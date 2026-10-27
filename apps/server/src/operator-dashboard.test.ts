@@ -1506,4 +1506,70 @@ describe('core metrics', () => {
     expect(body).not.toContain(forgotten);
     expect(body).not.toContain(secret);
   }, 30_000);
+
+  it('Reproduction CORE-OWN-WEEK: an unmeasured own-agent week stays null on the dashboard', async () => {
+    const human = 41;
+    const agent = 42;
+    const internal = 43;
+    const internalAgent = 44;
+    const today = easternDay();
+    const priorDay = shiftEasternDay(today, -10);
+    const measuredPriorDay = shiftEasternDay(today, -8);
+    const quietDay = shiftEasternDay(today, -1);
+    await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Internal',true)`, [coreWorkspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Internal')`, [coreRoom, coreWorkspace]);
+    await person(human, 'ios');
+    await ownAgent(agent, human);
+    await person(internal, 'ios', undefined, coreWorkspace);
+    await ownAgent(internalAgent, internal);
+    const turn = (requestId: string, agentId: number, roomId: string, at: string, input: number | null, output: number | null) =>
+      db.query(
+        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at,input_tokens,output_tokens)
+         VALUES($1,$2,$3,'complete',$4,$5,$6)`,
+        [roomId, requestId, coreId(agentId), at, input, output],
+      );
+    await turn('week-today', agent, room, coreAt(today), null, null);
+    await turn('week-prior', agent, room, coreAt(priorDay), null, null);
+    await turn('week-internal', internalAgent, coreRoom, coreAt(today), 9999, 1);
+
+    const readTokens = async () => {
+      const response = await get('?platforms=ios');
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.coreMetrics.tokens.state).toBe('measured');
+      const body = JSON.stringify(payload);
+      expect(body).not.toContain(coreId(human));
+      expect(body).not.toContain(coreId(internal));
+      return payload.coreMetrics.tokens.data;
+    };
+
+    const unmeasured = await readTokens();
+    expect(corePoint(unmeasured.daily, today)).toMatchObject({
+      ownAgentTokens: null, ownAgentTurnsUnmeasured: 1, freeAgentTokens: 0,
+    });
+    expect(corePoint(unmeasured.daily, priorDay)).toMatchObject({
+      ownAgentTokens: null, ownAgentTurnsUnmeasured: 1,
+    });
+    expect(corePoint(unmeasured.daily, quietDay)).toMatchObject({
+      ownAgentTokens: 0, ownAgentTurnsUnmeasured: 0,
+    });
+    expect(unmeasured.last7).toMatchObject({ ownAgentTokens: null, ownAgentTurnsUnmeasured: 1 });
+    expect(unmeasured.prior7).toMatchObject({ ownAgentTokens: null, ownAgentTurnsUnmeasured: 1 });
+    expect(unmeasured.change.ownAgentTokens).toEqual({ dayOverDay: null, weekOverWeek: null });
+
+    await turn('week-prior-measured', agent, room, coreAt(measuredPriorDay), 80, 20);
+    const mixedPrior = await readTokens();
+    expect(mixedPrior.last7.ownAgentTokens).toBeNull();
+    expect(mixedPrior.prior7).toMatchObject({ ownAgentTokens: 100, ownAgentTurnsUnmeasured: 1 });
+    expect(mixedPrior.change.ownAgentTokens.weekOverWeek).toBeNull();
+
+    await turn('week-zero', agent, room, coreAt(today), 0, 0);
+    const measuredZero = await readTokens();
+    expect(corePoint(measuredZero.daily, today)).toMatchObject({
+      ownAgentTokens: 0, ownAgentTurnsUnmeasured: 1,
+    });
+    expect(measuredZero.last7).toMatchObject({ ownAgentTokens: 0, ownAgentTurnsUnmeasured: 1 });
+    expect(measuredZero.prior7.ownAgentTokens).toBe(100);
+    expect(measuredZero.change.ownAgentTokens.weekOverWeek).toBe(-1);
+  }, 60_000);
 });

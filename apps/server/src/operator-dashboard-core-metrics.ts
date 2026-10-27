@@ -414,14 +414,23 @@ export async function dashboardCoreMetrics(
     }));
     const period = (slice: string[]) => {
       const points = daily.filter((point) => slice.includes(point.date));
-      const known = points.filter((point) => point.ownAgentTokens !== null);
-      const turns = points.reduce((sum, point) => sum + point.ownAgentTurnsUnmeasured, 0);
+      // A missing ledger day is no turns, filled as 0 on the daily series.
+      // It is not a measured figure, so it must not turn an all-unmeasured
+      // week into zero. A day the ledger returned, including an explicit 0, is.
+      let measured = 0;
+      let sawMeasured = false;
+      let unmeasuredTurns = 0;
+      for (const point of points) {
+        unmeasuredTurns += point.ownAgentTurnsUnmeasured;
+        if (own.has(point.date) && point.ownAgentTokens !== null) {
+          sawMeasured = true;
+          measured += point.ownAgentTokens;
+        }
+      }
       return {
         freeAgentTokens: points.reduce((sum, point) => sum + point.freeAgentTokens, 0),
-        ownAgentTokens: known.length === 0 && turns > 0
-          ? null
-          : known.reduce((sum, point) => sum + (point.ownAgentTokens ?? 0), 0),
-        ownAgentTurnsUnmeasured: turns,
+        ownAgentTokens: sawMeasured ? measured : unmeasuredTurns > 0 ? null : 0,
+        ownAgentTurnsUnmeasured: unmeasuredTurns,
       };
     };
     const todayPoint = daily.at(-1)!;

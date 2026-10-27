@@ -164,10 +164,14 @@ counts.
   reports them. The fields are optional, so an older daemon leaves them null.
   A turn with both null counts in `ownAgentTurnsUnmeasured` and adds nothing to
   the sum. A day whose own-agent turns are all unmeasured has `ownAgentTokens:
-  null`. A day with no own-agent turns is zero. `change.dayOverDay` and
-  `change.weekOverWeek` are `(current - prior) / prior` for free-agent tokens
-  and own-agent tokens. The ratio is null when either side is null or the prior
-  total is zero.
+  null`. A day with no own-agent turns is zero. A reported zero (both fields
+  present and totaling zero) stays zero. `last7` and `prior7` sum only days
+  that reported a figure. Days with no turns do not count as that figure, so a
+  window whose turns are all unmeasured is null rather than zero. A window
+  with no turns is zero. `change.dayOverDay` and `change.weekOverWeek` are
+  `(current - prior) / prior` for free-agent tokens and own-agent tokens. The
+  ratio is null when either side is null or the prior total is zero, so an
+  unmeasured week is not a 100% drop.
 
 Internal Workspaces, hidden identities, and the Play Review identity stay out
 through the shared cohort. Fixture success in an internal Workspace does not

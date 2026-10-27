@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -162,7 +162,18 @@ it('all agent resolvers, including saved global commands, use the promoted adapt
   expect(runtimeAgentCommand(saved, env).command).toBe(old);
 });
 
-async function adapterProcess(root: string, mode: 'pass' | 'reject' | 'protocol' | 'capabilities') {
+async function adapterProcess(
+  root: string,
+  mode:
+    | 'pass'
+    | 'reject'
+    | 'protocol'
+    | 'capabilities'
+    | 'auth'
+    | 'init-auth'
+    | 'crash'
+    | 'server-error',
+) {
   const command = join(root, 'codex-acp');
   const trace = join(root, 'requests.jsonl');
   await writeFile(
@@ -172,9 +183,12 @@ const fs = require('node:fs');
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
  const r = JSON.parse(line); fs.appendFileSync(${JSON.stringify(trace)}, line+'\\n');
  if (r.id === undefined) return;
+ if (${JSON.stringify(mode)} === 'init-auth' && r.method === 'initialize') { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32000,message:'Authentication required'}})+'\\n'); return; }
  let result;
  if (r.method === 'initialize') result = {protocolVersion:${mode === 'protocol' ? 99 : 1},agentCapabilities:${mode === 'capabilities' ? 'null' : '{promptCapabilities:{image:true}}'}};
  else if (r.method === 'session/new') {
+   if (${JSON.stringify(mode)} === 'crash') process.exit(23);
+   if (${JSON.stringify(mode)} === 'auth' || ${JSON.stringify(mode)} === 'server-error') { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32000,message:${JSON.stringify(mode)} === 'auth' ? 'Authentication required: configure a login' : 'Provider unavailable'}})+'\\n'); return; }
    if (${JSON.stringify(mode)} === 'reject') { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32602,message:'Invalid params'}})+'\\n'); return; }
    result = {sessionId:'probe-session'};
  } else { process.exit(23); }
@@ -326,3 +340,142 @@ it('running helpers resolve the shared promotion for every new Room/corner sessi
     agentCapabilities: { loadSession: true },
   });
 });
+
+it.each([
+  'auth',
+  'init-auth',
+  'reject',
+  'protocol',
+  'capabilities',
+  'crash',
+  'server-error',
+] as const)(
+  'credential-free CI only accepts session/new authentication-required: %s',
+  async (mode) => {
+    const { root } = await fixture();
+    const { command, trace } = await adapterProcess(root, mode);
+    const result = checkAdapterSession({
+      command,
+      env: { HOME: root, PATH: process.env.PATH! },
+      allowUnauthenticatedSession: true,
+      timeoutMs: 2000,
+    });
+    if (mode === 'auth') {
+      await expect(result).resolves.toMatchObject({
+        protocolVersion: 1,
+        sessionStart: 'authentication-required',
+      });
+    } else {
+      await expect(result).rejects.toThrow();
+    }
+    const requests = (await readFile(trace, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(requests.some((r) => r.method === 'session/prompt')).toBe(false);
+    if (mode === 'auth' || mode === 'reject' || mode === 'server-error' || mode === 'crash') {
+      expect(requests.find((r) => r.method === 'session/new')?.params.systemPrompt).toBeTruthy();
+    }
+  },
+);
+
+it.each(['codex', 'claude', 'pi'] as const)(
+  'helper %s probe uses the Room credential links in a disposable home and adopts a signed-in session',
+  async (kind) => {
+    const { root, env } = await fixture();
+    const adapter = MANAGED_ADAPTERS[kind];
+    const relative =
+      kind === 'codex'
+        ? '.codex/auth.json'
+        : kind === 'claude'
+          ? '.claude/.credentials.json'
+          : '.pi/agent/auth.json';
+    const credential = join(root, relative);
+    await mkdir(dirname(credential), { recursive: true });
+    await writeFile(credential, JSON.stringify({ fixtureLogin: true }), { mode: 0o600 });
+    const trace = join(root, 'home-paths.json');
+    const variable =
+      kind === 'codex'
+        ? 'CODEX_HOME'
+        : kind === 'claude'
+          ? 'CLAUDE_CONFIG_DIR'
+          : 'PI_CODING_AGENT_DIR';
+    const filename = kind === 'claude' ? '.credentials.json' : 'auth.json';
+    const install = async (request: { args: string[] }) => {
+      const prefix = request.args[request.args.indexOf('--prefix') + 1]!;
+      const bin = join(prefix, 'node_modules/.bin');
+      await mkdir(bin, { recursive: true });
+      const command = join(bin, adapter.binary);
+      await writeFile(
+        command,
+        `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path');
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+ const r = JSON.parse(line); if (r.id === undefined) return;
+ let result;
+ if (r.method === 'initialize') result = {protocolVersion:1,agentCapabilities:{}};
+ else if (r.method === 'session/new') {
+   const login = path.join(process.env[${JSON.stringify(variable)}], ${JSON.stringify(filename)});
+   const linked = fs.lstatSync(login).isSymbolicLink();
+   const source = fs.realpathSync(login);
+   const signedIn = JSON.parse(fs.readFileSync(login,'utf8')).fixtureLogin === true;
+   fs.writeFileSync(${JSON.stringify(trace)},JSON.stringify({home:process.env.HOME,login,linked,source,cwd:r.params.cwd}));
+   if (!linked || source !== ${JSON.stringify(credential)} || !signedIn || process.env.HOME === ${JSON.stringify(root)}) process.exit(23);
+   result = {sessionId:'signed-in-probe'};
+ } else process.exit(24);
+ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');
+});`,
+      );
+      await chmod(command, 0o755);
+    };
+    const alert = vi.fn(async () => undefined);
+    expect(
+      await installLatestAgentAdapter(kind, {
+        env,
+        readRegistry: async () => registry(),
+        install,
+        alert,
+      }),
+    ).toBe(true);
+    const paths = JSON.parse(await readFile(trace, 'utf8'));
+    expect(paths).toMatchObject({ linked: true, source: await realpath(credential) });
+    expect(paths.home).not.toBe(root);
+    await expect(readFile(paths.login)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(JSON.parse(await readFile(credential, 'utf8'))).toEqual({ fixtureLogin: true });
+    expect(alert).not.toHaveBeenCalled();
+    expect(readAdapterState(kind, env).active?.version).toBe('2.0.0');
+  },
+);
+
+it.each(['codex', 'claude', 'pi'] as const)(
+  'helper %s authentication-required keeps the working version and alerts exactly once',
+  async (kind) => {
+    const { root, env, old } = await fixture();
+    const statePath = adapterStatePath(kind, env);
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ active: { version: '1.0.0', command: old } }));
+    const install = async (request: { args: string[] }) => {
+      const prefix = request.args[request.args.indexOf('--prefix') + 1]!;
+      const bin = join(prefix, 'node_modules/.bin');
+      await mkdir(bin, { recursive: true });
+      const generated = await adapterProcess(bin, 'auth');
+      const target = join(bin, MANAGED_ADAPTERS[kind].binary);
+      if (target !== generated.command) {
+        await writeFile(target, await readFile(generated.command));
+        await chmod(target, 0o755);
+      }
+    };
+    const alert = vi.fn(async () => undefined);
+    const options = { env, install, alert, readRegistry: async () => registry() };
+    expect(await installLatestAgentAdapter(kind, options)).toBe(false);
+    expect(await installLatestAgentAdapter(kind, options)).toBe(false);
+    expect(activeAdapterCommand(kind, env)).toBe(old);
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0]?.[0]).toMatchObject({
+      message: expect.stringContaining('Authentication required'),
+    });
+    expect(readAdapterState(kind, env).rejected?.['2.0.0']?.error).toContain(
+      'Authentication required',
+    );
+  },
+);

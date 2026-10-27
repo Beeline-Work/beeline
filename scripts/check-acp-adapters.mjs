@@ -93,9 +93,11 @@ try {
         command: join(prefix, 'node_modules/.bin', adapter.binary),
         env,
         scratchRoot: prefix,
+        allowUnauthenticatedSession: true,
         onStage: stage => { result.stage = stage; },
         onInitialized: negotiated => { result.negotiated = negotiated; },
       });
+      result.sessionStart = result.negotiated.sessionStart;
       result.status = 'passed';
       result.stage = 'complete';
     } catch (error) {

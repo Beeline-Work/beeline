@@ -92,6 +92,13 @@ function flattenHarnessCause(tail: string): string {
   return meaningfulHarnessStderr(tail).replace(/\s+/g, ' ').trim();
 }
 
+/** Preserve the remote JSON-RPC code for callers classifying a precise refusal. */
+export class AcpRequestError extends Error {
+  constructor(readonly code: number | undefined, message: string) {
+    super(message);
+  }
+}
+
 /** Stable startup failure surfaced by bounded functional-update probes. */
 export class AcpRequestTimeoutError extends Error {
   readonly code = 'ACP_REQUEST_TIMEOUT';
@@ -1688,7 +1695,7 @@ export class AcpClient extends EventEmitter {
         const extra = [details, meaningful ? `harness stderr: ${meaningful}` : '']
           .filter(Boolean)
           .join('; ');
-        p.reject(new Error(`ACP error ${err.code}: ${err.message}${extra ? `; ${extra}` : ''}`));
+        p.reject(new AcpRequestError(err.code, `ACP error ${err.code}: ${err.message}${extra ? `; ${extra}` : ''}`));
       } else {
         p.resolve(msg.result);
       }

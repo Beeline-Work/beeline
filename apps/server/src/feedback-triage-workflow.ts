@@ -255,9 +255,12 @@ credentials, start login, or copy operator configuration. It uses Beeline's ACP
 client to run \`initialize\` and \`session/new\`, never a model prompt.
 
 Read its JSON results even when the exit code is nonzero. Each result names the
-adapter, exact installed version, program path, status and failed stage. A missing
-host program or refused unauthenticated session is a finding with that precise
-limit, not evidence of a broken logged-in turn. Report each failing check with
+adapter, exact installed version, program path, status and failed stage. An
+explicit authentication-required refusal from \`session/new\` is a passing
+credential-free compatibility result (\`sessionStart: authentication-required\`),
+not a bug finding. Initialization/protocol failures, parameter rejections,
+other session errors and crashes fail; a missing host program is a setup finding.
+Report each failing check with
 \`report_feedback(category:bug)\` naming the adapter/version and the observed
 stage, attach the returned item id, and add it to \`adapterFindings\`. Assess and
 propose fixes through the same morning-card approval path as other findings; a local

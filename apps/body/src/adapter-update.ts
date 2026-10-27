@@ -141,6 +141,7 @@ export async function updateAgentAdapter(
         negotiated = await (options.checkSession ?? checkAdapterSession)({
           command,
           env: agentEnv,
+          agentKind: kind,
         });
       } catch (error) {
         const detail = redactDiagnostic(error instanceof Error ? error.message : String(error))

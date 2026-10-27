@@ -20,8 +20,13 @@ through `initialize` and `session/new`, including a system prompt, MCP declarati
 and harness-specific metadata, without a model prompt. Protocol version 1 must
 negotiate successfully; advertised capabilities are recorded, with optional
 features left optional. Package versions select releases, never compatibility.
-The runtime check uses the operator's installed program and existing environment;
-an authentication refusal fails the check just like any other session failure.
+The runtime check uses the operator's installed program and the same isolated
+home preparation as Room sessions (`prepareRoomAgentHome`), linking the real
+Claude, Codex and Pi login files. Environment credentials remain available;
+ambient home state does not become the probe's writable home. Claude login
+refreshes use the Room write-back path before the disposable home is removed.
+An authentication refusal on a helper keeps the working copy and alerts once;
+it is never silently counted as a successful promotion.
 
 A passing candidate atomically becomes the shared active command for every agent
 of that kind, including agents with older global paths in their runtime records.
@@ -76,9 +81,14 @@ keys, logins, tokens or inherited Node options. It uses the
 same session-start check as runtime adoption, deliberately bypasses
 the release-age delay to test the newest versions immediately, never prompts a
 model, cleans up processes/files and returns versioned JSON results including
-negotiated protocol and capabilities when initialization succeeds. Nonzero exit
-means findings must be assessed, not ignored. See the workflow procedure for the
-normal human approval and dispatch path.
+negotiated protocol and capabilities when initialization succeeds. In this
+credential-free compatibility mode, an explicit ACP authentication-required
+refusal from `session/new` counts as passed with
+`sessionStart: authentication-required`: the request has reached authentication
+rather than failing parameter validation. Authentication at initialize, protocol
+or parameter rejection, other session errors, and process crashes still fail.
+Nonzero exit means findings must be assessed, not ignored. See the workflow
+procedure for the normal human approval and dispatch path.
 
 A refused unauthenticated session is a precise limitation, not evidence that a
 logged-in turn is broken. Before integrating the system-prompt fix, the isolated
@@ -91,20 +101,21 @@ pi-acp 0.0.34: initialize passed; session/new refused Authentication required
 exit status: 1
 ```
 
-No login or credential was supplied to resolve those refusals. Authentication
-refusals remain failures in CI; a green check requires an actual successful
-session start, not just a successful initialize. The separate system-prompt wire
-fix is responsible for making the October releases pass; this update protection
-keeps the working command selected when a new release fails. Repeating the
-same check after integrating the wire fix passed Claude 0.97.0 session creation;
-Codex 2.3.0 and Pi 0.0.34 reached session creation and returned authentication
-refusals. All three negotiated ACP v1 and advertised their capabilities.
+No login or credential was supplied to resolve those refusals. After integrating
+the system-prompt wire fix, the daily compatibility check passes for all three:
+Claude 0.97.0 creates a session; Codex 2.3.0 and Pi 0.0.34 accept session setup
+and return authentication-required. All three negotiate ACP v1 and advertise
+their capabilities. Helper promotion remains stricter: it requires an actual
+session with the credential-linked home, and an auth failure produces the same
+one-time alert and retained working copy as any other failed candidate.
 
 Regression coverage: `adapter-update.test.ts` exercises failing and passing real
 ACP subprocesses for all three kinds, durable alert deduplication, the one-day
 boundary, partial installs, live command resolution and two independent helpers
-sharing one installation. `adapter-freshness.test.ts` covers update fan-out and
-session launches proceeding while a candidate holds the install lock.
+sharing one installation. It also proves CI's auth-only success classification,
+helper credential linking for every adapter, isolated-home cleanup, and
+one-time helper auth-failure alerts. `adapter-freshness.test.ts` covers update
+fan-out and session launches proceeding while a candidate holds the install lock.
 
 ## Reproduction installed-agent-add
 

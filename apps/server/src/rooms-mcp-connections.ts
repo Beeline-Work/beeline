@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { tokenHash } from './auth.js';
+import { ensureMcpMember, retireMcpMember } from './rooms-mcp-members.js';
 
 interface Grant { client_id: string; identity_id: string; scope: string }
 const opaque = () => randomBytes(32).toString('base64url');
@@ -16,6 +17,18 @@ export async function issueMcpTokens(db: SqlDatabase, grant: Grant, familyId: st
 }
 
 export async function connectMcp(db: SqlDatabase, grant: Grant) {
+  const client = (
+    await db.query<{ name: string }>('SELECT name FROM rooms_mcp_clients WHERE id=$1', [
+      grant.client_id,
+    ])
+  ).rows[0];
+  // The connection acts through a member owned by the approving person; the
+  // registered client name is its model label and its initial display name.
+  await ensureMcpMember(db, {
+    clientId: grant.client_id,
+    ownerId: grant.identity_id,
+    modelLabel: client?.name ?? 'Connected app',
+  });
   await db.query(`INSERT INTO rooms_mcp_connections(client_id,identity_id,scope) VALUES($1,$2,$3)
     ON CONFLICT(client_id,identity_id) DO UPDATE SET scope=EXCLUDED.scope,revoked_at=NULL,
     connected_at=CASE WHEN rooms_mcp_connections.revoked_at IS NULL THEN rooms_mcp_connections.connected_at ELSE now() END`,
@@ -53,6 +66,7 @@ export async function refreshMcp(db: SqlDatabase, raw: string, clientId: string,
 }
 
 export async function disconnectMcp(db: SqlDatabase, identityId: string, clientId: string): Promise<void> {
+  await retireMcpMember(db, clientId, identityId);
   await db.transaction(async tx => {
     await tx.query('UPDATE rooms_mcp_connections SET revoked_at=now() WHERE identity_id=$1 AND client_id=$2', [identityId, clientId]);
     await tx.query('UPDATE rooms_mcp_families SET revoked_at=now() WHERE identity_id=$1 AND client_id=$2', [identityId, clientId]);

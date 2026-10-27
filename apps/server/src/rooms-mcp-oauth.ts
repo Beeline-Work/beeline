@@ -6,6 +6,8 @@ import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp } from './rooms-mcp-connections.js';
+import { ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
+import { agentHandleFromName } from '@beeline/api-contract/phone';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -45,12 +47,20 @@ function redirectUri(value: unknown): string {
     throw new Error('invalid_redirect_uri');
   return raw;
 }
+function callbackUri(value: unknown): string {
+  const raw = string(value, 2048);
+  const url = new URL(raw);
+  if (url.protocol !== 'https:' || url.hash || url.username || url.password)
+    throw new Error('invalid_client_metadata');
+  return raw;
+}
 interface Flow {
   id: string; browser_hash: string; client_id: string; redirect_uri: string; state: string;
   challenge: string; scope: string; identity_id: string | null; provider: string | null;
   name: string; logo: string | null; identity_name: string | null;
+  joiner_name: string | null; joiner_handle: string | null;
 }
-export interface McpPrincipal { hash: string; client_id: string; identity_id: string; scope: string }
+export interface McpPrincipal { hash: string; client_id: string; identity_id: string; member_id: string | null; scope: string }
 
 export class RoomsMcpOAuth {
   readonly origin: string;
@@ -86,8 +96,9 @@ export class RoomsMcpOAuth {
       [principal.client_id, principal.identity_id, operation.slice(0, 100), outcome]);
   }
   async principal(raw: string): Promise<McpPrincipal | undefined> {
-    return (await this.database.query<McpPrincipal>(`SELECT t.hash,t.client_id,t.identity_id,t.scope FROM rooms_mcp_tokens t
+    return (await this.database.query<McpPrincipal>(`SELECT t.hash,t.client_id,t.identity_id,t.scope,m.member_id FROM rooms_mcp_tokens t
       JOIN identities i ON i.id=t.identity_id AND i.kind='human'
+      LEFT JOIN rooms_mcp_members m ON m.client_id=t.client_id AND m.owner_id=t.identity_id
       LEFT JOIN rooms_mcp_families f ON f.id=t.family_id
       LEFT JOIN rooms_mcp_connections c ON c.client_id=f.client_id AND c.identity_id=f.identity_id
       WHERE t.hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now()
@@ -143,7 +154,9 @@ export class RoomsMcpOAuth {
         const redirects = input.redirect_uris.map(redirectUri);
         const id = opaque();
         const logo = input.logo_uri === undefined ? await bundledMcpLogo(name) : await fetchMcpLogo(string(input.logo_uri));
-        await this.database.query('INSERT INTO rooms_mcp_clients(id,name,redirects,logo) VALUES($1,$2,$3::jsonb,$4)', [id, name, JSON.stringify(redirects), logo ?? null]);
+        // An optional outgoing callback lets the client be pushed a tag instead of polling.
+        const callback = input.webhook_uri === undefined ? null : callbackUri(input.webhook_uri);
+        await this.database.query('INSERT INTO rooms_mcp_clients(id,name,redirects,logo,callback_url) VALUES($1,$2,$3::jsonb,$4,$5)', [id, name, JSON.stringify(redirects), logo ?? null, callback]);
         mcpJson(response, 201, { client_id: id, client_name: name, redirect_uris: redirects, token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }); return true;
       }
       if (request.method === 'GET' && path === '/mcp/oauth/authorize') {
@@ -185,18 +198,47 @@ export class RoomsMcpOAuth {
       if (request.method === 'GET' && path === '/mcp/oauth/consent') {
         const flow = await this.flow(url.searchParams.get('flow'), request);
         if (!flow.identity_id) this.page(response, 'Connect your Rooms', `<p>Sign in to Beeline to review access for <strong>${escape(flow.name)}</strong>.</p><p><a href="/mcp/oauth/login?flow=${flow.id}&amp;provider=google">Continue with Google</a></p><p><a href="/mcp/oauth/login?flow=${flow.id}&amp;provider=github">Continue with GitHub</a></p>`);
-        else this.page(response, `Allow ${flow.name} to use your Beeline Rooms?`, `<div class="brand">${flow.logo ? `<img class="mark" src="${escape(flow.logo)}" alt="${escape(flow.name)}">` : `<span class="mark">${escape(flow.name[0] ?? 'C')}</span>`}<span class="dots" aria-hidden="true">···</span><span class="mark bee" aria-label="Beeline">b</span></div><p class="who">Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong></p><div class="perm">${flow.scope.includes(MCP_READ) ? '<section><strong>Read your Rooms</strong><p>Read and search messages and corner status in Rooms you belong to.</p></section>' : ''}${flow.scope.includes(MCP_WRITE) ? '<section><strong>Post as you</strong><p>Send messages in your name. A message that tags @agent starts that agent’s work.</p></section>' : ''}</div><p class="fine">Room text you open in ${escape(flow.name)} goes to that client and its AI providers under their own privacy terms. Disconnect any time in Beeline, under Settings → Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><button name="decision" value="allow">Allow</button><button name="decision" value="deny">Cancel</button></form><p class="links"><a href="https://usebeeline.app/privacy/">Privacy</a> · <a href="mailto:hello@usebeeline.app">Support</a></p>`);
+        else {
+          const member = await mcpMemberId(this.database, flow.client_id, flow.identity_id);
+          const existing = member
+            ? (await this.database.query<{ name: string; handle: string | null }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]
+            : undefined;
+          const name = flow.joiner_name ?? existing?.name ?? flow.name;
+          const handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
+          const initial = escape((name[0] ?? 'F').toUpperCase());
+          const handleInput = `/mcp/oauth/consent`;
+          if (url.searchParams.get('edit') === '1') {
+            this.page(response, `Name ${flow.name}'s Beeline member`, `<p class="who">Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong></p><form class="perm" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><section><strong><label for="joiner_name">Name</label></strong><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60" style="width:100%;font:16px SG;padding:8px;border:1px solid #E2D9CB;border-radius:8px;background:#fff"></section><section><strong><label for="joiner_handle">Handle</label></strong><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40" style="width:100%;font:16px SG;padding:8px;border:1px solid #E2D9CB;border-radius:8px;background:#fff"><p>Tag it as @${escape(handle)} in a Room.</p></section><button name="decision" value="save">Save</button></form><p class="links"><a href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a></p>`);
+            return true;
+          }
+          this.page(response, `Allow ${flow.name} to join your Beeline team?`, `<div class="brand">${flow.logo ? `<img class="mark" src="${escape(flow.logo)}" alt="${escape(flow.name)}">` : `<span class="mark">${escape(flow.name[0] ?? 'C')}</span>`}<span class="dots" aria-hidden="true">···</span><span class="mark bee" aria-label="Beeline">b</span></div><p class="who">Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong></p><p class="fine" style="margin-bottom:6px">JOINS AS</p><div style="display:flex;align-items:center;gap:12px;border:1px solid #E2D9CB;border-radius:12px;padding:12px;margin-bottom:8px"><span class="mark" style="width:36px;height:36px;border:1px solid #E2D9CB">${initial}</span><span style="flex:1;min-width:0"><strong>${escape(name)}</strong><br><span class="fine">@${escape(handle)} · ${escape(flow.name)}</span></span><a href="${handleInput}?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="fine">Name and picture come from ${escape(flow.name)}. Change them here or later.</p><div class="perm">${flow.scope.includes(MCP_READ) ? '<section><strong>Read Rooms you add it to</strong><p>It sees only the Rooms where you add it under Members.</p></section>' : ''}${flow.scope.includes(MCP_WRITE) ? `<section><strong>Post as ${escape(name)}</strong><p>Its messages show as ${escape(name)}, never as you. Tagging an agent starts that agent's work, the same as your other agents.</p></section>` : ''}</div><p class="fine">Room text ${escape(name)} reads goes to ${escape(flow.name)} and its AI providers under their own privacy terms. Remove it any time in Beeline, under Settings → Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><button name="decision" value="allow">Allow</button><button name="decision" value="deny">Cancel</button></form><p class="links"><a href="https://usebeeline.app/privacy/">Privacy</a> · <a href="mailto:hello@usebeeline.app">Support</a></p>`);
+        }
         return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/consent') {
         if (request.headers.origin !== this.origin) throw new Error('invalid_request');
         const input = await mcpBody(request);
+        if (input.decision === 'save') {
+          const name = typeof input.joiner_name === 'string' ? input.joiner_name.trim().replace(/\s+/g, ' ') : '';
+          const handle = typeof input.joiner_handle === 'string' ? input.joiner_handle.trim().replace(/^@+/, '').toLowerCase() : '';
+          if (!name || name.length > 60 || !/^[a-z0-9_]{1,40}$/.test(handle)) throw new Error('invalid_request');
+          await this.database.transaction(async db => {
+            const flow = await this.flow(input.flow, request, db);
+            if (!flow.identity_id) throw new Error('invalid_request');
+            await db.query('UPDATE rooms_mcp_flows SET joiner_name=$2,joiner_handle=$3 WHERE id=$1', [flow.id, name, handle]);
+          });
+          this.redirect(response, `/mcp/oauth/consent?flow=${encodeURIComponent(String(input.flow))}`); return true;
+        }
         const target = await this.database.transaction(async db => {
           const flow = await this.flow(input.flow, request, db);
           if (!flow.identity_id || !['allow', 'deny'].includes(String(input.decision))) throw new Error('invalid_request');
           const target = new URL(flow.redirect_uri);
           target.searchParams.set('state', flow.state); target.searchParams.set('iss', this.origin);
           if (input.decision === 'allow') {
+            await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name });
+            const member = await mcpMemberId(db, flow.client_id, flow.identity_id);
+            if (member && (flow.joiner_name || flow.joiner_handle))
+              await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined });
             const code = opaque();
             await db.query(`INSERT INTO rooms_mcp_codes(hash,client_id,identity_id,redirect_uri,challenge,scope,expires_at)
               VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute')`, [tokenHash(code), flow.client_id, flow.identity_id, flow.redirect_uri, flow.challenge, flow.scope]);

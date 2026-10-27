@@ -1,4 +1,5 @@
 import { captureServerError } from './sentry.js';
+import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -961,6 +962,8 @@ export class MediaExpiryLoop {
 }
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
+  // Outgoing MCP member webhooks leave the wake transaction here.
+  try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
   const expired = [
     ['agent_turn_traces', "created_at<now()-interval '30 days'"],

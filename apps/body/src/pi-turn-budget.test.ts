@@ -51,7 +51,7 @@ describe('free Pi shell turn budget', () => {
     await writeFile(context, JSON.stringify({ startedAt: Date.now() }));
     const event = call();
     expect(handlers.get('tool_call')!(event)).toBeUndefined();
-    expect(event.input.timeout).toBeGreaterThan(835);
+    expect(event.input.timeout).toBe(300);
     await writeFile(context, '{}');
     expect(handlers.get('tool_call')!(call())).toMatchObject({ block: true });
   });
@@ -68,7 +68,7 @@ describe('free Pi shell turn budget', () => {
     const { createBashTool } = await import('@earendil-works/pi-coding-agent');
     await writeFile(context, JSON.stringify({ startedAt: Date.now() - 838500 }));
     const event = call(900);
-    event.input.command = 'printf partial > partial.txt; sleep 10; printf finished > finished.txt';
+    event.input.command = 'printf partial; printf partial > partial.txt; sleep 10; printf finished > finished.txt';
     handlers.get('tool_call')!(event);
     expect(event.input.timeout).toBe(1);
     const start = Date.now();
@@ -76,6 +76,7 @@ describe('free Pi shell turn budget', () => {
     try { await createBashTool(root).execute(event.toolCallId, event.input); }
     catch (failure) { error = String(failure); }
     expect(error).toMatch(/timed out/i);
+    expect(error).toContain('partial');
     expect(Date.now() - start).toBeLessThan(5000);
     expect(await readFile(resolve(root, 'partial.txt'), 'utf8')).toBe('partial');
     await expect(readFile(resolve(root, 'finished.txt'), 'utf8')).rejects.toThrow();

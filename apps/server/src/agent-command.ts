@@ -1494,9 +1494,10 @@ export async function authorizeFailedTurnOutput(
   agentId: string,
   requestId: unknown,
   generation: unknown,
+  allowCompleted = false,
 ): Promise<CommandRow> {
   if (typeof generation === 'string' && generation) {
-    return authorizeCommandOutput(db, roomId, agentId, requestId, generation);
+    return authorizeCommandOutput(db, roomId, agentId, requestId, generation, allowCompleted);
   }
   const row =
     typeof requestId === 'string'

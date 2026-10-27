@@ -25,7 +25,8 @@ export default function (pi) {
       startedAt = JSON.parse(readFileSync(process.env.BEELINE_TURN_CONTEXT_FILE, 'utf8')).startedAt;
     } catch { /* Without the intake time, a command cannot safely use the budget. */ }
     if (!Number.isFinite(startedAt)) return { block: true, reason: 'Cannot determine the remaining turn time. Explain that the command could not safely start.' };
-    const seconds = Math.floor((startedAt + budgetMs - reserveMs - Date.now()) / 1000);
+    // Five minutes leaves room for inspection and a second, smaller command.
+    const seconds = Math.min(300, Math.floor((startedAt + budgetMs - reserveMs - Date.now()) / 1000));
     if (seconds <= 0) return { block: true, reason: explanation };
     if (!Number.isFinite(event.input.timeout) || event.input.timeout <= 0 || event.input.timeout > seconds) {
       event.input.timeout = seconds;

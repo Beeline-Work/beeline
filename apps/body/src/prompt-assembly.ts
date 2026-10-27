@@ -1,3 +1,4 @@
+import { renderFreeAgentCheckpoint, type FreeAgentCheckpoint } from './free-agent-continuation.js';
 import { boundReplyExcerpt, subscriptionActionPrompt, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { createHash } from 'node:crypto';
@@ -619,6 +620,7 @@ export interface TurnPromptContext {
   /** Rendered rows and whether earlier rows were withheld as already seen. */
   readonly transcript?: { readonly lines: readonly string[]; readonly sinceLastTurn: boolean };
   readonly resume?: string;
+  readonly timeLimitCheckpoint?: FreeAgentCheckpoint;
   readonly members?: string;
   readonly memory?: string;
   readonly corners?: readonly OpenCornerRow[];
@@ -788,10 +790,10 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     id: 'turn.resume',
     topic: 'resume',
     why: { 'turn.resume': 'A card answer resumes a paused turn; the agent must know which question was answered.' },
-    budgetBytes: 600,
+    budgetBytes: 24_000,
     layer: 'turn',
-    surfaces: ROOMS,
-    render: ({ resume }) => resume ?? '',
+    surfaces: EVERYWHERE,
+    render: ({ resume, timeLimitCheckpoint }) => [resume, timeLimitCheckpoint ? renderFreeAgentCheckpoint(timeLimitCheckpoint) : ''].filter(Boolean).join('\n\n'),
   },
   {
     id: 'turn.members',

@@ -823,7 +823,7 @@ describe('Room turn failure receipt', () => {
   });
 
   it('FREE-ABUSE-1: fails exhausted assigned work without publishing synthetic continuation prose', async () => {
-    const note = "I've hit the time limit for this turn. Send another message and I can continue from here.";
+    const note = 'The mesh draft has been saved.';
     const { posted, receipts, attempts } = await runTurn({
       agentCommand: '/fake-agent', agentKind: 'opencode', commandReason: 'order',
       prompt: async () => ({ stopReason: 'free-agent-time-limit', updates: [], agentText: note, toolCalls: [] }),

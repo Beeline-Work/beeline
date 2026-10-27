@@ -1,0 +1,179 @@
+{
+  "id": "free-agent-continue-keeps-work",
+  "section": "turn.resume",
+  "summary": "Continue uses a saved mesh draft after the hard stop instead of restarting the mesh generation.",
+  "place": "repo-less-corner",
+  "turn": {
+    "task": {
+      "body": "continue",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "timeLimitCheckpoint": {
+      "request": "Smooth the handle model and send the finished mesh.",
+      "partial": "The smoothed mesh is saved in /work/handle-draft.obj. The export is finished; it still needs inspection before sending.",
+      "tools": [
+        "bash: completed\nmesh export saved /work/handle-draft.obj"
+      ],
+      "limits": 1
+    }
+  },
+  "pass": {
+    "call": "Bash",
+    "args": {
+      "command": {
+        "contains": "handle-draft.obj"
+      }
+    }
+  },
+  "scenario": {
+    "history": [],
+    "files": {
+      "/work/handle-draft.obj": "# Smoothed handle mesh\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "resume-uses-card-answer",
+              "kind": "room"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "resume-uses-card-answer",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": null,
+          "worktree": null,
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      },
+      {
+        "call": "post_artifact",
+        "args": {},
+        "result": {
+          "id": "artifact",
+          "committed": true
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "(head|cat|wc|ls|file|test).*handle-draft\\.obj"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "# Smoothed handle mesh\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
+  },
+  "tools": [
+    "Bash"
+  ],
+  "session": {
+    "freeAgent": true,
+    "worktree": "/work",
+    "agentName": "Ruby"
+  },
+  "messages": [
+    "Ruby: I reached the turn limit. Send another message to continue."
+  ]
+}

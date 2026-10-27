@@ -471,8 +471,8 @@ export async function handleFreeAgentModelRequest(
   }
   const day = now.toISOString().slice(0, 10);
   // Settle the reservation once: the reported usage when known, nothing for a
-  // failed or interrupted call. Dollar settlement retains its existing policy.
-  const settle = (spent: number, usd = reservation.reservedUsd) =>
+  // failed or interrupted call. Never keep a worst-case dollar reservation for an aborted reply.
+  const settle = (spent: number, usd: number) =>
     options.database.transaction(async db => {
       await db.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
       await adjustUsage(db, agent.owner_id, day, spent - reservation.reserved, -reservation.credit);
@@ -613,7 +613,7 @@ export async function handleFreeAgentModelRequest(
           ? reported.cost
           : (Math.max(0, Number(reported.prompt_tokens) || 0) * limits.inputUsdPerMillion +
              Math.max(0, Number(reported.completion_tokens) || 0) * limits.outputUsdPerMillion) / 1_000_000)
-        : reservation.reservedUsd,
+        : interrupted || abort.signal.aborted ? 0 : reservation.reservedUsd,
     );
     response.end();
   };

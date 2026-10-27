@@ -48,7 +48,7 @@ export const REPOSITORY_ROUTES: Record<string, string> = {
 export const SCRATCH_ROUTES: Record<string, string> = {"write": "write_scratch_file", "image": "fetch_image", "quota": "scratch_status"};
 export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = {
   onboarding: {
-    invite: { name: 'invite', description: 'Create an invite for the requester’s own Room and post a card that opens the phone share sheet. Workspace manager membership is required.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    invite: { name: 'invite', description: 'Create an invite for the requester\'s own Room and print the invite link in this chat. Workspace manager membership is required.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     repository: { name: 'repository', description: 'Post the Room repository card: create a private repo, link an installation repo, switch repos or add an organization. Returns install_missing, no_repo_linked or repo_linked. Use this instead of settings or CLI instructions.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     starters: { name: 'starters', description: 'Read recent commits, CI and open issues in the linked repository and post 3–4 one-tap tasks. Empty repositories get useful starting tasks. A selection starts work through the normal corner flow.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   },

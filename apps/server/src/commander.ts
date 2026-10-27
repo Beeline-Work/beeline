@@ -228,7 +228,7 @@ export async function reportToCommander(
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
   options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean } = {},
-): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
+): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean; retryAt?: number }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
@@ -362,6 +362,19 @@ export async function reportToCommander(
       )).rowCount
       ? origin
       : returnRoom;
+    // A new episode cannot bypass the per-corner automatic report budget.
+    if (options.automatic && origin) {
+      const allowed = await db.query(`INSERT INTO automatic_report_wakes(corner_id,agent_id,next_at)
+        VALUES($1,$2,now()+interval '3 minutes') ON CONFLICT(corner_id,agent_id)
+        DO UPDATE SET next_at=EXCLUDED.next_at WHERE automatic_report_wakes.next_at<=now()
+        RETURNING corner_id`, [origin,recipient]);
+      if (!allowed.rowCount) {
+        const next = (await db.query<{ next_at: Date }>(
+          'SELECT next_at FROM automatic_report_wakes WHERE corner_id=$1 AND agent_id=$2', [origin,recipient])).rows[0]!;
+        return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true, skipped: true,
+          retryAt: new Date(next.next_at).getTime() };
+      }
+    }
     const queued = await createAgentCommand(db, {
       id: reportId,
       roomId: wakeRoom,

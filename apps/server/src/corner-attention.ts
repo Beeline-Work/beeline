@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS corner_attention_spans (
 );
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS episode bigint NOT NULL DEFAULT 0;
 UPDATE corner_attention_spans SET episode=revision WHERE episode=0 AND last_state='idle';
+ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS reported_episode bigint;
+UPDATE corner_attention_spans SET reported_episode=episode WHERE reported_episode IS NULL;
+ALTER TABLE corner_attention_spans ALTER COLUMN reported_episode SET DEFAULT 0;
+ALTER TABLE corner_attention_spans ALTER COLUMN reported_episode SET NOT NULL;
 CREATE INDEX IF NOT EXISTS corner_attention_checked ON corner_attention_spans(checked_at);
 ALTER TABLE needs_you_marks ADD COLUMN IF NOT EXISTS reminder_dismissed_at timestamptz;
 -- Retire the repeating attention/reminder machinery without deleting historical messages.
@@ -34,7 +38,7 @@ CREATE OR REPLACE FUNCTION corner_attention_push() RETURNS trigger
 LANGUAGE plpgsql AS $attention$
 BEGIN
   INSERT INTO corner_attention_spans(corner_id,revision) VALUES(NEW.corner_id,1)
-  ON CONFLICT(corner_id) DO UPDATE SET revision=corner_attention_spans.revision+1;
+  ON CONFLICT(corner_id) DO UPDATE SET revision=corner_attention_spans.revision+1,last_state=NULL;
   RETURN NULL;
 END
 $attention$;
@@ -43,10 +47,28 @@ DROP TRIGGER IF EXISTS corner_attention_open ON corner_facts;
 CREATE TRIGGER corner_attention_open AFTER INSERT ON corner_facts
   FOR EACH ROW EXECUTE FUNCTION corner_attention_push();
 CREATE TRIGGER corner_attention_head AFTER UPDATE OF lifecycle ON corner_facts
-  FOR EACH ROW WHEN (OLD.lifecycle->'pr'->>'headSha' IS DISTINCT FROM NEW.lifecycle->'pr'->>'headSha')
+  FOR EACH ROW WHEN (OLD.lifecycle->'pr'->>'headSha' IS DISTINCT FROM NEW.lifecycle->'pr'->>'headSha'
+    OR COALESCE(OLD.lifecycle->'checksSummary'->>'status',OLD.lifecycle->>'checks')
+      IS DISTINCT FROM COALESCE(NEW.lifecycle->'checksSummary'->>'status',NEW.lifecycle->>'checks'))
   EXECUTE FUNCTION corner_attention_push();
 INSERT INTO corner_attention_spans(corner_id)
   SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL ON CONFLICT DO NOTHING;
+
+CREATE OR REPLACE FUNCTION corner_attention_human() RETURNS trigger LANGUAGE plpgsql AS $human$
+BEGIN
+  IF NEW.presentation='message' AND NEW.system_event IS NULL
+    AND NEW.author_id<>'${SYSTEM_IDENTITY_ID}'
+    AND EXISTS(SELECT 1 FROM identities WHERE id=NEW.author_id AND kind='human') THEN
+    UPDATE corner_attention_spans SET last_state=NULL,last_turn_ended_at=NULL WHERE corner_id=NEW.room_id;
+    IF FOUND THEN
+      PERFORM pg_notify('beeline_live_v1',json_build_object('table','corner_state','operation','UPDATE','roomId',NEW.room_id)::text);
+    END IF;
+  END IF;
+  RETURN NULL;
+END $human$;
+DROP TRIGGER IF EXISTS corner_attention_human ON messages;
+CREATE TRIGGER corner_attention_human AFTER INSERT ON messages
+  FOR EACH ROW EXECUTE FUNCTION corner_attention_human();
 
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS last_turn_ended_at timestamptz;
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_started_at timestamptz;
@@ -56,6 +78,13 @@ DECLARE corner uuid; pending boolean; failing boolean; was_failing boolean; same
 BEGIN
   IF TG_TABLE_NAME='agent_turns' THEN
     corner=COALESCE(NEW.room_id,OLD.room_id);
+    -- A commander answering its own alert is not new corner work.
+    IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND created_by=COALESCE(NEW.agent_id,OLD.agent_id)) THEN
+      RETURN NULL;
+    END IF;
+    IF NEW.status='working' THEN
+      UPDATE corner_attention_spans SET last_state=NULL WHERE corner_id=corner;
+    END IF;
     IF TG_OP='INSERT' AND NEW.status='working' AND NEW.generation_id LIKE 'pending:%' THEN
       UPDATE corner_attention_spans SET last_turn_ended_at=NEW.created_at WHERE corner_id=corner;
     END IF;
@@ -136,6 +165,7 @@ type Row = CornerStateRow & {
   parent_id: string;
   last_state: string | null;
   episode: string;
+  reported_episode: string;
   scheduled_wait: boolean;
 };
 function attentionSql() {
@@ -144,13 +174,13 @@ function attentionSql() {
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
     blocker.agent_commander,blocker.human_blocker,
-    span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,
+    span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,span.reported_episode::text,
     EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.next_run_at>now()
       AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) scheduled_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id
-    ${cornerWorkSql()} ${cornerBlockerSql()}
+    ${cornerWorkSql(true)} ${cornerBlockerSql()}
     WHERE c.id=$1 AND c.archived_at IS NULL FOR UPDATE OF span`;
 }
 
@@ -179,10 +209,11 @@ export async function refreshCornerAttention(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
       [cornerId, state, episode.toString()],
     );
-    if (state === 'idle' && row.last_state !== 'idle') {
+    let reportDeadline = 0;
+    if (state === 'idle' && BigInt(row.reported_episode) < episode) {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
       const text = `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
-      await reportToCommander(
+      const report = await reportToCommander(
         tx,
         cornerId,
         SYSTEM_IDENTITY_ID,
@@ -191,10 +222,14 @@ export async function refreshCornerAttention(
         id,
         { automatic: true, agentOnly: true, wakeInCorner: true },
       );
+      if (report.retryAt) reportDeadline = report.retryAt;
+      else await tx.query('UPDATE corner_attention_spans SET reported_episode=$2 WHERE corner_id=$1',
+        [cornerId,episode.toString()]);
     }
     const now = Date.now();
     // Only the existing post-turn gap has an activity deadline.
     const deadlines = [
+      reportDeadline ? Math.max(reportDeadline, now+1) : 0,
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };

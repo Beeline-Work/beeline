@@ -1,7 +1,11 @@
+import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { systemLine } from './system-line.js';
 import { cornerOwedSchemaSql } from './corner-owed.js';
-import { migrate } from './database.js';
+import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
+import { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
@@ -20,9 +24,20 @@ const HUMAN = 'a'.repeat(64),
   COMMANDER = 'b'.repeat(64),
   WORKER = 'c'.repeat(64),
   REVIEWER = 'd'.repeat(64);
-let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
+let db: SqlDatabase, closeDatabase: () => Promise<void>, daemon: DaemonService, phone: PhoneService;
 beforeAll(async () => {
-  db = new PgliteDatabase();
+  if (process.env.BEELINE_ATTENTION_TEST_POSTGRES_URL) {
+    const url = process.env.BEELINE_ATTENTION_TEST_POSTGRES_URL;
+    const schema = `attention_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: url });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pg = new PostgresDatabase('', 5, { pool: new Pool({ connectionString: url,
+      options: `-c search_path=${schema},public` }), mode: 'migration' });
+    db = pg;
+    closeDatabase = async () => { await pg.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); };
+  } else {
+    const pg = new PgliteDatabase(); db = pg; closeDatabase = () => pg.close();
+  }
   await migrate(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
@@ -39,9 +54,11 @@ beforeAll(async () => {
   daemon = new DaemonService(db, new LiveHub());
   phone = new PhoneService(db, 'http://test');
 }, 30_000);
-afterAll(async () => db.close());
+afterAll(async () => closeDatabase());
 beforeEach(async () => {
   await db.query('DELETE FROM workspaces');
+  await db.query('DELETE FROM agent_startup_backoff');
+  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Truthful states')`, [WS]);
   await db.query(
     `INSERT INTO rooms(id,workspace_id,name,created_by,reviewer_agent_id) VALUES($1,$2,'Room',$3,$4)`,
@@ -710,4 +727,92 @@ it.each(['blocked:', 'needs-decision:'])('FIC-1: red checks with an open %s repo
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect((await commanderFlags()).filter(command => command.source.body.includes('is idle'))).toHaveLength(0);
+});
+
+
+it.each(['failed', 'complete'])('Reproduction IDLE-STORM: commander %s does not reopen its own idle episode', async (status) => {
+  await ci('passing');
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(1);
+  await turn(COMMANDER);
+  await refreshCornerAttention(db, C);
+  await db.query(`UPDATE agent_turns SET status=$2 WHERE room_id=$1 AND agent_id=$3`, [C,status,COMMANDER]);
+  await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=$1`, [C]);
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(1);
+});
+
+it('Reproduction IDLE-STORM: new worker work opens an episode after the automatic report cooldown', async () => {
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(1);
+  await turn(WORKER);
+  await refreshCornerAttention(db, C);
+  await end(WORKER,40);
+  const deferred = await refreshCornerAttention(db, C);
+  expect(deferred!.deadlines).toHaveLength(1);
+  expect(await commanderFlags()).toHaveLength(1);
+  await db.query(`UPDATE automatic_report_wakes SET next_at=now()-interval '1 second' WHERE corner_id=$1`, [C]);
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(2);
+});
+
+it.each(['success','expiry'])('Reproduction STARTUP-STORM: startup failures across Rooms pause automatic inbox delivery and claims, with one owner notice and %s recovery', async (recovery) => {
+  for (let i=0;i<5;i++) {
+    const roomId = i%2 ? ROOM : C;
+    const command = await createAgentCommand(db, { id:`startup-${i}`,roomId,agentId:WORKER,
+      sourceMessageId:null,reason:'order',privatePayload:{kind:'order',authorId:COMMANDER,fromRoomId:ROOM,text:'Work'} });
+    await daemon.execute('claimAgentCommand',{roomId,commandId:command!.id,generationId:`startup-${i}`},WORKER);
+    await daemon.execute('postAgentTurnReceipt',{roomId,requestId:command!.turn_request_id,
+      generationId:`startup-${i}`,status:'failed',toolCalls:0,reason:'activation failed',reasonKind:'workspace-failure',
+      trace:{totalMs:5000,attempts:[{attempt:1,phases:{activation:5000},tools:[]}]}},WORKER);
+  }
+  // The failure handler can requeue the very command that opened the pause.
+  await db.query(`UPDATE agent_commands SET state='pending' WHERE id='startup-4'`);
+  expect((await db.query(`SELECT startup_wake_after FROM agent_commands WHERE id='startup-4'`)).rows[0]!.startup_wake_after).not.toBeNull();
+  const auto = await createAgentCommand(db,{id:'paused-auto',roomId:C,agentId:WORKER,sourceMessageId:null,
+    reason:'order',privatePayload:{kind:'order',authorId:COMMANDER,fromRoomId:ROOM,text:'Automatic work'}});
+  expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(0);
+  expect((await db.query(`SELECT 1 FROM agent_turns WHERE request_id=$1`,[auto!.turn_request_id])).rowCount).toBe(0);
+  await expect(daemon.execute('claimAgentCommand',{roomId:C,commandId:auto!.id,generationId:'cached'},WORKER)).rejects.toThrow();
+  await db.query('UPDATE agents SET wake_batch_minutes=1 WHERE agent_id=$1',[WORKER]);
+  const batched = await createAgentCommand(db,{id:'paused-batch',roomId:C,agentId:WORKER,sourceMessageId:null,
+    reason:'order',privatePayload:{kind:'order',authorId:COMMANDER,fromRoomId:ROOM,text:'Batched automatic work'}});
+  await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[batched!.id]);
+  await flushDueCommanderWakes(db);
+  expect((await db.query(`SELECT wake_after FROM agent_commands WHERE id=$1`,[batched!.id])).rows[0]!.wake_after).not.toBeNull();
+  const notices = await db.query(`SELECT id FROM messages WHERE text LIKE '%Automatic wakes are paused for 5 minutes.%'`);
+  expect(notices.rows).toHaveLength(1);
+  // A replayed terminal receipt must not add failures or notices.
+  await db.transaction(tx=>recordStartupWakeOutcome(tx,{roomId:C,requestId:'startup-4',generationId:'startup-4',
+    status:'failed',toolCalls:0,reasonKind:'workspace-failure'},WORKER));
+  expect((await db.query(`SELECT id FROM messages WHERE text LIKE '%Automatic wakes are paused for 5 minutes.%'`)).rows).toHaveLength(1);
+  await post('human-recovery-source','Try again',HUMAN);
+  const human = await createAgentCommand(db,{id:'human-recovery',roomId:C,agentId:WORKER,
+    sourceMessageId:'human-recovery-source',reason:'human_tag'});
+  expect((await readAgentCommands(db,C,WORKER)).commands.map(command=>command.id)).toContain(human!.id);
+  if (recovery === 'expiry') {
+    await db.query(`UPDATE agent_startup_backoff SET paused_until=now()-interval '1 second' WHERE agent_id=$1`,[WORKER]);
+    await db.query(`UPDATE agent_commands SET startup_wake_after=now()-interval '1 second' WHERE agent_id=$1 AND startup_wake_after IS NOT NULL`,[WORKER]);
+    await flushDueCommanderWakes(db);
+    expect((await readAgentCommands(db,C,WORKER)).commands.map(command=>command.id)).toContain(auto!.id);
+    expect((await db.query(`SELECT startup_wake_after FROM agent_commands WHERE id=$1`,[auto!.id])).rows[0]!.startup_wake_after).toBeNull();
+    return;
+  }
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:human!.id,generationId:'recovered'},WORKER);
+  await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:human!.turn_request_id,generationId:'recovered',status:'complete'},WORKER);
+  expect((await readAgentCommands(db,C,WORKER)).commands.map(command=>command.id)).toContain(auto!.id);
+  expect((await db.query(`SELECT paused_until FROM agent_startup_backoff WHERE agent_id=$1`,[WORKER])).rows[0]!.paused_until).toBeNull();
+});
+
+
+it.each(['human','push','check','reviewer'])('Reproduction IDLE-STORM: a real %s event can open a fresh idle episode', async (event) => {
+  await ci('passing');
+  await refreshCornerAttention(db,C);
+  await db.query(`UPDATE automatic_report_wakes SET next_at=now()-interval '1 second' WHERE corner_id=$1`,[C]);
+  if (event === 'human') await post('human-change','Continue this work',HUMAN);
+  if (event === 'push') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`,[C]);
+  if (event === 'check') await ci('failing');
+  if (event === 'reviewer') { await turn(REVIEWER); await refreshCornerAttention(db,C); await end(REVIEWER,40); }
+  await refreshCornerAttention(db,C);
+  expect(await commanderFlags()).toHaveLength(2);
 });

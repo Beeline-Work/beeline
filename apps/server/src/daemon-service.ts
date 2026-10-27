@@ -3791,12 +3791,13 @@ export class DaemonService {
     await this.reach(input.cornerId, agentId);
     if (!corner) throw new Error('corner not found');
     if (!corner.head_sha) return { status: 'blocked', blocker: corner.archived ? 'the corner is closed' : 'the corner has no pull request' };
-    if (!this.landCorner || !this.prChecksStatus)
-      return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
+    if (!this.prChecksStatus)
+      return { status: 'blocked', blocker: corner.archived ? 'the corner is closed' : 'GitHub is not configured on this server' };
     const gate = await this.prChecksStatus({ cornerId: input.cornerId });
     if (!gate.mergeAllowed && !(gate.blockedReason === 'PR is a draft' && gate.checks === 'passed' && gate.approved && !gate.held)) {
       return { status: 'blocked', blocker: gate.blockedReason ?? 'the merge gate is closed', holds: gate.holds };
     }
+    if (!this.landCorner) return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
     let blocker = 'the merge did not start; read the current checks before retrying';
     const landed = await this.landCorner(input.cornerId, reason => { blocker = reason; });
     if (landed.status === 'not-attempted')

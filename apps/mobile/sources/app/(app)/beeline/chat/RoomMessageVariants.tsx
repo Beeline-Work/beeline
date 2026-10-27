@@ -1,3 +1,4 @@
+import { funnelOnboarding } from '@/auth/signin-funnel';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -433,6 +434,9 @@ export const ChoiceCard = React.memo(function ChoiceCard({
   onSkip,
 }: ChoiceCardProps) {
   const card = message.choice!;
+  React.useEffect(() => {
+    if (card.starterOnboarding === 'welcome') void funnelOnboarding('welcome_shown');
+  }, [card.choiceId, card.starterOnboarding]);
   const display =
     card.agent.kind === 'agent' ? resolveAgentDisplayIdentity(card.agent.pubkey, agent) : null;
   const agentName = display && agent ? display.name : card.agent.name;
@@ -496,7 +500,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
           size={26}
         />
       }
-      title={card.prompt}
+      title={card.starterOnboarding === 'welcome' ? null : card.prompt}
       wrapTitle
       subline={subline || card.constraint}
       sublineTestID={`choice-${card.choiceId}-subline`}

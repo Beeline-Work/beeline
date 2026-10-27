@@ -16,7 +16,7 @@ export type ChoiceLetter = (typeof CHOICE_LETTERS)[number];
 
 export const CHOICE_PROMPT_MAX_LENGTH = 120;
 export const CHOICE_CONSTRAINT_MAX_LENGTH = 160;
-export const CHOICE_LABEL_MAX_LENGTH = 32;
+export const CHOICE_LABEL_MAX_LENGTH = 48;
 export const CHOICE_CONSEQUENCE_MAX_LENGTH = 80;
 /** A workflow gate answer's optional note; the same cap as a workflow receipt line. */
 export const CHOICE_NOTE_MAX_LENGTH = 140;

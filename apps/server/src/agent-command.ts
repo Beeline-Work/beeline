@@ -961,12 +961,19 @@ async function routeTaggedLifecycleCommand(
 
 /** The sole agent in a top-level Room with exactly one current human member. */
 export function soloRoomAgentSql(room: string, author: string): string {
-  return `(SELECT min(member.identity_id) FILTER (WHERE identity.kind='agent')
-    FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+  return `(SELECT CASE WHEN count(*) FILTER (WHERE solo_identity.kind='agent')=1
+      THEN min(member.identity_id) FILTER (WHERE solo_identity.kind='agent')
+      ELSE min(member.identity_id) FILTER (WHERE starter.starter_role='beebee') END
+    FROM memberships member JOIN identities solo_identity ON solo_identity.id=member.identity_id
+    LEFT JOIN free_agents starter ON starter.agent_id=member.identity_id AND starter.owner_id=${author}
+      AND starter.removed_at IS NULL
     WHERE member.room_id=${room}.id AND member.removed_at IS NULL
       AND ${room}.parent_id IS NULL AND ${room}.direct_participants IS NULL
-    HAVING count(*) FILTER (WHERE identity.kind='human')=1
-       AND count(*) FILTER (WHERE identity.kind='agent')=1
+    HAVING count(*) FILTER (WHERE solo_identity.kind='human')=1
+       AND (count(*) FILTER (WHERE solo_identity.kind='agent')=1 OR
+         (count(*) FILTER (WHERE solo_identity.kind='agent')=2
+          AND count(*) FILTER (WHERE starter.starter_role IN ('beebee','luna'))=2
+          AND count(*) FILTER (WHERE starter.starter_role='beebee')=1))
        AND bool_or(member.identity_id=${author}))`;
 }
 

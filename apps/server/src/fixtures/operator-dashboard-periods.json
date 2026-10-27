@@ -243,6 +243,290 @@
           }
         ],
         "biggestDrop": null
+      },
+      "onboardingFunnel": {
+        "cohort": "welcome_shown_in_window",
+        "steps": [
+          {
+            "key": "welcome_shown",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "option_picked",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "answered_after_pick",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_1d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_7d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          }
+        ],
+        "paths": {
+          "task": [
+            {
+              "key": "task_first_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_second_opinion",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_final_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "game": [
+            {
+              "key": "game_posted",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_viewer_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_closed",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "invite": [
+            {
+              "key": "invite_link_created",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_shared",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_signed_up",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_messaged",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ]
+        },
+        "byOption": {
+          "task": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "game": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "invite": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "special": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          }
+        },
+        "biggestDrop": null
       }
     },
     "28d": {
@@ -523,6 +807,290 @@
           "key": "active_7d",
           "lost": 1
         }
+      },
+      "onboardingFunnel": {
+        "cohort": "welcome_shown_in_window",
+        "steps": [
+          {
+            "key": "welcome_shown",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "option_picked",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "answered_after_pick",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_1d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_7d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          }
+        ],
+        "paths": {
+          "task": [
+            {
+              "key": "task_first_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_second_opinion",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_final_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "game": [
+            {
+              "key": "game_posted",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_viewer_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_closed",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "invite": [
+            {
+              "key": "invite_link_created",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_shared",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_signed_up",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_messaged",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ]
+        },
+        "byOption": {
+          "task": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "game": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "invite": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "special": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          }
+        },
+        "biggestDrop": null
       }
     },
     "7d": {
@@ -632,6 +1200,290 @@
           }
         ],
         "biggestDrop": null
+      },
+      "onboardingFunnel": {
+        "cohort": "welcome_shown_in_window",
+        "steps": [
+          {
+            "key": "welcome_shown",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "option_picked",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "answered_after_pick",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_1d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_7d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          }
+        ],
+        "paths": {
+          "task": [
+            {
+              "key": "task_first_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_second_opinion",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_final_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "game": [
+            {
+              "key": "game_posted",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_viewer_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_closed",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "invite": [
+            {
+              "key": "invite_link_created",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_shared",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_signed_up",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_messaged",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ]
+        },
+        "byOption": {
+          "task": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "game": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "invite": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "special": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          }
+        },
+        "biggestDrop": null
       }
     },
     "all": {
@@ -736,6 +1588,290 @@
           "key": "active_7d",
           "lost": 2
         }
+      },
+      "onboardingFunnel": {
+        "cohort": "welcome_shown_in_window",
+        "steps": [
+          {
+            "key": "welcome_shown",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "option_picked",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "answered_after_pick",
+            "count": 0,
+            "eligible": null,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_1d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          },
+          {
+            "key": "return_7d",
+            "count": 0,
+            "eligible": 0,
+            "medianSecondsFromPrevious": null,
+            "samples": 0
+          }
+        ],
+        "paths": {
+          "task": [
+            {
+              "key": "task_first_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_second_opinion",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "task_final_answer",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "game": [
+            {
+              "key": "game_posted",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_viewer_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "game_closed",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ],
+          "invite": [
+            {
+              "key": "invite_link_created",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_shared",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_opened",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_signed_up",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            },
+            {
+              "key": "invite_friend_messaged",
+              "count": 0,
+              "eligible": null,
+              "medianSecondsFromPrevious": null,
+              "samples": 0
+            }
+          ]
+        },
+        "byOption": {
+          "task": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "game": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "invite": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          },
+          "special": {
+            "steps": [
+              {
+                "key": "welcome_shown",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "option_picked",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "answered_after_pick",
+                "count": 0,
+                "eligible": null,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_1d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              },
+              {
+                "key": "return_7d",
+                "count": 0,
+                "eligible": 0,
+                "medianSecondsFromPrevious": null,
+                "samples": 0
+              }
+            ]
+          }
+        },
+        "biggestDrop": null
       }
     }
   },

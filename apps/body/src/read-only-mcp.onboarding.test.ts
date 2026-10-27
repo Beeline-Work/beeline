@@ -18,14 +18,18 @@ beforeEach(async () => {
   });
 });
 afterEach(() => {vi.unstubAllEnvs();vi.unstubAllGlobals();});
-it('discovers both cards without an external connection and binds writes to the active turn',async()=>{
+it('discovers cards and Room invitations without an external connection and binds writes to the active turn',async()=>{
   const discovered=JSON.parse(await callAgentTool('app_tool',{app:'beeline:onboarding'},'discover'));
-  expect(discovered.tools.map((t:{name:string})=>t.name)).toEqual(['repository','starters']);
+  expect(discovered.tools.map((t:{name:string})=>t.name)).toEqual(['invite','repository','starters']);
   calls.length = 0;
   for (const tool of ['repository','starters']) await callAgentTool('app_tool',{app:'beeline:onboarding',tool,args:{}});
   expect(calls.filter(call=>call.name === 'postRepositoryOnboarding').map(call=>call.name)).toEqual(['postRepositoryOnboarding','postRepositoryOnboarding']);
   expect(calls.filter(call=>call.name === 'postRepositoryOnboarding').map(call=>call.input.kind)).toEqual(['repository','starters']);
   expect(calls.find(call=>call.name === 'postRepositoryOnboarding')!.input).toMatchObject({roomId:'room-1',requestId:'request-1',generationId:context.generationId});
+  await callAgentTool('app_tool',{app:'beeline:onboarding',tool:'invite',args:{}});
+  expect(calls.filter(call=>call.name === 'postRoomInvite')).toEqual([{
+    name:'postRoomInvite', input:{roomId:'room-1',requestId:'request-1',taskId:'command-1',generationId:context.generationId},
+  }]);
 });
 
 it('hides the new tools when server eligibility is absent', async () => {

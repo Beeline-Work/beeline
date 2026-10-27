@@ -1,3 +1,4 @@
+vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.

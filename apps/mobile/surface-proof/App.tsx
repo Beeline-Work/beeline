@@ -1,3 +1,4 @@
+import OnboardingProof from './onboarding';
 import WorkbenchScreen from '../sources/app/(app)/beeline/settings/workbench';
 import ConnectorServiceScreen from '../sources/app/(app)/beeline/settings/workbench/service';
 import React from 'react';
@@ -39,6 +40,7 @@ export default function App() {
     'IBMPlexMono-Regular': require('../sources/assets/fonts/IBMPlexMono-Regular.ttf'),
   });
   if (!fonts) return null;
+  if (proofSurface === 'onboarding') return <OnboardingProof />;
   if (proofSurface === 'workbench')
     return (
       <SafeAreaProvider>

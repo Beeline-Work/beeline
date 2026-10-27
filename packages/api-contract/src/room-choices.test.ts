@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { AnswerChoiceInput, WorkflowGateRecordView } from './phone-operations.js';
 import {
   CHOICE_NOTE_MAX_LENGTH,
+  CHOICE_LABEL_MAX_LENGTH,
   CHOICE_POLL_ELECTORATE_MAX,
   CHOICE_POLL_ELECTORATE_MIN,
   CHOICE_TTL_SECONDS,
@@ -57,7 +58,7 @@ describe('choice option normalisation', () => {
     ).toThrow('2 to 4 options');
     expect(() =>
       normalizeChoiceOptions([
-        { label: 'x'.repeat(33), consequence: 'ok' },
+        { label: 'x'.repeat(CHOICE_LABEL_MAX_LENGTH + 1), consequence: 'ok' },
         { label: 'B', consequence: 'ok' },
       ]),
     ).toThrow('label is too long');

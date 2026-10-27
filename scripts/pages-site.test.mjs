@@ -221,9 +221,12 @@ test('the Pages 404 router preserves dynamic join and review fallback URLs', asy
   }
 });
 
-test('current X measurement policy keeps service review and the dated archive', () => {
+test('current onboarding and X measurement policy keeps service review and the dated archive', () => {
   const html = fs.readFileSync(path.join(WEB_ROOT, 'privacy', 'index.html'), 'utf8');
-  assert.match(html, /Effective: 25 October 2026/);
+  assert.match(html, /Effective: 26 October 2026/);
+  assert.match(html, /one-way account hash/);
+  assert.match(html, /Ordinary sign-in detail is kept for 90 days/);
+  assert.match(html, /retain onboarding milestones, their sign-in context and the pseudonymous account hash/);
   assert.match(html, /X ad measurement/);
   assert.doesNotMatch(html, /The public website has no advertising analytics/);
   assert.match(fs.readFileSync(path.join(WEB_ROOT, 'privacy', '2026-10-18.html'), 'utf8'), /Effective: 18 October 2026/);

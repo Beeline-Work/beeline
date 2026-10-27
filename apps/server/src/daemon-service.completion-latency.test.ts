@@ -29,6 +29,7 @@ type Timing = {
 };
 
 class DelayedDatabase implements SqlDatabase {
+  get backgroundWork() { return this.database.backgroundWork; }
   constructor(
     private readonly database: SqlDatabase,
     private readonly timing: Timing,

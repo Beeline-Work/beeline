@@ -25,19 +25,22 @@ Developer/publisher: **Moon Rice Limited**. The active Play Console account is
 | Files and documents | Yes, only when the user attaches/uploads them | With the user's Beeline service and recipients they choose | App functionality | Optional | Yes |
 | Photos | Yes, only when selected as a chat attachment or avatar | With the user's Beeline service and recipients they choose | App functionality | Optional | Yes |
 | Device or other IDs | Yes — Android FCM registration token | Firebase Cloud Messaging and the user's Beeline push gateway | App functionality: deliver optional notifications | Optional | Yes — token is registered to the signed app identity |
-| App interactions (first-party sign-in funnel) | Yes in production | Beeline service only | Analytics: improve sign-in | Required in production | No account identifier in the event ledger |
-| Other IDs (random install/attempt UUIDs) | Yes in production | Beeline service only | Anonymous sign-in measurement | Required in production | No account identifier in the event ledger |
+| App interactions (first-party sign-in and onboarding funnel) | Yes in production | Beeline service only | Analytics: improve sign-in and onboarding | Required in production | Yes — a one-way account hash connects authenticated events |
+| Other IDs (random install/attempt UUIDs and account hash) | Yes in production | Beeline service only | Sign-in and onboarding measurement | Required in production | Yes — pseudonymous account correlation |
 | App interactions (PostHog) | Conditional — only when a build contains `EXPO_PUBLIC_POSTHOG_API_KEY` and analytics is not disabled | PostHog as a service provider | Analytics | Optional | No application-level account identity is passed by the current event calls |
 
-## First-party anonymous sign-in measurement
+## First-party sign-in and onboarding measurement
 
-Production apps send app-open, sign-in-screen, provider-tap, callback-outcome and
-signed-in events to Beeline. Declare App interactions and Other IDs for analytics:
-random install and short-lived attempt IDs, platform/version, timestamp, provider,
-and fixed outcome/error enums. No account identifiers, names, emails, logins,
-IP addresses, device names, codes or tokens are stored in these events. The
-signed-in endpoint uses authentication only to exclude internal traffic. Raw
-records last 90 days, followed by anonymous daily aggregates. Dev/preview/lab and
+Production apps send sign-in steps, welcome choices, answer/review milestones,
+game viewing and time spent, invitation milestones and return visits to Beeline.
+Declare App interactions and Other IDs for analytics: random install and
+short-lived attempt IDs, platform/version, timestamps, fixed outcome/error enums,
+selected choice and viewer duration. Authenticated sign-in saves a one-way account
+hash to join onboarding across devices and exclude internal traffic. No raw
+account IDs, names, emails, logins, message contents, IP addresses, device names,
+codes or tokens are stored in these events. Ordinary sign-in detail lasts 90 days,
+followed by anonymous daily aggregates; onboarding milestones and their minimal
+sign-in context remain for historical cohort measurement. Dev/preview/lab and
 Play Review traffic is excluded. Privacy text: `web/privacy/index.html`.
 This declaration is independent of optional PostHog configuration.
 

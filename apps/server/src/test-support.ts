@@ -5,8 +5,10 @@ import { vector } from '@electric-sql/pglite/vector';
 import type { QueryResultRow } from 'pg';
 import type { SqlDatabase, QueryResult } from './database.js';
 import type { ObjectStorage } from './object-storage.js';
+import { DatabaseBackgroundWork } from './database-background-work.js';
 
 export class PgliteDatabase implements SqlDatabase {
+  readonly backgroundWork = new DatabaseBackgroundWork();
   // The vector extension is loaded unconditionally: institutional_memory_items
   // and workspace_skills declare `vector(...)` columns in the shared server
   // schema, so every test that runs `migrate()` needs it available, not only
@@ -34,8 +36,9 @@ export class PgliteDatabase implements SqlDatabase {
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
     return this.client.transaction(async (transaction) => work(this.executor(transaction)));
   }
-  close() {
-    return this.client.close();
+  async close() {
+    await this.backgroundWork.drain();
+    await this.client.close();
   }
   private executor(transaction: Transaction): SqlDatabase {
     return {

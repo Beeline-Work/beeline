@@ -1,5 +1,7 @@
 import { visibleMessageSql } from './read-cursor.js';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
+import { observeOnboardingMessage } from './signin-funnel.js';
+import { postStarterInviteOffer } from './starter-invite.js';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
@@ -570,6 +572,7 @@ export class DaemonService {
       'listAppTools',
       'executeAppTool',
       'postRepositoryOnboarding',
+      'postRoomInvite',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -1843,6 +1846,17 @@ export class DaemonService {
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postRoomInvite': {
+        const request = input as Input<'postRoomInvite'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const requester = await this.grantRequester();
+        const personId = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        if (!personId) throw new Error('Invite requester unavailable');
+        const result = await this.database.transaction(db => postStarterInviteOffer(db, request.roomId, authenticatedAgentId, personId, 'https://usebeeline.app'));
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message' });
+        return result as Output<Name>;
+      }
       case 'postRepositoryOnboarding': {
         const request = input as Input<'postRepositoryOnboarding'>;
         await this.access(request.roomId, authenticatedAgentId);
@@ -4547,6 +4561,20 @@ export class DaemonService {
           }
         : {}),
     });
+    if (saved.presentation === 'message') {
+      const depth = (saved as CommittedMessageLiveRow & { agent_hop_count?: number }).agent_hop_count
+        ?? this.authorizedCommand?.agent_depth;
+      // Observe committed replies without delaying their publication or acknowledgement.
+      const observe = async (database: SqlDatabase) => {
+        const work = () => observeOnboardingMessage(database, input.roomId, agentId, depth, input.text)
+          .catch(error => console.error('[onboarding]', error));
+        const backgroundWork = CornerAccessDatabase.physical(database).backgroundWork;
+        if (backgroundWork) backgroundWork.run(work);
+        else await work();
+      };
+      if (this.afterCommit) this.afterCommit(observe);
+      else await observe(this.database);
+    }
     // The atomic reply statement counted it in its own star_count CTE.
     if (!atomicCommandWrite && input.requestId && input.presentation !== 'card') {
       const reply = {
@@ -9152,6 +9180,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postTargetBranchProposal: true,
   requestAgentGrant: true,
   postRepositoryOnboarding: true,
+  postRoomInvite: true,
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,

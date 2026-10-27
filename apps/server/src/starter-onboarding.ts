@@ -81,6 +81,15 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
     for (const choice of previous) await skipRoomChoice(database, {
       choiceId: choice.id, viewerId: input.manualUserId,
     }, { wake: false });
+    // The greeting goes first, as at signup, so the agent's turn text never lands above the card.
+    const names = (await database.query<{ id: string; name: string }>(
+      `SELECT id,name FROM identities WHERE id=ANY($1::text[])`, [[input.manualUserId, input.agentId]],
+    )).rows;
+    const person = names.find(row => row.id === input.manualUserId)?.name, agent = names.find(row => row.id === input.agentId)?.name;
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,clock_timestamp())`, [
+      randomBytes(32).toString('hex'), input.roomId, input.agentId,
+      `Hi ${person ?? 'there'}, I'm ${agent ?? 'your agent'}. What should we do first?`,
+    ]);
   }
   const inherited = input.includeExplanation === false ? (await database.query<{ card: Record<string, unknown> }>(
     `SELECT card FROM messages WHERE room_id=$1 AND card->>'starterOnboarding'='welcome'

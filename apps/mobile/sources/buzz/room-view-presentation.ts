@@ -266,6 +266,7 @@ export type ChatDisplayMessage = {
   mentionPubkeys?: string[];
   /** The model stamped on the message at generation time (server-side); the
    *  agent byline renders it verbatim and falls back to no model. */
+  sourceClient?: RoomViewMessage['sourceClient'];
   agentModel?: string;
   reactions?: RoomViewMessage['reactions'];
   bookmarked?: boolean;
@@ -415,6 +416,7 @@ export function displayRoomMessage(
     ...(message.activity ? { activity: activityItems(message) } : {}),
     ...(message.attachments ? { attachments: [...message.attachments] } : {}),
     ...(message.mentionPubkeys ? { mentionPubkeys: [...message.mentionPubkeys] } : {}),
+    ...(message.sourceClient ? { sourceClient: message.sourceClient } : {}),
     ...(message.agentModel ? { agentModel: message.agentModel } : {}),
     ...(message.reactions
       ? { reactions: message.reactions.map((reaction) => ({ ...reaction })) }

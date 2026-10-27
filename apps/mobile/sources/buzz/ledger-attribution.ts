@@ -63,6 +63,7 @@ export function continuedSpeakerIds(entries: readonly LedgerSpeakerEntry[]): Set
  * `ChatDisplayMessage` so this module stays testable with no React Native
  * mocks. */
 export type LedgerAttributionMessage = {
+  sourceClient?: { id: string };
   id: string;
   pubkey?: string;
   isUser?: boolean;
@@ -127,5 +128,5 @@ export function ledgerSpeakerKey(
   if (isAgent) return `agent:${message.pubkey ?? 'unknown-agent'}`;
   // An optimistic own message has no pubkey until it reconciles, so it keys on
   // the viewer rather than on a shared "unknown" bucket.
-  return `person:${message.pubkey ?? (message.isUser ? 'self' : 'unknown-person')}`;
+  return `person:${message.pubkey ?? (message.isUser ? 'self' : 'unknown-person')}${message.sourceClient ? `:via:${message.sourceClient.id}` : ''}`;
 }

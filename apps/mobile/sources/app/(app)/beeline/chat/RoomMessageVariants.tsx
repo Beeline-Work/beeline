@@ -1246,7 +1246,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     !isAgent &&
     !announcementFeed &&
     !message.bookmarked &&
-    !message.feedbackReported
+    !message.feedbackReported &&
+    !message.sourceClient
       ? undefined
       : {
           // The viewer is named like every other speaker. Brass on the name
@@ -1263,6 +1264,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           // the row's long-press action makes React Native cancel its onPress
           // on release instead of navigating behind the actions sheet.
           onLongPress: onMessageActions ? () => onMessageActions(message) : undefined,
+          sourceClient: message.sourceClient,
           role: isAgent ? agentBylineLabel(agentModel) : undefined,
           stamp,
           isViewer: isSelfSteer,

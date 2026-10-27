@@ -189,7 +189,13 @@ export type SquireMachineReport = {
   readonly reportedAt: number;
 };
 
+export type AiClientConnection = {
+  readonly clientId: string; readonly name: string; readonly scopes: readonly string[];
+  readonly connectedAt: number; readonly lastUsedAt: number | null; readonly logo?: string;
+};
+
 export type WorkbenchView = {
+  readonly aiClients?: readonly AiClientConnection[];
   /** Absent only on older servers. The client must not reconstruct this projection. */
   readonly companies?: import('./workbench-companies.js').WorkbenchCompanyIndex;
   readonly workspaceId: string;

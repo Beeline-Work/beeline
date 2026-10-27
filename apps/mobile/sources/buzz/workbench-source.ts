@@ -203,6 +203,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     });
     return {
       companies: dto.companies,
+      aiClients: dto.aiClients,
       ...(dto.linkAccount ? { linkAccount: dto.linkAccount } : {}),
       helpers: dto.helpers.map((helper): WorkbenchHelper => ({
         id: helper.id,

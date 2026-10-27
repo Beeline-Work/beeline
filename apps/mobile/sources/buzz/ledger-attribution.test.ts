@@ -6,6 +6,11 @@ const agent = (id: string, pubkey = 'beebee') => ({ id, speaker: `agent:${pubkey
 const other = (id: string) => ({ id, speaker: null });
 
 describe('ledger attribution runs', () => {
+  it('re-announces a person when switching between a client and direct posting', () => {
+    const direct = { id: 'direct', pubkey: 'person' };
+    const via = { ...direct, id: 'via', sourceClient: { id: 'grok' } };
+    expect(ledgerSpeakerKey(direct, new Set())).not.toBe(ledgerSpeakerKey(via, new Set()));
+  });
   it('announces a voice once, then lets it keep writing', () => {
     const continued = continuedSpeakerIds([agent('a1'), agent('a2'), agent('a3')]);
     expect(continued.has('a1')).toBe(false);

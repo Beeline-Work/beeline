@@ -3796,13 +3796,7 @@ export class DaemonService {
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
     const gate = await this.prChecksStatus({ cornerId: input.cornerId });
     if (!gate.mergeAllowed && !(gate.blockedReason === 'PR is a draft' && gate.checks === 'passed' && gate.approved && !gate.held)) {
-      const blockers = [
-        gate.blockedReason ?? '',
-        gate.checks !== 'passed' ? `checks are ${gate.checks}` : '',
-        gate.approved ? '' : 'no yes on this head',
-        gate.held ? `a hold stands: ${gate.holds.map(hold => `${hold.id} (${hold.holderName}, ${hold.holderId})`).join('; ')}` : '',
-      ].filter(Boolean);
-      return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed', holds: gate.holds };
+      return { status: 'blocked', blocker: gate.blockedReason ?? 'the merge gate is closed', holds: gate.holds };
     }
     let blocker = 'the merge did not start; read the current checks before retrying';
     const landed = await this.landCorner(input.cornerId, reason => { blocker = reason; });

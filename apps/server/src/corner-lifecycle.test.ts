@@ -2980,6 +2980,23 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     expect(await currentState(cornerId)).toBe('landed');
   });
 
+  it.each(['hold', 'pending checks', 'missing review', 'stale head'] as const)(
+    'Reproduction merge-check-mismatch: checks and mergeCorner agree on %s', async blocker => {
+      const cornerId = await approved();
+      if (blocker === 'hold') await phone.execute('setCornerHold', { cornerId }, H);
+      if (blocker === 'pending checks') githubRollupState = 'pending';
+      if (blocker === 'missing review')
+        await db.query('DELETE FROM corner_merge_approvals WHERE corner_id=$1', [cornerId]);
+      if (blocker === 'stale head') githubHead = '9'.repeat(40);
+
+      const checks = await github.prChecksStatus({ cornerId });
+      const merged = await mergeDaemon().execute('mergeCorner', { cornerId }, A);
+      expect(checks.mergeAllowed).toBe(false);
+      expect(merged).toMatchObject({ status: 'blocked', blocker: checks.blockedReason });
+      console.info(`Reproduction merge-check-mismatch (${blocker}): checks=${checks.mergeAllowed} reason=${checks.blockedReason}; mergeCorner=${JSON.stringify(merged)}`);
+    },
+  );
+
   it.each(['checks', 'read', 'target', 'approval', 'claim'] as const)(
     'Reproduction MERGE-RETRY-REASON: %s rejection after a confirmed refusal names the actual blocker', async change => {
       const cornerId = await approved();

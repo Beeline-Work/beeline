@@ -32,6 +32,7 @@ import {
   claimCornerMergeAttempt,
   lockCornerLifecycle,
   cornerMergeGate,
+  cornerMergeability,
   unfinishedCornerMergeClaims,
   clearUnfinishedCornerMergeClaim,
 } from './corner-lifecycle.js';
@@ -1101,7 +1102,16 @@ export class GitHubOperations {
           checks,
           reviewWoken: corner.review_woken,
         });
-    const mergeAllowed = !corner.archived && checks === 'passed' && gate.open && pr.mergeability !== 'draft';
+    const mergeDecision = cornerMergeability({
+      checks,
+      approved: gate.approved,
+      held: gate.held,
+      holds: gate.holds,
+      archived: corner.archived,
+      expectedHeadSha: corner.lifecycle.pr?.headSha,
+      currentHeadSha: pr.headSha,
+      mergeability: pr.mergeability,
+    });
     // Where the corner stands, from the live facts above: building ->
     // checking -> waiting for a yes -> merged (or closed).
     const stage = pr.merged
@@ -1140,8 +1150,7 @@ export class GitHubOperations {
       reviewerWake,
       held: gate.held,
       holds: gate.holds,
-      mergeAllowed,
-      ...(pr.mergeability === 'draft' ? { blockedReason: 'PR is a draft' } : {}),
+      ...mergeDecision,
     };
   }
 
@@ -1263,7 +1272,7 @@ export class GitHubOperations {
           Number(status.pullRequest.split('/').at(-1)), status.headSha);
         await this.database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'draftReadyFailure' WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha]);
         status = await this.prChecksStatus({ cornerId });
-        if (status.blockedReason) throw new Error(status.blockedReason);
+        if (status.blockedReason?.includes('PR is a draft')) throw new Error(status.blockedReason);
       } catch (error) {
         await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
           '{pr,mergeability}','"draft"'::jsonb),'{draftReadyFailure}',jsonb_build_object('headSha',$2::text)) WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
@@ -1272,11 +1281,7 @@ export class GitHubOperations {
         return notAttempted(`PR is a draft: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    if (!status.mergeAllowed) return notAttempted([
-      status.blockedReason ?? '',
-      status.checks !== 'passed' ? `checks are ${status.checks}` : '',
-      status.approved ? '' : 'no yes on this head', status.held ? 'a hold stands' : '',
-    ].filter(Boolean).join('; ') || 'the merge gate is closed');
+    if (!status.mergeAllowed) return notAttempted(status.blockedReason ?? 'the merge gate is closed');
     const target = (
       await this.database.query<CornerWebhookTarget & {
         number: number;

@@ -23,7 +23,7 @@ const PUBLIC_CORNER = '55555555-5555-4555-8555-555555555555';
 const opaque = () => randomBytes(32).toString('base64url');
 
 describe('Rooms connector HTTP OAuth and MCP', () => {
-  let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, origin: string, phone: PhoneService;
+  let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, origin: string, phone: PhoneService, daemon: DaemonService;
   const clients: Client[] = [];
   beforeAll(async () => {
     db = new PgliteDatabase(); await migrate(db);
@@ -43,7 +43,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     });
     const live = new LiveHub();
     phone = new PhoneService(db, 'http://127.0.0.1', undefined, undefined, live);
-    const options = { database: db, auth, phone, daemon: new DaemonService(db, live), live, mediaMaximumBytes: 1024, roomsMcp: undefined as RoomsMcp | undefined };
+    daemon = new DaemonService(db, live);
+    const options = { database: db, auth, phone, daemon, live, mediaMaximumBytes: 1024, roomsMcp: undefined as RoomsMcp | undefined };
     server = createBeelineServer(options);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -220,6 +221,40 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await db.query('SELECT 1 FROM rooms_mcp_audit WHERE client_id=$1 AND outcome=$2', [grant.clientId, 'succeeded'])).rowCount).toBeGreaterThan(0);
     await post('/mcp/oauth/revoke', { client_id: grant.clientId, token });
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+  });
+  it('keeps the wake chain across member replies so a tag loop still stops at the depth limit', async () => {
+    const { client, member } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const latestMemberCommand = async () => (await db.query<{ agent_depth: number }>(
+      'SELECT agent_depth FROM agent_commands WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1',
+      [ROOM, member])).rows[0];
+    const agentCommand = async (sourceMessageId: string) => (await db.query<{ id: string; turn_request_id: string; agent_depth: number }>(
+      'SELECT id,turn_request_id,agent_depth FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3',
+      [ROOM, AGENT, sourceMessageId])).rows[0]!;
+    // A person's tag opens the member's first turn at depth zero.
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} begin the handoff` }, USER);
+    expect((await latestMemberCommand())!.agent_depth).toBe(0);
+    // The member replies through MCP and tags the demo agent: depth one, not a reset.
+    const first = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step one' } });
+    const firstId = JSON.parse((first.content as { text: string }[])[0]!.text).data.messageId as string;
+    const firstCommand = await agentCommand(firstId);
+    expect(firstCommand.agent_depth).toBe(1);
+    // The demo agent answers, tagging the member: depth two.
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: firstCommand.id, generationId: 'loop-1' }, AGENT);
+    await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, agentId: AGENT, requestId: firstCommand.turn_request_id, generationId: 'loop-1', status: 'working' }, AGENT);
+    await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: firstCommand.turn_request_id, generationId: 'loop-1', text: `@${handle} step one done` }, AGENT);
+    expect((await latestMemberCommand())!.agent_depth).toBe(2);
+    // The member replies again: depth three, the last depth the limit allows.
+    const second = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
+    const secondId = JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId as string;
+    const secondCommand = await agentCommand(secondId);
+    expect(secondCommand.agent_depth).toBe(3);
+    // The demo agent's next tag cannot open a new member turn: the loop stops.
+    const stopped = await latestMemberCommand();
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: secondCommand.id, generationId: 'loop-2' }, AGENT);
+    await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, agentId: AGENT, requestId: secondCommand.turn_request_id, generationId: 'loop-2', status: 'working' }, AGENT);
+    await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: secondCommand.turn_request_id, generationId: 'loop-2', text: `@${handle} step two done` }, AGENT);
+    expect(await latestMemberCommand()).toEqual(stopped);
   });
   it('sets this member’s own profile without changing its registered model label', async () => {
     const { client, member } = await connected();

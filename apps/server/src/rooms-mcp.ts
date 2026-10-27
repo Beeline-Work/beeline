@@ -7,7 +7,7 @@ import { messageSearchTerms } from '@beeline/api-contract/phone';
 import type { PhoneService } from './phone-service.js';
 import type { LiveHub } from './live.js';
 import { visibleChatMessageSql } from './read-cursor.js';
-import { routeAgentResult } from './agent-command.js';
+import { routeAgentResult, type CommandRow } from './agent-command.js';
 import { setMcpMemberProfile } from './rooms-mcp-members.js';
 import { RoomsMcpOAuth, MCP_READ, MCP_WRITE, mcpBody, mcpJson, type McpPrincipal } from './rooms-mcp-oauth.js';
 
@@ -194,10 +194,17 @@ export class RoomsMcp {
       const stored = await this.phone.execute('sendRoomMessage',
         { roomId, text, ...(messageId ? { messageId } : {}) }, member, { id: principal.client_id, name: source.name });
       // An agent's own tags follow the agent-to-agent path, one wake per tagged agent.
+      // This member's reply extends the chain of the command a tag already opened for it,
+      // so a member<->agent tag loop still stops at the same depth limit as any agents.
       let woken: string[] = [];
       if (!preexisting) {
         try {
-          const delivery = await routeAgentResult(db, undefined, stored.messageId, { roomId, agentId: member });
+          const parent = (await db.query<CommandRow>(
+            `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+             ORDER BY created_at DESC,id DESC LIMIT 1`,
+            [roomId, member],
+          )).rows[0];
+          const delivery = await routeAgentResult(db, parent, stored.messageId, { roomId, agentId: member });
           woken = delivery.woken;
         } catch (error) {
           console.error('[rooms-mcp] wake routing failed', error);

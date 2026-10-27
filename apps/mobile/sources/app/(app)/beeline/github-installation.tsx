@@ -1,6 +1,7 @@
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
@@ -44,7 +45,7 @@ function EnhancedGitHubInstallation() {
         if (Platform.OS === 'web') WebBrowser.maybeCompleteAuthSession();
         if (alive) setReturnPath(path);
       } catch (reason) {
-        if (alive) setError(reason instanceof Error ? reason.message : String(reason));
+        if (alive) setError(appErrorCopy(reason));
       }
     })();
     return () => { alive = false; };
@@ -52,9 +53,9 @@ function EnhancedGitHubInstallation() {
   if (returnPath) return <InstallationReturn path={returnPath} />;
   return <View style={[styles.page, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
-    {error ? <ErrorBanner title="Continue connecting GitHub"
+    {error ? <SettingsRow title="Continue connecting GitHub"
       description="Return to your Room to refresh repositories and finish setup."
-      retryLabel="Back to Room" retryVariant="primary" onRetry={() => setReturnPath(recoveryPath)} /> : <Text style={styles.copy}>
+      action="Back to Room" onPress={() => setReturnPath(recoveryPath)} /> : <Text style={styles.copy}>
       Checking your installation and loading the repositories Beeline can work in.
     </Text>}
   </View>;

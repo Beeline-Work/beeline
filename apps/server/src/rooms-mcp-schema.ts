@@ -1,0 +1,66 @@
+/** OAuth credentials are independent of phone and helper credentials. */
+export const ROOMS_MCP_SCHEMA = `
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS source_client jsonb;
+CREATE TABLE IF NOT EXISTS rooms_mcp_clients (
+  id text PRIMARY KEY, name text NOT NULL, redirects jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS logo text;
+CREATE INDEX IF NOT EXISTS rooms_mcp_clients_created ON rooms_mcp_clients(created_at);
+CREATE TABLE IF NOT EXISTS rooms_mcp_connections (
+  client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  scope text NOT NULL, connected_at timestamptz NOT NULL DEFAULT now(), last_used_at timestamptz,
+  revoked_at timestamptz, PRIMARY KEY(client_id,identity_id)
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_connections_identity ON rooms_mcp_connections(identity_id);
+CREATE TABLE IF NOT EXISTS rooms_mcp_families (
+  id text PRIMARY KEY, client_id text NOT NULL, identity_id text NOT NULL, scope text NOT NULL,
+  revoked_at timestamptz,
+  FOREIGN KEY(client_id,identity_id) REFERENCES rooms_mcp_connections(client_id,identity_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_families_connection ON rooms_mcp_families(client_id,identity_id);
+CREATE TABLE IF NOT EXISTS rooms_mcp_refresh (
+  hash text PRIMARY KEY, family_id text NOT NULL REFERENCES rooms_mcp_families(id) ON DELETE CASCADE,
+  consumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_refresh_family ON rooms_mcp_refresh(family_id);
+CREATE TABLE IF NOT EXISTS rooms_mcp_flows (
+  id text PRIMARY KEY, browser_hash text NOT NULL, client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
+  redirect_uri text NOT NULL, state text NOT NULL, challenge text NOT NULL, scope text NOT NULL,
+  identity_id text REFERENCES identities(id) ON DELETE CASCADE,
+  provider text, expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_flows_identity ON rooms_mcp_flows(identity_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_flows_client ON rooms_mcp_flows(client_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_flows_expiry ON rooms_mcp_flows(expires_at);
+CREATE TABLE IF NOT EXISTS rooms_mcp_codes (
+  hash text PRIMARY KEY, client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  redirect_uri text NOT NULL, challenge text NOT NULL, scope text NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_codes_identity ON rooms_mcp_codes(identity_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_codes_client ON rooms_mcp_codes(client_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_codes_expiry ON rooms_mcp_codes(expires_at);
+CREATE TABLE IF NOT EXISTS rooms_mcp_tokens (
+  hash text PRIMARY KEY, client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  scope text NOT NULL, expires_at timestamptz NOT NULL,
+  revoked_at timestamptz, window_at timestamptz NOT NULL DEFAULT now(), calls integer NOT NULL DEFAULT 0
+);
+ALTER TABLE rooms_mcp_tokens ADD COLUMN IF NOT EXISTS family_id text REFERENCES rooms_mcp_families(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS rooms_mcp_tokens_family ON rooms_mcp_tokens(family_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_tokens_identity ON rooms_mcp_tokens(identity_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_tokens_client ON rooms_mcp_tokens(client_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_tokens_expiry ON rooms_mcp_tokens(expires_at);
+CREATE TABLE IF NOT EXISTS rooms_mcp_audit (
+  id bigserial PRIMARY KEY, client_id text NOT NULL, identity_id text NOT NULL,
+  operation text NOT NULL, outcome text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_audit_created ON rooms_mcp_audit(created_at);
+CREATE TABLE IF NOT EXISTS rooms_mcp_admission (
+  key text PRIMARY KEY, window_at timestamptz NOT NULL DEFAULT now(), calls integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_admission_window ON rooms_mcp_admission(window_at);
+`;

@@ -1,6 +1,6 @@
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useState } from 'react';
@@ -65,15 +65,14 @@ export default function PromptSchedule() {
         title={schedule ? scheduleTitle(schedule) : 'Schedule'}
       />
       {stopFailed ? (
-        <ErrorBanner
+        <SettingsRow
           title="Could not stop this schedule."
-          retryLabel="Retry"
-          onRetry={() => void stop()}
-          retryTestID="schedule-stop-error-retry"
+          action="Retry"
+          onPress={() => void stop()}
           testID="schedule-stop-error"
         />
       ) : error ? (
-        <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
+        <SettingsRow title={error} action="Retry" onPress={retry}
           />
       ) : null}
       {loading && !work ? (

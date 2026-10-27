@@ -234,6 +234,7 @@ export type PhoneOperationMap = {
   deleteAccount: { input: EmptyInput; output: void };
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
   readConnectorInstall: { input: ReadConnectorInstallInput; output: Pick<WorkbenchView['connectors'][number], 'connectorId' | 'status'> | null };
+  disconnectAiClient: { input: { clientId: string }; output: void };
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
   readConnectApp: { input: ReadWorkbenchInput; output: {
     readonly workbench?: WorkbenchView; readonly suggestions?: WorkbenchAppSearchResult;

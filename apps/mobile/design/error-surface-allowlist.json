@@ -1,0 +1,605 @@
+[
+  {
+    "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "line": 1638,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline\n            title=\"Delivery failed\"\n            retryLabel=\"Retry\"\n            onRetry={() => onRetry(message.id)}\n            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}\n            testID={`outbox-delivery-failed-${message.id}`}\n            />",
+    "ancestors": [
+      "<View>",
+      "<NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>"
+    ],
+    "reason": "kept, already inset: delivery failure belongs to the ledger message content column."
+  },
+  {
+    "layoutHash": "986bb68ae2c9cc0b62de89c1511233de88cb8d7af3d474c39cc349b6f7e174bc",
+    "file": "app/(app)/beeline/chat/_chat-surface.tsx",
+    "line": 6691,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}\n                        description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}\n                        retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation →' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}\n                        onRetry={() => void handleReconnectRoomRepository()} retryTestID=\"corner-open-repo-connect\"\n                        secondaryAction={{ label: 'Dismiss', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID=\"corner-open-repo-prompt\" />",
+    "ancestors": [
+      "<Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>",
+      "<View style={[styles.bottomChromeStack, desktopExperience && styles.desktopReadingColumn]} testID=\"room-bottom-chrome\">",
+      "<KeyboardAvoidingView\n            style={styles.keyboardBody}\n            behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}\n          >",
+      "<View style={styles.container}>",
+      "<View style={styles.desktopConversationFrame}>",
+      "<BuzzCommunityShell\n      communities={communities}\n      activeCommunityId={activeCommunityId}\n      onSelect={handleCommunitySelect}\n      onAdd={() => router.push('/beeline/community' as Href)}\n      onSettings={() => router.push('/beeline/settings' as Href)}\n      viewerPubkey={userPubkey || undefined}\n      viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}\n    >"
+    ],
+    "reason": "kept, already inset: composer repository prompt or membership failure inside its sheet or dialog."
+  },
+  {
+    "layoutHash": "7e27798b43bbeb36321a3cf6b672e812634dc958cdeee9e7b07750f766013593",
+    "file": "app/(app)/beeline/chat/_chat-surface.tsx",
+    "line": 7283,
+    "tag": "Text",
+    "source": "<Text style={styles.membershipErrorText}>",
+    "ancestors": [
+      "<Text style={styles.membershipErrorText}>",
+      "<View accessibilityRole=\"alert\" style={styles.membershipError}>",
+      "<HullActionSheetModal\n        accessibilityLabel={`Close ${ROOM_LABEL} actions`}\n        dismissOnBackdrop={!renameBusy}\n        footer={roomRepoChoice.footer}\n        onClose={() =>\n          roomRepoChoice.listOpen ? setShowRoomRepoPicker(false) : closeRoomActions()\n        }\n        sticky={roomRepoChoice.listOpen ? undefined : roomRepoChoice.control}\n        onTitlePress={canRenameTitle && !roomRepoChoice.listOpen ? startRenameFromTitle : undefined}\n        testID=\"room-actions-sheet\"\n        title={roomRepoChoice.listOpen ? 'Choose a repo' : displayRoomName}\n        titleAccessibilityLabel={roomRepoChoice.listOpen ? undefined : `Rename ${displayRoomName}`}\n        titleTestID=\"room-actions-title\"\n        visible={roomActionsVisible}\n      >",
+      "<BuzzCommunityShell\n      communities={communities}\n      activeCommunityId={activeCommunityId}\n      onSelect={handleCommunitySelect}\n      onAdd={() => router.push('/beeline/community' as Href)}\n      onSettings={() => router.push('/beeline/settings' as Href)}\n      viewerPubkey={userPubkey || undefined}\n      viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}\n    >"
+    ],
+    "reason": "kept, already inset: composer repository prompt or membership failure inside its sheet or dialog."
+  },
+  {
+    "layoutHash": "7e27798b43bbeb36321a3cf6b672e812634dc958cdeee9e7b07750f766013593",
+    "file": "app/(app)/beeline/chat/_chat-surface.tsx",
+    "line": 7326,
+    "tag": "Text",
+    "source": "<Text style={styles.membershipErrorText}>",
+    "ancestors": [
+      "<Text style={styles.membershipErrorText}>",
+      "<View accessibilityRole=\"alert\" style={styles.membershipError}>",
+      "<HullActionSheetModal\n        accessibilityLabel=\"Close conversation actions\"\n        onClose={() => setDmActionsVisible(false)}\n        testID=\"dm-actions-sheet\"\n        title={displayRoomName}\n        visible={dmActionsVisible}\n      >",
+      "<BuzzCommunityShell\n      communities={communities}\n      activeCommunityId={activeCommunityId}\n      onSelect={handleCommunitySelect}\n      onAdd={() => router.push('/beeline/community' as Href)}\n      onSettings={() => router.push('/beeline/settings' as Href)}\n      viewerPubkey={userPubkey || undefined}\n      viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}\n    >"
+    ],
+    "reason": "kept, already inset: composer repository prompt or membership failure inside its sheet or dialog."
+  },
+  {
+    "layoutHash": "8c09edac98eb5633727c6b999bc9b58629122b9578dfb7a936ce974bcdef1123",
+    "file": "app/(app)/beeline/chat/_chat-surface.tsx",
+    "line": 7408,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.membershipErrorText}>",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.membershipErrorText}>",
+      "<HullDialog\n        actions={[\n          {\n            disabled: renameBusy,\n            label: 'Cancel',\n            onPress: () => {\n              setRenameEditing(false);\n              setRenameError(null);\n            },\n          },\n          {\n            busy: renameBusy,\n            disabled: renameBusy || !renameDraft.trim(),\n            label: renameBusy ? 'Renaming' : 'Apply',\n            onPress: () => void handleRenameRoom(),\n            testID: 'apply-corner-rename',\n            variant: 'primary',\n          },\n        ]}\n        dismissOnBackdrop={!renameBusy}\n        onRequestClose={() => {\n          if (renameBusy) return;\n          setRenameEditing(false);\n          setRenameError(null);\n        }}\n        testID=\"rename-corner-dialog\"\n        title={`Rename ${CORNER_LABEL}`}\n        visible={isCorner && renameEditing}\n      >",
+      "<BuzzCommunityShell\n      communities={communities}\n      activeCommunityId={activeCommunityId}\n      onSelect={handleCommunitySelect}\n      onAdd={() => router.push('/beeline/community' as Href)}\n      onSettings={() => router.push('/beeline/settings' as Href)}\n      viewerPubkey={userPubkey || undefined}\n      viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}\n    >"
+    ],
+    "reason": "kept, already inset: composer repository prompt or membership failure inside its sheet or dialog."
+  },
+  {
+    "layoutHash": "3432dbc1b5a4b754d308b4e8ef44b756680c567cd87abbead163abf85f502f94",
+    "file": "app/(app)/beeline/community.tsx",
+    "line": 218,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={error} testID=\"choice-error\" />",
+    "ancestors": [
+      "<View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>",
+      "<ScrollView\n        contentContainerStyle={[\n          styles.scroll,\n          { paddingTop: theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },\n        ]}\n        keyboardShouldPersistTaps=\"handled\"\n        style={styles.container}\n        testID=\"workspace-choice\"\n      >",
+      "<BuzzCommunityShell\n      communities={communities}\n      activeCommunityId={null}\n      onSelect={selectCommunity}\n      onAdd={() => undefined}\n      onSettings={() => router.push('/beeline/settings' as Href)}\n      viewerPubkey={identity?.publicKey}\n      viewerAvatarUrl={workspaceList?.viewer.avatar}\n      viewerFace={workspaceList?.viewer.face}\n    >"
+    ],
+    "reason": "kept, already inset: Workspace choice form owns its content padding; banner is now inline."
+  },
+  {
+    "layoutHash": "4e1ac1d87a85e58f6aa7903f1194b131ee2a2104b06aa59232beea073ceb5a65",
+    "file": "app/(app)/beeline/create-workspace.tsx",
+    "line": 140,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={error} testID=\"create-error\" />",
+    "ancestors": [
+      "<View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>",
+      "<ScrollView\n        contentContainerStyle={[\n          styles.scroll,\n          { paddingBottom: insets.bottom + theme.buzz.space.xxl },\n        ]}\n        keyboardShouldPersistTaps=\"handled\"\n      >",
+      "<View style={[styles.container, { paddingTop: insets.top }]} testID=\"create-workspace\">"
+    ],
+    "reason": "kept, already inset: Workspace creation form owns its content padding; banner is now inline."
+  },
+  {
+    "layoutHash": "3620a2631d15476b125d3efc572f4faf74186f8f3d38425e0240418d493395ab",
+    "file": "app/(app)/beeline/human-profile.tsx",
+    "line": 235,
+    "tag": "Text",
+    "source": "<Text style={styles.copy} accessibilityRole=\"alert\">",
+    "ancestors": [
+      "<Text style={styles.copy} accessibilityRole=\"alert\">",
+      "<View>",
+      "<ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>",
+      "<View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID=\"human-profile\">"
+    ],
+    "reason": "kept, already inset: profile content owns its inset; retry uses inline sizing."
+  },
+  {
+    "layoutHash": "9410f021b25773c0aefe141445438714218f22b6af583d818d58b54bda5ce22f",
+    "file": "app/(app)/beeline/members.tsx",
+    "line": 1181,
+    "tag": "Text",
+    "source": "<Text style={styles.axisError} testID={`model-axis-error-${kind}`}>",
+    "ancestors": [
+      "<Text style={styles.axisError} testID={`model-axis-error-${kind}`}>",
+      "<View key={kind}>",
+      "<View>"
+    ],
+    "reason": "kept, already inset: model choices and access failures belong to their settings sheet."
+  },
+  {
+    "layoutHash": "3eaa59cc2c3745820e13d4848e117a97fd7b7d7121f468a326ee6ff25d9d09a4",
+    "file": "app/(app)/beeline/members.tsx",
+    "line": 1244,
+    "tag": "Text",
+    "source": "<Text style={styles.switchError} testID=\"agent-access-error\">",
+    "ancestors": [
+      "<Text style={styles.switchError} testID=\"agent-access-error\">",
+      "<View style={styles.switchSection} testID=\"agent-access\">",
+      "<View\n              style={styles.detailPanel}\n              testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}\n            >"
+    ],
+    "reason": "kept, already inset: model choices and access failures belong to their settings sheet."
+  },
+  {
+    "layoutHash": "3eaa59cc2c3745820e13d4848e117a97fd7b7d7121f468a326ee6ff25d9d09a4",
+    "file": "app/(app)/beeline/members.tsx",
+    "line": 1284,
+    "tag": "Text",
+    "source": "<Text style={styles.switchError} testID=\"agent-yolo-error\">",
+    "ancestors": [
+      "<Text style={styles.switchError} testID=\"agent-yolo-error\">",
+      "<View style={styles.switchSection} testID=\"agent-yolo\">",
+      "<View\n              style={styles.detailPanel}\n              testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}\n            >"
+    ],
+    "reason": "kept, already inset: model choices and access failures belong to their settings sheet."
+  },
+  {
+    "layoutHash": "d5517cc8d6b9f633f91ef4348a4e6669c92e0bbbe892a00d28df037473778207",
+    "file": "app/(app)/beeline/onboarding.tsx",
+    "line": 592,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={notice.title} description={notice.message} />",
+    "ancestors": [
+      "<PixelGateReveal style={styles.namePanel}>",
+      "<View\n        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}\n        testID=\"onboarding-handle-ceremony\"\n      >"
+    ],
+    "reason": "kept, already inset: sign-in and handle forms own their content padding; banner is now inline."
+  },
+  {
+    "layoutHash": "db2800bd9b78ccbaf9b983f7c2401e57a38f7c4ce28f9eb2d6690ba917b964cc",
+    "file": "app/(app)/beeline/onboarding.tsx",
+    "line": 622,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={notice.title} description={notice.message} />",
+    "ancestors": [
+      "<View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>"
+    ],
+    "reason": "kept, already inset: sign-in and handle forms own their content padding; banner is now inline."
+  },
+  {
+    "layoutHash": "63aaa80d1205e3739fb542a0c034122ec229b3690783e55e588a1e5225475429",
+    "file": "app/(app)/beeline/settings/identity.tsx",
+    "line": 701,
+    "tag": "Text",
+    "source": "<Text style={styles.errorLabel}>",
+    "ancestors": [
+      "<Text style={styles.errorLabel}>",
+      "<View accessibilityRole=\"alert\" style={styles.errorPanel}>",
+      "<ScrollView contentContainerStyle={[styles.content, desktop && styles.desktopColumn]} keyboardShouldPersistTaps=\"handled\">",
+      "<View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>"
+    ],
+    "reason": "kept, already inset: identity error panel supplies its content inset."
+  },
+  {
+    "layoutHash": "ed187cfb3a2d7372bad60de0c6348f3ea0c2e965fa612cbceef354bf9afaa76a",
+    "file": "app/(app)/beeline/settings/identity.tsx",
+    "line": 702,
+    "tag": "Text",
+    "source": "<Text style={styles.errorText}>",
+    "ancestors": [
+      "<Text style={styles.errorText}>",
+      "<View accessibilityRole=\"alert\" style={styles.errorPanel}>",
+      "<ScrollView contentContainerStyle={[styles.content, desktop && styles.desktopColumn]} keyboardShouldPersistTaps=\"handled\">",
+      "<View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>"
+    ],
+    "reason": "kept, already inset: identity error panel supplies its content inset."
+  },
+  {
+    "layoutHash": "6f6c51d9b397aea6c562bcd6080dce938d46b2b306a423e2f4bb8b9b84ed8085",
+    "file": "app/(app)/beeline/settings/workbench/connect.tsx",
+    "line": 322,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title=\"Connection failed\" onRetry={retry} retryTestID=\"connect-retry\" />",
+    "ancestors": [
+      "<View testID=\"connect-install-progress\">",
+      "<ScrollView\n        style={styles.content}\n        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}\n        testID=\"connect-scroll\"\n      >",
+      "<View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>"
+    ],
+    "reason": "kept, already inset: install detail block and scroll content supply the inset."
+  },
+  {
+    "layoutHash": "6f6c51d9b397aea6c562bcd6080dce938d46b2b306a423e2f4bb8b9b84ed8085",
+    "file": "app/(app)/beeline/settings/workbench/connect.tsx",
+    "line": 360,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={error ?? 'Helpers are unavailable right now'} titleTestID=\"connect-error\"\n            onRetry={pairedHelperRef.current || observedId ? retry : undefined} retryTestID=\"connect-pair-retry\" />",
+    "ancestors": [
+      "<ScrollView\n        style={styles.content}\n        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}\n        testID=\"connect-scroll\"\n      >",
+      "<View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>"
+    ],
+    "reason": "kept, already inset: install detail block and scroll content supply the inset."
+  },
+  {
+    "layoutHash": "6f6c51d9b397aea6c562bcd6080dce938d46b2b306a423e2f4bb8b9b84ed8085",
+    "file": "app/(app)/beeline/settings/workbench/connection.tsx",
+    "line": 313,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline\n            title={error ?? (loadError?.includes('Key not found')\n                ? 'Key not found — it belongs to another member or no longer exists'\n                : 'Key unavailable right now')}\n            titleTestID=\"connection-error\"\n            testID=\"connection-error-state\"\n            retryLabel=\"Retry\"\n            retryTestID=\"connection-retry\"\n            onRetry={() => void (detail && error ? revoke() : retry())} />",
+    "ancestors": [
+      "<ScrollView\n        style={styles.content}\n        contentContainerStyle={styles.contentInner}\n        testID=\"connection-detail-scroll\"\n      >",
+      "<View\n      style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}\n      testID=\"connection-detail-screen\"\n    >"
+    ],
+    "reason": "kept, already inset: connection detail scroll content supplies the inset."
+  },
+  {
+    "layoutHash": "dbd03d402e54814cf9e4560758b06035f9adc1121c0f4c02d915c775782fab37",
+    "file": "app/(app)/beeline/settings/workbench/service.tsx",
+    "line": 175,
+    "tag": "Text",
+    "source": "<Text style={styles.error} testID=\"squire-computer-offline\">",
+    "ancestors": [
+      "<Text style={styles.error} testID=\"squire-computer-offline\">",
+      "<HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>",
+      "<View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID=\"connector-service-screen\">"
+    ],
+    "reason": "kept, already inset: computer offline explanation belongs to its action sheet."
+  },
+  {
+    "layoutHash": "66170278634acfc57d9ad02ffc1cfd2b93b9b4b74dae048274c04c8c288d0f13",
+    "file": "app/(app)/beeline/tray.tsx",
+    "line": 837,
+    "tag": "Text",
+    "source": "<Text style={styles.empty}>",
+    "ancestors": [
+      "<Text style={styles.empty}>",
+      "<View style={styles.emptyBlock}>",
+      "<View style={styles.paneFallback} testID=\"tray-pane\">"
+    ],
+    "reason": "kept, already inset: corner inspection empty block owns its content inset."
+  },
+  {
+    "layoutHash": "dc032e193f419f04be06f038a85471e0251f3f8bd99922827c33c3ab17202173",
+    "file": "app/(app)/index.tsx",
+    "line": 140,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.subtitle}>",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.subtitle}>",
+      "<View style={styles.portraitContainer}>"
+    ],
+    "reason": "kept, already inset: secure-storage recovery screen owns its portrait content inset."
+  },
+  {
+    "layoutHash": "840efd35773b1fa265694bb0af368ca65811819b1106b84b7c2f3ceeceeeb371",
+    "file": "app/(app)/join/[token].tsx",
+    "line": 204,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={error} />",
+    "ancestors": [
+      "<View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>",
+      "<ScrollView\n      contentContainerStyle={[\n        styles.scroll,\n        { paddingTop: insets.top + 48, paddingBottom: theme.buzz.space.xxl + insets.bottom },\n      ]}\n      style={styles.container}\n      testID=\"invite-join\"\n    >"
+    ],
+    "reason": "kept, already inset: invitation content and failure block own their content inset."
+  },
+  {
+    "layoutHash": "65813716cc959b8cd98d427bf2ba9ed4a6448e51cbd167641cb79895ddf51cb7",
+    "file": "components/DesktopRoomInspector.tsx",
+    "line": 642,
+    "tag": "Text",
+    "source": "<Text style={styles.error}>",
+    "ancestors": [
+      "<Text style={styles.error}>",
+      "<View style={styles.cockpitComposer}>",
+      "<View style={styles.cockpit} testID=\"desktop-work-cockpit\">"
+    ],
+    "reason": "kept, already inset: send failure belongs to the cockpit composer."
+  },
+  {
+    "layoutHash": "0ced32308678388d08cc42d5f8b67dc0fd813ad6e986e7b6f28844fc1ca2f8d2",
+    "file": "components/buzz/AgentProfileView.tsx",
+    "line": 156,
+    "tag": "Text",
+    "source": "<Text style={styles.copy} accessibilityRole=\"alert\">",
+    "ancestors": [
+      "<Text style={styles.copy} accessibilityRole=\"alert\">",
+      "<View style={styles.section}>",
+      "<KeyboardAwareScrollView\n        contentContainerStyle={[\n          styles.content,\n          { paddingBottom: theme.buzz.space.xxl + insets.bottom },\n        ]}\n        testID=\"agent-profile-scroll\"\n      >",
+      "<View style={[styles.container, { paddingTop: insets.top }]} testID=\"agent-profile\">"
+    ],
+    "reason": "kept, already inset: profile section owns its content inset; retry uses inline sizing."
+  },
+  {
+    "layoutHash": "f64aafc50f9efe01b182ef520865c14b8047c9206d0251043a714f98354d1516",
+    "file": "components/buzz/AgentProfileView.tsx",
+    "line": 337,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title=\"Could not load older work. Your current list is still available.\" onRetry={() => void moreWork()} retrying={workLoading} retryTestID=\"load-more-agent-work\" />",
+    "ancestors": [
+      "<View style={styles.section}>",
+      "<KeyboardAwareScrollView\n        contentContainerStyle={[\n          styles.content,\n          { paddingBottom: theme.buzz.space.xxl + insets.bottom },\n        ]}\n        testID=\"agent-profile-scroll\"\n      >",
+      "<View style={[styles.container, { paddingTop: insets.top }]} testID=\"agent-profile\">"
+    ],
+    "reason": "kept, already inset: profile section owns its content inset; retry uses inline sizing."
+  },
+  {
+    "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "file": "components/buzz/AgentSignInCard.tsx",
+    "line": 171,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={failure} testID={`${testID}-error`} />",
+    "ancestors": [],
+    "reason": "kept, already inset: agent sign-in card owns its content inset."
+  },
+  {
+    "layoutHash": "cbc5f48aa6f3772601bd271cf10b16d0d2a5d40787bfce3d6b2b57a64a0197e4",
+    "file": "components/buzz/AgentVoiceSection.tsx",
+    "line": 152,
+    "tag": "Text",
+    "source": "<Text style={styles.copy} accessibilityRole=\"alert\" testID=\"voice-error\">",
+    "ancestors": [
+      "<Text style={styles.copy} accessibilityRole=\"alert\" testID=\"voice-error\">",
+      "<View style={styles.section} testID=\"voice-section\">"
+    ],
+    "reason": "kept, already inset: voice settings section owns its content inset."
+  },
+  {
+    "layoutHash": "1457aa205aef10d1de5120408b61b27bf92e9a88fd680f92e4543b7c1b298b68",
+    "file": "components/buzz/ConversationComposer.tsx",
+    "line": 705,
+    "tag": "Text",
+    "source": "<Text style={styles.statusText} accessibilityRole=\"alert\" testID=\"voice-connection-error\">",
+    "ancestors": [
+      "<Text style={styles.statusText} accessibilityRole=\"alert\" testID=\"voice-connection-error\">",
+      "<View style={styles.statusLine}>",
+      "<View\n      ref={containerRef as React.Ref<View>}\n      {...containerProps}\n      style={[styles.composer, focused && styles.composerFocused,\n        ...(viewerPill ? [styles.viewerPill] : [])]}\n    >"
+    ],
+    "reason": "kept, already inset: composer status line owns its content inset."
+  },
+  {
+    "layoutHash": "5bdf8c06c1b7eca01b188b14f5d98476cd50a15615710a4b80c501b5aea94892",
+    "file": "components/buzz/CornerOpenToast.tsx",
+    "line": 56,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline\n          title=\"Couldn't reach Beeline\"\n          retryLabel=\"Retry\"\n          onRetry={status.retry}\n          retryTestID=\"corner-open-retry\"\n          secondaryAction={{ label: '', accessibilityLabel: 'Dismiss', iconOnly: true, onPress: cornerOpenEnded,\n            icon: <Svg width={18} height={18} viewBox=\"0 0 18 18\"><Path d=\"M4 4L14 14M14 4L4 14\" stroke={theme.buzz.textPrimary} strokeWidth={1.5} /></Svg> }}\n          testID=\"corner-open-failed\"\n        />",
+    "ancestors": [
+      "<InlineRow style={styles.plate}>",
+      "<View pointerEvents=\"box-none\" style={[styles.dock, { bottom: insets.bottom + theme.buzz.space.md }]}>"
+    ],
+    "reason": "kept, already inset: toast plate owns its content inset inside InlineRow."
+  },
+  {
+    "layoutHash": "a5ac72b47ece1ade91142ee5bba9c8c238c87081b7ba039d26bbd1c089f3a27e",
+    "file": "components/buzz/FacePickerSheet.tsx",
+    "line": 75,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"face-picker-error\">",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"face-picker-error\">",
+      "<HullActionSheetModal\n      accessibilityLabel=\"Close face picker\"\n      onClose={onClose}\n      scrimTestID=\"face-picker-scrim\"\n      subtitle=\"Animals only. You can change it anytime.\"\n      testID=\"face-picker\"\n      title=\"Face\"\n      visible={visible}\n    >"
+    ],
+    "reason": "kept, already inset: face picker sheet owns its content inset."
+  },
+  {
+    "layoutHash": "2dc0a475f5ddc966671e758c0b561c4ba5f9670cda618350cf8ab8b51e295e0b",
+    "file": "components/buzz/MemberPickerSheet.tsx",
+    "line": 117,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\">",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\">",
+      "<View style={styles.footer}>",
+      "<HullActionSheetModal\n      accessibilityLabel=\"Close member picker\"\n      contentStyle={styles.modalContent}\n      onClose={busy ? () => undefined : onClose}\n      dismissOnBackdrop={!busy}\n      visible={visible}\n      testID={testID}\n      title={agentConnectOnly ? undefined : MEMBER_PICKER_TITLE}\n      footer={\n        !agentConnectOnly || error ? (\n          <View style={styles.footer}>\n            {error && (\n              <Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\">\n                ! {error}\n              </Text>\n            )}\n            {!agentConnectOnly && (\n              <View style={styles.addInset}>\n                <Button\n                  disabled={chosen.length === 0}\n                  label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'}\n                  loading={busy}\n                  onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))}\n                  testID=\"member-picker-add\"\n                />\n              </View>\n            )}\n          </View>\n        ) : undefined\n      }\n    >"
+    ],
+    "reason": "kept, already inset: member picker footer owns its content inset."
+  },
+  {
+    "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "file": "components/buzz/MessageSearchResults.tsx",
+    "line": 130,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={label} retryLabel=\"Retry\" onRetry={onPress} retryTestID={testID} />",
+    "ancestors": [],
+    "reason": "kept, already inset: search results own their content inset."
+  },
+  {
+    "layoutHash": "766f94f8424aa98d33e17b2cff055f44ad7f52259e0614ba0094f32e793a2aef",
+    "file": "components/buzz/NewCornerDialog.tsx",
+    "line": 66,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"create-corner-error\">",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"create-corner-error\">",
+      "<View style={styles.titleField} testID=\"create-corner-content\">",
+      "<HullDialog\n      dismissOnBackdrop={!creating}\n      onRequestClose={creating ? () => undefined : onClose}\n      testID=\"new-corner-dialog\"\n      title={`Begin a new ${CORNER_LABEL}`}\n      visible={visible}\n      actions={[\n        { label: 'Cancel', onPress: onClose, disabled: creating, testID: 'create-corner-cancel' },\n        {\n          label: creating ? 'Opening…' : `Open ${CORNER_LABEL}`,\n          onPress: onCreate,\n          disabled: !ready,\n          busy: creating,\n          variant: 'primary',\n          testID: 'create-corner-submit',\n        },\n      ]}\n    >"
+    ],
+    "reason": "kept, already inset: corner dialog owns its content inset."
+  },
+  {
+    "layoutHash": "e121a745bbbe1049f4a4eab1c7c7df300edfbe2a7829710d82c437fb343ab86b",
+    "file": "components/buzz/PushLevelSetting.tsx",
+    "line": 86,
+    "tag": "Text",
+    "source": "<Text style={styles.errorText}>",
+    "ancestors": [
+      "<Text style={styles.errorText}>",
+      "<View accessibilityRole=\"alert\" style={styles.error} testID=\"push-level-error\">",
+      "<HullActionSheetModal\n        accessibilityLabel=\"Close push notifications picker\"\n        dismissOnBackdrop={!working}\n        onClose={() => {\n          if (!working) setOpen(false);\n        }}\n        testID=\"push-notifications-sheet\"\n        title=\"Push notifications\"\n        visible={open}\n      >"
+    ],
+    "reason": "kept, already inset: push-level failure belongs to the action sheet."
+  },
+  {
+    "layoutHash": "55eb00e4e3154c244223427045ee53950e8360e55833225c265d14b659b64609",
+    "file": "components/buzz/RepoPicker.tsx",
+    "line": 358,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={`! ${error}`} />",
+    "ancestors": [
+      "<View\n      style={[styles.container, fillAvailableHeight && styles.containerFill]}\n      testID={testIDPrefix}\n    >"
+    ],
+    "reason": "kept, already inset: repository picker form owns its content inset."
+  },
+  {
+    "layoutHash": "238b49492104eed60e264bd4f959a1789290ad00076a5ac3840664bd70b56f6e",
+    "file": "components/buzz/RepositoryChoice.tsx",
+    "line": 259,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={error} testID={`${p}-repo-error`} />",
+    "ancestors": [
+      "<View style={styles.repoBlock}>",
+      "<IndexRowInsetContext.Provider value=\"flush\">"
+    ],
+    "reason": "kept, already inset: repository choice form owns its content inset."
+  },
+  {
+    "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "file": "components/buzz/RoomCornersList.tsx",
+    "line": 409,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline\n                title={more.reason}\n                retryLabel=\"Retry\"\n                onRetry={onMoreArchived}\n                retryTestID=\"room-corners-archived-more\" />",
+    "ancestors": [
+      "<InlineActionRow>",
+      "<View>"
+    ],
+    "reason": "kept, already inset: archived pagination failure occupies InlineActionRow."
+  },
+  {
+    "layoutHash": "263f7a804d8dc71d66d6770d052c585303593256ada6f0804b4e102ace572710",
+    "file": "components/buzz/RoomReviewerActions.tsx",
+    "line": 35,
+    "tag": "Text",
+    "source": "<Text style={styles.errorText}>",
+    "ancestors": [
+      "<Text style={styles.errorText}>",
+      "<View\n      accessibilityRole=\"alert\"\n      style={surface ? styles.surfaceWarning : styles.error}\n      testID={testID}\n    >"
+    ],
+    "reason": "kept, already inset: reviewer warning and failure belong to their section or action sheet."
+  },
+  {
+    "layoutHash": "1bdb63c2a3b489216f87c0e2b3c778031cd078c5a3af24b1e3937ed63fa1b0c2",
+    "file": "components/buzz/RoomReviewerActions.tsx",
+    "line": 179,
+    "tag": "Text",
+    "source": "<Text style={styles.errorText}>",
+    "ancestors": [
+      "<Text style={styles.errorText}>",
+      "<View accessibilityRole=\"alert\" style={styles.error} testID=\"room-reviewer-error\">",
+      "<HullActionSheetModal\n        accessibilityLabel=\"Close reviewer picker\"\n        dismissOnBackdrop={!busy}\n        footer={\n          <>\n            <RoomReviewerAutoMergeNotice\n              visible={Boolean(allowAutoMerge)}\n              testID=\"room-reviewer-auto-merge-picker-warning\"\n            />\n            {error ? (\n              <View accessibilityRole=\"alert\" style={styles.error} testID=\"room-reviewer-error\">\n                <Text style={styles.errorText}>! {error}</Text>\n              </View>\n            ) : null}\n            <HullActionSheetCancel\n              label=\"Done\"\n              onPress={() => setPickerVisible(false)}\n              testID=\"room-reviewer-close\"\n            />\n          </>\n        }\n        onClose={() => {\n          if (!busy) setPickerVisible(false);\n        }}\n        scrollBody={false}\n        subtitle=\"The first healthy agent on this list reviews every pull request opened from the Room. If its review fails or goes silent, the next one takes over. Tap an agent to add it to the end of the list or take it off.\"\n        testID=\"room-reviewer-sheet\"\n        title={`Reviewers for ${roomName}`}\n        visible={pickerVisible}\n      >"
+    ],
+    "reason": "kept, already inset: reviewer warning and failure belong to their section or action sheet."
+  },
+  {
+    "layoutHash": "33f1d02d3cf84bd2e01e5ede88d4a63482836a1a9074470c2219a0ec14776cf6",
+    "file": "components/buzz/RoomRosterSheet.tsx",
+    "line": 275,
+    "tag": "Text",
+    "source": "<Text style={styles.membershipErrorText}>",
+    "ancestors": [
+      "<Text style={styles.membershipErrorText}>",
+      "<View accessibilityRole=\"alert\" style={styles.membershipError}>",
+      "<View style={styles.rosterModal}>",
+      "<HullActionSheetModal\n      accessibilityLabel={`Close ${ROOM_LABEL} roster`}\n      contentStyle={{ maxHeight: '82%', paddingBottom: Math.max(bottomInset, space.md) }}\n      onClose={onClose}\n      visible={visible}\n      testID=\"room-roster-sheet\"\n      scrollBody={false}\n    >"
+    ],
+    "reason": "kept, already inset: roster sheet owns its membership-error inset."
+  },
+  {
+    "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "file": "components/buzz/RuntimeErrorBoundary.tsx",
+    "line": 25,
+    "tag": "Text",
+    "source": "<Text selectable style={{ ...theme.type.body, color: theme.textPrimary }} testID=\"runtime-error-message\">",
+    "ancestors": [
+      "<Text selectable style={{ ...theme.type.body, color: theme.textPrimary }} testID=\"runtime-error-message\">",
+      "<ScrollView style={{ maxHeight: 256 }}>",
+      "<View style={{ backgroundColor: theme.bgBase, padding: 16, gap: 8,\n    ...(scope === 'app' ? { flex: 1, paddingTop: 48 } : {}) }} testID=\"runtime-error\">"
+    ],
+    "reason": "kept, already inset: provider-free emergency recovery owns its padding; diagnostics are reported privately."
+  },
+  {
+    "layoutHash": "c3fa07a2e2bf6847d2f9128cd618a4fdf9e300076b925fae6bc64800017f4fd6",
+    "file": "components/buzz/SoulPortraitControls.tsx",
+    "line": 153,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.copy} testID=\"avatar-generation-error\">",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.copy} testID=\"avatar-generation-error\">",
+      "<View style={styles.container} testID=\"soul-avatar-generator\">"
+    ],
+    "reason": "kept, already inset: portrait controls own their content inset."
+  },
+  {
+    "layoutHash": "3bc372657e16dbb3af7a518f52c010637722e97dab98260022441899915d8114",
+    "file": "components/buzz/TranscriptCard.tsx",
+    "line": 467,
+    "tag": "Text",
+    "source": "<Text style={styles.errorTitle}>",
+    "ancestors": [
+      "<Text style={styles.errorTitle}>",
+      "<View style={styles.errorCopy}>",
+      "<InlineRow accessibilityRole=\"alert\" accessibilityLiveRegion=\"polite\" style={styles.inlineError}>",
+      "<View style={[styles.frame, tier === 'ask' && styles.ask]} testID={testID}>",
+      "<Animated.View style={arrivalContentStyle}>",
+      "<View style={styles.frameShell}>"
+    ],
+    "reason": "kept, already inset: transcript card and InlineRow own the error content inset."
+  },
+  {
+    "layoutHash": "2dd3c40ba5a2af6bf3c2cc6542b23003cb2d83d3309f74319c6d4fdead761b0c",
+    "file": "components/buzz/TranscriptCard.tsx",
+    "line": 468,
+    "tag": "Text",
+    "source": "<Text style={styles.errorDescription}>",
+    "ancestors": [
+      "<Text style={styles.errorDescription}>",
+      "<View style={styles.errorCopy}>",
+      "<InlineRow accessibilityRole=\"alert\" accessibilityLiveRegion=\"polite\" style={styles.inlineError}>",
+      "<View style={[styles.frame, tier === 'ask' && styles.ask]} testID={testID}>",
+      "<Animated.View style={arrivalContentStyle}>",
+      "<View style={styles.frameShell}>"
+    ],
+    "reason": "kept, already inset: transcript card and InlineRow own the error content inset."
+  },
+  {
+    "layoutHash": "f473d54b17503827c9a10cd514558b5e328bd31e1cdb9bf299c35962b48c7bb0",
+    "file": "components/buzz/ViewerConversationDock.tsx",
+    "line": 171,
+    "tag": "Text",
+    "source": "<Text style={styles.error}>",
+    "ancestors": [
+      "<Text style={styles.error}>",
+      "<ScrollView ref={transcriptScroll} style={styles.transcriptScroll}\n              testID=\"viewer-conversation-scroll\" keyboardShouldPersistTaps=\"handled\"\n              onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}>",
+      "<View\n      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }, { maxHeight: transcriptMaxHeight }]}\n      testID=\"viewer-conversation-transcript\"\n    >",
+      "<View pointerEvents=\"box-none\" style={styles.overlay} testID=\"viewer-conversation-dock\"\n    onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>"
+    ],
+    "reason": "kept, already inset: viewer conversation dock owns its content inset."
+  },
+  {
+    "layoutHash": "7d4f18cd5748757cf54bfd9af2b63277f5099e583b9c9e2f4a889fe1a40c9041",
+    "file": "components/buzz/ViewerConversationDock.tsx",
+    "line": 184,
+    "tag": "Text",
+    "source": "<Text style={styles.error}>",
+    "ancestors": [
+      "<Text style={styles.error}>",
+      "<View\n      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }, { maxHeight: transcriptMaxHeight }]}\n      testID=\"viewer-conversation-transcript\"\n    >",
+      "<View pointerEvents=\"box-none\" style={styles.overlay} testID=\"viewer-conversation-dock\"\n    onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>"
+    ],
+    "reason": "kept, already inset: viewer conversation dock owns its content inset."
+  },
+  {
+    "layoutHash": "23c3e4662743d5d18e1d9bfbd3641cac1f04e4d94c59403782ce321058210b1b",
+    "file": "components/buzz/VoiceBar.tsx",
+    "line": 49,
+    "tag": "Text",
+    "source": "<Text accessibilityRole=\"alert\" style={styles.error}\n            testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>",
+    "ancestors": [
+      "<Text accessibilityRole=\"alert\" style={styles.error}\n            testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>",
+      "<View style={styles.waveform} accessibilityLabel={voice.speaker\n        ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : voice.muted ? 'Microphone muted' : 'Listening'} testID=\"voice-waveform\">",
+      "<View style={styles.controls} testID=\"voice-bar\">"
+    ],
+    "reason": "kept, already inset: voice status bar owns its content inset."
+  }
+]

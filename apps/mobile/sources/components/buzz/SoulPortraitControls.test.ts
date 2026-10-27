@@ -72,7 +72,7 @@ describe('soul avatar generation', () => {
     expect(renderer.root.findByType('SettingsRow').props.title).toBe('Retry avatar generation');
     expect(
       renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
-    ).toContain('offline');
+    ).toBe('Couldn’t reach Beeline');
   });
 
   it('has no free-text direction input and sends only the current soul', async () => {

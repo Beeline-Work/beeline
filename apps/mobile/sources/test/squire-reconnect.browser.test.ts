@@ -24,11 +24,11 @@ it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings re
           result.cardRoute=globalThis.__route.pathname; root.render(<SignIn />);
         }} />);
       setTimeout(()=>document.querySelector('[data-testid="connector-offer-offer-continue"]').click(),100);
-      setTimeout(()=>{result.cardError=document.querySelector('[role="alert"]')?.textContent; result.cardRetry=!!document.querySelector('[data-testid="signin-retry"]');
+      setTimeout(()=>{result.cardError=document.querySelector('[data-testid="signin-card"]')?.textContent; result.cardRetry=!!document.querySelector('[data-testid="signin-retry"]');
         root.unmount(); const settings=createRoot(document.getElementById('root')); globalThis.__route={params:{workspaceId:'ws',viewerId:'owner',connectorId:'trusty-squire',helperId:'machine'}};
         settings.render(<Connect />);
       },16000);
-      setTimeout(()=>{result.settingsError=document.querySelector('[role="alert"]')?.textContent; result.text=document.getElementById('root').textContent;
+      setTimeout(()=>{result.settingsError=document.querySelector('[data-testid="connect-error"]')?.textContent; result.text=document.getElementById('root').textContent;
         document.getElementById('result').textContent=JSON.stringify(result);},33000);`);
     const base = webProofShims(mobile);
     const result = await runBrowserProof({ entry, mobile, width: 390, head: '<script>window.process={env:{NODE_ENV:"development"}};</script>', budgetMs: 35000,
@@ -57,8 +57,9 @@ it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings re
     const output = JSON.parse(result.result);
     console.info('Reproduction squire-spinner:', output);
     expect(output.cardRoute).toBe('/beeline/settings/workbench/connect-signin');
-    expect(output.cardError).toMatch(/did not (answer|load)/);
+    expect(output.cardError).toContain('Couldn’t reach Beeline');
     expect(output.cardRetry).toBe(true);
-    expect(output.text).toMatch(/did not answer/);
+    expect(output.settingsError).toContain('Couldn’t reach Beeline');
+    expect(output.text).toContain('Couldn’t reach Beeline');
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 60000);

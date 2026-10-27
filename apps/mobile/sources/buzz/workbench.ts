@@ -118,6 +118,7 @@ export type WorkbenchApp = {
 };
 
 export type WorkbenchView = {
+  aiClients?: readonly import('@beeline/api-contract/workbench').AiClientConnection[];
   companies?: import('@beeline/api-contract/workbench').WorkbenchCompanyIndex;
   linkAccount?: { connected: boolean; pending: boolean; ineligible: boolean };
   connectors: readonly WorkbenchConnector[];

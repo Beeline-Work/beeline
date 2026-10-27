@@ -51,7 +51,7 @@ describe('resource observers in the desktop web renderer', () => {
           output.signInError = document.querySelector('[data-testid="signin-retry"]')?.textContent;
           output.installerError = document.querySelector('[data-testid="connect-error"]')?.textContent;
           output.inspectorRetry = document.querySelector('[data-testid="desktop-corner-retry"]')?.textContent;
-          output.inspectorError = document.querySelector('[data-testid="desktop-corner-retry"]')?.closest('[role="alert"]')?.textContent;
+          output.inspectorError = document.querySelector('[data-testid="desktop-corner-retry"]')?.textContent;
           output.staleTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]'); }, 7600);
         setTimeout(() => { output.stoppedReads = globalThis.__installReads;
           document.querySelector('[data-testid="signin-retry"]')?.click();
@@ -105,7 +105,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');
-      expect(proof.inspectorRetry).toBe('Retry');
+      expect(proof.inspectorRetry).toContain('Retry');
       expect(proof.workflowText).toBe('Corner · Implement');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
@@ -149,7 +149,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9d and R9-OBS-01 desktop web:', result.result);
       expect(JSON.parse(result.result).status).toBe('Done');
-      expect(JSON.parse(result.result).failureText).toContain('offline');
+      expect(JSON.parse(result.result).failureText).toContain('Couldn’t reach Beeline');
       // The run page's "Also running in this corner" section reads the room's
       // other live runs alongside the run itself, so each cycle (initial load,
       // the postgres invalidate, and the reconnect) now fires two reads.

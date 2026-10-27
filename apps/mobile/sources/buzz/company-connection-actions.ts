@@ -87,7 +87,7 @@ export function useConnectCompanyApp(scope: WorkbenchScope) {
         else openCompanyItem({ kind: 'app', appId: started.appId }, scope);
       }
       await readSharedWorkbench(scope, { refresh: true });
-    } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Connecting failed')); }
+    } catch (cause) { setError(appErrorCopy(cause, 'Connecting failed')); }
     finally { setBusy(null); }
   };
   const open = async (row: WorkbenchCompany, apps?: readonly WorkbenchApp[]) => {
@@ -103,7 +103,7 @@ export function useConnectCompanyApp(scope: WorkbenchScope) {
       const started = await getWorkbenchSource().beginAppSignIn({ appId: destination.appId });
       await openAppSignIn(started.authorizationUrl, { ...scope, appId: destination.appId });
       await readSharedWorkbench(scope, { refresh: true });
-    } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Reconnecting failed')); }
+    } catch (cause) { setError(appErrorCopy(cause, 'Reconnecting failed')); }
     finally { setBusy(null); }
   };
   return { connect, open, busy, error };

@@ -46,7 +46,7 @@ export default function AppDetailScreen() {
     setWorking(true);
     setError(null);
     try { await getWorkbenchSource().disconnectApp({ workspaceId, appId: app.id }); router.back(); }
-    catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not disconnect app')); }
+    catch (cause) { setError(appErrorCopy(cause, 'Could not disconnect app')); }
     finally { setWorking(false); }
   };
 
@@ -121,11 +121,11 @@ export default function AppDetailScreen() {
           </>
         ) : null}
         {error || loadError || (app?.status === 'error' && app.errorMessage) ? (
-          <Text accessibilityRole="alert" style={styles.error}>{error ?? (loadError ? 'App unavailable right now' : null) ?? (app && needsSquire
+          <SettingsRow title={error ?? (loadError ? 'App unavailable right now' : null) ?? (app && needsSquire
         ? `${app.name} connects through Trusty Squire. Connect Trusty Squire, then return here to connect ${app.name}.`
         : app?.transport !== 'composio' && app?.errorMessage === 'App sign-in is unavailable for this person'
           ? `${app.name} connects through your helper. Retry to ask your helper to finish connecting it.`
-          : appErrorCopy(app?.errorMessage ?? ''))}</Text>
+          : appErrorCopy(app?.errorMessage ?? ''))} />
         ) : null}
       </ScrollView>
       <HullActionSheetModal visible={statusOpen} title={app?.name} onClose={() => setStatusOpen(false)}>

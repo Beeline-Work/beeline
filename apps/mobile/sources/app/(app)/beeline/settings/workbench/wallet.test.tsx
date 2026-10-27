@@ -229,7 +229,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     const renderer = await render(WalletScreen);
     await act(async () => { await renderer.root.findByProps({ testID: 'wallet-disconnect-row' }).props.onPress(); });
     const row = renderer.root.findByProps({ testID: 'wallet-disconnect-row' });
-    expect(row.props.description).toContain('Network unavailable');
+    expect(row.props.description).toBe('Couldn’t reach Beeline');
     expect(row.props.disabled).toBe(false);
     expect((await source.readWallet()).delegation.active).toBe(true);
   });
@@ -372,7 +372,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     expect(grant).not.toHaveBeenCalled();
   });
 
-  it('shows a real grant refusal on the connect row, not the empty-wallet path', async () => {
+  it('keeps a failed grant on the connect row with plain connection copy', async () => {
     const source = new MockWalletSource();
     const baseline = await source.readWallet();
     source.readWallet = async () => ({
@@ -391,7 +391,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
       await Promise.resolve();
     });
     const banner = renderer.root.findByProps({ testID: 'wallet-connect-row' });
-    expect(banner.props.description).toBe('wallet not created');
+    expect(banner.props.description).toBe('Couldn’t reach Beeline');
     expect(banner.props.descriptionTone).toBe('danger');
     expect(banner.props.action).toBe('reconnect');
     expect(renderer.root.findAllByProps({ testID: 'wallet-network-unavailable' })).toHaveLength(0);

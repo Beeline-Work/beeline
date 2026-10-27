@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -39,7 +40,7 @@ export function PushLevelSetting({ disabled = false, onSave, value }: Props) {
       await onSave(level);
       setOpen(false);
     } catch (caught) {
-      setError(`Could not update push notifications: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not update push notifications.`));
     } finally {
       setWorking(false);
     }

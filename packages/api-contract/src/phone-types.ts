@@ -225,6 +225,7 @@ export type RoomViewActivity = {
 };
 
 export type RoomViewMessage = {
+  readonly sourceClient?: { readonly id: string; readonly name: string };
   readonly voiceCall?: import('./voice.js').VoiceCall;
   readonly id: string;
   readonly text: string;

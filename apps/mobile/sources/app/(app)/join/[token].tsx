@@ -1,3 +1,5 @@
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { IndexRow, InlineRow } from '@/components/buzz/IndexRow';
@@ -106,7 +108,7 @@ export default function CommunityInviteJoin() {
         // never got an answer leaves it for the next try.
         if (inviteIsGone(err)) await clearPendingInvite();
         if (!cancelled) {
-          setError(String(err));
+          setError(appErrorCopy(err));
           setFailure(inviteIsGone(err) ? 'gone' : 'unreachable');
         }
       } finally {
@@ -129,7 +131,7 @@ export default function CommunityInviteJoin() {
       enterWorkspaceRoom(redemption.workspaceId, redemption.roomId);
     } catch (err) {
       joinInFlight.current = false;
-      setError(`Could not join: ${String(err)}`);
+      setError(appErrorCopy(err, `Could not join.`));
     } finally {
       setJoining(false);
     }
@@ -204,16 +206,7 @@ export default function CommunityInviteJoin() {
           </>
         ) : failure === 'unreachable' ? (
           <View style={styles.failureBlock} testID="invite-unreachable">
-            <ErrorBanner title="Couldn’t reach Beeline"
-              description="Your invite may still be fine — we could not ask the server about it. Check your connection and try again." />
-            {error ? <Text style={styles.meta}>{error}</Text> : null}
-            <Button
-              label="Retry"
-              onPress={retry}
-              style={styles.primary}
-              testID="invite-retry"
-              variant="secondary"
-            />
+            <SettingsRow title="Couldn’t reach Beeline" description="Check your connection and try again." action="Retry" onPress={retry} testID="invite-retry" />
             <Button variant="quiet" label="Choose another way in" onPress={() => void otherWay()} testID="invite-other-way" />
           </View>
         ) : (

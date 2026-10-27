@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from './Button';
 import React from 'react';
 import { Animated, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native';
@@ -136,7 +137,7 @@ export function ViewerConversationDock({
       return true;
     } catch (caught) {
       sentToAgent.current = previouslySent;
-      setError(caught instanceof Error ? caught.message : 'Could not send this message.');
+      setError(appErrorCopy(caught, 'Could not send this message.'));
       return false;
     } finally {
       setSending(false);

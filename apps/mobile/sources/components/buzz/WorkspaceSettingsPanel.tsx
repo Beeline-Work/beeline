@@ -1,4 +1,5 @@
-import { ErrorBanner } from './ErrorBanner';
+import { appErrorCopy } from '@/buzz/app-error-copy';
+import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -30,7 +31,6 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
-import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
@@ -162,7 +162,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
   // The Room names come from the app-level Room list, which owns its watch and reads.
-  const chatList = useChatList(chatListKey, { onError: (reason) => setError(String(reason)) });
+  const chatList = useChatList(chatListKey, { onError: (reason) => setError(appErrorCopy(reason)) });
 
   const workspace = workspaceView?.workspace;
   useEffect(() => {
@@ -184,7 +184,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       setJoinLinkCopied(false);
     } catch (caught) {
       if (generation === joinLinkGeneration.current)
-        setError(`Could not load public join link: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not load public join link.`));
     } finally {
       if (generation === joinLinkGeneration.current) setJoinLinkBusy(false);
     }
@@ -284,13 +284,13 @@ function WorkspaceSettings({ workspaceId }, ref) {
             },
             onError: (reason) => {
               setLoading(false);
-              setError(String(reason));
+              setError(appErrorCopy(reason));
             },
           });
           workspaceSchedulerRef.current = workspaceScheduler;
           await workspaceScheduler.startAfter(Promise.resolve());
         } catch (caught) {
-          if (!cancelled) setError(`Could not load ${WORKSPACE_LABEL} settings: ${String(caught)}`);
+          if (!cancelled) setError(appErrorCopy(caught, `Could not load ${WORKSPACE_LABEL} settings.`));
         } finally {
           if (!cancelled && !workspaceScheduler) setLoading(false);
         }
@@ -315,7 +315,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       workspaceSchedulerRef.current?.force();
       setRenamingWorkspace(false);
     } catch (caught) {
-      setError(`Could not rename ${WORKSPACE_LABEL}: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not rename ${WORKSPACE_LABEL}.`));
     } finally {
       setWorkingKey(null);
     }
@@ -332,7 +332,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       await client.setCommunityAvatar(communityId, avatar);
       workspaceSchedulerRef.current?.force();
     } catch (caught) {
-      setError(`Could not set ${WORKSPACE_LABEL} picture: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not set ${WORKSPACE_LABEL} picture.`));
     } finally {
       setWorkingKey(null);
     }
@@ -349,7 +349,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       await client.setCommunityAvatar(communityId, '');
       workspaceSchedulerRef.current?.force();
     } catch (caught) {
-      setError(`Could not reset ${WORKSPACE_LABEL} picture: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not reset ${WORKSPACE_LABEL} picture.`));
     } finally {
       setWorkingKey(null);
     }
@@ -366,7 +366,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
         await client.setCommunityVisibility(communityId, visibility);
         workspaceSchedulerRef.current?.force();
       } catch (caught) {
-        setError(`Could not change ${WORKSPACE_LABEL} visibility: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not change ${WORKSPACE_LABEL} visibility.`));
       } finally {
         setWorkingKey(null);
       }
@@ -387,7 +387,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
         workspaceSchedulerRef.current?.force();
         if (chatListKey) refreshChatList(chatListKey);
       } catch (caught) {
-        setError(`Could not change ${ROOM_LABEL} visibility: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not change ${ROOM_LABEL} visibility.`));
       } finally {
         setWorkingKey(null);
       }
@@ -409,7 +409,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
         router.push(roomHref(room.id, communityId));
       } catch (caught) {
         setRoomSheetId(null);
-        setError(`Could not join ${roomTitle(room.name) ?? room.name}: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not join ${roomTitle(room.name) ?? room.name}.`));
       } finally {
         setWorkingKey(null);
       }
@@ -443,7 +443,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       setDeleteSheetOpen(false);
       router.replace('/beeline/channels');
     } catch (caught) {
-      setError(`Could not delete ${WORKSPACE_LABEL}: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not delete ${WORKSPACE_LABEL}.`));
       setDeleteBusy(false);
     }
   }, [communityId, deleteBusy, deleteConfirmText, workspace, deletionDraft]);
@@ -474,20 +474,10 @@ function WorkspaceSettings({ workspaceId }, ref) {
   return (
     <View style={styles.container}>
       {!workspaceView ? (
-        <View style={styles.denied} testID="workspace-settings-load-failed">
-          <Text style={styles.deniedTitle}>
-            {error ?? `Could not load ${WORKSPACE_LABEL} settings`}
-          </Text>
-          <Button
-            label="Retry"
-            onPress={() => setRetryGeneration((value) => value + 1)}
-            testID="workspace-settings-retry"
-            variant="secondary"
-          />
-        </View>
+        <SettingsRow title={error ?? `Could not load ${WORKSPACE_LABEL} settings`} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} testID="workspace-settings-retry" />
       ) : (
         <View testID={canManageWorkspace ? 'workspace-settings-manage' : 'workspace-settings-read-only'}>
-          {error && !errorRow ? <ErrorBanner inline title={error} /> : null}
+          {error && !errorRow ? <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} /> : null}
           <View testID="workspace-overview-settings">
             <RoomListSectionHeader title="General" inset="content" />
             {canManageWorkspace ? (
@@ -501,6 +491,8 @@ function WorkspaceSettings({ workspaceId }, ref) {
                 testID="workspace-name-row"
                 title="Name"
                 value={renamingWorkspace ? undefined : (workspace?.name ?? '')}
+                description={error && errorRow === 'name' ? error : undefined}
+                descriptionTone={error && errorRow === 'name' ? 'danger' : undefined}
               />
             ) : (
               <SettingsRow testID="workspace-name-row" title="Name" value={workspace?.name ?? ''} />
@@ -527,7 +519,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                       workingKey === 'name', label: workingKey === 'name' ? 'Saving…' : 'Save', loading: workingKey === 'name', onPress: () => void saveWorkspaceName(), testID: "workspace-name-save", variant: 'primary' }]} />
               </View>
             )}
-            {error && errorRow === 'name' ? <ErrorBanner inline title={error} /> : null}
+
             <View testID="workspace-visibility-setting">
               {canManageWorkspace ? (
                 <SettingsRow
@@ -538,40 +530,45 @@ function WorkspaceSettings({ workspaceId }, ref) {
                   testID="workspace-visibility-row"
                   title="Visibility"
                   value={visibilityLabel}
-                />
+                description={error && errorRow === 'visibility' ? error : undefined}
+                descriptionTone={error && errorRow === 'visibility' ? 'danger' : undefined}
+              />
               ) : (
                 <SettingsRow testID="workspace-visibility-row" title="Visibility" value={visibilityLabel} />
               )}
             </View>
-            {error && errorRow === 'visibility' ? <ErrorBanner inline title={error} /> : null}
+
             {workspace?.visibility === 'public' && (
               <View testID="workspace-public-join-setting">
                 <SettingsRow
                   accessibilityLabel="Copy public join link"
                   action={joinLinkBusy ? 'Loading…' : joinLinkCopied ? 'Copied' : 'Copy'}
-                  description="Anyone with the link can join"
+                  description={error && errorRow === 'join-link' ? error : 'Anyone with the link can join'}
                   disabled={workingKey !== null || joinLinkBusy}
                   onPress={copyJoinLink}
                   testID="workspace-public-join-copy"
                   title="Public join link"
-                />
-                {error && errorRow === 'join-link' ? <ErrorBanner inline title={error} /> : null}
+                  descriptionTone={error && errorRow === 'join-link' ? 'danger' : undefined}
+              />
+
               </View>
             )}
-            {canManageWorkspace && workspace?.avatar ? (
+            {canManageWorkspace && (workspace?.avatar || (error && errorRow === 'picture')) ? (
               <SettingsRow
                 disabled={workingKey === 'picture'}
                 onPress={() => void resetWorkspacePicture()}
                 testID="workspace-picture-clear"
                 title="Use generated mark"
                 tone="action"
+                description={error && errorRow === 'picture' ? error : undefined}
+                descriptionTone={error && errorRow === 'picture' ? 'danger' : undefined}
               />
             ) : null}
-            {error && errorRow === 'picture' ? <ErrorBanner inline title={error} /> : null}
+
             {canManageWorkspace ? (
               <SettingsRow
                 title="Allow fix sweep"
-                description="Helps Beeline improve"
+                description={error && errorRow === 'fix-sweep' ? error : 'Helps Beeline improve'}
                 testID="workspace-fix-sweep"
                 toggle={{
                   value: workspaceView?.managerSettings?.allowFixSweep === true,
@@ -583,13 +580,14 @@ function WorkspaceSettings({ workspaceId }, ref) {
                     setError(null);
                     void monolithPhoneOperation('updateWorkspace', { workspaceId: communityId, allowFixSweep })
                       .then(() => workspaceSchedulerRef.current?.force())
-                      .catch((caught) => setError(`Could not update Allow fix sweep: ${String(caught)}`))
+                      .catch((caught) => setError(appErrorCopy(caught, `Could not update Allow fix sweep.`)))
                       .finally(() => setWorkingKey(null));
                   },
                 }}
+                descriptionTone={error && errorRow === 'fix-sweep' ? 'danger' : undefined}
               />
             ) : null}
-            {error && errorRow === 'fix-sweep' ? <ErrorBanner inline title={error} /> : null}
+
           </View>
 
           <View testID="workspace-members-link">
@@ -631,7 +629,8 @@ function WorkspaceSettings({ workspaceId }, ref) {
                     <SettingsRow
                       accessibilityLabel={`Show actions for ${ROOM_LABEL} ${displayName}`}
                       chevron="right"
-                      description={description || undefined}
+                      description={error && errorRow === `room-${room.id}` ? error : description || undefined}
+                      descriptionTone={error && errorRow === `room-${room.id}` ? 'danger' : undefined}
                       descriptionAction={
                         duplicateName
                           ? {
@@ -648,7 +647,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                       title={displayName}
                       value={ROOM_VISIBILITY_LABELS[room.visibility]}
                     />
-                    {error && errorRow === `room-${room.id}` ? <ErrorBanner inline title={error} /> : null}
+
                   </View>
                 );
               })}
@@ -663,8 +662,10 @@ function WorkspaceSettings({ workspaceId }, ref) {
                 testID="workspace-delete-row"
                 title={`Delete ${WORKSPACE_LABEL}`}
                 tone="destructive"
+                description={error && errorRow === 'delete' ? error : undefined}
+                descriptionTone={error && errorRow === 'delete' ? 'danger' : undefined}
               />
-              {error && errorRow === 'delete' ? <ErrorBanner inline title={error} /> : null}
+
             </View>
           )}
 

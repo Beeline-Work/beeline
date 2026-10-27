@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -295,7 +296,7 @@ export default function BuzzOnboarding() {
           ? error
           : new OidcBindError(
               'storage_failed',
-              error instanceof Error ? error.message : String(error),
+              appErrorCopy(error),
               500,
             );
       const next = noticeForAuthError(normalized);
@@ -534,9 +535,7 @@ export default function BuzzOnboarding() {
           : "HANDLE NOT CLAIMED",
         message: taken
           ? `@${normalized} belongs to someone else. Choose another handle.`
-          : error instanceof Error
-            ? error.message
-            : String(error),
+          : appErrorCopy(error),
         retryable: false,
       });
     } finally {
@@ -590,7 +589,7 @@ export default function BuzzOnboarding() {
             {normalized ? `@${normalized}` : "3–30 · a–z · 0–9 · dash"}
           </Text>
           {notice && (
-        <ErrorBanner title={notice.title} description={notice.message} />
+        <ErrorBanner inline title={notice.title} description={notice.message} />
       )}
           <Button
             disabled={!normalized || loading}
@@ -620,7 +619,7 @@ export default function BuzzOnboarding() {
       </View>
 
       {notice && (
-        <ErrorBanner title={notice.title} description={notice.message} />
+        <ErrorBanner inline title={notice.title} description={notice.message} />
       )}
 
       <View style={styles.actions}>

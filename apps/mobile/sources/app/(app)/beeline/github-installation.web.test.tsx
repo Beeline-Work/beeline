@@ -18,6 +18,7 @@ vi.mock('react-native', () => ({
   Text: ({ children }: { children: React.ReactNode }) => <p>{children}</p>,
 }));
 vi.mock('@/components/buzz/PageHeader', () => ({ PageHeader: ({ title }: { title: string }) => <h1>{title}</h1> }));
+vi.mock('@/components/buzz/SettingsRow', () => ({ SettingsRow: ({ title, description, action, onPress }: any) => <button onClick={onPress}><span>{title}</span><span>{description}</span><span>{action}</span></button> }));
 vi.mock('@/components/buzz/Button', () => ({
   Button: ({ label, onPress }: { label: string; onPress: () => void }) => <button onClick={onPress}>{label}</button>,
 }));
@@ -87,7 +88,7 @@ it('GH-WEB-1: Back to Room leaves a failed refresh without displaying raw errors
   expect(container.textContent).toContain('Continue connecting GitHub');
   expect(container.textContent).toContain('Return to your Room to refresh repositories and finish setup.');
   expect(container.textContent).not.toContain('Repository refresh failed');
-  expect(container.querySelector('button')?.textContent).toBe('Back to Room');
+  expect(container.querySelector('button')?.textContent).toContain('Back to Room');
   await act(async () => { container.querySelector('button')!.click(); });
   expect(mocks.operation).toHaveBeenCalledTimes(1);
   expect(window.location.pathname).toBe('/beeline/channels');
@@ -116,7 +117,7 @@ it('shows shared recovery for a GitHub failure and returns to the saved Room', a
   expect(container.querySelector('h1')?.textContent).toBe('GitHub needs another try');
   expect(container.textContent).toContain('Continue connecting GitHub');
   expect(container.textContent).not.toContain('GitHub connection canceled');
-  expect(container.querySelector('button')?.textContent).toBe('Back to Room');
+  expect(container.querySelector('button')?.textContent).toContain('Back to Room');
   await act(async () => { container.querySelector('button')!.click(); });
   expect(window.location.pathname).toBe('/beeline/chat/room-1');
   expect(await githubInstallationReturnPath()).toBeNull();

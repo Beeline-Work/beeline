@@ -107,7 +107,7 @@ async function run() {
   const banner = document.querySelector(`[data-testid="${page}-stop-error"]`)?.getBoundingClientRect();
   const bannerBelowHeader = header && banner ? banner.top >= header.bottom - 1 : null;
   if (params.has('retryStop')) {
-    click(`${page}-stop-error-retry`);
+    click(`${page}-stop-error`);
     for (let i = 0; i < 3; i += 1) await pause();
   }
   report(

@@ -1,4 +1,5 @@
-import { ErrorBanner } from './buzz/ErrorBanner';
+import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { resolveComposerMentions } from '@/buzz/room-participants';
@@ -239,7 +240,7 @@ export function DesktopRoomInspector({
       ) : (
         <>
           {observed.error ? (
-            <ErrorBanner inline title={observed.error} onRetry={observed.retry} retryTestID="desktop-corner-retry" />
+            <SettingsRow title={observed.error} description={connectionErrorDescription} action="Retry" onPress={observed.retry} testID="desktop-corner-retry" />
           ) : null}
           <CornerCockpit
             client={client}
@@ -377,7 +378,7 @@ function CornerCockpit({
       return true;
     } catch (error) {
       setStopping(false);
-      setSendError(`Could not stop turn: ${String(error)}`);
+      setSendError(appErrorCopy(error, `Could not stop turn.`));
       return false;
     }
   };
@@ -466,7 +467,7 @@ function CornerCockpit({
       await onRefresh();
       scheduleFrame(() => transcriptRef.current?.scrollToEnd({ animated: false }));
     } catch (caught) {
-      setSendError(`Could not send message: ${String(caught)}`);
+      setSendError(appErrorCopy(caught, `Could not send message.`));
     } finally {
       setSending(false);
     }

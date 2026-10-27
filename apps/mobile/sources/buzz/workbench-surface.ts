@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { isWorkbenchCompanyIndex } from './workbench-company-validation';
 import { useCallback, useEffect } from 'react';
 import { useFocusEffect } from 'expo-router';
@@ -23,7 +24,13 @@ export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
   const view = value as Partial<WorkbenchView>;
   return Array.isArray(view.apps) && Array.isArray(view.helpers) &&
     Array.isArray(view.connectors) && Array.isArray(view.connections) &&
-    (view.companies === undefined || isWorkbenchCompanyIndex(view.companies));
+    (view.companies === undefined || isWorkbenchCompanyIndex(view.companies)) &&
+    (view.aiClients === undefined || (Array.isArray(view.aiClients) && view.aiClients.length <= 100 && view.aiClients.every(client =>
+      client && typeof client.clientId === 'string' && client.clientId.length <= 100 &&
+      typeof client.name === 'string' && client.name.length <= 120 &&
+      Array.isArray(client.scopes) && client.scopes.every((scope: unknown) => scope === 'rooms:read' || scope === 'rooms:write') &&
+      Number.isFinite(client.connectedAt) && (client.lastUsedAt === null || Number.isFinite(client.lastUsedAt)) &&
+      (client.logo === undefined || (typeof client.logo === 'string' && client.logo.length <= 400000 && client.logo.startsWith('data:image/png;base64,'))))));
 };
 const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope; consumers: number; dirty: boolean }>();
 /** Workbench views the server answered this session; a stored view outside it may be stale. */
@@ -64,7 +71,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
     void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => {
       if (!owner.consumers) { owner.dirty = true; return; }
       if (stored) return mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
-        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
+        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
     });
   }
   if (workbenchStop || workbenchStarting) return release;
@@ -82,7 +89,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
         owner.dirty = false;
         void mobileSurfaceCache.fetch(owner.address, isWorkbenchView,
           () => readWorkbenchWithTimeout(owner.scope))
-          .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
+          .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
       }
     }
   }).then((stop) => { if (generation !== clientResetGeneration()) stop();

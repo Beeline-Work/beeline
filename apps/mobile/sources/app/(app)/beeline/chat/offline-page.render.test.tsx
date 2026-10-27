@@ -161,7 +161,7 @@ it('page-offline-1: failed initial load renders the production error screen and 
   expect(renderer.root.findAllByProps({ testID: 'room-hydration-error' }).length).toBeGreaterThan(
     0,
   );
-  expect(renderedText()).toContain('Could not load this conversation.');
+  expect(renderedText()).toContain('Couldn’t reach Beeline');
   recoverServer();
   const retry = renderer.root.findAll(
     (node: any) => node.type === 'Pressable' && node.props.onPress && text(node).includes('Retry'),

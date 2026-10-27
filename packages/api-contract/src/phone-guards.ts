@@ -1086,6 +1086,7 @@ function readReaction(value: unknown): MessageReactionView | null {
 export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
   const item = record(value);
   const author = readIdentity(item?.author);
+  const sourceClient = record(item?.sourceClient);
   if (!item || !hex64(item.id) || !author || !integer(item.createdAt)) return null;
   const presentation =
     item.presentation === 'message' ||
@@ -1129,6 +1130,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('reply', projectedReply),
     ...field('liveTurnId', typeof item.liveTurnId === 'string' ? item.liveTurnId : undefined),
     ...field('requestId', typeof item.requestId === 'string' ? item.requestId : undefined),
+    ...field('sourceClient', sourceClient && typeof sourceClient.id === 'string' && typeof sourceClient.name === 'string' && sourceClient.name.length <= 120 ? { id: sourceClient.id, name: sourceClient.name } : undefined),
     ...field('agentModel', typeof item.agentModel === 'string' ? item.agentModel : undefined),
     ...field('attachments', readList(item.attachments, readAttachment)),
     ...field(

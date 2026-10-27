@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -94,8 +95,7 @@ export class MonolithPhoneOperationError extends Error {
  * saying why reads as a control that does nothing.
  */
 export function phoneOperationFailureReason(error: unknown): string {
-  if (error instanceof MonolithPhoneOperationError) return error.code;
-  return error instanceof Error ? error.message : String(error);
+  return appErrorCopy(error);
 }
 
 export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(

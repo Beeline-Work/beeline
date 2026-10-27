@@ -23,8 +23,8 @@ it('keeps the Room mounted when the first voice render throws, reports it, and r
   try {
     await act(async () => { renderer = create(<><TextHeader /><RuntimeErrorBoundary scope="conversation" onError={end} onRetry={retry}><Voice /></RuntimeErrorBoundary></>); });
     expect(renderer.root.findByType('Header')).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'runtime-error-message' }).props.children).toBe(cause.message);
-    expect(renderer.root.findByProps({ testID: 'runtime-error-stack' }).props.children).toContain('VoiceBar');
+    expect(renderer.root.findByProps({ testID: 'runtime-error-message' }).props.children).toBe('Conversation mode could not start');
+    expect(renderer.root.findAllByProps({ testID: 'runtime-error-stack' })).toHaveLength(0);
     expect(report).toHaveBeenCalledWith('conversation', cause);
     expect(end).toHaveBeenCalledOnce();
     await act(async () => renderer.root.findByProps({ testID: 'runtime-error-retry' }).props.onPress());
@@ -38,7 +38,7 @@ it('keeps the Room mounted when the first voice render throws, reports it, and r
 it('shows a root error without app providers and keeps Retry operable', async () => {
   const retry = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<RuntimeErrorView scope="app" error={new Error('Root failed')} retry={retry} />); });
-  expect(renderer.root.findByProps({ testID: 'runtime-error-message' }).props.children).toBe('Root failed');
+  expect(renderer.root.findByProps({ testID: 'runtime-error-message' }).props.children).toBe('Beeline could not display this screen');
   await act(async () => renderer.root.findByProps({ testID: 'runtime-error-retry' }).props.onPress());
   expect(retry).toHaveBeenCalledOnce();
   await act(async () => renderer.unmount());

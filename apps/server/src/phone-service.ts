@@ -1,3 +1,4 @@
+import { disconnectMcp } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
 import { postStarterExplanation, postStarterGame } from './starter-onboarding.js';
 import { createStarterInvite } from './starter-invite.js';
@@ -410,6 +411,7 @@ interface MessageRow {
   root_message_id: string | null;
   request_id: string | null;
   turn_id: string | null;
+  source_client?: { id: string; name: string } | null;
   agent_model: string | null;
   activity: unknown[] | null;
   durable_fact: RoomViewMessage['durableFact'] | null;
@@ -785,6 +787,7 @@ function projectedMessage(
     createdAtMs: row.created_at.getTime(),
     ...(typeof row.version === 'number' ? { version: row.version } : {}),
     author,
+    ...(!row.deleted_at && row.source_client ? { sourceClient: row.source_client } : {}),
     presentation: row.deleted_at ? 'system' : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),
     ...(row.bookmarked ? { bookmarked: true } : {}),
@@ -4163,6 +4166,7 @@ export class PhoneService {
     name: Name,
     input: Input<Name>,
     viewerId: string,
+    sourceClient?: { id: string; name: string },
   ): Promise<Output<Name>> {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
@@ -4235,7 +4239,7 @@ export class PhoneService {
           this.github,
         )) as Output<Name>;
       case 'sendRoomMessage': {
-        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId);
+        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId, sourceClient);
         this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
         await observeOnboardingMessage(this.database, (input as Input<'sendRoomMessage'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
         return sent as Output<Name>;
@@ -4658,6 +4662,12 @@ export class PhoneService {
       case 'reportRunningUpdate':
         await this.reportUpdate(input as Input<'reportRunningUpdate'>, viewerId);
         return undefined as Output<Name>;
+      case 'disconnectAiClient': {
+        const clientId = (input as Input<'disconnectAiClient'>).clientId;
+        if (typeof clientId !== 'string' || !clientId || clientId.length > 100) throw new Error('Invalid client');
+        await disconnectMcp(this.database, viewerId, clientId);
+        return undefined as Output<Name>;
+      }
       case 'readWorkbench':
         return (await this.readWorkbench(
           input as Input<'readWorkbench'>,
@@ -5003,6 +5013,7 @@ export class PhoneService {
   private async sendMessage(
     input: Input<'sendRoomMessage'>,
     author: string,
+    sourceClient?: { id: string; name: string },
   ): Promise<Output<'sendRoomMessage'>> {
     if (!this.routingTransaction)
       return this.database.transaction((db) =>
@@ -5013,7 +5024,7 @@ export class PhoneService {
           this.sendPushTest,
           this.live,
           true,
-        ).sendMessage(input, author),
+        ).sendMessage(input, author, sourceClient),
       );
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
@@ -5044,8 +5055,8 @@ export class PhoneService {
            JOIN identities identity ON identity.id=$3
            WHERE room.id=$2 AND ($3=$6 OR workspace_member.identity_id IS NOT NULL)
          ), inserted AS (
-           INSERT INTO messages(id,room_id,author_id,text,attachments)
-           SELECT $1,$2,$3,$4,$5::jsonb FROM access
+           INSERT INTO messages(id,room_id,author_id,text,attachments,source_client)
+           SELECT $1,$2,$3,$4,$5::jsonb,$7::jsonb FROM access
            WHERE writable AND ($3=$6 OR NOT system_dm)
            ON CONFLICT(id) DO NOTHING
            RETURNING id,room_id,created_at
@@ -5067,7 +5078,7 @@ export class PhoneService {
            access.direct_participants IS NOT NULL direct,
            access.parent_id IS NOT NULL corner,access.author_kind,access.solo_agent
          FROM access`,
-        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID],
+        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, sourceClient ? JSON.stringify(sourceClient) : null],
       )).rows[0];
       if (!write) throw new Error('room access denied');
       database = new CornerAccessDatabase(database);
@@ -9408,7 +9419,17 @@ export class PhoneService {
         [viewerId],
       )
     ).rows[0];
+    const aiClients = (await this.database.query<{
+      client_id: string; name: string; logo: string | null; scope: string; connected_at: Date; last_used_at: Date | null;
+    }>(`SELECT c.client_id,app.name,app.logo,
+      (SELECT string_agg(DISTINCT permission,' ') FROM rooms_mcp_families f,unnest(string_to_array(f.scope,' ')) permission
+       WHERE f.client_id=c.client_id AND f.identity_id=c.identity_id AND f.revoked_at IS NULL) scope,c.connected_at,c.last_used_at FROM rooms_mcp_connections c
+      JOIN rooms_mcp_clients app ON app.id=c.client_id WHERE c.identity_id=$1 AND c.revoked_at IS NULL
+      AND EXISTS(SELECT 1 FROM rooms_mcp_families f WHERE f.client_id=c.client_id AND f.identity_id=c.identity_id AND f.revoked_at IS NULL)
+      ORDER BY c.connected_at DESC LIMIT 100`, [viewerId])).rows;
     const view: Output<'readWorkbench'> = {
+      aiClients: aiClients.map(c => ({ clientId: c.client_id, name: c.name, ...(c.logo ? { logo: c.logo } : {}), scopes: c.scope.split(' '),
+        connectedAt: seconds(c.connected_at), lastUsedAt: c.last_used_at ? seconds(c.last_used_at) : null })),
       workspaceId: input.workspaceId,
       ...(linkAccount ? { linkAccount } : {}),
       catalog: connectorCatalog(),
@@ -10803,6 +10824,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  'disconnectAiClient',
   'openComputerSession',
   'handbackComputerSession',
   'endComputerSession',

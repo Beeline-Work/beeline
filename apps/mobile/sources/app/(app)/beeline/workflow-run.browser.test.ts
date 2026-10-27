@@ -719,3 +719,19 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(finalPage.fontOf).toBe('13px SpaceGrotesk-Regular');
   }, 120_000);
 });
+
+
+it.each([
+  ['client refusal', 400, 'The timeout must be shorter.', 'The timeout must be shorter.'],
+  ['timeout', 504, 'Request timed out', 'Couldn’t reach Beeline'],
+])('R3: actual Workflow route preserves %s after loading fails', async (_kind, statusCode, message, expected) => {
+  const mobile = process.cwd();
+  const shims = workflowRunShims(mobile, { contract: {}, run: {} });
+  shims['@/sync/transport/monolith-operation'] = `export const monolithPhoneOperation = async () => { throw Object.assign(new Error(${JSON.stringify(message)}), {status: ${statusCode}}); };`;
+  const result = await runBrowserProof({
+    entry: path.join(mobile, 'scripts/workflow-run-proof.tsx'), mobile, shims,
+    width: 390, query: '?list',
+  });
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.result).text.join(' ')).toContain(expected);
+}, 30_000);

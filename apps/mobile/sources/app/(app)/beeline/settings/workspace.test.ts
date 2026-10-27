@@ -369,7 +369,7 @@ describe('Workspace Settings authority', () => {
     const renderer = await render();
 
     expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'workspace-settings-load-failed' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' }).props.title).toBe('Couldn’t reach Beeline');
     expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' })).toBeDefined();
     expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
       'Admin access required',
@@ -753,7 +753,7 @@ describe('Workspace Settings authority', () => {
 
     expect(navigation.push).not.toHaveBeenCalled();
     expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
-      'Could not join #fantastik: Error: workspace admins only',
+      'workspace admins only',
     );
   });
 
@@ -873,7 +873,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.busy).toBe(
       false,
     );
-    expect(() => renderer.root.findByProps({ accessibilityRole: 'alert' })).not.toThrow();
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.description).toBe('Couldn’t reach Beeline');
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
   });
 

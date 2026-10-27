@@ -351,9 +351,12 @@ export async function reportToCommander(
     // idle alert opts into waking the commander inside its corner, so its
     // reply stays with the corner's members instead of a parent Room
     // strangers read; every other report keeps the caller's return route.
+    // effective corner access: inherited parent-roster membership counts, and
+    // this caller (refreshCornerAttention) runs on the raw database, so name
+    // the effective view instead of relying on query rewriting.
     const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
       (await db.query(
-        'SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
+        'SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
         [origin, recipient],
       )).rowCount
       ? origin

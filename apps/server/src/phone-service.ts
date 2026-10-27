@@ -8431,6 +8431,12 @@ export class PhoneService {
         gone,
         DELETED_ACCOUNT_IDENTITY_ID,
       ]);
+      // Workspace deletion audits outlive both the workspace and its actor.
+      // Preserve the event while anonymising attribution like shared messages.
+      await database.query(`UPDATE workspace_deletions SET deleted_by=$2 WHERE deleted_by=ANY($1)`, [
+        gone,
+        DELETED_ACCOUNT_IDENTITY_ID,
+      ]);
 
       // DM Rooms nobody else relies on (person↔own-agent) go with the account;
       // the rest lose the deleted participant from their participant list.

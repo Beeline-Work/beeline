@@ -1,29 +1,19 @@
-// Daily feedback-triage check. Requires a built Body and installed harness CLIs.
+// Daily CI and feedback-triage check. Requires a built Body and installed harness CLIs.
 // It never reads/copies a login or sends a model prompt.
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
-import { AcpClient } from '../apps/body/dist/acp.js';
+import { checkAdapterSession } from '../apps/body/dist/adapter-session-check.js';
+import { MANAGED_ADAPTERS } from '../apps/body/dist/adapter-store.js';
 import { requireInstalledAgentProgram } from '../apps/body/dist/agent-command.js';
 
 const exec = promisify(execFile);
-const adapters = [
-  {
-    kind: 'codex',
-    package: '@agentclientprotocol/codex-acp',
-    binary: 'codex-acp',
-    override: 'CODEX_PATH',
-  },
-  {
-    kind: 'claude',
-    package: '@agentclientprotocol/claude-agent-acp',
-    binary: 'claude-agent-acp',
-    override: 'CLAUDE_CODE_EXECUTABLE',
-  },
-  { kind: 'pi', package: 'pi-acp', binary: 'pi-acp', override: 'PI_ACP_PI_COMMAND' },
-];
+const adapters = Object.entries(MANAGED_ADAPTERS).map(([kind, adapter]) => ({
+  kind, package: adapter.packageName, binary: adapter.binary,
+  override: kind === 'codex' ? 'CODEX_PATH' : kind === 'claude' ? 'CLAUDE_CODE_EXECUTABLE' : 'PI_ACP_PI_COMMAND',
+}));
 const root = await mkdtemp(join(tmpdir(), 'beeline-adapter-check-'));
 const results = [];
 try {
@@ -69,7 +59,6 @@ try {
       stage: 'version',
       program: null,
     };
-    let client;
     try {
       const published = await exec('npm', ['view', `${adapter.package}@latest`, 'version'], {
         env,
@@ -89,7 +78,7 @@ try {
           '--no-fund',
           '--ignore-scripts',
           '--omit=optional',
-          `${adapter.package}@latest`,
+          `${adapter.package}@${result.version}`,
         ],
         { env, timeout: 300_000, maxBuffer: 128 * 1024 },
       );
@@ -100,16 +89,15 @@ try {
       result.program = requireInstalledAgentProgram(adapter.kind, process.env);
       env[adapter.override] = result.program;
       result.stage = 'initialize';
-      client = new AcpClient({
-        agentCommand: join(prefix, 'node_modules/.bin', adapter.binary),
-        agentEnv: env,
-        inheritProcessEnv: false,
-        resourceScope: 'none',
+      result.negotiated = await checkAdapterSession({
+        command: join(prefix, 'node_modules/.bin', adapter.binary),
+        env,
+        scratchRoot: prefix,
+        allowUnauthenticatedSession: true,
+        onStage: stage => { result.stage = stage; },
+        onInitialized: negotiated => { result.negotiated = negotiated; },
       });
-      await client.start(30_000);
-      result.stage = 'session/new';
-      const session = await client.sessionNew({ cwd: home, timeoutMs: 30_000 });
-      if (!session.sessionId) throw new Error('session/new returned no session id');
+      result.sessionStart = result.negotiated.sessionStart;
       result.status = 'passed';
       result.stage = 'complete';
     } catch (error) {
@@ -118,7 +106,6 @@ try {
         .replace(/\s+/g, ' ')
         .slice(0, 2000);
     } finally {
-      if (client) await client.stop();
       await rm(prefix, { recursive: true, force: true });
     }
     results.push(result);

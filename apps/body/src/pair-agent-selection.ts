@@ -6,13 +6,12 @@ import {
   formatAdapterInstallCommand,
   latestAdapterInstallCommand,
   resolveAgentCommand,
-  runAdapterInstall,
+  installLatestAgentAdapter,
   type AdapterInstallCommand,
   type AgentCommand,
   type DetectedAgentCommand,
   type AgentKind,
 } from './agent-command.js';
-import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { unwrapPrompt } from './clack-support.js';
 
 type SelectionOutput = Pick<NodeJS.WritableStream, 'write'>;
@@ -52,7 +51,9 @@ async function installAdapter(
   install: AdapterInstallCommand,
   opts: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
-  await withAdapterInstallLock(() => runAdapterInstall(install, opts), opts.env);
+  const kind = install.args.at(-1)?.includes('codex-acp') ? 'codex'
+    : install.args.at(-1)?.includes('claude-agent-acp') ? 'claude' : 'pi';
+  await installLatestAgentAdapter(kind, opts);
 }
 
 function errorMessage(error: unknown): string {
@@ -106,10 +107,8 @@ export async function selectPairAgentCommand(opts: {
       output.write(`[beeline] using ${refreshed.kind} (${label}; adapter current)\n`);
       return refreshed;
     } catch (installError) {
-      throw new Error(
-        `Could not refresh the ${agent.kind} adapter: ${errorMessage(installError)}. ` +
-          `Install it with: ${formatAdapterInstallCommand(refresh)}`,
-      );
+      output.write(`[beeline] keeping ${agent.kind} adapter: ${errorMessage(installError)}\n`);
+      return agent;
     }
   };
 

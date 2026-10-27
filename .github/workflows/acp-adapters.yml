@@ -1,0 +1,31 @@
+name: ACP adapter compatibility
+
+on:
+  schedule:
+    - cron: '41 8 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acp-adapter-compatibility
+  cancel-in-progress: false
+
+jobs:
+  adapters:
+    name: Latest ACP session-start check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Build the production session-start check
+        run: npx turbo run build --filter=@beeline/body...
+      - name: Install harness programs in the disposable runner
+        run: npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest
+      - name: Check latest adapters without the runtime release-age delay
+        run: node scripts/check-acp-adapters.mjs

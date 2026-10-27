@@ -1,10 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, readdirSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { withAdapterInstallLock } from './adapter-install-lock.js';
+import { activeAdapterCommand } from './adapter-store.js';
+import type { AdapterUpdateOptions } from './adapter-update.js';
 import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
 
 export const AGENT_KINDS = [
@@ -38,7 +38,7 @@ export interface AgentCommand {
 
 export interface AdapterInstallCommand {
   command: 'npm';
-  args: ['install', '-g', string];
+  args: ['install', ...string[]];
 }
 
 export type DetectedAgentCommand =
@@ -143,77 +143,17 @@ export async function runAdapterInstall(
   });
 }
 
-/** Refresh a separable ACP adapter before resolving the binary that will use it. */
+/** Install beside the working adapter and promote only after session-start validation. */
 export async function installLatestAgentAdapter(
   kind: AgentKind,
-  opts: {
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    stdio?: 'inherit' | 'ignore';
-    readInstalledVersion?: (packageName: string) => Promise<string | undefined>;
-    readLatestVersion?: (packageName: string) => Promise<string>;
-    install?: (command: AdapterInstallCommand) => Promise<void>;
-  } = {},
+  opts: AdapterUpdateOptions = {},
 ): Promise<boolean> {
-  const install = latestAdapterInstallCommand(kind);
-  if (!install) return false;
-  const packageName = install.args[2].slice(0, -'@latest'.length);
-  return withAdapterInstallLock(async () => {
-    let installed: string | undefined;
-    let latest: string;
-    try {
-      installed = await (
-        opts.readInstalledVersion ?? ((name) => installedAdapterVersion(name, opts.env))
-      )(packageName);
-      latest = await (
-        opts.readLatestVersion ?? ((name) => publishedAdapterVersion(name, opts.env))
-      )(packageName);
-      if (!latest.trim()) return false;
-    } catch {
-      // An unavailable registry or npm root must not turn every daemon start
-      // into a destructive reinstall of a working adapter.
-      return false;
-    }
-    if (installed === latest.trim()) return false;
-    await (opts.install ?? ((command) => runAdapterInstall(command, opts)))(install);
-    return true;
-  }, opts.env);
+  if (kind !== 'codex' && kind !== 'claude' && kind !== 'pi') return false;
+  const { updateAgentAdapter } = await import('./adapter-update.js');
+  return updateAgentAdapter(kind, opts);
 }
 
 const execFileAsync = promisify(execFile);
-
-async function npmOutput(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const { stdout } = await execFileAsync('npm', args, {
-    env,
-    timeout: 3_000,
-    maxBuffer: 16_384,
-  });
-  return stdout.trim();
-}
-
-async function installedAdapterVersion(
-  packageName: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | undefined> {
-  const root = await npmOutput(['root', '-g'], env);
-  if (!root) throw new Error('npm global root is empty');
-  try {
-    const contents = await readFile(resolve(root, packageName, 'package.json'), 'utf8');
-    const version = (JSON.parse(contents) as { version?: unknown }).version;
-    if (typeof version !== 'string') throw new Error('installed adapter version is missing');
-    return version;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-}
-
-async function publishedAdapterVersion(
-  packageName: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string> {
-  return npmOutput(['view', packageName, 'version'], env);
-}
 
 /** Older user CLIs can reject flags required by the latest adapter. */
 export async function explainAgentProgramFailure(error: unknown, env: NodeJS.ProcessEnv): Promise<unknown> {
@@ -423,7 +363,7 @@ export function resolveAgentCommand(opts: {
       'Codex CLI not found. Install it with `npm install -g @openai/codex@latest`, then retry with `--agent codex`.',
     );
     const command = requireExecutable(
-      'codex-acp',
+      activeAdapterCommand('codex', env) ?? 'codex-acp',
       env,
       cwd,
       `Codex ACP adapter not found. Install it with \`${adapterInstallHint('codex')}\`, then retry with \`--agent codex\`.`,
@@ -439,7 +379,7 @@ export function resolveAgentCommand(opts: {
       'Claude Code not found. Install Claude Code, then retry with `--agent claude`.',
     );
     const command =
-      executableOnPath('claude-agent-acp', env) ?? executableOnPath('claude-code-acp', env);
+      activeAdapterCommand('claude', env) ?? executableOnPath('claude-agent-acp', env) ?? executableOnPath('claude-code-acp', env);
     if (!command) {
       throw new Error(
         `Claude Code needs an ACP adapter. Install it with \`${adapterInstallHint('claude')}\`, then retry with \`--agent claude\`.`,
@@ -476,7 +416,7 @@ export function resolveAgentCommand(opts: {
       'Pi coding agent not found. Install it with `npm install -g @mariozechner/pi-coding-agent@latest`, then retry with `--agent pi`.',
     );
     const command = requireExecutable(
-      'pi-acp',
+      activeAdapterCommand('pi', env) ?? 'pi-acp',
       env,
       cwd,
       `Pi needs an ACP adapter. Install it with \`${adapterInstallHint('pi')}\`, then retry with \`--agent pi\`.`,

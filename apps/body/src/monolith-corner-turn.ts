@@ -105,7 +105,7 @@ import {
   deviceGrantResumePrompt,
   ROOM_PROMPT_BACKSTOP_MS,
 } from './monolith-room-turn.js';
-import type { BodyConfig } from './config.js';
+import { bodyAgentCommand, type BodyConfig } from './config.js';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
@@ -1040,7 +1040,7 @@ export class MonolithCornerTurnLoop {
           }),
         })
       : {};
-    const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
+    const command = bodyAgentCommand(this.options.config);
     const harnessLabel = harnessIdentityLabel({
       kind: this.options.config.agentKind,
       command,

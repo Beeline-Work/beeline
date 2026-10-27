@@ -99,7 +99,7 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
-import type { BodyConfig } from './config.js';
+import { bodyAgentCommand, type BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
@@ -1216,7 +1216,7 @@ export class MonolithRoomTurnLoop {
           }),
         })
       : {};
-    const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
+    const command = bodyAgentCommand(this.options.config);
     startupStep('home');
     const harnessLabel = harnessIdentityLabel({
       kind: this.options.config.agentKind,

@@ -7,11 +7,11 @@ import { convergeMachine, prepareMachineRelease } from './recovery.js';
  * With no helper running, native convergence starts it and awaits serving agents.
  */
 import pc from 'picocolors';
+import type { AdapterUpdateOptions } from './adapter-update.js';
 import {
   formatAdapterInstallCommand,
   installLatestAgentAdapter,
   latestAdapterInstallCommand,
-  type AdapterInstallCommand,
   type AgentKind,
 } from './agent-command.js';
 import { helperStatusLines } from './helper-status.js';
@@ -37,13 +37,10 @@ import {
   resolveManifestUrl,
 } from './self-update-manifest.js';
 
-interface RuntimeAdapterRefreshOptions {
+interface RuntimeAdapterRefreshOptions extends AdapterUpdateOptions {
   env?: NodeJS.ProcessEnv;
   configPaths?: string[];
   readRuntime?: (path: string) => Promise<{ agentKind?: AgentKind }>;
-  install?: (command: AdapterInstallCommand) => Promise<void>;
-  readInstalledVersion?: (packageName: string) => Promise<string | undefined>;
-  readLatestVersion?: (packageName: string) => Promise<string>;
   log?: (line: string) => void;
 }
 
@@ -71,14 +68,7 @@ export async function refreshRuntimeHarnessAdapters(
     if (!command) continue;
     log(`[beeline] refreshing ${kind} adapter: ${formatAdapterInstallCommand(command)}`);
     try {
-      await installLatestAgentAdapter(kind, {
-        ...(options.env ? { env: options.env } : {}),
-        ...(options.install ? { install: options.install } : {}),
-        ...(options.readInstalledVersion
-          ? { readInstalledVersion: options.readInstalledVersion }
-          : {}),
-        ...(options.readLatestVersion ? { readLatestVersion: options.readLatestVersion } : {}),
-      });
+      await installLatestAgentAdapter(kind, options);
     } catch (error) {
       log(
         `[beeline] ${kind} adapter refresh failed; keeping the installed copy (${error instanceof Error ? error.message : String(error)})`,

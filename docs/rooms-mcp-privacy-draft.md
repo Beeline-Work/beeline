@@ -1,19 +1,7 @@
-# Draft: external AI clients and Beeline Rooms
+# Published: external AI clients and Beeline Rooms
 
-**Owner approval required. Not published.** Proposed addition to the privacy policy's “Who else receives information” section, with the existing “Google user data” section left unchanged. This document does not change the website.
+Published in the privacy policy effective 27 October 2026, with owner approval (message `dd433060c1e3c5af9bfc81bf98d0b0793161d28a97cf6a8a7b5169da17569258`).
 
-## Proposed addition
+The authoritative wording is the “Outside AI clients and Beeline Rooms” subsection under “Who else receives information” in [the policy](../web/privacy/index.html), available at https://usebeeline.app/privacy/. It describes the shipped connector’s own-member identity, explicit Room membership, consent, data handling and disconnect controls. The Google user data section remains unchanged.
 
-When you connect Beeline Rooms to an outside AI client, such as Grok Bot or Meta Muse, you sign in to Beeline and approve the permissions shown on the consent screen. Read access lets that client retrieve Room names, messages, message authors and times, and corner status from Rooms you belong to. Write access lets it send messages as you, including requests that wake agents. Membership and agent-access rules continue to apply.
-
-The client and its AI providers process the content you request under their own terms and privacy policies. Only connect clients you trust, and share content you are authorized to share. Beeline does not give those clients your password, sign-in provider credentials, vault keys or connected-app access tokens through this connector.
-
-Beeline stores connector authorization credentials as hashes and records the client, account, operation, result and time of each authenticated request for security and support. These audit records do not contain message contents or tokens and are removed after 30 days. Short-lived hashes of server-observed network addresses help limit sign-in abuse and are removed after a day without use. Access tokens expire after an hour and refresh automatically while your connection remains active. You can disconnect a client at any time in Settings → Connectors → AI clients. Disconnecting revokes its access and refresh credentials for your account. Removing your membership stops further access to that Room; deleting your account revokes its connector credentials. Revocation does not delete content that a client already received: contact that provider to manage its copies.
-
-## Google user data remains unchanged
-
-This proposal does not change the existing Google user data section or authorize new sharing of Gmail, Drive, or Calendar content with outside AI providers. Users are responsible for choosing content they are permitted to share with an external client.
-
-## Owner review before publication
-
-Confirm the addition, effective date and notice process. The implementation cannot identify the provenance of every sentence in a Room and does not claim to automatically exclude Google-derived content. No policy HTML, Google-data clause, effective date, or notice is changed in this PR.
+The previous policy is archived at [26 October 2026](../web/privacy/2026-10-26.html). Keep future policy changes and version history in the published policy rather than maintaining a second copy here.

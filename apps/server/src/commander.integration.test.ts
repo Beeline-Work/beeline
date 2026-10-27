@@ -456,7 +456,7 @@ it('Reproduction quiet-stale: drops an unreachable notice after a turn has run s
   console.info('Demonstrated quiet-stale: worker ran after failed wake; commander receives no unreachable notice');
 });
 
-it('allows one new unreachable notice after a worker turn ends the previous failure span', async () => {
+it('allows one new unreachable notice after worker recovery and the automatic report cooldown', async () => {
   const opened = await open();
   const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, pending.id, pending);
@@ -466,6 +466,7 @@ it('allows one new unreachable notice after a worker turn ends the previous fail
     (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
     SELECT 'next-failed-wake',room_id,agent_id,source_message_id,'next-failed-wake',action,reason,root_command_id,root_source_message_id,agent_depth
     FROM agent_commands WHERE id=$1 RETURNING *`, [pending.id])).rows[0]!;
+  await db.query(`UPDATE automatic_report_wakes SET next_at=now()-interval '1 second' WHERE corner_id=$1`,[opened.cornerId]);
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(2);

@@ -1,3 +1,4 @@
+import { flushStartupWakeBackoffs, startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { NotificationWork } from './notification-work.js';
 import type { LiveHub } from './live.js';
 import type { SqlDatabase } from './database.js';
@@ -39,6 +40,7 @@ async function flushCommanderWakes(
       `SELECT command.id,command.private_payload->>'fromRoomId' from_room
      FROM agent_commands command
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'
+       AND ${startupWakeAllowedSql('command')}
        AND (command.wake_after<=now() OR ($4::boolean AND command.wake_after IS NULL))
        AND ($3::text[] IS NULL OR command.id=ANY($3::text[]))
      ORDER BY command.inbox_sequence FOR UPDATE`,
@@ -163,6 +165,7 @@ async function interruptForSteers(db: SqlDatabase, roomId: string, agentId: stri
     `SELECT command.id FROM agent_commands command
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'
        AND command.action IN ('input','resume') AND command.wake_after IS NULL AND NOT command.avatar_job
+       AND ${startupWakeAllowedSql('command')}
        AND command.created_offline IS DISTINCT FROM TRUE
        AND NOT (command.reason='corner_brief_revision' AND command.wake_context IS NOT NULL
          AND command.wake_context=$4::jsonb)
@@ -205,6 +208,7 @@ async function interruptForSteers(db: SqlDatabase, roomId: string, agentId: stri
 
 /** Durable deadlines are recovered on startup and serviced by the server's existing tick. */
 export async function flushDueCommanderWakes(db: SqlDatabase): Promise<number> {
+  await flushStartupWakeBackoffs(db);
   const recipients = (
     await db.query<{ room_id: string; agent_id: string }>(
       `SELECT DISTINCT command.room_id,command.agent_id FROM agent_commands command
@@ -269,7 +273,7 @@ export class CommanderWakeDeadlines {
     await flushDueCommanderWakes(this.db);
     const rows = (
       await this.db.query<{ room_id: string; agent_id: string }>(
-        `SELECT DISTINCT room_id,agent_id FROM agent_commands WHERE state='pending' AND wake_after IS NOT NULL`,
+        `SELECT DISTINCT room_id,agent_id FROM agent_commands WHERE state='pending' AND (wake_after IS NOT NULL OR startup_wake_after IS NOT NULL)`,
       )
     ).rows;
     for (const row of rows) await this.refresh(row.room_id, row.agent_id);
@@ -295,7 +299,7 @@ export class CommanderWakeDeadlines {
     const key = `${roomId}:${agentId}`;
     const row = (
       await this.db.query<{ due: Date | null }>(
-        `SELECT min(command.wake_after) due FROM agent_commands command
+        `SELECT min(GREATEST(command.wake_after,command.startup_wake_after)) due FROM agent_commands command
          JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
          JOIN effective_memberships member ON member.room_id=command.room_id AND member.identity_id=command.agent_id AND member.removed_at IS NULL
          WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'`,

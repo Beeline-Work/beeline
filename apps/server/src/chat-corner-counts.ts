@@ -130,7 +130,7 @@ export function cornerFactsSql(viewerExpr: string): {
 }
 
 /** A running turn retains the review role recorded by its dispatch. */
-export function cornerWorkSql(): string {
+export function cornerWorkSql(ignoreCommander = false): string {
   const reviewerTurn = `(t.agent_id=ANY(array_remove(ARRAY[${cornerReviewerSql('c')}]||${cornerReviewerFallbacksSql('c')},NULL))
     OR EXISTS(SELECT 1 FROM agent_commands dispatched
       LEFT JOIN messages source ON source.id=dispatched.source_message_id
@@ -143,6 +143,7 @@ export function cornerWorkSql(): string {
     LEFT JOIN LATERAL (WITH turns AS MATERIALIZED (SELECT ${reviewerTurn} review,
         COALESCE(t.generation_id,'') LIKE 'pending:%' pending
         FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+          ${ignoreCommander ? 'AND t.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND (COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
             OR t.created_at>now()-interval '30 seconds'))
       SELECT COALESCE(bool_or(pending OR NOT review),false) worker_active,

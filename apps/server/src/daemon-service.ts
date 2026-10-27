@@ -1,3 +1,4 @@
+import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
 import { postStarterWelcome } from './starter-onboarding.js';
 import { visibleMessageSql } from './read-cursor.js';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
@@ -4851,6 +4852,7 @@ export class DaemonService {
         });
       }
       await this.persistTurnTrace(database, input, agentId);
+      if (!input.heartbeat) await recordStartupWakeOutcome(database, input, agentId);
       if (input.status === 'failed') {
         silence = await this.inscribeTurnFailure(
           database,

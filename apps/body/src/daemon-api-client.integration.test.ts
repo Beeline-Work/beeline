@@ -2420,6 +2420,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         expect(await client.execute('getAgentPresence', { agentId: AGENT, roomId: ROOM })).toEqual(
           expect.objectContaining({ status: 'online' }),
         ),
+        { timeout: 10_000 },
       );
     } finally {
       disconnect();

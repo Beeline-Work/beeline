@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import {
   createAgentCommand,
+  refuseVerdictedReviewerWake,
   repairReviewerCornerMembership,
   nextAgentDepth,
   type CommandRow,
@@ -380,7 +381,14 @@ export async function reportToCommander(
       retainDepth: true,
       reason: 'report',
     });
-    if (!queued) throw new CommandRefusalError('commander could not receive report', 409);
+    if (!queued) {
+      const head = typeof command?.review_context?.headSha === 'string' ? command.review_context.headSha : undefined;
+      // The verdict was routed back to the reviewer who already has this head.
+      // Skip the wake instead of failing the report.
+      if (head && await refuseVerdictedReviewerWake(db, wakeRoom, recipient, head))
+        return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
+      throw new CommandRefusalError('commander could not receive report', 409);
+    }
   } else {
     // The existing attention index follows this transport provenance; no public relay is created.
     if (origin && incoming?.private_payload)

@@ -408,7 +408,11 @@ export const REVIEWER_DISPATCH_REASONS = [
   'report',
 ] as const;
 
-/** A repair handback is an order or tag whose purpose is `repair`. It is not a repeat review. */
+/**
+ * A repair handback (`purpose: repair`) and an ordinary tag or order are not
+ * another review. They carry the current pull request only as a handoff note.
+ * A verdict walking back (`purpose: verdict`) is the repeat.
+ */
 export function reviewerDispatchCarriesHead(
   reason: string,
   sourceKind: string | undefined,
@@ -416,7 +420,7 @@ export function reviewerDispatchCarriesHead(
 ): boolean {
   if (reason === 'corner_review_dispatch') return true;
   if (reason === 'subscribed_event' && sourceKind === 'check-passed') return true;
-  if (!reviewContext || reviewContext.purpose === 'repair') return false;
+  if (reviewContext?.purpose !== 'verdict') return false;
   return reason === 'agent_tag' || reason === 'order' || reason === 'report';
 }
 
@@ -460,8 +464,7 @@ export async function refuseVerdictedReviewerWake(
        AND (
          command.reason='corner_review_dispatch'
          OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed')
-         OR (command.reason IN ('agent_tag','order','report')
-           AND command.review_context->>'purpose' IS DISTINCT FROM 'repair')
+         OR (command.reason='report' AND command.review_context->>'purpose'='verdict')
        )
        AND COALESCE(command.review_context->>'headSha', source.system_event->'object'->>'headSha')=$2
        AND ($3::text IS NULL OR COALESCE(command.review_context->>'pullRequest',$3::text)=$3::text)

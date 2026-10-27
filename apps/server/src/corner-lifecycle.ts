@@ -1001,7 +1001,6 @@ async function queueReviewerCommand(
   db: SqlDatabase,
   input: Parameters<typeof createAgentCommand>[1],
 ): Promise<{ command?: CommandRow; error?: string; blocked?: boolean }> {
-  if (await reviewerStandingFailure(db, input.agentId)) return { blocked: true };
   // The wake names the brief revision current at dispatch, so a reviewer
   // never reviews against a superseded one.
   const brief = (
@@ -1021,7 +1020,9 @@ async function queueReviewerCommand(
   const rawPull = context?.pullRequest;
   const pullRequest = typeof rawPull === 'number' ? rawPull
     : typeof rawPull === 'string' && /^\d+$/.test(rawPull) ? Number(rawPull) : null;
-  if (headSha && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest))
+  // Same return as a standing failure: a verdicted head is not a lost wake.
+  if (await reviewerStandingFailure(db, input.agentId) ||
+      (headSha !== undefined && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest)))
     return { blocked: true };
   const prior = (await db.query<{ text: string }>(
     `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id

@@ -1352,22 +1352,37 @@ describe('corner message attribution', () => {
     )).rows[0]!.id;
     const parent = (await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [review!.id])).rows[0];
     const delivered: string[] = [];
-    for (const reason of REVIEWER_DISPATCH_REASONS) {
+    // Every path that asks for a review of this head. A chat tag or order is
+    // not one of them: the reviewer still has to receive ordinary work.
+    const reviewPaths = REVIEWER_DISPATCH_REASONS.filter(reason => reason !== 'agent_tag' && reason !== 'order');
+    for (const reason of reviewPaths) {
       const created = await createAgentCommand(db, {
         roomId: C,
         agentId: B,
         sourceMessageId: reason === 'subscribed_event' || reason === 'corner_review_dispatch' ? sourceId : null,
         reason,
         ...(reason === 'report' ? { parent, reportSource: parent } : {}),
-        ...(reason === 'report' || reason === 'order' ? {
+        ...(reason === 'report' ? {
           privatePayload: {
             kind: reason, authorId: A, fromRoomId: C,
-            text: reason === 'report' ? 'failed: FAIL: same head again.' : 'Review the same head again',
+            text: 'failed: FAIL: same head again.',
           },
         } : {}),
       });
       if (created && !verdicted.has(created.id)) delivered.push(`${reason}:${created.id}`);
     }
+    for (const reason of ['agent_tag', 'order'] as const) {
+      const created = await createAgentCommand(db, {
+        roomId: C, agentId: B, sourceMessageId: null, reason,
+        ...(reason === 'order' ? {
+          privatePayload: { kind: reason, authorId: A, fromRoomId: C, text: 'Release the hold on this head' },
+        } : {}),
+      });
+      expect(created?.reason).toBe(reason);
+      verdicted.add(created!.id);
+    }
+    expect(reviewerDispatchCarriesHead('agent_tag', undefined, { headSha: head, pullRequest: 91 })).toBe(false);
+    expect(reviewerDispatchCarriesHead('report', undefined, { purpose: 'verdict', headSha: head })).toBe(true);
     await routeSystemCommand(db, { roomId: C, sourceMessageId: sourceId, kind: 'check-passed', targets: [B] });
     await advanceCorner(db, C, { kind: 'checks', result: 'passing', sourceMessageId: sourceId });
     await reconcileConfiguredCornerReviewers(db, R);

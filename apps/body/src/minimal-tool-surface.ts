@@ -641,7 +641,12 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX}
       },
       "required": ["scope", "query"],
-      "additionalProperties": false
+      "additionalProperties": false,
+      // Memory caps queries at 500 UTF-8 bytes; 125 code points always fit.
+      "anyOf": [
+        {"properties": {"scope": {"const": "history"}}},
+        {"properties": {"scope": {"const": "memory"}, "query": {"maxLength": 125}}}
+      ]
     }
   },
   {

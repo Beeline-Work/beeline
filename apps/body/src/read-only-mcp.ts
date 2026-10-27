@@ -2761,8 +2761,9 @@ function advertisedAgentTool(name: string): ToolDefinition {
 }
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
-  if (tool.name === 'search' && typeof args.query === 'string' && [...args.query].length > 125) {
-    throw new Error('search: query must be at most 125 characters (500 UTF-8 bytes)');
+  if (tool.name === 'search' && args.scope === 'memory' && typeof args.query === 'string'
+    && [...args.query].length > 125) {
+    throw new Error('search: memory query must be at most 125 characters (500 UTF-8 bytes)');
   }
   if (!Check(tool.inputSchema, args)) {
     if (tool.name === 'search') {

@@ -46,10 +46,10 @@ describe('Room participant roster layout', () => {
     expect(rowSource).not.toContain("', offline'");
   });
 
-  it('reads in the Members page vocabulary: one word over one counted head, roles from the type scale', () => {
-    // The sheet title says Members once; the head below it keeps only the count and +.
+  it('reads in the Members page vocabulary: one title over the list, roles from the type scale', () => {
+    // The title owns Add; there is no redundant section head.
     expect(source).toMatch(/rosterModalTitle}>{MEMBERS_LABEL}</);
-    expect(source).toMatch(/<RoomListSectionHeader\s+title=""\s+count={members.length}/);
+    expect(source).not.toContain('RoomListSectionHeader');
     // One section, so no per-kind heads are left to drift apart.
     expect(source).not.toContain('room-roster-people-head');
     expect(source).not.toContain('room-roster-agents-head');

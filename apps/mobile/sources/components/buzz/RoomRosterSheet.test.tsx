@@ -1,4 +1,3 @@
-import { RoomListSectionHeader } from './RoomListSectionHeader';
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 import * as React from 'react';
@@ -194,9 +193,7 @@ describe('RoomRosterSheet', () => {
     'shows shared human-role and agent-model rows inside a %s',
     (_surface, parentChannelId) => {
       const renderer = render(sheet({ parentChannelId }));
-      expect(
-        renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-      ).toEqual('');
+      expect(renderer.root.findAllByProps({ testID: 'room-roster-members-head' })).toHaveLength(0);
       expect(renderer.root.findAllByProps({ testID: 'room-roster-people-head' })).toHaveLength(0);
       expect(renderer.root.findAllByProps({ testID: 'room-roster-agents-head' })).toHaveLength(0);
 
@@ -270,12 +267,9 @@ describe('RoomRosterSheet', () => {
     expect(onRemove).toHaveBeenCalledWith(ox);
   });
 
-  it('counts the viewer into the one Members section and keeps agents after the people', () => {
+  it('includes the viewer without a counted head and keeps agents after the people', () => {
     const renderer = render(sheet({ members: [viewer, ana, ox] }));
-    expect(
-      renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-    ).toEqual('');
-    expect(renderer.root.findByType(RoomListSectionHeader).props.count).toBe(3);
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-members-head' })).toHaveLength(0);
 
     expect(rowIds(renderer)).toEqual([
       `room-roster-person-${VIEWER}`,
@@ -308,11 +302,8 @@ describe('RoomRosterSheet', () => {
     const renderer = render(sheet({ members: crowd }));
     const visible = () => rowIds(renderer);
 
-    // The head counts all thirteen even while ten are on screen.
-    expect(
-      renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-    ).toEqual('');
-    expect(renderer.root.findByType(RoomListSectionHeader).props.count).toBe(13);
+    // The list holds overflow without adding a counted head.
+    expect(renderer.root.findAllByProps({ testID: 'room-roster-members-head' })).toHaveLength(0);
     expect(visible()).toHaveLength(10);
     expect(visible().at(-1)).toBe('room-roster-person-person-9');
 
@@ -323,7 +314,7 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-roster-more' })).toHaveLength(0);
   });
 
-  it('renders one + on the Members head that opens the one picker', () => {
+  it('renders one labelled Add beside Close that opens the one picker', () => {
     const onAddMembers = vi.fn();
     const renderer = render(sheet({ onAddMembers }));
 
@@ -331,23 +322,17 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
     const add = renderer.root.findByProps({ testID: 'room-roster-add-members' });
     expect(add.props.accessibilityLabel).toBe('Add members');
-    {
-      const box = add.props.style({ pressed: false })[0];
-      expect(box.height).toBeGreaterThanOrEqual(44);
-      expect(box.width).toBeGreaterThanOrEqual(44);
-    }
+    expect(add.props.label).toBe('Add');
     act(() => add.props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the head on an empty Room so a manager can still add into it (C83)', () => {
+  it('keeps Add on an empty Room so a manager can still add into it (C83)', () => {
     // The Room header's `+` is gone, so an agentless Room reaches an agent
-    // only through this head. It stays a manager-of-a-top-level-Room affair.
+    // through the sheet heading. It stays a manager-of-a-top-level-Room affair.
     const onAddMembers = vi.fn();
     const empty = render(sheet({ onAddMembers, members: [] }));
-    const head = empty.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!;
-    expect(head.props.children).toEqual('');
-    expect(empty.root.findByType(RoomListSectionHeader).props.count).toBe(0);
+    expect(empty.root.findAllByProps({ testID: 'room-roster-members-head' })).toHaveLength(0);
     act(() => empty.root.findByProps({ testID: 'room-roster-add-members' }).props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);
 
@@ -358,7 +343,7 @@ describe('RoomRosterSheet', () => {
     }
   });
 
-  it('shows no + on the Members head to a viewer who cannot manage members', () => {
+  it('shows no Add in the heading to a viewer who cannot manage members', () => {
     const renderer = render(sheet({ canManage: false }));
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-members' })).toHaveLength(0);
   });

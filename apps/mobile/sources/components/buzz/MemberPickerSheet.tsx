@@ -2,6 +2,7 @@ import { MemberRosterRow } from './MemberRosterRow';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HULL_SHEET_INSET } from '@/buzz/hull-sheet-layout';
 import { Typography } from '@/constants/Typography';
 import { HullActionSheetModal } from './HullActionSheet';
 import { IdentityMark } from './IdentityMark';
@@ -145,6 +146,8 @@ export function MemberPickerSheet({
           const isChecked = checked.has(candidate.pubkey);
           return (
             <MemberRosterRow
+              inset="sheet"
+              density="sheet"
               kind={candidate.kind === 'agent' ? 'agent' : 'human'}
               pubkey={candidate.pubkey}
               name={candidate.name}
@@ -245,7 +248,7 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
-    addInset: { paddingHorizontal: hull.space.md, paddingTop: hull.space.sm },
+    addInset: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: hull.space.sm },
     error: {
       ...Typography.default(),
       ...hull.type.meta,

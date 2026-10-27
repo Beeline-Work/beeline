@@ -10,12 +10,20 @@ const header = readFileSync(new URL('./RoomListSectionHeader.tsx', import.meta.u
 const sidebar = readFileSync(new URL('../SidebarView.tsx', import.meta.url), 'utf8');
 
 describe('Shared section add control', () => {
-  it('keeps the Members and roster add actions on the common heading', () => {
+  it('keeps Workspace Members add actions on the common section heading', () => {
     expect(members).toContain('<RoomListSectionHeader');
     expect(members).toContain('actionAccessibilityLabel="Add people"');
     expect(members).toContain('actionAccessibilityLabel="Add agents"');
-    expect(roster).toContain('<RoomListSectionHeader');
-    expect(roster).toContain('actionAccessibilityLabel="Add members"');
+  });
+  it('puts the Room add action beside Close without a separate count heading', () => {
+    expect(roster).not.toContain('<RoomListSectionHeader');
+    const heading = roster.slice(roster.indexOf('<View style={styles.rosterModalHeading}>'), roster.indexOf('<ScrollView'));
+    expect(heading).toContain('{canAddMembers && (');
+    expect(heading).toContain('label="Add"');
+    expect(heading).toContain('accessibilityLabel="Add members"');
+    expect(heading).toContain('onPress={onAddMembers}');
+    expect(heading).toContain('onPress={onClose}');
+    expect(heading).not.toContain('members.length');
   });
   it("uses a full phone target and preserves the desktop tap line", () => {
     const target = header.match(/sectionHeaderAction:\s*\{[\s\S]*?\n\s*\},/);

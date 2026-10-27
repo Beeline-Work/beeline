@@ -38,16 +38,15 @@ async function discovered(corner: boolean): Promise<string[]> {
   return [...new Set([...appsIn(appTool.description), ...connect.capabilities])].sort();
 }
 
-beforeEach(() => {
-  // No Room is eligible for onboarding cards here; the onboarding tests cover eligibility.
-  vi.stubGlobal('fetch', async () => Response.json({ repositoryOnboarding: false }));
-});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
 
-describe.each(PLACES)('$name', ({ corner, surface, commandReason }) => {
+describe.each(PLACES.flatMap(place => [false, true].map(repositoryOnboarding => ({ ...place, repositoryOnboarding }))))('$name onboarding=$repositoryOnboarding', ({ corner, surface, commandReason, repositoryOnboarding }) => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', async () => Response.json({ repositoryOnboarding }));
+  });
   it('discovery offers only Beeline apps that answer there, and every app that answers is offered', async () => {
     useEnvironment(corner);
     const offered = await discovered(corner);
@@ -64,7 +63,7 @@ describe.each(PLACES)('$name', ({ corner, surface, commandReason }) => {
   it('states the discovered apps in one short block of the turn prompt', async () => {
     useEnvironment(corner);
     const offered = await discovered(corner);
-    const prompt = assembleTurnPrompt({ surface, task: { body: 'Check the deploy.', commandReason } });
+    const prompt = assembleTurnPrompt({ surface, onboarding: repositoryOnboarding, task: { body: 'Check the deploy.', commandReason } });
     const block = prompt.text.split('\n\n').find(paragraph => paragraph.startsWith('Works here ('));
     expect(block).toBeDefined();
     expect(Buffer.byteLength(block!)).toBeLessThanOrEqual(260);

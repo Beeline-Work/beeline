@@ -1842,7 +1842,7 @@ export class MonolithRoomTurnLoop {
                 throw new Error('Room checkout refresh failed before this turn');
               }
               const checkout = this.turnCheckout;
-              const [conversation, roster, delivered, corners, institutionalContext] =
+              const [conversation, roster, delivered, corners, institutionalContext, onboarding] =
                 await trace.measure('context-fetch', () =>
                   Promise.all([
                     api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
@@ -1852,6 +1852,7 @@ export class MonolithRoomTurnLoop {
                     awaitInstitutionalContext(institutionalContextFetch, (message) =>
                       console.warn(`[thin-core] Room ${this.options.roomId}: ${message}`),
                     ),
+                    this.repositoryState().then(state => state.repositoryOnboarding === true, () => false),
                   ]),
                 );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
@@ -1935,6 +1936,7 @@ export class MonolithRoomTurnLoop {
                   memory: institutionalContext.text,
                   corners: openCorners,
                   closedCorners,
+                  onboarding,
                   task: {
                     fromName: inboxItemAuthorName(item, names),
                     commandReason: this.commandContext.current?.reason,

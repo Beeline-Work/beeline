@@ -1362,12 +1362,11 @@ export const SILENT_TOOL: ToolDefinition = {
 };
 /**
  * The Beeline apps app_tool serves in a place. Corner apps work only in a
- * corner. Onboarding is left out: it joins only while the server marks the
- * Room eligible, and connect reports it then.
+ * corner. Onboarding joins only while the server marks the Room eligible.
  */
-export function placeBeelineApps(cornerTurn: boolean): string[] {
+export function placeBeelineApps(cornerTurn: boolean, onboarding = false): string[] {
   return Object.keys(CAPABILITY_ROUTES)
-    .filter(capability => capability !== 'onboarding' && (capability !== 'corner_app' || cornerTurn))
+    .filter(capability => (capability !== 'onboarding' || onboarding) && (capability !== 'corner_app' || cornerTurn))
     .map(capability => `beeline:${capability}`);
 }
 /** app_tool names only the Beeline apps that work in this place, so discovery never offers one that refuses. */

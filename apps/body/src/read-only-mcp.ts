@@ -3003,7 +3003,7 @@ async function availableCapabilities(checkOnboarding = true): Promise<string[]> 
     }
   } catch { /* Missing server eligibility always leaves the feature dark. */ }
 
-  return [...placeBeelineApps(Boolean(process.env.BEELINE_DAEMON_CORNER_ID)), ...(onboarding ? ['beeline:onboarding'] : [])];
+  return placeBeelineApps(Boolean(process.env.BEELINE_DAEMON_CORNER_ID), onboarding);
 }
 
 /** The refusal for a Beeline app that does not work here names the apps that do. */

@@ -600,6 +600,8 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
 }
 
 export interface TurnPromptContext {
+  /** Current server eligibility for onboarding, refreshed each turn. */
+  readonly onboarding?: boolean;
   readonly surface: PromptSurface;
   /** Actual selected model window when known; conservative default otherwise. */
   readonly modelContextTokens?: number;
@@ -760,11 +762,11 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 260,
     layer: 'turn',
     surfaces: EVERYWHERE,
-    render: ({ surface, task }) => {
+    render: ({ surface, task, onboarding }) => {
       const corner = CORNERS.includes(surface);
       const place = corner ? 'corner' : surface === 'dm' ? 'DM' : 'Room';
       return [
-        `Works here (${task.commandReason === 'schedule' ? `schedule run in this ${place}` : place}): app_tool apps ${placeBeelineApps(corner).join(', ')}.`,
+        `Works here (${task.commandReason === 'schedule' ? `schedule run in this ${place}` : place}): app_tool apps ${placeBeelineApps(corner, onboarding).join(', ')}.`,
         !corner && 'Corner only: beeline:corner_app and repository writes.',
       ].filter(Boolean).join(' ');
     },

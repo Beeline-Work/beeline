@@ -48,6 +48,8 @@ async function twoTurns(
     agentKind?: BodyConfig['agentKind'];
     codegraphCommand?: string;
     repositoryBacked?: boolean;
+    onboarding?: () => boolean;
+    turnPrompt?: (prompt: string) => void;
     githubToken?: () => string | undefined;
     personalGitHubToken?: string;
     externalCommand?: (env: Record<string, string>) => Promise<void>;
@@ -120,7 +122,7 @@ async function twoTurns(
     if (name === 'getAgentConfiguration') return configurations[Math.min(delivered, 2) - 1 || 0];
     if (name === 'listAgentGrants') return { grants: hooks?.grants?.() ?? [] };
     if (name === 'getRoomRepositoryState')
-      return hooks?.repositoryBacked ? { resolution: 'repository' } : { resolution: 'none' };
+      return { resolution: hooks?.repositoryBacked ? 'repository' : 'none', repositoryOnboarding: hooks?.onboarding?.() ?? false };
     if (name === 'getWorkspaceRoster') {
       return {
         members: [
@@ -205,7 +207,8 @@ async function twoTurns(
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
   vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_sessionId, prompt) => {
+    hooks?.turnPrompt?.(String(prompt));
     if (!alive) throw new Error('AcpClient not started');
     await hooks?.externalCommand?.(sessionEnv);
     return {
@@ -255,6 +258,22 @@ async function twoTurns(
 const unchanged: AgentConfiguration = { commands: [], yoloMode: false };
 
 describe('retained Room session', () => {
+  it.each([false, true])('refreshes onboarding eligibility in a warm session, starting eligible=%s', async (initial) => {
+    let eligible = initial;
+    const prompts: string[] = [];
+    const result = await twoTurns([unchanged, unchanged], [], {
+      onboarding: () => eligible,
+      turnPrompt: prompt => prompts.push(prompt),
+      betweenTurns: async () => { eligible = !eligible; },
+    });
+    expect(result.activations).toBe(1);
+    for (const [index, expected] of [initial, !initial].entries()) {
+      const block = prompts[index]!.split('\n\n').find(line => line.startsWith('Works here ('));
+      expect(block).toBeDefined();
+      expect(block!.includes('beeline:onboarding')).toBe(expected);
+    }
+  });
+
   it('authorizes an external issue comment with the Room token and rotates it between turns', async () => {
     const requests: Array<{ path: string; authorization?: string; body: string }> = [];
     const server = createServer(async (request, response) => {

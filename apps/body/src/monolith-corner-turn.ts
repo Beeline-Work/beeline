@@ -1726,6 +1726,7 @@ export class MonolithCornerTurnLoop {
                 activeReviewerInstruction,
                 institutionalContext,
                 memberCorners,
+                onboarding,
               ] = await trace.measure('context-fetch', () =>
                 Promise.all([
                   api.execute('getRoomConversation', {
@@ -1740,6 +1741,8 @@ export class MonolithCornerTurnLoop {
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
                   api.execute('listRoomCorners', { roomId: this.options.parentRoomId }),
+                  api.execute('getRoomRepositoryState', { roomId: cornerId })
+                    .then(state => state.repositoryOnboarding === true, () => false),
                 ]),
               );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
@@ -1878,12 +1881,14 @@ export class MonolithCornerTurnLoop {
                 );
                 const assembled = assembleTurnPrompt(followup ? {
                   surface: this.sessionSurface,
+                  onboarding,
                   modelContextTokens: this.modelContextTokens,
                   ...briefContext,
                   task: { body: followup },
                 } : {
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
+                  onboarding,
                   sessionPrefix: this.turnSessionPrefix,
                   objective: restored.objective ?? this.options.objective,
                   ...(restored.titleGenerated && restored.title

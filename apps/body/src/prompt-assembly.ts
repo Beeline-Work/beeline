@@ -8,6 +8,7 @@ import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 import type { MachineHost } from './machine-host.js';
 import { SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
+import { placeBeelineApps } from './minimal-tool-surface.js';
 
 /**
  * The ONE place Beeline prompt text is written and assembled.
@@ -599,6 +600,8 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
 }
 
 export interface TurnPromptContext {
+  /** Current server eligibility for onboarding, refreshed each turn. */
+  readonly onboarding?: boolean;
   readonly surface: PromptSurface;
   /** Actual selected model window when known; conservative default otherwise. */
   readonly modelContextTokens?: number;
@@ -751,6 +754,22 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       checkout
         ? `Repository checkout: origin/${checkout.branch} at commit ${checkout.commit}, refreshed for this turn.`
         : '',
+  },
+  {
+    id: 'turn.capabilities',
+    topic: 'what works in this place',
+    why: { 'turn.capabilities': 'Agents in Rooms discovered corner-only apps, called them and got unavailable; environment reports were 21.2% of all reports in the 7 days to 2026-10-26.' },
+    budgetBytes: 260,
+    layer: 'turn',
+    surfaces: EVERYWHERE,
+    render: ({ surface, task, onboarding }) => {
+      const corner = CORNERS.includes(surface);
+      const place = corner ? 'corner' : surface === 'dm' ? 'DM' : 'Room';
+      return [
+        `Works here (${task.commandReason === 'schedule' ? `schedule run in this ${place}` : place}): app_tool apps ${placeBeelineApps(corner, onboarding).join(', ')}.`,
+        !corner && 'Corner only: beeline:corner_app and repository writes.',
+      ].filter(Boolean).join(' ');
+    },
   },
   {
     id: 'turn.transcript',

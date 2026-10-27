@@ -226,7 +226,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -347,10 +347,11 @@ export async function reportToCommander(
     return true;
   });
   if (member.kind === 'agent') {
-    // Automatic agent-only system status is private coordination. Wake the
-    // commander inside its corner when it belongs there, so its reply stays
-    // with the corner's members instead of a parent Room strangers read.
-    const wakeRoom = options.automatic && options.agentOnly && origin &&
+    // Automatic agent-only system status is private coordination. Only the
+    // idle alert opts into waking the commander inside its corner, so its
+    // reply stays with the corner's members instead of a parent Room
+    // strangers read; every other report keeps the caller's return route.
+    const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
       (await db.query(
         'SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
         [origin, recipient],

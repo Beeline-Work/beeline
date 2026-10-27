@@ -11,6 +11,7 @@ import { PHONE_OPERATION_NAMES } from './phone-service.js';
  * routable (404 unknown_phone_operation).
  */
 const ALL_PHONE_OPERATION_NAMES = {
+  disconnectAiClient: true,
   acceptConnectorOffer: true,
   addRoomMember: true,
   addWorkspaceMember: true,

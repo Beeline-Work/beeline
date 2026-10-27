@@ -151,7 +151,8 @@ export class RoomsMcp {
     }
     if (name === 'send_message') {
       if (!roomId) throw new Error('Room required');
-      const result = await this.phone.execute('sendRoomMessage', { roomId, text: textArg(args.text, 16000) }, viewer);
+      const source = (await db.query<{ name: string }>('SELECT name FROM rooms_mcp_clients WHERE id=$1', [principal.client_id])).rows[0]!;
+      const result = await this.phone.execute('sendRoomMessage', { roomId, text: textArg(args.text, 16000) }, viewer, { id: principal.client_id, name: source.name });
       this.live.publish({ type: 'invalidate', roomId, reason: 'phone-write', messageId: result.messageId });
       return { messageId: result.messageId, pendingAgentCommands: result.pendingAgentCommands };
     }

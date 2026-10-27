@@ -1,3 +1,4 @@
+import { AiClientsSection } from '@/components/buzz/AiClientsSection';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
@@ -43,6 +44,7 @@ export default function WorkbenchScreen() {
         <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
           value="" editable={false} variant="search" placeholderTextColor={theme.buzz.textDisabled}
           testID="connectors-search" onPress={() => setSearchOpen(true)} />
+        <AiClientsSection clients={view?.aiClients ?? []} onChanged={refresh} />
         {!index.hasConnections ? <View>
           <Text style={styles.note}>No connections yet. Choose a service to get started.</Text>
           <RoomListSectionHeader title="Suggested" inset="content" spacing="flush" />

@@ -1,5 +1,8 @@
 /** Local-only seeded reviewer fixture. No production credentials or helper are used. */
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { connectMcp } from '../apps/server/dist/rooms-mcp-connections.js';
+import { bundledMcpLogo } from '../apps/server/dist/rooms-mcp-logos.js';
 import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -43,7 +46,7 @@ try {
       } else mount.handle(request, response);
     } };
   server = createBeelineServer(options);
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await new Promise(resolve => server.listen(Number(process.env.MCP_PROOF_PORT ?? 0), '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const tenant = { host: new URL(origin).host, community: 'local-connector-review', origin, roomCommunityIds: ['local-review-room'] };
   // The only stand-in is the upstream GitHub identity provider. Beeline's actual
@@ -80,7 +83,7 @@ try {
   let info, tokens, verifier, authorizeUrl;
   const provider = {
     redirectUrl: 'http://127.0.0.1:9876/callback',
-    clientMetadata: { client_name: 'Beeline connector reviewer', redirect_uris: ['http://127.0.0.1:9876/callback'], grant_types: ['authorization_code'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: 'rooms:read rooms:write' },
+    clientMetadata: { client_name: 'Grok', redirect_uris: ['http://127.0.0.1:9876/callback'], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: 'rooms:read rooms:write' },
     state: () => 'local-proof-state', clientInformation: () => info, saveClientInformation: value => { info = value; },
     tokens: () => tokens, saveTokens: value => { tokens = value; },
     codeVerifier: () => verifier, saveCodeVerifier: value => { verifier = value; }, redirectToAuthorization: value => { authorizeUrl = value; },
@@ -97,7 +100,7 @@ try {
   response = await browser(`/auth/github/callback?state=${upstream.searchParams.get('state')}&code=synthetic-provider-code`); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location')); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location'));
-  const html = await response.text(); assert.match(html, /Post messages as you/); assert.match(html, /Connector Reviewer/);
+  const html = await response.text(); assert.match(html, /Post as you/); assert.match(html, /Connector Reviewer/);
   transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the client, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
   response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow' }) });
   assert.equal(response.status, 302);
@@ -105,6 +108,11 @@ try {
   assert.equal(callback.searchParams.get('state'), 'local-proof-state'); assert.equal(callback.searchParams.get('iss'), origin);
   assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', authorizationCode: callback.searchParams.get('code'), resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'AUTHORIZED');
   transcript('SDK exchanged the code with PKCE and the resource audience. No credentials are printed or saved.');
+  const firstRefresh = tokens.refresh_token;
+  tokens.expires_in = 0;
+  assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'AUTHORIZED');
+  assert.notEqual(tokens.refresh_token, firstRefresh);
+  transcript('SDK refreshed the connection and received a rotated refresh token.');
   client = new Client({ name: 'beeline-rooms-proof', version: '1.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { authProvider: provider }));
   assert.equal((await client.listTools()).tools.length, 6);
@@ -133,10 +141,31 @@ try {
       transcript(`MCP Inspector tools/call ${name} completed through Streamable HTTP using the OAuth-issued local grant.`);
     }
   }
-  response = await fetch(origin + '/mcp/oauth/revoke', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tokens.access_token, client_id: info.client_id }) });
-  assert.equal(response.status, 200);
+  if (process.argv.includes('--ui')) {
+    const muse = 'local-muse-reviewer';
+    await db.query('INSERT INTO rooms_mcp_clients(id,name,redirects,logo) VALUES($1,$2,$3::jsonb,$4)', [muse, 'Meta Muse', '[]', await bundledMcpLogo('Meta Muse')]);
+    await db.transaction(tx => connectMcp(tx, { client_id: muse, identity_id: person, scope: 'rooms:read' }));
+    const phoneToken = randomBytes(32).toString('base64url');
+    await db.query("INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at) VALUES($1,$2,$3,now()+interval '1 hour')", [tokenHash(phoneToken), person, '11111111-1111-4111-8111-111111111111']);
+    const handler = server.listeners('request')[0];
+    server.removeAllListeners('request');
+    server.on('request', async (req, res) => {
+      if (req.url === '/proof/bootstrap') {
+        res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ phoneToken, person, workspace, room, clientId: info.client_id }));
+      } else if (req.url === '/proof/status') {
+        const status = (await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${tokens.access_token}` } })).status;
+        res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify({ status }));
+        if (status === 401) transcript('Settings disconnect: the next MCP call returned 401.');
+      } else handler(req, res);
+    });
+    transcript(`UI proof fixture ${origin}; only synthetic accounts and credentials. Keep running until screenshots and Disconnect complete.`);
+    await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });
+  } else {
+    await options.phone.execute('disconnectAiClient', { clientId: info.client_id }, person);
+  }
   response = await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${tokens.access_token}` } }); assert.equal(response.status, 401);
-  transcript('Revocation succeeded; the next MCP request returned unauthorized. PASS.');
+  transcript('Disconnect succeeded; the next MCP request returned unauthorized. PASS.');
   }
 } finally {
   await client?.close(); server?.closeAllConnections();

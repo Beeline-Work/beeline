@@ -44,24 +44,14 @@ Discovery advertises both scopes. The initial unauthorized challenge asks only f
 - Protected resource metadata: `/.well-known/oauth-protected-resource/mcp`.
 - Authorization server metadata: `/.well-known/oauth-authorization-server`.
 - Registration, authorization, token and revocation: `/mcp/oauth/register`, `/mcp/oauth/authorize`, `/mcp/oauth/token`, `/mcp/oauth/revoke`.
-- Exact registered HTTPS redirects are accepted; HTTP is allowed only for loopback clients. URL fetching is never part of registration.
-- `resource` must be the canonical MCP URL on authorization and token exchange. Only `authorization_code` and `S256` are supported. Register `token_endpoint_auth_method:"none"`, `grant_types:["authorization_code"]`, `response_types:["code"]`.
-- Codes expire after a minute and are single use. Access tokens expire after an hour. This version issues no refresh token; reconnect after expiration. Clients requiring refresh tokens must be verified before directory submission.
+- Exact registered HTTPS redirects are accepted; HTTP is allowed only for loopback clients. An optional `logo_uri` is fetched once with HTTPS, public-address checks, pinned DNS, redirect refusal, a 256 KiB limit and image decoding; the cached PNG is served as inline data, never hotlinked.
+- `resource` must be the canonical MCP URL on authorization and token exchange. Authorization uses `S256`. Register `token_endpoint_auth_method:"none"`, `grant_types:["authorization_code","refresh_token"]`, `response_types:["code"]`.
+- Codes expire after a minute and are single use. Access tokens expire after an hour. Refresh tokens rotate on every use. Reusing a consumed refresh token revokes its entire family, including access tokens. Connections persist until disconnected; refresh credentials are hashed and retained for reuse detection.
 - Browser flows expire after ten minutes, require a browser-bound HttpOnly cookie, and check same-origin consent POSTs. Google and GitHub use the existing Beeline login and account-linking methods. Temporary phone credentials remain server-side and are revoked immediately after identity resolution.
 - Tokens and codes are stored only as hashes. MCP tokens cannot authenticate as phone or daemon tokens.
-- A client can revoke its token with a form POST containing `client_id` and `token`. The next call returns 401. There is no app settings control in this version.
+- A client can revoke its token with a form POST containing `client_id` and `token`. The next call returns 401. Settings → Connectors → AI clients lists the signed-in person’s connections. Open a client and choose Disconnect to revoke every access and refresh token for that person/client pair. The next MCP call returns 401.
 
-Support can revoke all grants for a person/client pair using the authorized server database maintenance route, with bound parameters:
-
-```sql
-BEGIN;
-DELETE FROM rooms_mcp_flows WHERE identity_id=$1 AND client_id=$2;
-DELETE FROM rooms_mcp_codes WHERE identity_id=$1 AND client_id=$2;
-UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE identity_id=$1 AND client_id=$2;
-COMMIT;
-```
-
-Identify the person through the support authentication process, never from a caller-supplied identity alone. Existing Room or Workspace removal applies to every subsequent read/write without waiting for token expiry. Account deletion cascades credential rows. Audit records contain client id, identity id, operation, outcome and time, without token or message content. Maintenance removes expired flows/codes/tokens, old admission buckets, unused registrations after 30 days and audit rows after 30 days, in bounded batches.
+Server maintenance can call `disconnectMcp(database, identityId, clientId)` through an authorized maintenance session; it uses the same transaction as Settings. Never identify the person from a caller-supplied identity alone. Existing Room or Workspace removal applies to every subsequent read/write without waiting for token expiry. Account deletion cascades credential rows. Audit records contain client id, identity id, operation, outcome and time, without token or message content. Maintenance removes expired flows/codes/tokens, old admission buckets, unused registrations after 30 days and audit rows after 30 days, in bounded batches.
 
 ## Reviewer fixture and test instructions
 
@@ -77,11 +67,11 @@ node --import tsx scripts/prove-rooms-mcp.mjs --serve
 For an interactive review:
 
 1. Start the fixture with `--serve`; use the printed loopback `/mcp` URL in MCP Inspector's Streamable HTTP connection.
-2. Select OAuth authorization code, enable DCR, and request `rooms:read rooms:write`. Register only the `authorization_code` grant. Follow the browser authorization page.
-3. Choose **Continue with GitHub**. Only in this loopback fixture, the synthetic provider signs in the seeded reviewer automatically. Confirm the consent screen names the client, account and both permissions; choose **Allow access**.
+2. Select OAuth authorization code, enable DCR, and request `rooms:read rooms:write`. Register both `authorization_code` and `refresh_token` grants. Follow the browser authorization page.
+3. Choose **Continue with GitHub**. Only in this loopback fixture, the synthetic provider signs in the seeded reviewer automatically. Confirm the consent screen names the client, account and both permissions; choose **Allow**.
 4. Initialize and list tools. Call `list_rooms`; expect only the fixture Room. Read it and find the synthetic agent activity.
 5. Send `@demo-agent acknowledge the connector review` to that Room. Expect a message id and queued agent command. The automatic proof additionally claims that command, commits an agent reply and reads it through the phone service. The interactive fixture has no running helper, so it queues the command rather than inventing a reply.
-6. Revoke the token through the advertised endpoint. Repeat an MCP call with that same token; expect unauthorized.
+6. Refresh the issued token through the advertised token endpoint; expect a new refresh token and a working access token. In Settings → Connectors, open the client and choose Disconnect. Repeat an MCP call; expect 401. The `--ui` proof mode keeps the seeded service open for the production native controls to perform this step.
 7. Run `npm run test -w @beeline/server -- src/rooms-mcp.test.ts` for separate-account denial, read-only consent, PKCE/redirect/audience binding, replay, expiry, rate limits and membership removal.
 
 To reproduce the Inspector CLI portion used for the committed evidence, install Inspector in a disposable tools directory (version 2.12.0 was used), then point `MCP_INSPECTOR_CLIENT` at its `clients/cli/build/index.js` when running the automatic proof. It calls Inspector's real CLI entry in-process, keeps the local OAuth grant in memory and prints only synthetic Room results. The SDK performs discovery, DCR and PKCE; Inspector then uses that OAuth-issued grant to list, read and send. It does not claim the Inspector browser performed the authorization ceremony.
@@ -92,6 +82,16 @@ For directory reviewers after release, provision a dedicated real Beeline accoun
 
 [Local proof transcript](rooms-mcp-proof.md) records the built-service path. This is not a defect report. The closest production-like proof is the loopback built server with real migrations, OAuth flow, MCP transport, account linking, membership queries and command routing; only the upstream identity provider and agent helper execution are simulated.
 
-The live privacy page was fetched on 2026-10-26 and matched the repository's effective 2026-10-25 policy. It says connected apps/model providers receive data under their own terms, but its Google-data section also says only Room members and the service can see data shown there. External-client exports need explicit clarification. [The proposed wording](rooms-mcp-privacy-draft.md) is for owner approval and is not a published policy change. Owner approval and any required policy notice precede directory submission.
+The live privacy page was fetched on 2026-10-26 and matched the repository's effective 2026-10-25 policy. It says connected apps/model providers receive data under their own terms, but its Google-data section also says only Room members and the service can see data shown there. The option B draft leaves that Google section unchanged and does not authorize exporting Google-sourced content. It explains user-directed sharing and Settings disconnect. [The proposed wording](rooms-mcp-privacy-draft.md) is for owner approval and is not a published policy change. Owner approval and any required policy notice precede directory submission.
 
 References checked on 2026-10-26: [MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [Grok Bot marketplace](https://x.ai/bot/marketplace), [Muse Connector Platform](https://platform.muse.ai/). The current MCP specification retains DCR for compatibility but prefers client metadata documents; this release implements the brief's DCR requirement. The Muse platform describes functional, security and legal review. None of these sources confirms Beeline listing approval or guarantees client-specific compatibility.
+
+## Client identity and logo sources
+
+Messages retain the registered client id and name at send time and show “via <client>” in the shared web/native message row. Client names and logos are presentation metadata, not verified publisher identities. The server alone supplies attribution; phone message input cannot set it.
+
+The bundled SVGs are unmodified official assets. Display PNGs are decoded and resized server-side. Unknown clients without an accepted logo use an initial tile.
+
+- Grok: `Grok_Logomark_Dark.svg` from [xAI’s official brand download](https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip), linked by [brand guidelines](https://x.ai/legal/brand-guidelines).
+- Muse: [official Muse application logomark](https://muse.ai/images/favicon/app-squiggle.svg), as published on muse.ai.
+- Space Grotesk: existing app font files, with their OFL license copied beside the consent assets.

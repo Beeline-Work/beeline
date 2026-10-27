@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { fetchMcpLogo, bundledMcpLogo } from './rooms-mcp-logos.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
+import { connectMcp, refreshMcp } from './rooms-mcp-connections.js';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -45,7 +48,7 @@ function redirectUri(value: unknown): string {
 interface Flow {
   id: string; browser_hash: string; client_id: string; redirect_uri: string; state: string;
   challenge: string; scope: string; identity_id: string | null; provider: string | null;
-  name: string; identity_name: string | null;
+  name: string; logo: string | null; identity_name: string | null;
 }
 export interface McpPrincipal { hash: string; client_id: string; identity_id: string; scope: string }
 
@@ -62,16 +65,16 @@ export class RoomsMcpOAuth {
   private page(response: ServerResponse, title: string, content: string): void {
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer',
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       'x-content-type-options': 'nosniff',
     });
-    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)} · Beeline</title><style>body{margin:0;background:#14091a;color:#f0f0f3;font:16px/1.5 system-ui}main{max-width:32rem;margin:10vh auto;padding:24px}h1{font-size:26px}p{color:#c9c9d1}a{color:#e5a645}button{font:inherit;padding:12px 20px;margin:12px 12px 0 0;border:1px solid #b08a4a;border-radius:3px;background:#e5a645;color:#14091a;cursor:pointer}button[value=deny]{background:transparent;color:#f0f0f3}a:focus-visible,button:focus-visible{outline:3px solid #f0f0f3;outline-offset:4px}small{color:#c9c9d1}</style><main><small>BEELINE ROOMS</small><h1>${escape(title)}</h1>${content}</main></html>`);
+    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)} · Beeline</title><style>@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Regular.ttf')}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Medium.ttf');font-weight:500}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-SemiBold.ttf');font-weight:600}*{box-sizing:border-box}body{margin:0;background:#F3EDE3;color:#171310;font:16px/1.5 SG,system-ui}main{display:flex;flex-direction:column;max-width:28rem;margin:8vh auto;padding:24px}h1{font-weight:600;font-size:24px;line-height:1.25;margin:0 0 8px}p{color:#4A4038}a{color:#8a6323}button{display:block;width:100%;font:500 16px SG;padding:13px;margin-top:8px;border:0;border-radius:12px;background:#1C1712;color:#F3EDE3;cursor:pointer}button[value=deny]{background:transparent;color:#171310}a:focus-visible,button:focus-visible{outline:3px solid #8a6323;outline-offset:4px}.brand{order:-1;display:flex;align-items:center;gap:12px;margin:8px 0 24px}.mark{width:44px;height:44px;border-radius:11px;object-fit:contain;background:#ECE4D5;display:grid;place-items:center}.bee{background:#1C1712;color:#E5A645;font-weight:600;font-size:24px}.dots{color:#B8A27A}.who{font-size:14px;margin-bottom:20px}.who strong{font-weight:500;color:#8a6323}.perm{border-top:1px solid #E2D9CB}.perm section{padding:13px 0;border-bottom:1px solid #E2D9CB}.perm strong{display:block;font-weight:500}.perm p{font-size:14px;margin:0}.fine,.links{font-size:13px;color:#6F6558}.links{text-align:center;margin-top:16px}</style><main><h1>${escape(title)}</h1>${content}</main></html>`);
   }
   private redirect(response: ServerResponse, location: string): void {
     response.writeHead(302, { location, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); response.end();
   }
   private async flow(id: unknown, request: IncomingMessage, db = this.database): Promise<Flow> {
-    const result = await db.query<Flow>(`SELECT f.*,c.name,i.name identity_name FROM rooms_mcp_flows f
+    const result = await db.query<Flow>(`SELECT f.*,c.name,c.logo,i.name identity_name FROM rooms_mcp_flows f
       JOIN rooms_mcp_clients c ON c.id=f.client_id LEFT JOIN identities i ON i.id=f.identity_id
       WHERE f.id=$1 AND f.browser_hash=$2 AND f.expires_at>now() FOR UPDATE OF f`,
       [string(id, 100), tokenHash(this.cookie(request))]);
@@ -85,7 +88,10 @@ export class RoomsMcpOAuth {
   async principal(raw: string): Promise<McpPrincipal | undefined> {
     return (await this.database.query<McpPrincipal>(`SELECT t.hash,t.client_id,t.identity_id,t.scope FROM rooms_mcp_tokens t
       JOIN identities i ON i.id=t.identity_id AND i.kind='human'
-      WHERE t.hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now()`, [tokenHash(raw)])).rows[0];
+      LEFT JOIN rooms_mcp_families f ON f.id=t.family_id
+      LEFT JOIN rooms_mcp_connections c ON c.client_id=f.client_id AND c.identity_id=f.identity_id
+      WHERE t.hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now()
+      AND (t.family_id IS NULL OR (f.revoked_at IS NULL AND c.revoked_at IS NULL))`, [tokenHash(raw)])).rows[0];
   }
   async take(principal: McpPrincipal): Promise<boolean> {
     const result = await this.database.query(`UPDATE rooms_mcp_tokens SET
@@ -93,12 +99,17 @@ export class RoomsMcpOAuth {
       window_at=CASE WHEN window_at<=now()-interval '1 minute' THEN now() ELSE window_at END
       WHERE hash=$1 AND revoked_at IS NULL AND expires_at>now()
         AND (window_at<=now()-interval '1 minute' OR calls<60) RETURNING hash`, [principal.hash]);
+    if (result.rowCount) await this.database.query('UPDATE rooms_mcp_connections SET last_used_at=now() WHERE client_id=$1 AND identity_id=$2 AND revoked_at IS NULL', [principal.client_id, principal.identity_id]);
     return result.rowCount > 0;
   }
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
     const path = url.pathname;
     if (!path.startsWith('/mcp/oauth/') && path !== '/.well-known/oauth-authorization-server' &&
         path !== '/.well-known/oauth-protected-resource/mcp') return false;
+    if (request.method === 'GET' && /^\/mcp\/oauth\/SpaceGrotesk-(Regular|Medium|SemiBold)\.ttf$/.test(path)) {
+      response.writeHead(200, { 'content-type': 'font/ttf', 'cache-control': 'public, max-age=31536000' });
+      response.end(readFileSync(new URL(`../assets/mcp/${path.split('/').at(-1)}`, import.meta.url))); return true;
+    }
     response.setHeader('access-control-allow-origin', '*');
     if (request.method === 'OPTIONS') {
       response.writeHead(204, { 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' });
@@ -111,7 +122,7 @@ export class RoomsMcpOAuth {
       if (request.method === 'GET' && path === '/.well-known/oauth-authorization-server') {
         mcpJson(response, 200, { issuer: this.origin, authorization_endpoint: `${this.origin}/mcp/oauth/authorize`,
           token_endpoint: `${this.origin}/mcp/oauth/token`, registration_endpoint: `${this.origin}/mcp/oauth/register`,
-          revocation_endpoint: `${this.origin}/mcp/oauth/revoke`, response_types_supported: ['code'], grant_types_supported: ['authorization_code'],
+          revocation_endpoint: `${this.origin}/mcp/oauth/revoke`, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
           code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'],
           revocation_endpoint_auth_methods_supported: ['none'], scopes_supported: [MCP_READ, MCP_WRITE], authorization_response_iss_parameter_supported: true }); return true;
       }
@@ -127,12 +138,13 @@ export class RoomsMcpOAuth {
         const name = input.client_name === undefined ? 'MCP client' : string(input.client_name, 120);
         if (!Array.isArray(input.redirect_uris) || !input.redirect_uris.length || input.redirect_uris.length > 10 ||
             (input.token_endpoint_auth_method !== undefined && input.token_endpoint_auth_method !== 'none') ||
-            (input.grant_types !== undefined && JSON.stringify(input.grant_types) !== '["authorization_code"]') ||
+            (input.grant_types !== undefined && (!Array.isArray(input.grant_types) || !input.grant_types.includes('authorization_code') || input.grant_types.some(g => !['authorization_code', 'refresh_token'].includes(String(g))))) ||
             (input.response_types !== undefined && JSON.stringify(input.response_types) !== '["code"]')) throw new Error('invalid_client_metadata');
         const redirects = input.redirect_uris.map(redirectUri);
         const id = opaque();
-        await this.database.query('INSERT INTO rooms_mcp_clients(id,name,redirects) VALUES($1,$2,$3::jsonb)', [id, name, JSON.stringify(redirects)]);
-        mcpJson(response, 201, { client_id: id, client_name: name, redirect_uris: redirects, token_endpoint_auth_method: 'none', grant_types: ['authorization_code'], response_types: ['code'] }); return true;
+        const logo = input.logo_uri === undefined ? await bundledMcpLogo(name) : await fetchMcpLogo(string(input.logo_uri));
+        await this.database.query('INSERT INTO rooms_mcp_clients(id,name,redirects,logo) VALUES($1,$2,$3::jsonb,$4)', [id, name, JSON.stringify(redirects), logo ?? null]);
+        mcpJson(response, 201, { client_id: id, client_name: name, redirect_uris: redirects, token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }); return true;
       }
       if (request.method === 'GET' && path === '/mcp/oauth/authorize') {
         const q = url.searchParams;
@@ -173,7 +185,7 @@ export class RoomsMcpOAuth {
       if (request.method === 'GET' && path === '/mcp/oauth/consent') {
         const flow = await this.flow(url.searchParams.get('flow'), request);
         if (!flow.identity_id) this.page(response, 'Connect your Rooms', `<p>Sign in to Beeline to review access for <strong>${escape(flow.name)}</strong>.</p><p><a href="/mcp/oauth/login?flow=${flow.id}&amp;provider=google">Continue with Google</a></p><p><a href="/mcp/oauth/login?flow=${flow.id}&amp;provider=github">Continue with GitHub</a></p>`);
-        else this.page(response, `Allow ${flow.name}?`, `<p>Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong>.</p><p>This client will be able to:</p><ul>${flow.scope.includes(MCP_READ) ? '<li>Read and search messages and view corners in Rooms you belong to.</li>' : ''}${flow.scope.includes(MCP_WRITE) ? '<li>Post messages as you, including instructions that wake your agents.</li>' : ''}</ul><p>Room content will be shared with this client and its AI providers. Only connect clients you trust. Access expires after one hour. Contact support to revoke it sooner.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><button name="decision" value="allow">Allow access</button><button name="decision" value="deny">Cancel</button></form><p><a href="https://usebeeline.app/privacy/">Privacy</a> · <a href="mailto:hello@usebeeline.app">Support</a></p>`);
+        else this.page(response, `Allow ${flow.name} to use your Beeline Rooms?`, `<div class="brand">${flow.logo ? `<img class="mark" src="${escape(flow.logo)}" alt="${escape(flow.name)}">` : `<span class="mark">${escape(flow.name[0] ?? 'C')}</span>`}<span class="dots" aria-hidden="true">···</span><span class="mark bee" aria-label="Beeline">b</span></div><p class="who">Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong></p><div class="perm">${flow.scope.includes(MCP_READ) ? '<section><strong>Read your Rooms</strong><p>Read and search messages and corner status in Rooms you belong to.</p></section>' : ''}${flow.scope.includes(MCP_WRITE) ? '<section><strong>Post as you</strong><p>Send messages in your name. A message that tags @agent starts that agent’s work.</p></section>' : ''}</div><p class="fine">Room text you open in ${escape(flow.name)} goes to that client and its AI providers under their own privacy terms. Disconnect any time in Beeline, under Settings → Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><button name="decision" value="allow">Allow</button><button name="decision" value="deny">Cancel</button></form><p class="links"><a href="https://usebeeline.app/privacy/">Privacy</a> · <a href="mailto:hello@usebeeline.app">Support</a></p>`);
         return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/consent') {
@@ -197,6 +209,12 @@ export class RoomsMcpOAuth {
       }
       if (request.method === 'POST' && path === '/mcp/oauth/token') {
         const input = await mcpBody(request);
+        if (input.grant_type === 'refresh_token') {
+          if (input.resource !== undefined && input.resource !== this.resource) throw new Error('invalid_grant');
+          const token = await refreshMcp(this.database, string(input.refresh_token, 100), string(input.client_id, 100), input.scope === undefined ? undefined : string(input.scope, 100));
+          if (!token) throw new Error('invalid_grant');
+          mcpJson(response, 200, token); return true;
+        }
         if (input.grant_type !== 'authorization_code' || input.resource !== this.resource ||
             typeof input.code_verifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(input.code_verifier)) throw new Error('invalid_grant');
         const challenge = createHash('sha256').update(input.code_verifier).digest('base64url');
@@ -205,15 +223,14 @@ export class RoomsMcpOAuth {
             WHERE hash=$1 AND client_id=$2 AND redirect_uri=$3 AND challenge=$4 AND expires_at>now() RETURNING identity_id,client_id,scope`,
             [tokenHash(string(input.code, 100)), input.client_id, input.redirect_uri, challenge])).rows[0];
           if (!row) throw new Error('invalid_grant');
-          const access = opaque();
-          await db.query(`INSERT INTO rooms_mcp_tokens(hash,identity_id,client_id,scope,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')`, [tokenHash(access), row.identity_id, row.client_id, row.scope]);
-          return { access_token: access, token_type: 'Bearer', expires_in: 3600, scope: row.scope };
+          return connectMcp(db, row);
         });
         mcpJson(response, 200, token); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/revoke') {
         const input = await mcpBody(request);
         await this.database.query('UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash=$1 AND client_id=$2', [tokenHash(string(input.token, 200)), string(input.client_id, 100)]);
+        await this.database.query(`UPDATE rooms_mcp_families SET revoked_at=now() WHERE client_id=$1 AND id IN (SELECT family_id FROM rooms_mcp_refresh WHERE hash=$2)`, [string(input.client_id, 100), tokenHash(string(input.token, 200))]);
         mcpJson(response, 200, {}); return true;
       }
       mcpJson(response, 404, { error: 'not_found' });

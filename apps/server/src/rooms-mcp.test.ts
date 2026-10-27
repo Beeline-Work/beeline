@@ -56,10 +56,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   async function post(path: string, input: Record<string, unknown>, headers: Record<string, string> = {}) {
     return fetch(origin + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
   }
-  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow') {
+  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string) {
     const registered = await post('/mcp/oauth/register', { client_name: 'Local MCP reviewer', redirect_uris: ['http://127.0.0.1:9876/callback'], token_endpoint_auth_method: 'none' });
     expect(registered.status).toBe(201);
-    const client = await registered.json() as { client_id: string };
+    const client = clientId ? { client_id: clientId } : await registered.json() as { client_id: string };
     const verifier = opaque();
     const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:9876/callback', response_type: 'code', resource: origin + '/mcp',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope, state: 'review-state' });
@@ -95,6 +95,43 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
     return { client, token: tokens.access_token, grant };
   }
+  it('rotates refresh tokens and revokes their family on reuse', async () => {
+    const grant = await authorize();
+    const initial = await (await exchange(grant)).json() as { access_token: string; refresh_token: string };
+    const refresh = (token: string, clientId = grant.clientId) => post('/mcp/oauth/token', {
+      grant_type: 'refresh_token', refresh_token: token, client_id: clientId, resource: origin + '/mcp',
+    });
+    expect((await refresh(initial.refresh_token, 'wrong-client')).status).toBe(400);
+    const response = await refresh(initial.refresh_token);
+    expect(response.status).toBe(200);
+    const next = await response.json() as typeof initial;
+    expect(next.refresh_token).not.toBe(initial.refresh_token);
+    expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${next.access_token}` } })).status).not.toBe(401);
+    expect((await refresh(initial.refresh_token)).status).toBe(400);
+    expect((await refresh(next.refresh_token)).status).toBe(400);
+    for (const token of [initial.access_token, next.access_token]) {
+      expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+    }
+  });
+  it('lists only the viewer connections and disconnects access and refresh credentials together', async () => {
+    const grant = await authorize();
+    const tokens = await (await exchange(grant)).json() as { access_token: string; refresh_token: string };
+    expect((await phone.readWorkbench({ workspaceId: WORKSPACE }, OTHER)).aiClients).not.toContainEqual(expect.objectContaining({ clientId: grant.clientId }));
+    expect((await phone.readWorkbench({ workspaceId: WORKSPACE }, USER)).aiClients).toContainEqual(expect.objectContaining({ clientId: grant.clientId }));
+    await phone.execute('disconnectAiClient', { clientId: grant.clientId }, OTHER);
+    expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${tokens.access_token}` } })).status).not.toBe(401);
+    const otherGrant = await authorize('rooms:read', 'allow', grant.clientId);
+    const otherTokens = await (await exchange(otherGrant)).json() as typeof tokens;
+    const phoneToken = opaque();
+    await db.query("INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at) VALUES($1,$2,$3,now()+interval '1 hour')", [tokenHash(phoneToken), USER, WORKSPACE]);
+    const disconnected = await post('/v1/phone/operations/disconnectAiClient', { clientId: grant.clientId }, { authorization: `Bearer ${phoneToken}` });
+    expect(disconnected.status).toBe(204);
+    expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${tokens.access_token}` } })).status).toBe(401);
+    expect((await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: grant.clientId })).status).toBe(400);
+    expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${otherTokens.access_token}` } })).status).toBe(401);
+    expect((await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: otherTokens.refresh_token, client_id: grant.clientId })).status).toBe(400);
+    expect((await phone.readWorkbench({ workspaceId: WORKSPACE }, USER)).aiClients).not.toContainEqual(expect.objectContaining({ clientId: grant.clientId }));
+  });
   it('advertises resource discovery and OAuth metadata without credentials', async () => {
     const unauthorized = await fetch(origin + '/mcp'); expect(unauthorized.status).toBe(401);
     expect(unauthorized.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
@@ -142,7 +179,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(searched).toContain('nebula test'); expect(searched).not.toContain('private nebula');
     expect(JSON.stringify(await client.callTool({ name: 'list_corners', arguments: { room: ROOM } }))).toContain(PUBLIC_CORNER);
     expect(JSON.stringify(await client.callTool({ name: 'corner_status', arguments: { corner: PUBLIC_CORNER } }))).toContain('Demo corner');
-    expect((await phone.readRoom(ROOM, USER))!.messages.some(m => m.id === message.id)).toBe(true);
+    expect((await phone.readRoom(ROOM, USER))!.messages.find(m => m.id === message.id)?.sourceClient).toEqual({ id: grant.clientId, name: 'Local MCP reviewer' });
     expect((await db.query('SELECT 1 FROM rooms_mcp_audit WHERE client_id=$1 AND outcome=$2', [grant.clientId, 'succeeded'])).rowCount).toBeGreaterThan(0);
     await post('/mcp/oauth/revoke', { client_id: grant.clientId, token });
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);

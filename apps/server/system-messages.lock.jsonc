@@ -99,7 +99,7 @@
     ],
     "occurrences": 1
   },
-  {"id":"src/rooms-mcp.ts:RoomsMcp.call:wrapper:7f84d496c775deb0","file":"apps/server/src/rooms-mcp.ts","kind":"wrapper","template":"$databaseResult","literals":[".identity_id",".text","FirstLiteralToken:16000","textArg()"],"occurrences":1},
+  {"id":"src/rooms-mcp.ts:RoomsMcp.call:wrapper:ebf5a7efa34ba9d9","file":"apps/server/src/rooms-mcp.ts","kind":"wrapper","template":"$databaseResult","literals":["\"hex\"","\"sha256\"",".digest",".digest()",".idempotencyKey",".member_id",".text",".update",".update()","FirstLiteralToken:100","FirstLiteralToken:16000","NullKeyword","[\"rooms-mcp-message:\",\":\",\"\"]","binary:===","conditional:?:","createHash()","end:expression","textArg()"],"occurrences":1},
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:77bffb8ed6e15ac5",
     "file": "apps/server/src/agent-class-retirement.ts",

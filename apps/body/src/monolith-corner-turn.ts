@@ -82,6 +82,7 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { hasCornerPrepareScript } from './corner-prepare-script.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
+import { installPiTurnBudget } from './pi-turn-budget.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
@@ -1384,6 +1385,7 @@ export class MonolithCornerTurnLoop {
     const sessionServers = sessionNewMcpServers<McpServerWire>(harnessLabel, servers, grantedRouteServers);
     // Pi ACP ignores session/new MCP servers. The installer selects native
     // mcp.json or the generated bridge for this executable and isolated home.
+    await installPiTurnBudget(agentEnv.PI_CODING_AGENT_DIR);
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,

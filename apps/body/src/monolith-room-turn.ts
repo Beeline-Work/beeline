@@ -69,6 +69,7 @@ import {
   type DeliveredAttachment,
 } from './attachment-delivery.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
+import { installPiTurnBudget } from './pi-turn-budget.js';
 import {
   beelineAgentMcpServer,
   readOnlyMcpServer,
@@ -1426,6 +1427,7 @@ export class MonolithRoomTurnLoop {
     const sessionServers = sessionNewMcpServers<McpServerWire>(harnessLabel, servers, grantedRouteServers);
     // Pi ACP ignores session/new MCP servers. The installer selects native
     // mcp.json or the generated bridge for this executable and isolated home.
+    await installPiTurnBudget(agentEnv.PI_CODING_AGENT_DIR);
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,

@@ -210,6 +210,16 @@ discards the session. The leader reaper cancels overdue claimed commands after
 the cap plus 60 seconds of grace and stops their Machine even if it is still
 reporting activity. The existing idle, reaper and deletion intervals are unchanged.
 
+Pi shell commands leave a delivery window before that cap. The generated
+`pi-turn-budget.ts` extension reads the current command intake time for each
+`bash` call and clamps its timeout to the remaining budget minus one minute
+(one tenth of the budget for shorter configured test turns). Shorter requested
+timeouts remain intact. During the delivery window, new shell commands are
+refused; a budget-stopped command tells the agent to deliver finished files or
+explain what remains. The hard cap and its existing plain continuation notice
+are unchanged. Regression: `pi-turn-budget.test.ts`; isolated real-Pi proof:
+build the body, then run `node scripts/prove-turn-command-budget.mjs`.
+
 At 80% of whichever allowance applies (2.4M of the default 3M daily cap, or 8M of the 10M first-day cap), settlement posts one plain allowance notice per owner per UTC day into the room where the person is working, with the midnight UTC reset and a Members ->
 Add agent link. The owner must be a room member; otherwise nothing is posted. Delivery does not call a model. The warning records
 `allowance_warning` and `nudge_shown`; pairing a non-free agent in the same

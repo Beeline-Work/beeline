@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { CHOICE_LABEL_MAX_LENGTH } from './room-choices.js';
 import { validateCornerWorkflow, readWorkflowContract, workflowContentsError, workflowReceiptError, validateSavedWorkflow } from './workflow-contracts.js';
 
 const contract = {
@@ -543,8 +544,8 @@ describe('separate saved and corner validators', () => {
     [work({ extra: true }), 'handoffs.work: unknown key "extra" (a handoff allows role, roleBinding, requires, on, loop, timeoutSeconds, hint, does)'],
     [work({ ...gate, extra: true }), 'handoffs.work: unknown key "extra" (a gate allows kind, role, requires, on, timeoutSeconds, default, hint, does)'],
     [work({ ...gate, on: { done: 'done' } }), 'handoffs.work: a gate needs 2-4 outcomes (got 1)'],
-    [work({ ...gate, on: { ['a'.repeat(33)]: 'done', timeout: 'done' } }),
-      `handoffs.work: outcome "${'a'.repeat(33)}" is longer than 32 characters`],
+    [work({ ...gate, on: { ['a'.repeat(CHOICE_LABEL_MAX_LENGTH + 1)]: 'done', timeout: 'done' } }),
+      `handoffs.work: outcome "${'a'.repeat(CHOICE_LABEL_MAX_LENGTH + 1)}" is longer than ${CHOICE_LABEL_MAX_LENGTH} characters`],
     [{ ...base, handoffs: { work: base.handoffs.work, done: base.handoffs.work } }, 'at least one terminal state is required'],
     [work({ does: '' }), 'handoffs.work: does must be nonempty plaintext on one line, at most 140 characters'],
     [work({ hint: 1 }), 'handoffs.work: hint must be a string'],

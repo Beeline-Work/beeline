@@ -36,9 +36,10 @@ and pairing. Candidate installation does not block sessions on the working copy.
 Registry and npm failures leave the active command intact. No compatibility
 allowlist, package-version pin, or manual adoption gate is used.
 
-Node/npm and agent programs belong to the operator. Workspace cache sharing remains, but the helper no longer creates
-Workspace copies of adapters and harness CLIs. No toolchain manifest, Node or
-agent downloader, checksum store, or helper-owned harness program prefix is retained.
+Node/npm and agent programs belong to the operator. Workspace cache sharing
+remains, but the helper no longer creates Workspace copies of adapters and
+harness CLIs. No toolchain manifest, Node or agent downloader, checksum store,
+or helper-owned harness program prefix is retained.
 
 `loadBodyConfig` and Connect model probes explicitly set
 `CLAUDE_CODE_EXECUTABLE` to the discovered user `claude`, `CODEX_PATH` to the user
@@ -68,9 +69,10 @@ and [Claude adapter implementation](https://github.com/agentclientprotocol/claud
 
 The daily GitHub workflow `.github/workflows/acp-adapters.yml` and the
 feedback-triage workflow's `adapters` step run `node scripts/check-acp-adapters.mjs`
-after building Body. It installs the three latest adapters into temporary prefixes and uses the installed programs. Every
-check has private HOME/XDG/config/cache directories and an explicit environment
-without provider keys, logins, tokens or inherited Node options. It uses the
+after building Body. It installs the three latest adapters into temporary
+prefixes and uses the installed programs. Every check has private
+HOME/XDG/config/cache directories and an explicit environment without provider
+keys, logins, tokens or inherited Node options. It uses the
 same session-start check as runtime adoption, deliberately bypasses
 the release-age delay to test the newest versions immediately, never prompts a
 model, cleans up processes/files and returns versioned JSON results including
@@ -79,8 +81,8 @@ means findings must be assessed, not ignored. See the workflow procedure for the
 normal human approval and dispatch path.
 
 A refused unauthenticated session is a precise limitation, not evidence that a
-logged-in turn is broken. The isolated run on 27 October 2026 reproduced the
-production request-shape failure:
+logged-in turn is broken. Before integrating the system-prompt fix, the isolated
+run on 27 October 2026 reproduced the production request-shape failure:
 
 ```text
 @agentclientprotocol/codex-acp 2.3.0: initialize passed; session/new refused Invalid params (-32602)
@@ -93,7 +95,10 @@ No login or credential was supplied to resolve those refusals. Authentication
 refusals remain failures in CI; a green check requires an actual successful
 session start, not just a successful initialize. The separate system-prompt wire
 fix is responsible for making the October releases pass; this update protection
-keeps the working command selected when a new release fails.
+keeps the working command selected when a new release fails. Repeating the
+same check after integrating the wire fix passed Claude 0.97.0 session creation;
+Codex 2.3.0 and Pi 0.0.34 reached session creation and returned authentication
+refusals. All three negotiated ACP v1 and advertised their capabilities.
 
 Regression coverage: `adapter-update.test.ts` exercises failing and passing real
 ACP subprocesses for all three kinds, durable alert deduplication, the one-day

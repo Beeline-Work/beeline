@@ -107,6 +107,8 @@ describe('harness adapter freshness', () => {
   it('starts a working adapter while a candidate install holds the lock', async () => {
     const env = await lockEnv();
     vi.stubEnv('BEELINE_LIB_DIR', env.BEELINE_LIB_DIR);
+    vi.stubEnv('HOME', env.HOME);
+    vi.stubEnv('XDG_DATA_HOME', env.XDG_DATA_HOME);
     const root = roots.at(-1)!;
     const binary = join(root, 'probe-agent');
     await writeFile(
@@ -129,14 +131,17 @@ describe('harness adapter freshness', () => {
     await acquired;
     const client = new AcpClient({ agentCommand: binary, agentEnv: {} });
     let started = false;
-    const start = client.start(2_000).then(() => {
+    const start = client.start(10_000).then(() => {
       started = true;
     });
-    await new Promise((done) => setTimeout(done, 150));
-    expect(started).toBe(true);
-    release();
-    await Promise.all([install, start]);
-    expect(started).toBe(true);
-    client.stop();
+    try {
+      // Process startup varies under the full suite's load. Observe completion
+      // while the lock is still held instead of assuming a 150ms launch time.
+      await vi.waitFor(() => expect(started).toBe(true), { timeout: 5_000 });
+    } finally {
+      release();
+      await Promise.all([install, start]);
+      await client.stop();
+    }
   });
 });

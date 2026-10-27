@@ -10,6 +10,7 @@ export const BEELINE_MEMORY_SKILL_NAME = 'beeline-memory';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
 export const BEELINE_REVIEW_SKILL_NAME = 'beeline-review';
 export const BEELINE_SPEC_SKILL_NAME = 'beeline-spec';
+export const BEELINE_ONBOARDING_SKILL_NAME = 'beeline-onboarding';
 
 /**
  * Situational skills: each covers one kind of situation an agent meets in
@@ -265,7 +266,7 @@ export function beelineManagedSkills(
   options: { isReviewer: boolean },
 ): Array<{ name: string; content: string }> {
   return [
-    { name: 'beeline-onboarding', content: beelineOnboardingSkillMarkdown(releaseId) },
+    { name: BEELINE_ONBOARDING_SKILL_NAME, content: beelineOnboardingSkillMarkdown(releaseId) },
     { name: BEELINE_FILES_SKILL_NAME, content: beelineFilesSkillMarkdown(releaseId) },
     { name: BEELINE_CORNERS_SKILL_NAME, content: beelineCornersSkillMarkdown(releaseId) },
     { name: BEELINE_WAKES_SKILL_NAME, content: beelineWakesSkillMarkdown(releaseId) },
@@ -492,7 +493,7 @@ Once a corner is open for a reported bug, follow these steps in order. They are 
 }
 
 function beelineOnboardingSkillMarkdown(releaseId: string): string {
-  return skillMarkdown('beeline-onboarding', 'Run or rerun Beeline onboarding in the current chat when someone asks to try the welcome flow.', releaseId,
+  return skillMarkdown(BEELINE_ONBOARDING_SKILL_NAME, 'Run or rerun Beeline onboarding in the current chat when someone asks to try the welcome flow.', releaseId,
     `# Run onboarding
 
 Discover the existing onboarding app with app_tool(app:"beeline:onboarding"). Call its welcome action with app_tool(app:"beeline:onboarding", tool:"welcome", args:{}).

@@ -38,6 +38,7 @@ import {
 import {
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
+  BEELINE_ONBOARDING_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   SITUATIONAL_SKILL_NAMES,
 } from './beeline-skill.js';
@@ -897,6 +898,7 @@ describe('operator skills + MCP passthrough', () => {
         'greet',
         'draw-avatar',
         BEELINE_SPEC_SKILL_NAME,
+        BEELINE_ONBOARDING_SKILL_NAME,
         BEELINE_TRIAGE_SKILL_NAME,
         ...SITUATIONAL_SKILL_NAMES,
       ].sort(),
@@ -912,6 +914,7 @@ describe('operator skills + MCP passthrough', () => {
       [
         BEELINE_REVIEW_SKILL_NAME,
         BEELINE_SPEC_SKILL_NAME,
+        BEELINE_ONBOARDING_SKILL_NAME,
         BEELINE_TRIAGE_SKILL_NAME,
         'draw-avatar',
         'greet',

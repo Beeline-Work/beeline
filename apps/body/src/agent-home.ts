@@ -74,6 +74,7 @@ import { androidAgentEnv } from './android-agent-env.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
+  BEELINE_ONBOARDING_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   beelineManagedSkills,
   runningBeelineReleaseId,
@@ -160,6 +161,7 @@ const GOOSE_SHARED_CONFIG_FILES = ['config.yaml', 'secrets.yaml'] as const;
 export const BEELINE_DEFAULT_SKILL_NAMES = [
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
+  BEELINE_ONBOARDING_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   DRAW_AVATAR_SKILL_NAME,
   ...SITUATIONAL_SKILL_NAMES,

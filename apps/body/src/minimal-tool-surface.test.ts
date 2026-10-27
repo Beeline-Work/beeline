@@ -328,14 +328,13 @@ describe('minimal agent surface', () => {
     const accepted = [
       { scope: 'history', query: '🙂'.repeat(500), limit: 10 },
       { scope: 'memory', query: '🙂'.repeat(125), limit: 1 },
-      { scope: 'memory', query: 'x'.repeat(125), limit: 10 },
+      { scope: 'memory', query: 'x'.repeat(500), limit: 10 },
     ];
     for (const args of accepted) {
       expect(Check(schema, args)).toBe(true);
       await callAgentTool('search', args, 'valid');
     }
     expect(calls).toHaveLength(accepted.length);
-    expect(Check(schema, { scope: 'memory', query: 'x'.repeat(126) })).toBe(false);
   });
   it('reads exact messages, revisions, procedures and bounded transcripts through existing authorities', async () => {
     await callAgentTool(

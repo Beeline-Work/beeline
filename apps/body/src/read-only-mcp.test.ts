@@ -65,15 +65,15 @@ describe('canonical tool contracts', () => {
   it('keeps memory query byte limits inside the advertised schema and tool path', async () => {
     const searchSchema = schema('search');
     const memoryQuery = (query: string) => ({ scope: 'memory', query, limit: 1 });
-    const queryMax = searchSchema.anyOf[1].properties.query.maxLength;
-    const withinCap = memoryQuery('🙂'.repeat(queryMax));
-    const overCap = memoryQuery('🙂'.repeat(queryMax + 1));
+    expect(searchSchema.properties.query.description).toMatch(/Memory scope .* 500 UTF-8 bytes/);
+    const withinCap = memoryQuery('🙂'.repeat(125));
+    const overCap = memoryQuery('🙂'.repeat(126));
 
     expect(Buffer.byteLength(withinCap.query, 'utf8')).toBe(500);
     expect(Check(searchSchema, withinCap)).toBe(true);
     expect(Buffer.byteLength(overCap.query, 'utf8')).toBeGreaterThan(500);
     await expect(callAgentTool('search', overCap, 'memory-search-over-cap'))
-      .rejects.toThrow(/memory query must be at most 125 characters/);
+      .rejects.toThrow(/query: memory scope allows at most 500 UTF-8 bytes/);
   });
 
   it('separates assignment completion, feedback, discovery and execution', () => {

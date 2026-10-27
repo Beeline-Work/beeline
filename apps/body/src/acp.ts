@@ -798,6 +798,7 @@ export class AcpClient extends EventEmitter {
   private supportsStandardSteering = false;
   private supportsSessionLoading = false;
   private supportsImagePrompts = false;
+  private supportsStructuredSystemPrompt = false;
   private alive = false;
   /**
    * Byte length of the last prompt handed to the harness, measured here because
@@ -1051,9 +1052,15 @@ export class AcpClient extends EventEmitter {
     const steering = initMeta?.steering as Record<string, unknown> | undefined;
     this.supportsStandardSteering = steering?.supported === true;
     const agentCapabilities = initResult.agentCapabilities as
-      { loadSession?: unknown; promptCapabilities?: { image?: unknown } } | undefined;
+      | {
+          loadSession?: unknown;
+          promptCapabilities?: { image?: unknown };
+          sessionCapabilities?: { systemPrompt?: object | null };
+        }
+      | undefined;
     this.supportsSessionLoading = agentCapabilities?.loadSession === true;
     this.supportsImagePrompts = agentCapabilities?.promptCapabilities?.image === true;
+    this.supportsStructuredSystemPrompt = agentCapabilities?.sessionCapabilities?.systemPrompt != null;
     this.emit('initialized', initResult);
     // ACP defines no `initialized` notification; pi-acp answers it with -32601
     // and dumps the notification to stderr on every session. Do not send it to
@@ -1205,7 +1212,13 @@ export class AcpClient extends EventEmitter {
         env: s.env ?? [],
       })),
     };
-    if (opts.systemPrompt) params.systemPrompt = opts.systemPrompt;
+    if (opts.systemPrompt) {
+      // Current ACP SDKs validate the standard field and reject the legacy
+      // string with -32602. Older harnesses retain their existing wire form.
+      params.systemPrompt = this.supportsStructuredSystemPrompt
+        ? { mode: 'append', content: [{ type: 'text', text: opts.systemPrompt }] }
+        : opts.systemPrompt;
+    }
     // The tool-scope lockdown is applied HERE, not at the call sites, so a new
     // session path cannot ship without it: every session/new this daemon sends
     // pins the harness to the servers listed on the same request. See
@@ -1218,8 +1231,8 @@ export class AcpClient extends EventEmitter {
     const meta: Record<string, unknown> = {
       ...(sessionToolScopeMeta(this.agentLabel, this.agentEnv.CLAUDE_CODE_TERMINAL_MCP_TOOLS) ?? {}),
     };
-    // claude-agent-acp reads the system prompt only from `_meta.systemPrompt`;
-    // its top-level `systemPrompt` sibling above is silently ignored there.
+    // Older claude-agent-acp reads only `_meta.systemPrompt`. Keep its fallback;
+    // versions advertising the standard field give that field precedence.
     if (opts.systemPrompt && harnessReadsMetaSystemPrompt(this.agentLabel)) {
       meta.systemPrompt = { append: opts.systemPrompt };
     }

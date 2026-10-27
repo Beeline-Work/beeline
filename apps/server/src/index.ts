@@ -1,3 +1,4 @@
+import { syncXSiteVisits } from './x-site-visits.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { syncXAdReports } from './x-ad-reports.js';
@@ -481,6 +482,7 @@ async function main() {
   // Database claims fence retries across leaders; one local run per job bounds concurrency.
   let xConversionsRunning = false;
   let xReportsRunning = false;
+  let xSiteVisitsRunning = false;
   let financesRunning = false;
   work.add('operator-finances', 60 * 60_000, async () => {
     if (financesRunning) return;
@@ -493,6 +495,12 @@ async function main() {
     xConversionsRunning = true;
     void backgroundJobs.run('x-signup-conversions', () => deliverXSignups(jobsDatabase))
       .finally(() => { xConversionsRunning = false; });
+  });
+  work.add('x-site-visits', reconciliationMs, async () => {
+    if (xSiteVisitsRunning) return;
+    xSiteVisitsRunning = true;
+    void backgroundJobs.run('x-site-visits', () => syncXSiteVisits(jobsDatabase))
+      .finally(() => { xSiteVisitsRunning = false; });
   });
   work.add('x-reports', reconciliationMs, async () => {
     if (xReportsRunning) return;

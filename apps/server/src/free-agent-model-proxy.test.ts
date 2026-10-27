@@ -186,11 +186,23 @@ describe('free agent model proxy', () => {
   it.each([
     { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'A'.repeat(100_000) } }] },
     { role: 'user', content: 'data:image/png;base64,' + 'A'.repeat(100_000) },
-    { role: 'assistant', reasoning_details: [{ type: 'reasoning.encrypted', data: 'A'.repeat(100_000) }] },
   ])('refuses unsupported binary input before reservation instead of counting it as text', async message => {
     expect((await call({ messages: [message] })).status).toBe(400);
     expect(upstream).toEqual([]);
     expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0);
+  });
+
+  it('Reproduction luna-encrypted-1: forwards replayed encrypted reasoning and counts it in full', async () => {
+    config = { ...CONFIG, dailyTokenCap: 1_000_000, lifetimeTokenCap: 0 };
+    const encrypted = { type: 'reasoning.encrypted', data: 'A'.repeat(100_000), index: 0 };
+    const body = { messages: [{ role: 'user', content: 'Your move' },
+      { role: 'assistant', content: 'ok', reasoning_details: [encrypted] }], max_tokens: 1024 };
+    expect(promptTokenBound(body)).toBeGreaterThan(100_000 / 3);
+    const response = await call(body);
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveLength(1);
+    expect((upstream[0]!.body.messages as unknown[])[1]).toMatchObject({ reasoning_details: [encrypted] });
+    console.log('Demonstrated luna-encrypted-1: encrypted reasoning replay HTTP 200, forwarded unchanged.');
   });
 
   it('Reproduction free-allowance-bytes-overcount: forwards 180 KB at 123478 of 300000 tokens used', async () => {

@@ -29,6 +29,28 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 const today = () => new Date().toISOString().slice(0, 10);
+it('attributes viewer milestones only to the onboarding artifact posted on the signup attempt', async () => {
+  const identity = 'd'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Person','customer')`, [identity]);
+  const attempt = make({ event: 'signed_in', provider: 'google' });
+  await recordSigninFunnelEvent(db, attempt, 'server', identity);
+  await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+    VALUES($1,$2,'signup','android','0.2.22','server',now())`, [attempt.installId, attempt.attemptId]);
+  await recordOnboardingEvent(db, identity, 'welcome_shown');
+  const artifactId = randomUUID();
+  await recordOnboardingEvent(db, identity, 'game_posted', { artifactId });
+  const milestones = async (id?: string) => {
+    for (const event of ['game_viewer_opened', 'game_viewer_closed'] as const) {
+      await recordSigninFunnelEvent(db, { ...attempt, provider: undefined, event, artifactId: id,
+        ...(event === 'game_viewer_closed' ? { durationMs: 1500 } : {}) }, 'client', identity);
+    }
+    const funnel = await dashboardOnboarding(db, `${today()}T00:00:00Z`, new Date().toISOString());
+    return funnel.paths.game.slice(1).map(step => step.count);
+  };
+  expect(await milestones()).toEqual([0, 0]);
+  expect(await milestones(randomUUID())).toEqual([0, 0]);
+  expect(await milestones(artifactId)).toEqual([1, 1]);
+});
 it('joins onboarding to the authenticated signup attempt, excludes team accounts, and measures option intervals', async () => {
   for (const [identity, handle] of [['d'.repeat(64), 'customer'], ['e'.repeat(64), 'lunchboxfortwo']]) {
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Person',$2)`, [identity, handle]);

@@ -1,6 +1,7 @@
 import {
   FUNNEL_FIRST_SESSION_MS,
   FUNNEL_SCREEN_SEND_CAP,
+  FUNNEL_UUID,
   parseSigninFunnelEvent,
   type SigninFunnelEvent,
   type FunnelAuthObservation,
@@ -21,7 +22,7 @@ function funnelAccountHash(identityId: string) {
 }
 
 export async function recordOnboardingEvent(database: SqlDatabase, identityId: string, event: OnboardingEvent,
-  detail: { option?: 'A' | 'B' | 'C' | 'D'; durationMs?: number } = {}) {
+  detail: { option?: 'A' | 'B' | 'C' | 'D'; durationMs?: number; artifactId?: string } = {}) {
   const context = (await database.query<{ install_id: string; attempt_id: string; platform: SigninFunnelEvent['platform']; version: string }>(
     `SELECT e.install_id,e.attempt_id,e.platform,e.version FROM signin_funnel_installs i
      JOIN signin_funnel_events e ON e.install_id=i.install_id
@@ -139,9 +140,10 @@ export async function recordSigninFunnelEvent(
     [event.installId, funnelAccountHash(identityId!)],
   )).rowCount) return;
   if (source === 'client' && ['game_viewer_opened', 'game_viewer_closed'].includes(event.event)) {
+    if (!event.artifactId || !FUNNEL_UUID.test(event.artifactId)) return;
     const prerequisite = 'game_posted';
-    if (!(await database.query(`SELECT 1 FROM signin_funnel_events WHERE install_id=$1 AND attempt_id=$2 AND event=$3`,
-      [event.installId, event.attemptId, prerequisite])).rowCount) return;
+    if (!(await database.query(`SELECT 1 FROM signin_funnel_events WHERE install_id=$1 AND attempt_id=$2 AND event=$3 AND artifact_id=$4::uuid`,
+      [event.installId, event.attemptId, prerequisite, event.artifactId])).rowCount) return;
   }
   if (event.event === 'screen_shown') {
     // Keep screens only for a new-account signup on this attempt, within its first session,
@@ -179,8 +181,8 @@ export async function recordSigninFunnelEvent(
       `UPDATE signin_funnel_installs SET account_hash=$2 WHERE install_id=$1`, [event.installId, funnelAccountHash(identityId)],
     );
     await tx.query(
-      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at,onboarding_option,duration_ms)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $3='welcome_shown' THEN $14::timestamptz ELSE now() END,$12,$13) ON CONFLICT(install_id,attempt_id,event,provider,screen)
+      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at,onboarding_option,duration_ms,artifact_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $3='welcome_shown' THEN $14::timestamptz ELSE now() END,$12,$13,$15::uuid) ON CONFLICT(install_id,attempt_id,event,provider,screen)
       DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source,
         last_seen_at=GREATEST(signin_funnel_events.last_seen_at,EXCLUDED.last_seen_at),
         visits=signin_funnel_events.visits+CASE WHEN EXCLUDED.event='screen_shown' THEN 1 ELSE 0 END
@@ -201,6 +203,7 @@ export async function recordSigninFunnelEvent(
         event.option ?? null,
         event.durationMs ?? null,
         event.timestamp,
+        event.artifactId ?? null,
       ],
     );
     if (event.event === 'signed_in' && identityId && !internal) {

@@ -52,9 +52,9 @@ describe('runnable viewer boundary', () => {
     let tree: any;
     vi.mocked(funnelOnboarding).mockClear();
     await act(async () => { tree = create(<RunnableArtifact attachment={attachment} />); });
-    expect(funnelOnboarding).toHaveBeenCalledWith('game_viewer_opened');
+    expect(funnelOnboarding).toHaveBeenCalledWith('game_viewer_opened', undefined, '11111111-1111-4111-8111-111111111111');
     await act(async () => { tree.unmount(); });
-    expect(funnelOnboarding).toHaveBeenCalledWith('game_viewer_closed', expect.any(Number));
+    expect(funnelOnboarding).toHaveBeenCalledWith('game_viewer_closed', expect.any(Number), '11111111-1111-4111-8111-111111111111');
   });
   it('has no bridge, bearer, injected script, or file/permission access; rejects external navigation', async () => {
     state.os = 'android';

@@ -208,12 +208,12 @@ export function createSigninFunnelClient(input: {
           token,
         );
       }),
-    onboarding: (event: 'welcome_shown' | 'game_viewer_opened' | 'game_viewer_closed' | 'invite_shared', authorization: string, durationMs?: number) =>
+    onboarding: (event: 'welcome_shown' | 'game_viewer_opened' | 'game_viewer_closed' | 'invite_shared', authorization: string, durationMs?: number, artifactId?: string) =>
       serial(async () => {
         const pending = await readPending();
         if (!pending || suppressed) return;
         send({ ...pending.context, event, timestamp: new Date(now()).toISOString(),
-          ...(durationMs !== undefined ? { durationMs } : {}) }, authorization);
+          ...(durationMs !== undefined ? { durationMs } : {}), ...(artifactId ? { artifactId } : {}) }, authorization);
       }),
     activation: (event: 'workspace_created' | 'first_message_sent', authorization: string) =>
       serial(() => step(event, undefined, undefined, undefined, authorization)),

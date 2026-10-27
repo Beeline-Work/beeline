@@ -103,6 +103,7 @@ export interface SigninFunnelEvent {
   screen?: FunnelScreen;
   option?: 'A' | 'B' | 'C' | 'D';
   durationMs?: number;
+  artifactId?: string;
   timestamp: string;
 }
 export const FUNNEL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -120,6 +121,7 @@ const KEYS = [
   'timestamp',
   'option',
   'durationMs',
+  'artifactId',
 ];
 export function parseSigninFunnelEvent(value: unknown, now = Date.now()): SigninFunnelEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -144,6 +146,7 @@ export function parseSigninFunnelEvent(value: unknown, now = Date.now()): Signin
   const providerStep = ['provider_tapped', 'callback_result', 'signed_in'].includes(
     v.event as string,
   );
+  if (v.artifactId !== undefined && (!['game_posted', 'game_viewer_opened', 'game_viewer_closed'].includes(v.event as string) || typeof v.artifactId !== 'string' || !FUNNEL_UUID.test(v.artifactId))) return null;
   if (v.option !== undefined && (!ONBOARDING_EVENTS.includes(v.event as never) || !['A', 'B', 'C', 'D'].includes(v.option as string))) return null;
   if (v.durationMs !== undefined && (v.event !== 'game_viewer_closed' || !Number.isSafeInteger(v.durationMs) || Number(v.durationMs) < 0 || Number(v.durationMs) > 86_400_000)) return null;
   if (

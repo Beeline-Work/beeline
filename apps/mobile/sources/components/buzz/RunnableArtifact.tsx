@@ -4,6 +4,7 @@ import { Platform, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import { runnableArtifactUrl } from '@/buzz/artifact-link';
+import { mediaIdFromUrl } from '@/buzz/artifact';
 import { useSandboxWebView, useSandboxWebViewStatus } from './sandbox-webview';
 import { Button } from './Button';
 
@@ -18,8 +19,10 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   const status = useSandboxWebViewStatus();
   useEffect(() => {
     const started = Date.now();
-    void funnelOnboarding('game_viewer_opened');
-    return () => { void funnelOnboarding('game_viewer_closed', Math.min(86_400_000, Date.now() - started)); };
+    const artifactId = mediaIdFromUrl(attachment.url);
+    if (!artifactId) return;
+    void funnelOnboarding('game_viewer_opened', undefined, artifactId);
+    return () => { void funnelOnboarding('game_viewer_closed', Math.min(86_400_000, Date.now() - started), artifactId); };
   }, [attachment.url]);
   useEffect(() => {
     let live = true;

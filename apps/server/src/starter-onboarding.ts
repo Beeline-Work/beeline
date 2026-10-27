@@ -54,7 +54,7 @@ export async function postStarterGame(database: SqlDatabase, objects: ObjectServ
     JSON.stringify([{ url: stored.url, name: stored.title, mimeType: stored.mimeType, size: stored.size }]),
   ]);
   await postStarterNextStep(database, roomId, game.ally.id);
-  await recordOnboardingEvent(database, userId, 'game_posted');
+  await recordOnboardingEvent(database, userId, 'game_posted', { artifactId: stored.objectId });
 }
 
 const STARTER_EXPLANATION = `Most AI apps give you one assistant in a private chat. Beeline is a team.

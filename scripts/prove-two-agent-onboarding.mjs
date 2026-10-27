@@ -55,6 +55,17 @@ try {
   const played = await snapshot('game');
   const attachment = played.messages.flatMap(m => m.attachments ?? []).find(a => a.mimeType === 'application/vnd.beeline.game+html');
   assert(attachment, 'Luna posts an interactive attachment');
+  const unrelated = await objects.uploadArtifact(owner, Buffer.from('<!doctype html><html><body>Another game</body></html>'), 'application/vnd.beeline.game+html', 'Another game');
+  const viewerEvent = async artifactId => {
+    for (const milestone of ['game_viewer_opened', 'game_viewer_closed']) {
+      await recordSigninFunnelEvent(db, { ...event, provider: undefined, event: milestone, artifactId,
+        ...(milestone === 'game_viewer_closed' ? { durationMs: 1500 } : {}) }, 'client', owner);
+    }
+    const dashboard = await dashboardPeriods(db, new Date().toISOString());
+    return dashboard['24h'].onboardingFunnel.paths.game.slice(1).map(step => step.count);
+  };
+  assert.deepEqual(await viewerEvent(unrelated.objectId), [0, 0], 'ONBOARDING-GAME-1: unrelated artifacts must not count');
+  assert.deepEqual(await viewerEvent(attachment.url.split('/').pop()), [1, 1], 'ONBOARDING-GAME-1: the onboarding artifact counts');
   const game = [...bytes.values()][0].toString();
   assert.equal((game.match(/class="cell"/g) ?? []).length, 9);
   assert(game.includes('data:image/png;base64,'));

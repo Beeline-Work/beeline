@@ -21,6 +21,15 @@ selects D, then sends another message. Before the fix this returned
 does not record `user_answered`, and repeated post-pick messages preserve the
 first qualifying timestamp. The dashboard contract and user-facing text are unchanged.
 
+### Regression ONBOARDING-GAME-1
+
+After selecting B, the built-service proof uploads a different runnable artifact
+and sends its viewer open/close events. Before the fix, both onboarding counts
+incorrectly became one. They now remain zero until events name the actual
+onboarding artifact, when both become one. The trusted mobile shell sends only
+the media object UUID, and the server matches it to the posted onboarding game
+on the authenticated signup attempt. Missing or unrelated IDs do not count.
+
 PGlite and in-memory object storage replace production PostgreSQL and Tigris.
 No Fly Machine or live model is used. The model proxy regression separately
 executes authenticated HTTP requests for both teammates and verifies stored

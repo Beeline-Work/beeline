@@ -34,6 +34,21 @@ function setup(
     advance: () => (time += 31 * 60_000),
   };
 }
+it('sends artifact identity with viewer events, without its URL', async () => {
+  const { client, send } = setup('android');
+  await client.begin('google');
+  await client.signedIn('private-session');
+  const artifactId = '11111111-1111-4111-8111-111111111111';
+  await client.onboarding('game_viewer_opened', 'private-session', undefined, artifactId);
+  await client.onboarding('game_viewer_closed', 'private-session', 1500, artifactId);
+  const events = send.mock.calls.map(call => call[0]).filter(event => event.event.startsWith('game_viewer_'));
+  expect(events).toHaveLength(2);
+  for (const event of events) {
+    expect(event.artifactId).toBe(artifactId);
+    expect(parseSigninFunnelEvent(event)).not.toBeNull();
+    expect(JSON.stringify(event)).not.toContain('/v1/media/');
+  }
+});
 it.each(['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const)(
   'sends each action step once with no personal fields on %s',
   async (platform) => {

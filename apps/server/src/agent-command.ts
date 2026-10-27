@@ -411,16 +411,21 @@ export const REVIEWER_DISPATCH_REASONS = [
 /**
  * A repair handback (`purpose: repair`) and an ordinary tag or order are not
  * another review. They carry the current pull request only as a handoff note.
- * A verdict walking back (`purpose: verdict`) is the repeat.
+ * Two wakes are the repeat: a verdict walking back (`purpose: verdict`), and a
+ * tag or order sent from a repair turn (`sourcePurpose: repair`), which asks
+ * the reviewer to look again. The refusal still lets a new head through.
  */
 export function reviewerDispatchCarriesHead(
   reason: string,
   sourceKind: string | undefined,
   reviewContext: Record<string, unknown> | undefined,
+  sourcePurpose?: unknown,
 ): boolean {
   if (reason === 'corner_review_dispatch') return true;
   if (reason === 'subscribed_event' && sourceKind === 'check-passed') return true;
-  if (reviewContext?.purpose !== 'verdict') return false;
+  if (!reviewContext) return false;
+  if ((reason === 'agent_tag' || reason === 'order') && sourcePurpose === 'repair') return true;
+  if (reviewContext.purpose !== 'verdict') return false;
   return reason === 'agent_tag' || reason === 'order' || reason === 'report';
 }
 
@@ -642,7 +647,7 @@ export async function createAgentCommand(
   if (reviewContext && input.reason === 'corner_review_needed') reviewContext.purpose = 'repair';
   const sourceEvent = member.rows[0]!.source_event as { kind?: string; object?: { headSha?: string } } | null;
   // Every review dispatch is inserted here. A verdicted or in-flight head is not delivered again.
-  if (reviewerDispatchCarriesHead(input.reason, sourceEvent?.kind, reviewContext)) {
+  if (reviewerDispatchCarriesHead(input.reason, sourceEvent?.kind, reviewContext, reviewSource?.review_context?.purpose)) {
     const recordedHead = typeof reviewContext?.headSha === 'string' ? reviewContext.headSha : undefined;
     const recordedPull = typeof reviewContext?.pullRequest === 'number' ? reviewContext.pullRequest
       : typeof reviewContext?.pullRequest === 'string' && /^\d+$/.test(reviewContext.pullRequest)

@@ -105,6 +105,8 @@ export interface ResolvedMessageMention {
   readonly id: string;
   readonly kind: 'human' | 'agent';
   readonly handle: string;
+  /** An MCP member's registered outgoing webhook, resolved with the mention. */
+  readonly mcpCallbackUrl?: string;
 }
 
 /** Resolve exact typed handles against the Room's current membership. */
@@ -121,10 +123,13 @@ export async function resolveCurrentMemberMentions(
     id: string;
     kind: 'human' | 'agent';
     handle: string;
+    mcp_callback_url: string | null;
   }>(
-    `SELECT identity.id,identity.kind,identity.handle
+    `SELECT identity.id,identity.kind,identity.handle,client.callback_url mcp_callback_url
      FROM memberships membership
      JOIN identities identity ON identity.id=membership.identity_id
+     LEFT JOIN rooms_mcp_members member ON member.member_id=identity.id
+     LEFT JOIN rooms_mcp_clients client ON client.id=member.client_id
      WHERE membership.room_id=$1 AND membership.removed_at IS NULL
        AND identity.handle IS NOT NULL AND btrim(identity.handle)<>''`,
     [roomId],
@@ -134,7 +139,12 @@ export async function resolveCurrentMemberMentions(
     if (member.id === authorId) continue;
     const handle = member.handle.trim().replace(/^@/, '');
     const candidates = byHandle.get(handle) ?? [];
-    candidates.push({ id: member.id, kind: member.kind, handle });
+    candidates.push({
+      id: member.id,
+      kind: member.kind,
+      handle,
+      ...(member.mcp_callback_url ? { mcpCallbackUrl: member.mcp_callback_url } : {}),
+    });
     byHandle.set(handle, candidates);
   }
   const resolved = [...typedHandles].flatMap((handle) => {

@@ -1019,8 +1019,10 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   targets.delete(source.author_id);
   for (const target of targets) {
     const agent = (
-      await db.query<{ owner_id: string; access_policy: unknown }>(
-        `SELECT a.owner_id,a.access_policy FROM agents a
+      await db.query<{ owner_id: string; access_policy: unknown; mcp_callback_url: string | null }>(
+        `SELECT a.owner_id,a.access_policy,client.callback_url mcp_callback_url FROM agents a
+   LEFT JOIN rooms_mcp_members member ON member.member_id=a.agent_id
+   LEFT JOIN rooms_mcp_clients client ON client.id=member.client_id
    JOIN memberships m ON m.identity_id=$2 AND m.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$3) AND m.removed_at IS NULL
    WHERE a.agent_id=$1 FOR ${avatarJob ? 'UPDATE' : 'SHARE'} OF a,m`,
         [target, source.author_id, source.room_id],
@@ -1051,7 +1053,8 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
-    if (dispatched) await recordMcpMemberWebhook(db, target, source.room_id, sourceId, source.text);
+    if (dispatched && agent.mcp_callback_url)
+      await recordMcpMemberWebhook(db, target, agent.mcp_callback_url, source.room_id, sourceId, source.text);
     if (source.parent_id) await setCornerImplementer(db, source.room_id, target);
   }
   return false;
@@ -1132,7 +1135,8 @@ export async function routeAgentResult(
     if (dispatched) woken.push(mention.handle);
     else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
-    if (dispatched) await recordMcpMemberWebhook(db, mention.id, roomId, sourceId, source.text);
+    if (dispatched && mention.mcpCallbackUrl)
+      await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
   }
   return { woken, notWoken };
 }

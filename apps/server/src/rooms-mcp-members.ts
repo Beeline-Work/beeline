@@ -85,23 +85,16 @@ interface McpMemberWebhook {
  * One call per (message, member). The shared webhook ledger's own wake dedupe
  * decides: a redelivery of the same message inserts nothing and calls nobody.
  * A member that tags itself is never a wake target, so self-posts never fire.
+ * The caller already knows the registered callback, so this adds no read.
  */
 export async function recordMcpMemberWebhook(
   db: SqlDatabase,
   memberId: string,
+  callbackUrl: string,
   roomId: string,
   messageId: string,
   text: string,
 ): Promise<McpMemberWebhook | undefined> {
-  const row = (
-    await db.query<{ callback_url: string | null }>(
-      `SELECT client.callback_url FROM rooms_mcp_members member
-       JOIN rooms_mcp_clients client ON client.id=member.client_id
-       WHERE member.member_id=$1`,
-      [memberId],
-    )
-  ).rows[0];
-  if (!row?.callback_url) return undefined;
   const id = randomUUID();
   const inserted = await db.query(
     `INSERT INTO subscription_webhook_calls(id,member_id,wake_message_id,outcome,byte_size,reason)

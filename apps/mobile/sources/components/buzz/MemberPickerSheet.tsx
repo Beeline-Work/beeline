@@ -14,6 +14,8 @@ export type MemberPickerCandidate = {
   name: string;
   handle: string;
   kind: 'person' | 'agent';
+  /** Agents only: the model label beside the handle. */
+  model?: string;
   /** The creature on record — a person's chosen one, an agent's assigned one. */
   face?: string;
   avatarUrl?: string;
@@ -148,7 +150,7 @@ export function MemberPickerSheet({
               name={candidate.name}
               title={candidate.name}
               handle={candidate.handle}
-              subtitle={`@${candidate.handle}`}
+              subtitle={`@${candidate.handle}${candidate.model ? ` · ${candidate.model}` : ''}`}
               avatarUrl={candidate.avatarUrl}
               face={candidate.face}
               divider="bottom"

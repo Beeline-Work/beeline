@@ -21,6 +21,28 @@ CREATE TABLE IF NOT EXISTS subscription_webhook_calls (
 CREATE INDEX IF NOT EXISTS subscription_webhook_calls_subscription
  ON subscription_webhook_calls(subscription_id,called_at DESC);
 CREATE INDEX IF NOT EXISTS subscription_webhook_calls_wake ON subscription_webhook_calls(wake_message_id);
+-- An outgoing webhook to an MCP member is one call per (message, member), and
+-- this table's own ledger and wake dedupe record it alongside room webhooks.
+ALTER TABLE subscription_webhook_calls ALTER COLUMN subscription_id DROP NOT NULL;
+ALTER TABLE subscription_webhook_calls ADD COLUMN IF NOT EXISTS member_id text REFERENCES identities(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS subscription_webhook_calls_member_wake
+ ON subscription_webhook_calls(member_id,wake_message_id) WHERE member_id IS NOT NULL;
+-- Outgoing calls to an MCP member wait here between the wake transaction and
+-- delivery, so no HTTP request is ever held inside a Room write.
+CREATE TABLE IF NOT EXISTS rooms_mcp_webhook_outbox (
+ call_id uuid PRIMARY KEY REFERENCES subscription_webhook_calls(id) ON DELETE CASCADE,
+ member_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+ room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+ message_id text NOT NULL,
+ body text NOT NULL,
+ attempts integer NOT NULL DEFAULT 0,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ delivered_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_pending
+ ON rooms_mcp_webhook_outbox(created_at) WHERE delivered_at IS NULL;
+CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_room ON rooms_mcp_webhook_outbox(room_id);
+CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_member ON rooms_mcp_webhook_outbox(member_id);
 CREATE TABLE IF NOT EXISTS subscription_webhook_deliveries (
  subscription_id uuid NOT NULL REFERENCES agent_subscriptions(id) ON DELETE CASCADE,
  delivery_hash text NOT NULL,

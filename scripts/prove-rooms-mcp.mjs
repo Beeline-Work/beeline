@@ -100,14 +100,17 @@ try {
   response = await browser(`/auth/github/callback?state=${upstream.searchParams.get('state')}&code=synthetic-provider-code`); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location')); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location'));
-  const html = await response.text(); assert.match(html, /Post as you/); assert.match(html, /Connector Reviewer/);
-  transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the client, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
+  const html = await response.text(); assert.match(html, /JOINS AS/); assert.match(html, /Read Rooms you add it to/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
+  transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the joining member, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
   response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow' }) });
   assert.equal(response.status, 302);
   const callback = new URL(response.headers.get('location'));
   assert.equal(callback.searchParams.get('state'), 'local-proof-state'); assert.equal(callback.searchParams.get('iss'), origin);
   assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', authorizationCode: callback.searchParams.get('code'), resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'AUTHORIZED');
   transcript('SDK exchanged the code with PKCE and the resource audience. No credentials are printed or saved.');
+  // The connection is a member owned by the reviewer; a person adds it to a Room to read and post there.
+  const member = (await db.query(`SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1`, [person])).rows[0].member_id;
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [workspace, room, member]);
   const firstRefresh = tokens.refresh_token;
   tokens.expires_in = 0;
   assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'AUTHORIZED');
@@ -115,17 +118,17 @@ try {
   transcript('SDK refreshed the connection and received a rotated refresh token.');
   client = new Client({ name: 'beeline-rooms-proof', version: '1.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { authProvider: provider }));
-  assert.equal((await client.listTools()).tools.length, 6);
+  assert.equal((await client.listTools()).tools.length, 7);
   const rooms = await client.callTool({ name: 'list_rooms', arguments: {} }); assert.match(JSON.stringify(rooms), /connector-demo/);
   const read = await client.callTool({ name: 'read_messages', arguments: { room, limit: 10 } }); assert.match(JSON.stringify(read), /synthetic demo content/);
   transcript('Streamable HTTP client initialized, discovered all tools, listed its seeded Room and read synthetic agent activity.');
   const sent = await client.callTool({ name: 'send_message', arguments: { room, text: '@demo-agent acknowledge the connector review' } }); assert.notEqual(sent.isError, true);
   const row = (await db.query(`SELECT m.id,m.author_id,c.id command_id FROM messages m JOIN agent_commands c ON c.source_message_id=m.id WHERE m.text=$1 AND m.room_id=$2`, ['@demo-agent acknowledge the connector review', room])).rows[0];
-  assert.equal(row.author_id, person);
+  assert.equal(row.author_id, member);
   await claimAgentCommand(db, room, agent, row.command_id, 'connector-proof');
   await options.daemon.execute('postRoomMessage', { roomId: room, requestId: row.id, generationId: 'connector-proof', text: 'Connector review acknowledged.' }, agent);
   assert.match(JSON.stringify(await options.phone.readRoom(room, person)), /Connector review acknowledged/);
-  transcript('send_message posted as the reviewer; the tagged demo agent claimed its command and replied; the phone Room read shows the reply.');
+  transcript('send_message posted as the member; the tagged demo agent claimed its command and replied; the phone Room read shows the reply.');
   // Optional Inspector CLI library uses the very same short-lived local grant.
   if (process.env.MCP_INSPECTOR_CLIENT) {
     process.env.MCP_INSPECTOR_SECRET_STORE = 'memory';

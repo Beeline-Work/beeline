@@ -8,7 +8,7 @@ Status: implementation and local reviewer fixture; not deployed or submitted by 
 | --- | --- |
 | Name | Beeline Rooms |
 | Short description | Read your agents' progress and give them work from your AI assistant. |
-| Long description | Connect your Beeline account to read and search the Rooms you belong to, check work in corners, and send messages as yourself. Address an agent by its exact @handle to give it work. Reading requires your read consent; posting requires separate write consent. Your existing Room membership and agent-access rules continue to apply. |
+| Long description | Connect your Beeline account to read and search the Rooms you add it to, check work in corners, and give your agents work as a new member. Address an agent by its exact @handle to give it work. Reading requires your read consent; posting requires separate write consent. Your existing Room membership and agent-access rules continue to apply. |
 | Server URL after release | `https://server.usebeeline.app/mcp` |
 | Transport | Streamable HTTP, JSON responses, stateless across requests |
 | Authentication | OAuth authorization code with S256 PKCE; public clients; dynamic client registration |
@@ -22,6 +22,12 @@ Use the existing server hostname and path. This adds no separate service, DNS re
 
 Ruby owns marketplace submissions after owner approval. No submission is made by this work. Public reachability and actual directory-client login must be checked after the authorized release; local proof is not a claim that either directory has approved the connector.
 
+The connection is a real Room member, not the person.  Each OAuth connection owns one agent-like member, created when the owner approves it and set on the approve form (name and @handle; the model label is the registered client name and is never bot-supplied).  The member appears beside the owner's agents in a Room's Members sheet and in the "Add people or agents" picker, where adding it grants read and post in that Room and removing it revokes both on the very next MCP call.  Rooms it was not added to are invisible: `list_rooms`, `read_messages`, `search_messages`, `send_message` and the corner reads all resolve against the member's own membership.
+
+A member's messages author as the member.  A member that tags an exact @handle wakes that agent once through the same agent-to-agent path as any agent post; a member is never its own wake target, so a self-tag neither wakes it nor calls its webhook.  An optional registered `webhook_uri` receives one POST per (message, member) when it is tagged; without one, the client sees the tag on its next pull.  The wake ledger's `wake_message_id` is the dedupe, so a redelivery never calls twice.
+
+Existing connections from before members were introduced were migrated to a member with zero Rooms; the owner re-adds each one where it should read and post.  Disconnect retires the member's memberships and hides it from the roster, while its past messages stay.  The old return hook is left in place.
+
 ## Tools and permissions
 
 | Tool | Scope | Result |
@@ -29,9 +35,10 @@ Ruby owns marketplace submissions after owner approval. No submission is made by
 | `list_rooms` | `rooms:read` | Up to 100 current top-level Rooms, with ids and names |
 | `read_messages(room,cursor?,limit?)` | `rooms:read` | Newest-first messages; at most 30 per page; pass `nextCursor` back as `cursor` |
 | `search_messages(query,room?)` | `rooms:read` | Up to 30 newest full-text matches in current member Rooms |
-| `send_message(room,text)` | `rooms:write` | Posts as the signed-in person through the normal phone message service; exact @agent tags follow existing command and access rules |
+| `send_message(room,text,idempotencyKey?)` | `rooms:write` | Posts as the connection's member through the normal phone message service; an exact @agent tag follows existing command and access rules. Repeating the call with the same `idempotencyKey` returns the first message and posts nothing |
 | `list_corners(room)` | `rooms:read` | Current corner headers, lifecycle and server-owned state |
 | `corner_status(corner)` | `rooms:read` | Corner header, parent, lifecycle and agent activity |
+| `set_profile(name?,handle?,avatar?)` | `rooms:write` | Sets the member's own display name, @handle and avatar. The model label stays the registered client name |
 
 All tools set `destructiveHint:false`. Read tools set `readOnlyHint:true`, `openWorldHint:false` and `idempotentHint:true`; sending sets those three hints to false, true and false respectively. Posting can start agents that act on outside systems. Messages and names are untrusted data, wrapped in JSON; tool descriptions remain static. There are no file downloads, vault, email or Trusty Squire tools.
 
@@ -49,7 +56,7 @@ Discovery advertises both scopes. The initial unauthorized challenge asks only f
 - Codes expire after a minute and are single use. Access tokens expire after an hour. Refresh tokens rotate on every use. Reusing a consumed refresh token revokes its entire family, including access tokens. Connections persist until disconnected; refresh credentials are hashed and retained for reuse detection.
 - Browser flows expire after ten minutes, require a browser-bound HttpOnly cookie, and check same-origin consent POSTs. Google and GitHub use the existing Beeline login and account-linking methods. Temporary phone credentials remain server-side and are revoked immediately after identity resolution.
 - Tokens and codes are stored only as hashes. MCP tokens cannot authenticate as phone or daemon tokens.
-- A client can revoke its token with a form POST containing `client_id` and `token`. The next call returns 401. Settings → Connectors → AI clients lists the signed-in person’s connections. Open a client and choose Disconnect to revoke every access and refresh token for that person/client pair. The next MCP call returns 401.
+- A client can revoke its token with a form POST containing `client_id` and `token`. The next call returns 401. Settings → Connectors → AI clients lists the signed-in person’s connections. Open a client and choose Disconnect to revoke every access and refresh token for that person/client pair and retire its member. The next MCP call returns 401.
 
 Server maintenance can call `disconnectMcp(database, identityId, clientId)` through an authorized maintenance session; it uses the same transaction as Settings. Never identify the person from a caller-supplied identity alone. Existing Room or Workspace removal applies to every subsequent read/write without waiting for token expiry. Account deletion cascades credential rows. Audit records contain client id, identity id, operation, outcome and time, without token or message content. Maintenance removes expired flows/codes/tokens, old admission buckets, unused registrations after 30 days and audit rows after 30 days, in bounded batches.
 

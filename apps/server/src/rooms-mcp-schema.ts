@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_clients (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS logo text;
+ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS callback_url text;
 CREATE INDEX IF NOT EXISTS rooms_mcp_clients_created ON rooms_mcp_clients(created_at);
 CREATE TABLE IF NOT EXISTS rooms_mcp_connections (
   client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
@@ -14,6 +15,26 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_connections (
   revoked_at timestamptz, PRIMARY KEY(client_id,identity_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_connections_identity ON rooms_mcp_connections(identity_id);
+-- One MCP connection acts as one agent-like member owned by the approving person.
+-- The member's own Room memberships alone decide what it can read and post in.
+CREATE TABLE IF NOT EXISTS rooms_mcp_members (
+  client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
+  owner_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  member_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  model_label text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (client_id, owner_id)
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_members_member ON rooms_mcp_members(member_id);
+-- A client-supplied idempotency key returns the first message it already posted.
+CREATE TABLE IF NOT EXISTS rooms_mcp_idempotency (
+  member_id text NOT NULL,
+  idempotency_key text NOT NULL,
+  message_id text NOT NULL,
+  result jsonb,
+  claimed_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (member_id, idempotency_key)
+);
 CREATE TABLE IF NOT EXISTS rooms_mcp_families (
   id text PRIMARY KEY, client_id text NOT NULL, identity_id text NOT NULL, scope text NOT NULL,
   revoked_at timestamptz,
@@ -32,6 +53,8 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_flows (
   provider text, expires_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_flows_identity ON rooms_mcp_flows(identity_id);
+ALTER TABLE rooms_mcp_flows ADD COLUMN IF NOT EXISTS joiner_name text;
+ALTER TABLE rooms_mcp_flows ADD COLUMN IF NOT EXISTS joiner_handle text;
 CREATE INDEX IF NOT EXISTS rooms_mcp_flows_client ON rooms_mcp_flows(client_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_flows_expiry ON rooms_mcp_flows(expires_at);
 CREATE TABLE IF NOT EXISTS rooms_mcp_codes (

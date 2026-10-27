@@ -12,7 +12,8 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
-import { claimAgentCommand } from './agent-command.js';
+import { claimAgentCommand, routeHumanMessage } from './agent-command.js';
+import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -90,10 +91,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const response = await exchange(grant);
     expect(response.status).toBe(200);
     const tokens = await response.json() as { access_token: string };
+    // The connection acts through a member owned by the approving person; a
+    // person adds it to a Room before it can read or post there.
+    const member = (await db.query<{ member_id: string }>(
+      'SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.member_id;
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`, [WORKSPACE, ROOM, member]);
     const client = new Client({ name: 'rooms-review-proof', version: '1.0.0' });
     clients.push(client);
     await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
-    return { client, token: tokens.access_token, grant };
+    return { client, token: tokens.access_token, grant, member };
   }
   it('rotates refresh tokens and revokes their family on reuse', async () => {
     const grant = await authorize();
@@ -162,15 +169,43 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/consent', { flow: grant.flow, decision: 'allow' }, { cookie: grant.cookie, origin })).status).toBe(400);
     expect((await fetch(`${origin}/mcp/oauth/consent?flow=${grant.flow}`)).status).toBe(400);
   });
-  it('connects a real SDK client, reads, searches, posts as the user and wakes an agent', async () => {
-    const { client, token, grant } = await connected();
-    const tools = await client.listTools(); expect(tools.tools).toHaveLength(6);
+  it('previews and edits the joining member on consent', async () => {
+    const registered = await post('/mcp/oauth/register', { client_name: 'Grok Bot', redirect_uris: ['http://127.0.0.1:9876/callback'] });
+    const client = await registered.json() as { client_id: string };
+    const verifier = opaque();
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:9876/callback', response_type: 'code', resource: origin + '/mcp',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state: 'edit-state' });
+    const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
+    const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+    const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+    await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+    await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
+    expect(page).toContain('JOINS AS'); expect(page).toContain('Grok Bot');
+    expect(page).toContain('Read Rooms you add it to'); expect(page).toContain('Post as Grok Bot');
+    const edit = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}&edit=1`, { headers: { cookie } })).text();
+    expect(edit).toContain('name="joiner_name"');
+    expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Firstmate', joiner_handle: 'firstmate' }, { cookie, origin })).status).toBe(302);
+    const renamed = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
+    expect(renamed).toContain('Firstmate'); expect(renamed).toContain('@firstmate');
+    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    expect(allowed.status).toBe(302);
+    const code = new URL(allowed.headers.get('location')!).searchParams.get('code')!;
+    expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
+    const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
+    expect((await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'Firstmate', handle: 'firstmate' });
+  });
+  it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
+    const { client, token, grant, member } = await connected();
+    const tools = await client.listTools(); expect(tools.tools).toHaveLength(7);
     const rooms = await client.callTool({ name: 'list_rooms', arguments: {} });
     expect(JSON.stringify(rooms)).toContain(ROOM); expect(JSON.stringify(rooms)).not.toContain(PRIVATE);
     const posted = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent report the nebula test' } });
     expect(posted.isError).not.toBe(true);
+    expect(JSON.parse((posted.content as { text: string }[])[0]!.text).data.woken).toEqual(['demo-agent']);
     const message = (await db.query<{ id: string; author_id: string }>(`SELECT id,author_id FROM messages WHERE room_id=$1 AND text=$2`, [ROOM, '@demo-agent report the nebula test'])).rows[0]!;
-    expect(message.author_id).toBe(USER);
+    expect(message.author_id).toBe(member);
+    expect(message.author_id).not.toBe(USER);
     const command = (await db.query<{ id: string }>('SELECT id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [message.id, AGENT])).rows[0]!;
     expect(command).toBeDefined(); await claimAgentCommand(db, ROOM, AGENT, command.id, 'mcp-proof');
     expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [command.id])).rows[0]!.state).toBe('claimed');
@@ -180,9 +215,50 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(JSON.stringify(await client.callTool({ name: 'list_corners', arguments: { room: ROOM } }))).toContain(PUBLIC_CORNER);
     expect(JSON.stringify(await client.callTool({ name: 'corner_status', arguments: { corner: PUBLIC_CORNER } }))).toContain('Demo corner');
     expect((await phone.readRoom(ROOM, USER))!.messages.find(m => m.id === message.id)?.sourceClient).toEqual({ id: grant.clientId, name: 'Local MCP reviewer' });
+    // One wake per tagged agent.
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [message.id, AGENT])).rowCount).toBe(1);
     expect((await db.query('SELECT 1 FROM rooms_mcp_audit WHERE client_id=$1 AND outcome=$2', [grant.clientId, 'succeeded'])).rowCount).toBeGreaterThan(0);
     await post('/mcp/oauth/revoke', { client_id: grant.clientId, token });
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
+  });
+  it('sets this member’s own profile without changing its registered model label', async () => {
+    const { client, member } = await connected();
+    const updated = await client.callTool({ name: 'set_profile', arguments: { name: 'Firstmate', handle: 'firstmate_set', avatar: '' } });
+    expect(updated.isError).not.toBe(true);
+    const identity = (await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]!;
+    expect(identity).toEqual({ name: 'Firstmate', handle: 'firstmate_set' });
+    const config = (await db.query<{ selected_model: string }>('SELECT selected_model FROM agents WHERE agent_id=$1', [member])).rows[0]!;
+    expect(config.selected_model).toBe('Local MCP reviewer');
+  });
+  it('is idempotent on the client key and posts nothing on a retry', async () => {
+    const { client } = await connected();
+    const first = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'idempotent handoff @demo-agent', idempotencyKey: 'job-1' } });
+    const id = JSON.parse((first.content as { text: string }[])[0]!.text).data.messageId as string;
+    expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    const second = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'idempotent handoff @demo-agent', idempotencyKey: 'job-1' } });
+    expect(JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId).toBe(id);
+    expect((await db.query('SELECT 1 FROM messages WHERE text=$1', ['idempotent handoff @demo-agent'])).rowCount).toBe(1);
+  });
+  it('fires one outgoing webhook per (message, member) and never for its own post', async () => {
+    const { client, grant, member } = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/firstmate' WHERE id=$1`, [grant.clientId]);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} ship the webhook` }, USER);
+    const calls = async () => (await db.query('SELECT id FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, sent.messageId])).rowCount;
+    expect(await calls()).toBe(1);
+    // A repeated route of the same message never calls again.
+    await routeHumanMessage(db, sent.messageId);
+    expect(await calls()).toBe(1);
+    const delivered: string[] = [];
+    const count = await deliverMcpMemberWebhooks(db, async (url) => {
+      delivered.push(String(url)); return new Response('', { status: 200 });
+    });
+    expect(count).toBe(1); expect(delivered).toEqual(['https://hooks.example/firstmate']);
+    expect((await db.query('SELECT delivered_at FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rows[0]!.delivered_at).not.toBeNull();
+    // Its own post tags itself; a member is never its own wake target, so no webhook call.
+    const own = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `@${handle} self note` } });
+    const ownId = JSON.parse((own.content as { text: string }[])[0]!.text).data.messageId as string;
+    expect((await db.query('SELECT 1 FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, ownId])).rowCount).toBe(0);
   });
   it('denies cross-user reads, searches, sends and corner reads without exposing private content', async () => {
     const { client } = await connected();
@@ -203,7 +279,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await db.query('UPDATE rooms_mcp_tokens SET calls=60,window_at=now() WHERE hash=$1', [tokenHash(token)]);
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(429);
     const other = await connected('rooms:read');
-    expect((await other.client.listTools()).tools.length).toBe(6);
+    expect((await other.client.listTools()).tools.length).toBe(7);
   });
   it('rejects expired grants and never accepts an MCP grant as a phone session', async () => {
     const { token } = await connected();
@@ -228,9 +304,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'x'.repeat(16001) } })).isError).toBe(true);
   });
   it('bounds messages and drops access immediately when membership ends', async () => {
-    const { client } = await connected();
+    const { client, member } = await connected();
     expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1000 } })).isError).toBe(true);
-    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, USER]);
+    // Removing the member from the Room revokes its next read and post at once.
+    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
     expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).toBe(true);
     expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(ROOM);
   });

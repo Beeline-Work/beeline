@@ -1,6 +1,7 @@
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
+import { recordMcpMemberWebhook } from './rooms-mcp-members.js';
 import { CORNER_CHECKS_BLOCKED_AFTER, cornerReportWaiting } from './corner-state.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
@@ -1043,13 +1044,14 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       );
       if (active.rowCount) throw new Error('avatar generation already active (conflict)');
     }
-    await createAgentCommand(db, {
+    const dispatched = await createAgentCommand(db, {
       roomId: source.room_id,
       agentId: target,
       avatarJob,
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
+    if (dispatched) await recordMcpMemberWebhook(db, target, source.room_id, sourceId, source.text);
     if (source.parent_id) await setCornerImplementer(db, source.room_id, target);
   }
   return false;
@@ -1130,6 +1132,7 @@ export async function routeAgentResult(
     if (dispatched) woken.push(mention.handle);
     else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
+    if (dispatched) await recordMcpMemberWebhook(db, mention.id, roomId, sourceId, source.text);
   }
   return { woken, notWoken };
 }

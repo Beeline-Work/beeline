@@ -1981,6 +1981,7 @@ export function BuzzChatSurface({
             name: display.name,
             handle: display.handle,
             kind: 'agent' as const,
+            ...('model' in member && typeof member.model === 'string' ? { model: member.model } : {}),
             ...(display.avatarUrl ? { avatarUrl: display.avatarUrl } : {}),
             ...(display.face ? { face: display.face } : {}),
           };

@@ -792,6 +792,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner requires a complete verified repository binding');
   }
   const requestId = (await activeCommandContext()).requestId;
+  const brief = args.brief ? await bindBriefFiles(asObject(args.brief)) : undefined;
   const idempotencyKey = createHash('sha256')
     .update(`open_corner\0${requestId}\0${toolCallId}`)
     .digest('hex');
@@ -804,8 +805,8 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     objective,
     ...(args.implementer !== undefined ? { implementer: args.implementer as string } : {}),
     ...(args.reviewer !== undefined ? { reviewer: args.reviewer as string } : {}),
-    ...(args.brief
-      ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
+    ...(brief
+      ? { brief: brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
     ...(args.hold === true ? { hold: true } : {}),
     ...(repository.resolution === 'repository'
@@ -834,6 +835,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
 async function reviseCornerBrief(args: JsonObject): Promise<string> {
   const cornerId = typeof args.cornerId === 'string' ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const requestId = (await activeCommandContext()).requestId;
+  const bound = await bindBriefFiles({ spec: args.spec, attachments: args.attachments } as JsonObject);
   return JSON.stringify(
     await daemonExecute('reviseCornerBrief', {
       cornerId,
@@ -847,7 +849,7 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
         approval: args.approval as import('@beeline/api-contract/daemon').CornerBriefDraft['approval'],
         change: args.change as string | undefined,
         attachments:
-          args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
+          bound.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
       },
     }),
   );
@@ -1574,6 +1576,12 @@ function sniffArtifactMime(bytes: Buffer, fromHtml: boolean): ArtifactMimeType {
   return 'application/octet-stream';
 }
 
+/** The caller's checkout and writable home, where only it can open files. */
+function attachRootsFromEnv(): string[] {
+  return [process.env.BEELINE_ATTACH_ROOT?.trim(), process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim()]
+    .filter((root): root is string => Boolean(root));
+}
+
 export function postArtifactDepsFromEnv(): PostArtifactDeps {
   const scratchRoot = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
   return {
@@ -1663,6 +1671,96 @@ export async function postArtifact(
     `Posted artifact "${title}" (${bytes.length} bytes, ${mime}); it is delivered with your ` +
     `final reply.${objectId ? ` Object ${objectId} will be included automatically if this turn opens or revises a corner brief.` : ''} Ask for feedback here in the Room.`
   );
+}
+
+/** Rendered formats are validated as self-contained mocks; a working file
+ *  such as a game template or a build page is source, so it travels inert. */
+const BRIEF_FILE_INERT_MIMES = new Set(['text/html', 'image/svg+xml', 'application/vnd.beeline.game+html']);
+
+/** Absolute or `~/` paths written in brief or order text. */
+const NAMED_PATH = /(?:^|[\s(<[])(?:"((?:~\/|\/)[^"\n]+)"|'((?:~\/|\/)[^'\n]+)'|`((?:~\/|\/)[^`\n]+)`|((?:~\/|\/)[^\s`'"()<>\]]+))/g;
+
+/** Recognize private paths even when missing or unreadable, so delivery fails
+ *  explicitly rather than handing the worker an inaccessible filename. */
+export function namedPrivateFiles(roots: string[], text: string): { named: string; resolved: string }[] {
+  const home = process.env.HOME?.trim();
+  const found: { named: string; resolved: string }[] = [];
+  for (const match of text.matchAll(NAMED_PATH)) {
+    const quoted = match[1] ?? match[2] ?? match[3];
+    const named = quoted ?? match[4]!.replace(/[.,;:!?*]+$/, '');
+    const absolute = named.startsWith('~/') ? (home ? join(home, named.slice(2)) : '') : named;
+    if (!absolute) continue;
+    let resolved = resolve(absolute);
+    const inRoots = roots.some((root) => withinRoot(resolve(root), resolved));
+    try {
+      resolved = resolveAttachPath(roots, absolute);
+    } catch {
+      // A named path in our roots still needs a refusal if it cannot be read.
+      if (!inRoots) continue;
+    }
+    if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
+  }
+  return found;
+}
+
+/**
+ * A brief attachment may name a working file by `path` instead of an object
+ * id. The file is uploaded and queued like post_artifact, so it reaches the
+ * caller's own place, and the brief carries its object id; the server then
+ * binds it to the corner and the worker downloads and checks the same bytes.
+ * A file that cannot be read refuses the call by name. A private file the
+ * spec names but does not attach also refuses, because the worker cannot
+ * open it.
+ */
+export async function bindBriefFiles(brief: JsonObject, given?: PostArtifactDeps): Promise<JsonObject> {
+  const roots = given?.roots ?? attachRootsFromEnv();
+  const attachments = Array.isArray(brief.attachments) ? (brief.attachments as JsonObject[]) : [];
+  const attached = new Set<string>();
+  const bound: JsonObject[] = [];
+  for (const item of attachments) {
+    const path = item?.path;
+    if (path === undefined) {
+      bound.push(item);
+      continue;
+    }
+    if (typeof path !== 'string' || item.objectId !== undefined)
+      throw new Error('a brief attachment names either objectId or path, not both');
+    const deps = given ?? postArtifactDepsFromEnv();
+    let resolved: string;
+    let bytes: Buffer;
+    try {
+      resolved = resolveAttachPath(deps.roots, path);
+      if (statSync(resolved).size > MAX_ATTACH_BYTES)
+        throw new Error(`file exceeds the ${MAX_ATTACH_BYTES}-byte limit`);
+      bytes = readFileSync(resolved);
+      if (!bytes.length) throw new Error('file is empty');
+    } catch (error) {
+      throw new Error(
+        `brief attachment ${path} cannot be delivered: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const fileName = basename(resolved);
+    const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')).toLowerCase() : '';
+    const known = ARTIFACT_MIME_BY_EXTENSION[extension];
+    const mime = known && !BRIEF_FILE_INERT_MIMES.has(known) ? known : known ? 'text/plain' : 'application/octet-stream';
+    validateArtifact(mime, bytes, fileName);
+    const uploaded = await deps.upload(bytes, mime, fileName);
+    const objectId = uploaded.url ? POSTED_MEDIA_ID.exec(uploaded.url)?.[1] : undefined;
+    if (!objectId) throw new Error(`brief attachment ${path} cannot be delivered: the upload returned no object`);
+    await deps.queue({ url: uploaded.url, name: fileName, mimeType: mime, size: bytes.length });
+    attached.add(resolved);
+    const { path: _path, ...rest } = item;
+    bound.push({ ...rest, objectId });
+  }
+  const unattached = namedPrivateFiles(roots, typeof brief.spec === 'string' ? brief.spec : '')
+    .filter((file) => !attached.has(file.resolved));
+  if (unattached.length)
+    throw new Error(
+      `the brief names ${unattached.map((file) => file.named).join(', ')}, which only you can open; ` +
+        `attach each with brief.attachments [{path, purpose, required}] so the worker receives it, ` +
+        `or name a repository file by its repository-relative path`,
+    );
+  return attachments.length ? { ...brief, attachments: bound } : brief;
 }
 
 function agentScheduleRoomId(): string {
@@ -3357,6 +3455,13 @@ async function executeAgentOperation(
       });
     }
     case 'order': {
+      const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''));
+      if (named.length)
+        throw new Error(
+          `the order names ${named.map((file) => file.named).join(', ')}, which only you can open; ` +
+            `attach each to the corner brief with revise_corner brief.attachments [{path, purpose, required}], ` +
+            `or name a repository file by its repository-relative path`,
+        );
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
       return JSON.stringify(result);
     }
@@ -3655,7 +3760,7 @@ async function executeAgentOperation(
         ...(args.name !== undefined ? { name: String(args.name) } : {}),
         ...(args.reviewer !== undefined ? { reviewer: args.reviewer as string } : {}),
         ...(args.objective !== undefined ? { objective: args.objective } : {}),
-        ...(args.brief !== undefined ? { brief: args.brief } : {}),
+        ...(args.brief !== undefined ? { brief: await bindBriefFiles(asObject(args.brief)) } : {}),
       });
       return args.name === undefined ? 'updated the corner reviewer' : `renamed the corner to ${String(result.name)}`;
     }

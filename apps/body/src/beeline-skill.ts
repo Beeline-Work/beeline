@@ -397,6 +397,7 @@ Use your judgment about how much planning work needs. This loop can help for a l
 
 - When a visual or interaction decision needs eyes, create and post one self-contained mock with the beeline-files-and-mocks steps.
 - A mock/file posted with \`post_artifact\` in this planning turn is added automatically to the brief attachment manifest; do not manually copy its object ID. Still list it under \`## References\` with whose call it is. Existing human-posted files must be named explicitly in attachments.
+- A working file in your own home or checkout (trace, CSV, screenshot, template) is yours alone: attach it as \`brief.attachments [{path, purpose, required}]\` so the worker receives the same bytes. A brief or order that names such a file without attaching it is refused.
 
 ### 6. Implementation tasks
 

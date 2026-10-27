@@ -65,7 +65,7 @@ function SearchContent({ scope, view, initialQuery = '', onNavigate }: {
         disabled={Boolean(actions.busy)} onPress={() => void actions.connect({ ...results[0]!.company!, preferredRoute: route })} />) : null}
     </View> : null}
     {input && response.query === input && !results.length && !error ? <Text style={styles.note}>No connections found. Trusty Squire can connect to a website for you.</Text> : null}
-    {error || actions.error ? <Text accessibilityRole="alert" style={styles.error}>{error ?? actions.error}</Text> : null}
+    {error || actions.error ? <SettingsRow title={(error ?? actions.error)!} /> : null}
   </View>;
 }
 
@@ -88,7 +88,7 @@ export default function ConnectAppScreen() {
   return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>
     <PageHeader eyebrow="Connectors" prominent title="Search" onBack={() => router.back()} backAccessibilityLabel="Back to Connectors" testID="connect-app-header" />
     <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom }} keyboardShouldPersistTaps="handled" testID="connect-app-scroll">
-      {error ? <Text accessibilityRole="alert" style={styles.error}>Connections are unavailable right now</Text> : null}
+      {error ? <SettingsRow title="Connections are unavailable right now" /> : null}
       <SearchContent scope={scope} view={view} initialQuery={params.query} />
     </ScrollView>
   </View>;

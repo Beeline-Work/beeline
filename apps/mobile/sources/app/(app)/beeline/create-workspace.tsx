@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -82,7 +83,7 @@ export default function CreateWorkspace() {
       enterWorkspaceRoom(workspaceId, created.roomId ?? null);
     } catch (reason) {
       setError(
-        `Could not create ${WORKSPACE_LABEL}: ${reason instanceof Error ? reason.message : String(reason)}`,
+        appErrorCopy(reason, `Could not create ${WORKSPACE_LABEL}.`),
       );
       setWorking(false);
     }
@@ -136,7 +137,7 @@ export default function CreateWorkspace() {
             />
           </View>
           {error ? (
-            <ErrorBanner title={error} testID="create-error" />
+            <ErrorBanner inline title={error} testID="create-error" />
           ) : null}
         </View>
       </ScrollView>

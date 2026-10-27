@@ -15,6 +15,7 @@ vi.mock('@/auth/github-auth-session',()=>({clearPendingGitHubInstallation:mocks.
 vi.mock('@/sync/transport/monolith-operation',()=>({monolithPhoneOperation:mocks.operation}));
 vi.mock('react-native',()=>({Platform:{OS:'web'},View:(props:any)=>React.createElement('View',props,props.children),Text:(props:any)=>React.createElement('Text',props,props.children)}));
 vi.mock('react-native-unistyles',()=>({StyleSheet:{create:()=>({page:{},copy:{}})}}));
+vi.mock('@/components/buzz/SettingsRow',()=>({SettingsRow:(props:any)=>React.createElement('SettingsRow',props)}));
 vi.mock('@/components/buzz/Button',()=>({Button:(props:any)=>React.createElement('Button',props)}));
 vi.mock('@/components/buzz/PageHeader',()=>({PageHeader:(props:any)=>React.createElement('PageHeader',props)}));
 vi.mock('expo-router',()=>({useLocalSearchParams:()=>mocks.params,Redirect:(props:any)=>React.createElement('Redirect',props)}));
@@ -54,9 +55,8 @@ it('GH-WEB-1: failed refresh offers the primary Room recovery action',async()=>{
   const renderer=await render();
   expect(renderer.root.findByType('PageHeader').props.title).toBe('GitHub needs another try');
   expect(mocks.browserComplete).not.toHaveBeenCalled();
-  const button = renderer.root.findByType('Button');
-  expect(button.props.label).toBe('Back to Room');
-  expect(button.props.variant).toBe('primary');
+  const button = renderer.root.findByType('SettingsRow');
+  expect(button.props.action).toBe('Back to Room');
   expect(mocks.clear).not.toHaveBeenCalled();
   await act(async()=>{button.props.onPress();});
   expect(mocks.operation).toHaveBeenCalledTimes(1);
@@ -69,7 +69,7 @@ it('Back to Room takes a GitHub error back to the Room to start again',async()=>
   mocks.complete.mockRejectedValueOnce(new Error('GitHub authorization was denied'));
   const renderer=await render();
   expect(renderer.root.findByType('PageHeader').props.title).toBe('GitHub needs another try');
-  await act(async()=>{renderer.root.findByType('Button').props.onPress();});
+  await act(async()=>{renderer.root.findByType('SettingsRow').props.onPress();});
   expect(renderer.root.findByType('Redirect').props.href).toBe('/beeline/chat/room');
   expect(mocks.operation).not.toHaveBeenCalled();
 });

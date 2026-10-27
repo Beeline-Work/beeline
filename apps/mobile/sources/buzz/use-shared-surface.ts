@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
@@ -41,7 +42,7 @@ export function useSharedSurface<T>(
     void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relay]) => {
       if (cancelled || !identity) return;
       setResolved({ key: addressKey, address: surfaceAddress(relay, identity.publicKey, endpoint, JSON.parse(paramsKey)) });
-    }).catch((cause) => { if (!cancelled) { setError(String(cause)); setLoading(false); } });
+    }).catch((cause) => { if (!cancelled) { setError(appErrorCopy(cause)); setLoading(false); } });
     return () => { cancelled = true; };
   }, [endpoint, paramsKey, reset, enabled, addressKey]);
 
@@ -54,7 +55,7 @@ export function useSharedSurface<T>(
       setError(null);
       return next;
     } catch (cause) {
-      setError(String(cause));
+      setError(appErrorCopy(cause));
       return null;
     } finally {
       setLoading(false);

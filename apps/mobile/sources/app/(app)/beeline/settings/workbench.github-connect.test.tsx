@@ -94,7 +94,7 @@ it('shows an actionable error if Windows cannot launch the authorization link', 
   source.connectApp.mockResolvedValue({ appId: 'github-app', authorizationUrl: 'https://github.com/login/oauth/authorize?state=fixture' });
   opener.openUrl.mockRejectedValue(new Error('Could not open browser. Check your default browser and try again.'));
   await clickGitHub(tree => {
-    const error = tree.root.findByProps({ accessibilityRole: 'alert' });
-    expect(error.props.children).toBe('Could not open browser. Check your default browser and try again.');
+    const error = tree.root.findAllByType('SettingsRow').find((node: any) => node.props.title === 'Could not open browser. Check your default browser and try again.');
+    expect(error.props.title).toBe('Could not open browser. Check your default browser and try again.');
   });
 });

@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -136,7 +137,7 @@ export function RoomReviewerActions({
         if (!next.length) setPickerVisible(false);
         onSaved?.(next);
       } catch (caught) {
-        setError(`Could not change ${ROOM_LABEL} reviewer: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not change ${ROOM_LABEL} reviewer.`));
       } finally {
         setBusy(false);
       }

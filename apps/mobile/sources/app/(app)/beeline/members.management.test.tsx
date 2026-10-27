@@ -1160,7 +1160,7 @@ describe('Members workspace management', () => {
     expect(
       renderer.root
         .findAllByType('Text' as any)
-        .some((node: any) => String(node.props.children).includes('network unavailable')),
+        .some((node: any) => String(node.props.children).includes('Couldn’t reach Beeline')),
     ).toBe(true);
   });
 
@@ -1433,7 +1433,7 @@ describe('Members workspace management', () => {
     );
     expect(
       renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
-    ).toContain('offline');
+    ).toBe('Couldn’t reach Beeline');
   });
 
   it('omits avatar direction and sends only the current soul', async () => {
@@ -1802,6 +1802,29 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
 
     expect(renderer.root.findAllByProps({ testID: 'agent-yolo-switch' })).toHaveLength(0);
+  });
+
+  describe.each([
+    ['yolo', 'updateAgentYolo'],
+    ['access', 'updateAgentAccessPolicy'],
+  ])('R4: %s toggle failure copy on the Members route', (toggle, operation) => {
+    it.each([
+      [504, 'surface_request_timed_out', 'Couldn’t reach Beeline'],
+      [403, 'permission_denied', 'Could not complete request'],
+      [400, 'The timeout must be shorter.', 'The timeout must be shorter.'],
+    ])('formats status %s with code %s', async (status, code, expected) => {
+      const renderer = await render();
+      await openAgentManagement(renderer);
+      phoneOperation.mockRejectedValueOnce(Object.assign(
+        new Error(`Monolith ${operation} failed (${status}): ${code}`), { status, code },
+      ));
+      await act(async () => {
+        await renderer.root.findByProps({ testID: `agent-${toggle}-switch` }).props.onValueChange(true);
+      });
+      expect(phoneOperation).toHaveBeenCalledWith(operation, expect.any(Object));
+      expect(renderer.root.findByProps({ testID: `agent-${toggle}-error` }).props.children).toBe(expected);
+      expect(renderer.root.findByProps({ testID: `agent-${toggle}-switch` }).props.value).toBe(false);
+    });
   });
 
   it('flips yolo optimistically and rolls back with the server message when refused', async () => {

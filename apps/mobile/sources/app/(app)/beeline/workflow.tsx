@@ -1,6 +1,7 @@
+import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
@@ -43,7 +44,7 @@ export default function Workflow() {
       setDetail(await monolithPhoneOperation('readWorkflowDefinition', { roomId, name }));
       setError(null);
     } catch (caught) {
-      setError(String(caught));
+      setError(appErrorCopy(caught));
     }
   }, [roomId, name]);
   useFocusEffect(
@@ -60,7 +61,7 @@ export default function Workflow() {
         testID="workflow-header"
       />
       {error ? (
-        <ErrorBanner inline title={error} onRetry={() => void reload()} />
+        <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={() => void reload()} />
       ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (

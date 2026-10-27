@@ -110,7 +110,7 @@ it('shows Room agents during a pending or failed join and clears the error on ex
     expect(voice.connecting).toBe(true);
     expect(voice.agents).toEqual(agents);
     await act(async () => { rejectJoin(new Error('TLS roots missing')); await joining; });
-    expect(voice.error).toBe('TLS roots missing');
+    expect(voice.error).toBe('Conversation mode could not start');
     expect(reportClientError).toHaveBeenCalledWith('voice-join', expect.objectContaining({ message: 'TLS roots missing' }));
     expect(voice.agents).toEqual(agents);
     await act(async () => voice.end());
@@ -245,7 +245,7 @@ it('preserves the connection error even if disconnect and audio cleanup also rej
   await act(async () => { renderer = create(<Probe />); });
   try {
     await act(async () => { await expect(voice.join()).resolves.toBeUndefined(); });
-    expect(voice.error).toBe('WebRTC failed before connecting');
+    expect(voice.error).toBe('Conversation mode could not start');
     expect(fixture.closeAudio).toHaveBeenCalledOnce();
     expect(voice.connecting).toBe(false);
     expect(voice.call).toBeNull();

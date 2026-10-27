@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { isWorkbenchCompanyIndex } from './workbench-company-validation';
 import { useCallback, useEffect } from 'react';
 import { useFocusEffect } from 'expo-router';
@@ -70,7 +71,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
     void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => {
       if (!owner.consumers) { owner.dirty = true; return; }
       if (stored) return mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
-        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
+        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
     });
   }
   if (workbenchStop || workbenchStarting) return release;
@@ -88,7 +89,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
         owner.dirty = false;
         void mobileSurfaceCache.fetch(owner.address, isWorkbenchView,
           () => readWorkbenchWithTimeout(owner.scope))
-          .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
+          .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
       }
     }
   }).then((stop) => { if (generation !== clientResetGeneration()) stop();

@@ -91,12 +91,12 @@
   },
   {
     "file": "app/(app)/join/[token].tsx",
-    "line": 203,
+    "line": 208,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "59de9f641bef8e49b053",
-    "control": "<View style={styles.failureBlock} testID=\"invite-unreachable\"> <ErrorBanner title=\"Couldn’t reach Beeline\" description=\"Your invite may still be fine — we could not ask the server about it. Check your connection and try again.\" /> {error ? <Text style={styles.meta}>{error}</Text> : null} <Button label=\"Retry\" onPress={retry} style={styles.primary} testID=\"invite-retry\" variant=\"secondary\" /> <Butt",
-    "reason": "Container already renders ErrorBanner; following buttons are invite navigation/retry controls."
+    "id": "c37250d01c33b74b5ac5",
+    "control": "<View style={styles.failureBlock} testID=\"invite-unreachable\"> <SettingsRow title=\"Couldn’t reach Beeline\" description=\"Check your connection and try again.\" action=\"Retry\" onPress={retry} testID=\"invite-retry\" /> <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" /> </View>",
+    "reason": "The failure uses the shared IndexRow preset; the following quiet button chooses another invitation path."
   },
   {
     "file": "components/buzz/AgentProfileView.tsx",

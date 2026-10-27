@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -44,7 +45,7 @@ export function FacePickerSheet({
     } catch (caught) {
       onFaceChange(previous);
       setError(
-        `Could not save your face. Try again. (${caught instanceof Error ? caught.message : String(caught)})`,
+        appErrorCopy(caught, 'Could not save your face. Try again.'),
       );
     } finally {
       setSaving(false);

@@ -18,7 +18,7 @@ describe('Room open occupancy', () => {
     expect(session).not.toContain('Offline — showing the last saved response.');
     expect(surface).toContain('testID="room-hydration-error"');
     expect(surface).toContain("{transcriptHydrationError ?? 'Could not load this conversation.'}");
-    expect(surface).toContain('onRetry={retryHydration}');
+    expect(surface).toContain('onPress={retryHydration}');
   });
 
   it('marks navigation dispatch, route mount, and cache-read separately from auth', () => {

@@ -96,7 +96,7 @@ it('CR1: workflow failure recovers quietly on an event after bounded backoff', a
   const push = () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors' } });
   try {
     await act(async () => { tree = create(<Corner />); });
-    expect(current.error).toBe('offline');
+    expect(current.error).toBe('Couldn’t reach Beeline');
     await act(async () => { for (let n = 0; n < 20; n++) push(); });
     expect(read).toHaveBeenCalledTimes(1);
     await act(async () => { vi.advanceTimersByTime(1000); push(); });

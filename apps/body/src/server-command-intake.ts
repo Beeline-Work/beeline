@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
+import { redactReplayError, isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import { isNetworkFailure } from './live-link.js';
 
@@ -337,6 +337,7 @@ export async function runServerCommandIntake(options: {
                 agentId, roomId, requestId: command.turnRequestId,
                 generationId: context.generationId, status: 'failed',
                 reason: 'Could not enter command execution context',
+                trace: { totalMs: 0, attempts: [], reason: redactReplayError('Could not enter command execution context') },
               });
             } finally {
               await release();

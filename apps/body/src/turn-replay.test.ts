@@ -34,3 +34,13 @@ it('whitelists malicious wire payloads and caps excerpts at the server boundary'
   expect(trace?.attempts[1]?.tools[0]?.error?.length).toBeLessThanOrEqual(160);
   expect(JSON.stringify(trace)).not.toMatch(/private|example.com|secret=|arguments/);
 });
+
+it('bounds and redacts optional pre-session failure metadata without changing normal traces', () => {
+  const base = {totalMs:0, attempts:[]};
+  expect(sanitizeTurnReplay(base)).toEqual(base);
+  expect(sanitizeTurnReplay({...base, reason:'token=private https://private.example', reasonKind:'workspace-failure'}))
+    .toEqual({...base,reason:'[SECRET] [URL]',reasonKind:'workspace-failure'});
+  for (const reasonKind of ['BAD', 'a'.repeat(41), 'contains secret', 12, null]) {
+    expect(sanitizeTurnReplay({...base,reason:12,reasonKind})).toEqual(base);
+  }
+});

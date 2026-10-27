@@ -153,6 +153,7 @@ it('stores no replies and multiple replies, and never trusts supplied message id
   const silent=await claimedTurn();
   await daemon.execute('postAgentTurnReceipt',{...silent,status:'complete',completionKind:'no-reply',trace:emptyTrace},AGENT);
   expect((await db.query(`SELECT reply_message_ids FROM agent_turn_traces WHERE request_id=$1`,[silent.requestId])).rows[0]!.reply_message_ids).toEqual([]);
+  expect((await db.query(`SELECT trace FROM agent_turn_traces WHERE request_id=$1`,[silent.requestId])).rows[0]!.trace).toEqual(emptyTrace);
   const multiple=await claimedTurn();
   const first=await daemon.execute('postRoomMessage',{...multiple,text:'First reply'},AGENT);
   // Historical narration can precede a final reply under the same request.
@@ -185,4 +186,19 @@ it('accepts only the stopped generation diagnostics and never restores output au
   await expect(daemon.execute('postAgentTurnReceipt',{...turn,generationId:'stale',status:'cancelled',trace:emptyTrace},AGENT)).rejects.toThrow();
   await expect(daemon.execute('postRoomMessage',{...turn,text:'Must stay stopped'},AGENT)).rejects.toThrow();
   expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`,[turn.requestId])).rows[0]!.status).toBe('cancelled');
+});
+
+it('redacts pre-session diagnostics at persistence and preserves startup classification', async () => {
+  const { recordStartupWakeOutcome } = await import('./startup-wake-backoff.js');
+  const { redactReplayError } = await import('@beeline/api-contract/daemon');
+  const reason = 'worktree failed https://private.example/path token=super-private';
+  const turn = await claimedTurn();
+  const trace = {totalMs:0, attempts:[], reason, reasonKind:'workspace-failure'};
+  await daemon.execute('postAgentTurnReceipt', {...turn,status:'failed',reasonKind:'workspace-failure',trace}, AGENT);
+  const rows = await db.query(`SELECT outcome,trace FROM agent_turn_traces WHERE request_id=$1`, [turn.requestId]);
+  expect(rows.rows).toEqual([{outcome:'failed',trace:{...trace,reason:redactReplayError(reason)}}]);
+  expect((await db.query(`SELECT failures FROM agent_startup_backoff WHERE agent_id=$1`,[AGENT])).rows[0]!.failures).toBe(1);
+  const ordinary = await claimedTurn();
+  await recordStartupWakeOutcome(db,{...ordinary,status:'failed',trace:{totalMs:0,attempts:[]}},AGENT);
+  expect((await db.query(`SELECT failures FROM agent_startup_backoff WHERE agent_id=$1`,[AGENT])).rows[0]!.failures).toBe(0);
 });

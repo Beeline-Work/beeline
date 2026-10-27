@@ -11,6 +11,7 @@ import {
   type RoomMembershipChange,
 } from './daemon-api-client.js';
 import {
+  redactReplayError,
   isStandingWorkspaceConfigurationFault,
   type CornerRestoreResult,
   type RoomGitHubTokenResult,
@@ -1711,6 +1712,7 @@ export class RoomRuntimeCoordinator {
           status: 'failed',
           reason: reason.text,
           reasonKind: 'workspace-failure',
+          trace: { totalMs: 0, attempts: [], reason: redactReplayError(reason.text), reasonKind: 'workspace-failure' },
         });
         reported.add(requestId);
       }

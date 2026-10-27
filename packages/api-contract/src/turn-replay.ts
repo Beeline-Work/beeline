@@ -6,6 +6,8 @@ export interface ReplayToolCall {
   error?: string;
 }
 export interface TurnReplay {
+  reason?: string;
+  reasonKind?: string;
   totalMs: number;
   attempts: { attempt: number; phases: Record<string, number>; tools: ReplayToolCall[] }[];
 }
@@ -38,6 +40,9 @@ export function sanitizeTurnReplay(input: unknown): TurnReplay | undefined {
   if (!Array.isArray(record.attempts) || record.attempts.length > 20) return undefined;
   return {
     totalMs: duration(record.totalMs),
+    ...(typeof record.reason === 'string' ? { reason: redactReplayError(record.reason) } : {}),
+    ...(typeof record.reasonKind === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(record.reasonKind)
+      ? { reasonKind: record.reasonKind } : {}),
     attempts: record.attempts.map((entry, index) => ({
       attempt: index + 1,
       phases: Object.fromEntries(PHASES.filter(key => entry?.phases && typeof entry.phases[key] === 'number')

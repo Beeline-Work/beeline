@@ -214,7 +214,9 @@ async function writeChoiceCard(
   // settlement: the run reads them back to tell a current card from a stale one.
   await database.query(`UPDATE messages SET card=jsonb_strip_nulls(jsonb_build_object(
     'receiptHint',card->'receiptHint','runId',card->'runId','workflowSlug',card->'workflowSlug',
-    'attempt',card->'attempt'
+    'attempt',card->'attempt','starterOnboarding',card->'starterOnboarding',
+    'onboardingManual',card->'onboardingManual','onboardingUserId',card->'onboardingUserId',
+    'onboardingRunId',card->'onboardingRunId'
   )) || $2::jsonb WHERE id=$1`, [
     messageId,
     JSON.stringify(card),

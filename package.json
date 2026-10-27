@@ -108,6 +108,8 @@
     "test:prompt-discovery": "node --import tsx --test scripts/discovery-score.test.mjs scripts/discovery-service.test.mjs scripts/discovery-launch.test.mjs",
     "build:x-attribution": "esbuild web/x-attribution-source.ts --bundle --format=iife --minify --platform=browser --target=es2022 --outfile=web/x-attribution.js",
     "prove:x-attribution": "npm run build -w @beeline/server && node --import tsx scripts/prove-x-attribution.mjs",
+    "backfill:luna": "node scripts/backfill-luna.mjs",
+    "prove:onboarding:welcome": "npm run build && node --import tsx scripts/prove-onboarding-welcome.mjs",
     "prove:turn-replay": "npm run build && node scripts/prove-turn-replay.mjs"
   },
   "devDependencies": {

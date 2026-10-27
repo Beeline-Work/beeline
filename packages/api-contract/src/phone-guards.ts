@@ -728,6 +728,7 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     return { identityId: response.identityId, optionId: response.optionId };
   });
   return {
+    ...field('onboardingManual', typeof item.onboardingManual === 'boolean' ? item.onboardingManual : undefined),
     ...field('starterOnboarding', oneOf(item.starterOnboarding, ['welcome', 'next'] as const)),
     choiceId: item.choiceId,
     mode: item.mode,

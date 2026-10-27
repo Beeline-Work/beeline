@@ -127,7 +127,7 @@ export const INSTITUTIONAL_SKILL_INDEX_MAX_BYTES = 1_000;
 export const WORKSPACE_CORE_SKILL_SLUG = 'workspace-core';
 /** JSON Schema string lengths count Unicode code points, not UTF-8 bytes. */
 export const INSTITUTIONAL_HISTORY_QUERY_SCHEMA = {
-  type: 'string', minLength: 1, maxLength: 125,
+  type: 'string', minLength: 1, maxLength: 500,
   // PostgreSQL text cannot contain NUL; a trimmed query must contain a term.
   pattern: '^(?![\\s\\S]*\\u0000)[\\s\\S]*\\S[\\s\\S]*$',
 } as const;

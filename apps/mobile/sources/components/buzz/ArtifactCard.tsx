@@ -88,10 +88,10 @@ export function openArtifactViewer(attachment: AttachmentReference, isDesktop = 
  * once when the card mounts into the transcript window and snapshotted to an
  * image cached on the device keyed by object id. Every later mount shows the
  * cached image — no second render on scroll. Title as caption with author and
- * size; footer `Open in browser` and `Open`; no status label — if it is in
- * front of you it is ready. The existing expired treatment (the plain
- * attachment card) covers the page-is-gone case upstream, so this component
- * only ever renders a live artifact.
+ * size; footer `Open in browser ↗` on the left and `Open →` on the right; no
+ * status label — if it is in front of you it is ready. The existing expired
+ * treatment (the plain attachment card) covers the page-is-gone case upstream,
+ * so this component only ever renders a live artifact.
  */
 export const ArtifactCard = React.memo(function ArtifactCard({
   attachment,
@@ -144,7 +144,6 @@ export const ArtifactCard = React.memo(function ArtifactCard({
         actions={actions}
         onOpenInBrowser={openInBrowser}
         onOpenFull={openFull}
-        fileFooter
         testID={`artifact-document-${activeAttachment.name}`}
       >
         <View style={styles.docRow} testID="artifact-document-body">
@@ -263,7 +262,6 @@ function ArtifactCardShell({
   actions,
   onOpenInBrowser,
   onOpenFull,
-  fileFooter = false,
   children,
   testID,
 }: {
@@ -272,10 +270,6 @@ function ArtifactCardShell({
   actions: readonly ('browser' | 'open')[];
   onOpenInBrowser(): void;
   onOpenFull(): void;
-  /** Only a non-previewable file card keeps the v0.1.106 footer: body-size
-   * labels, a spacer, and the accent `Open →`. Previewable artifacts keep the
-   * shared inline row (PR 2959's decision unification). */
-  fileFooter?: boolean;
   children: React.ReactNode;
   testID: string;
 }) {
@@ -290,58 +284,31 @@ function ArtifactCardShell({
           {kindLine}
         </Text>
       </View>
-      {fileFooter ? (
-        <InlineRow style={styles.fileFooter}>
-          {actions.includes('browser') ? (
-            <Button
-              accessibilityLabel="Open in browser"
-              accessibilityRole="link"
-              onPress={onOpenInBrowser}
-              testID="artifact-open-browser"
-              label={'Open in browser ↗'}
-              variant="quiet"
-              appearance={{ control: undefined, label: styles.footerQuiet }}
-            />
-          ) : null}
-          <View style={styles.footerSpacer} />
-          {actions.includes('open') ? (
-            <Button
-              accessibilityLabel="Open artifact"
-              accessibilityRole="link"
-              onPress={onOpenFull}
-              testID="artifact-open"
-              label={'Open →'}
-              variant="quiet"
-              appearance={{ control: undefined, label: styles.footerPrimary }}
-            />
-          ) : null}
-        </InlineRow>
-      ) : (
-        <InlineRow style={styles.footer}>
-          {actions.includes('browser') ? (
-            <Button
-              accessibilityLabel="Open in browser"
-              accessibilityRole="link"
-              onPress={onOpenInBrowser}
-              testID="artifact-open-browser"
-              label={'Open in browser ↗'}
-              variant="secondary"
-              size="inline"
-            />
-          ) : null}
-          {actions.includes('open') ? (
-            <Button
-              accessibilityLabel="Open artifact"
-              accessibilityRole="link"
-              onPress={onOpenFull}
-              testID="artifact-open"
-              label={'Open'}
-              variant="secondary"
-              size="inline"
-            />
-          ) : null}
-        </InlineRow>
-      )}
+      <InlineRow style={styles.footer}>
+        {actions.includes('browser') ? (
+          <Button
+            accessibilityLabel="Open in browser"
+            accessibilityRole="link"
+            onPress={onOpenInBrowser}
+            testID="artifact-open-browser"
+            label={'Open in browser ↗'}
+            variant="quiet"
+            appearance={{ control: undefined, label: styles.footerQuiet }}
+          />
+        ) : null}
+        <View style={styles.footerSpacer} />
+        {actions.includes('open') ? (
+          <Button
+            accessibilityLabel="Open artifact"
+            accessibilityRole="link"
+            onPress={onOpenFull}
+            testID="artifact-open"
+            label={'Open →'}
+            variant="quiet"
+            appearance={{ control: undefined, label: styles.footerPrimary }}
+          />
+        ) : null}
+      </InlineRow>
     </View>
   );
 }
@@ -600,17 +567,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   captionKind: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   footer: {
-    minHeight: theme.buzz.transcriptCard.footerMinHeight,
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.buzz.space.md,
-    paddingHorizontal: theme.buzz.transcriptCard.side,
-    paddingVertical: theme.buzz.transcriptCard.footerVertical,
-    borderTopWidth: 1,
-    borderTopColor: theme.buzz.border,
-  },
-  fileFooter: {
     minHeight: theme.buzz.transcriptCard.footerMinHeight,
     flexDirection: 'row',
     alignItems: 'center',

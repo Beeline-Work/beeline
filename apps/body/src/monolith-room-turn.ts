@@ -1,3 +1,4 @@
+import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
 import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
@@ -638,6 +639,7 @@ export class MonolithRoomTurnLoop {
   private sessionStateDirs: string[] = [];
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
   private readonly warmTranscript: WarmTranscript;
+  private readonly freeContinuation: FreeAgentContinuation;
   /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
   private readonly sectionBaseline = new PromptSectionBaseline();
   /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
@@ -655,6 +657,8 @@ export class MonolithRoomTurnLoop {
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
     const nativeResume = harnessSupportsNativeSessionResume(options.config.agentCommand ?? options.config.agentBinary);
+    this.freeContinuation = new FreeAgentContinuation(options.config.agentHomeRoot
+      ? resolve(options.config.agentHomeRoot, 'free-agent-continuation.json') : undefined);
     this.warmTranscript = new WarmTranscript(nativeResume && options.config.agentHomeRoot
       ? { path: join(options.config.agentHomeRoot, 'warm-transcript.json') } : {});
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
@@ -1739,6 +1743,9 @@ export class MonolithRoomTurnLoop {
     this.turnUsage = new TurnUsageAccumulator();
     this.harnessTokens = undefined;
     const trace = this.beginTurnTrace(item.id);
+    let timeLimited = false;
+    const freeAgent = Boolean(this.options.config.agentEnv?.BEELINE_FREE_AGENT_ID ||
+      this.options.config.agentEnv?.BEELINE_FREE_AGENT_MODEL_TOKEN);
     const traceGenerationId = this.commandContext.generationId;
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
@@ -1793,6 +1800,7 @@ export class MonolithRoomTurnLoop {
     // the corner.
     let liveCornerOpened = false;
     try {
+      if (freeAgent) await this.freeContinuation.begin(inboxItemPromptBody(item));
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
       let deliberateNoReply = false;
@@ -1910,6 +1918,7 @@ export class MonolithRoomTurnLoop {
                 const assembled = assembleTurnPrompt({
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
+                  ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),
                   sessionPrefix: this.turnInstructionPrefix,
                   ...(checkout?.branch && checkout.commit
                     ? { checkout: { branch: checkout.branch, commit: checkout.commit } }
@@ -2061,7 +2070,7 @@ export class MonolithRoomTurnLoop {
               let result = await runPrompt();
               trace.promptSettled();
               if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '') &&
-                ['repeated-tool-call', 'free-agent-time-limit', 'login-required'].includes(result.stopReason)) {
+                ['repeated-tool-call', 'login-required'].includes(result.stopReason)) {
                 stream.close();
                 await this.discardSession();
                 const tool = result.toolCalls.at(-1)?.title;
@@ -2069,8 +2078,15 @@ export class MonolithRoomTurnLoop {
               }
               if (result.stopReason === 'free-agent-time-limit') {
                 stream.close();
-                await stream.settle(result.agentText, { triggerMessageId: item.id });
-                await this.discardSession();
+                timeLimited = true;
+                let reply: string;
+                try { reply = await this.freeContinuation.stopped(result); }
+                finally { await this.discardSession(); }
+                if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '')) {
+                  await stream.retract();
+                  throw new Error('unreported_order: free-agent-time-limit; requested work is unfinished');
+                }
+                await stream.settle(reply, { triggerMessageId: item.id });
                 return;
               }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
@@ -2259,17 +2275,19 @@ export class MonolithRoomTurnLoop {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
         requestId: item.id,
-        status: 'complete',
+        status: timeLimited ? 'failed' : 'complete',
+        ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
         ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
         trace: trace.replay(),
         ...this.turnMetrics,
       });
+      if (freeAgent && !timeLimited) await this.freeContinuation.clear();
       this.warmTranscript.complete(this.sessionId, [item.id, ...active.steers.map((steer) => steer.id)]);
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
-      void finishTrace('complete').catch(() => undefined);
+      void finishTrace(timeLimited ? 'failed' : 'complete', timeLimited ? 'free-agent-time-limit' : undefined).catch(() => undefined);
     } catch (error) {
       // A stopped turn already has its ending — the server wrote `cancelled`
       // and named who stopped it the moment it accepted the request. There is
@@ -2350,7 +2368,7 @@ export class MonolithRoomTurnLoop {
           retractError,
         );
       });
-      const reason = distillTurnFailureReason(error);
+      const reason = timeLimited ? { text: 'free-agent-time-limit' } : distillTurnFailureReason(error);
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,

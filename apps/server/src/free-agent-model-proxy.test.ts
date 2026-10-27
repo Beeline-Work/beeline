@@ -621,13 +621,13 @@ describe('free agent model proxy', () => {
     await (await call({ stream: true, messages: [] })).text();
     expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0);
     expect((await db.query(`SELECT detail FROM free_agent_events WHERE kind='model_usage'`)).rows)
-      .toMatchObject([{ detail: { tokens: 0 } }]);
+      .toMatchObject([{ detail: { tokens: 0, usd: 0 } }]);
   });
 
-  it('releases tokens when the caller aborts an active reply without usage', async () => {
+  it.each([undefined, { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7, cost: 0.002 }])('settles an interrupted reply at actual or zero usage: %j', async reported => {
     reply = (signal) => new Response(new ReadableStream({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'));
+        controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ choices: [{ delta: { content: 'hello' } }], ...(reported ? { usage: reported } : {}) }) + '\n\n'));
         // The mock upstream fails like fetch does when its caller disconnects.
         signal!.addEventListener('abort', () => controller.error(new Error('aborted')), { once: true });
       },
@@ -641,7 +641,9 @@ describe('free agent model proxy', () => {
     await reader.read();
     abort.abort();
     await reader.cancel().catch(() => undefined);
-    await vi.waitFor(async () => expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0));
+    await vi.waitFor(async () => expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(reported?.total_tokens ?? 0));
+    expect(Number((await db.query(`SELECT usd FROM free_agent_budget`)).rows[0]!.usd)).toBeCloseTo(reported?.cost ?? 0);
+    expect((await db.query(`SELECT detail FROM free_agent_events WHERE kind='model_usage'`)).rows).toMatchObject([{ detail: { tokens: reported?.total_tokens ?? 0, usd: reported?.cost ?? 0 } }]);
   });
 
   it('counts tokens conservatively from partial usage', () => {

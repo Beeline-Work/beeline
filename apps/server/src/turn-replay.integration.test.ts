@@ -37,13 +37,17 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => db.close());
 
-it.each(['room','corner'] as const)('replays a production %s turn from trigger through tools and visible reply', async scope => {
+it.each([
+  {scope: 'room', limited: false}, {scope: 'corner', limited: false},
+  {scope: 'room', limited: true}, {scope: 'corner', limited: true},
+] as const)('replays a production $scope turn from trigger through visible reply (time limit: $limited)', async ({scope, limited}) => {
   const roomId = scope === 'room' ? ROOM : randomUUID();
   if (scope === 'corner') {
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Trace corner',$4)`, [roomId,WS,ROOM,HUMAN]);
     await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Trace proof')`,[roomId,AGENT]);
     for (const person of [HUMAN,AGENT]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,roomId,person]);
   }
+  if (limited) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys) VALUES($1,$2,$3,'running','fixture')`, [AGENT,WS,HUMAN]);
   const trigger = randomUUID();
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Please run the trace proof')`, [trigger,roomId,HUMAN]);
   await createAgentCommand(db, {roomId,agentId:AGENT,sourceMessageId:trigger,reason:'human_tag'});
@@ -59,6 +63,10 @@ it.each(['room','corner'] as const)('replays a production %s turn from trigger t
       if (name === 'claimAgentCommand') {
         const command = (await daemon.execute('getAgentCommands',{roomId},AGENT)).commands.find(c=>c.id===input.commandId)!;
         activeAuthority = {roomId,requestId:command.turnRequestId,generationId:input.generationId};
+      }
+      if (limited && name === 'postAgentTurnReceipt' && input.status === 'failed') {
+        await expect(daemon.execute(name, {...input, generationId:'stale'} as never, AGENT)).rejects.toThrow();
+        await expect(daemon.execute(name, {...input, reason:'runtime failure'} as never, AGENT)).rejects.toThrow();
       }
       const result = await daemon.execute(name as never,input as never,AGENT);
       if (name === 'postAgentTurnReceipt' && input.status !== 'working') settled = true;
@@ -82,9 +90,9 @@ it.each(['room','corner'] as const)('replays a production %s turn from trigger t
     await expect(daemon.execute('postRoomMessage',{...activeAuthority,roomId,generationId:'wrong-generation',text:'Refused write'} as never,AGENT)).rejects.toThrow();
     refused.status='rejected';refused.content='permission denied';onTools?.(calls);
     onChunk?.('Proof completed.','Proof completed.');
-    return {stopReason:'end_turn',agentText:'Proof completed.',updates:[],toolCalls:calls};
+    return {stopReason:limited ? 'free-agent-time-limit' : 'end_turn',agentText:'Proof completed.',updates:[],toolCalls:calls};
   });
-  const config = {agentBinary:'/fake',agentCommand:'/fake',agentKind:'codex',agentArgs:[],agentEnv:{},
+  const config = {agentBinary:'/fake',agentCommand:'/fake',agentKind:'codex',agentArgs:[],agentEnv:limited ? {BEELINE_FREE_AGENT_ID: AGENT} : {},
     workspaceRoot:root,agentHomeRoot:join(root,'home'),operatorHome:join(root,'operator'),
     mcpBinary:'/fake',readonlyMcpCommand:'/fake',autoApprovePermissions:true,accessPolicy:'everyone'} as BodyConfig;
   const common = {roomId,workspaceId:WS,cwd:root,api,config,runtime:{agent:{name:'Bee',publicKey:AGENT,
@@ -99,20 +107,28 @@ it.each(['room','corner'] as const)('replays a production %s turn from trigger t
   try {
     await vi.waitFor(()=>expect(settled).toBe(true),{timeout:15000});
     const rows = await db.query<{trigger_message_id:string;reply_message_ids:string[];outcome:string;trace:TurnReplay}>(
-      `SELECT * FROM agent_turn_traces WHERE room_id=$1 AND agent_id=$2`,[roomId,AGENT]);
+      `SELECT * FROM agent_turn_traces WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,[roomId,AGENT,trigger]);
     expect(rows.rows).toHaveLength(1);
     const record=rows.rows[0]!;
     expect(record.trigger_message_id).toBe(trigger);
-    expect(record.outcome).toBe('complete');
+    expect(record.outcome).toBe(limited ? 'failed' : 'complete');
+    if (limited) {
+      expect((await db.query(`SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,[roomId,trigger,AGENT])).rows).toMatchObject([{status:'failed',failure_reason:'free-agent-time-limit'}]);
+    }
     expect(record.trace.attempts[0]!.tools.map(c=>[c.name,c.outcome])).toEqual([['read','ok'],['post','refused']]);
-    expect(record.trace.attempts[0]!.phases.publish).toBeGreaterThanOrEqual(0);
+    if (!limited) expect(record.trace.attempts[0]!.phases.publish).toBeGreaterThanOrEqual(0);
     expect(record.reply_message_ids).toHaveLength(1);
     const visible=await phone.readRoom(roomId,HUMAN);
     expect(JSON.stringify(visible)).toContain('Proof completed.');
     expect(JSON.stringify(visible)).toContain(record.reply_message_ids[0]);
-    console.log(`TURN-REPLAY ${scope}: trigger → read ok → post refused → visible reply → complete persisted.`);
+    if (limited) {
+      expect(JSON.stringify(visible)).toContain('send continue');
+      expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND request_id=$2 AND author_id=$3 AND presentation='message'`,[roomId,trigger,AGENT])).rowCount).toBe(1);
+    }
+    console.log(`TURN-REPLAY ${scope}: trigger → read ok → post refused → visible reply → ${limited ? 'FREE-CONTINUE-1 failed with saved checkpoint' : 'complete'} persisted.`);
   } finally {
     abort.abort();await running.catch(()=>undefined);await scheduler.dispose();await rm(root,{recursive:true,force:true});
+    if (limited) await db.query('DELETE FROM free_agents WHERE agent_id=$1',[AGENT]);
   }
 },30000);
 

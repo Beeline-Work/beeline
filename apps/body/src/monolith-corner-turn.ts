@@ -1,3 +1,4 @@
+import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { modelContextWindowTokens } from './model-context-window.js';
 import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
@@ -509,6 +510,7 @@ export class MonolithCornerTurnLoop {
   private sessionCodegraphReady = false;
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
   private readonly warmTranscript: WarmTranscript;
+  private readonly freeContinuation: FreeAgentContinuation;
   /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
   private readonly sectionBaseline = new PromptSectionBaseline();
   /** The live session's environment, read back for pi's own turn record. */
@@ -586,6 +588,8 @@ export class MonolithCornerTurnLoop {
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
     const nativeResume = harnessSupportsNativeSessionResume(options.config.agentCommand ?? options.config.agentBinary);
+    this.freeContinuation = new FreeAgentContinuation(options.config.agentHomeRoot
+      ? resolve(options.config.agentHomeRoot, 'free-agent-continuation.json') : undefined);
     this.warmTranscript = new WarmTranscript(nativeResume && options.config.agentHomeRoot
       ? { path: join(options.config.agentHomeRoot, 'warm-transcript.json') } : {});
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
@@ -1643,6 +1647,9 @@ export class MonolithCornerTurnLoop {
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
+    let timeLimited = false;
+    const freeAgent = Boolean(this.options.config.agentEnv?.BEELINE_FREE_AGENT_ID ||
+      this.options.config.agentEnv?.BEELINE_FREE_AGENT_MODEL_TOKEN);
     const traceGenerationId = this.commandContext.generationId;
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
@@ -1688,6 +1695,7 @@ export class MonolithCornerTurnLoop {
     };
     let deliberateNoReply = false;
     try {
+      if (freeAgent) await this.freeContinuation.begin(this.commandContext.current?.source.body ?? trigger);
       await withTurnReceiptHeartbeat(
         api,
         {
@@ -1883,11 +1891,13 @@ export class MonolithCornerTurnLoop {
                   surface: this.sessionSurface,
                   onboarding,
                   modelContextTokens: this.modelContextTokens,
+                  ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),
                   ...briefContext,
                   task: { body: followup },
                 } : {
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
+                  ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),
                   onboarding,
                   sessionPrefix: this.turnSessionPrefix,
                   objective: restored.objective ?? this.options.objective,
@@ -2220,8 +2230,11 @@ export class MonolithCornerTurnLoop {
               const completeTerminal = async (result: PromptResult): Promise<boolean> => {
                 if (result.stopReason === 'free-agent-time-limit') {
                   stream.close();
-                  await stream.settle(result.agentText, requestedById ? { triggerMessageId: requestId } : {});
-                  await this.discardSession();
+                  timeLimited = true;
+                  let reply: string;
+                  try { reply = await this.freeContinuation.stopped(result); }
+                  finally { await this.discardSession(); }
+                  await stream.settle(reply, requestedById ? { triggerMessageId: requestId } : {});
                   return true;
                 }
                 if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
@@ -2463,17 +2476,19 @@ export class MonolithCornerTurnLoop {
         agentId: this.agent.publicKey,
         roomId: cornerId,
         requestId,
-        status: 'complete',
+        status: timeLimited ? 'failed' : 'complete',
+        ...(timeLimited ? { reason: 'free-agent-time-limit' } : {}),
         ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
         trace: trace.replay(),
         ...this.turnMetrics,
       });
+      if (freeAgent && !timeLimited) await this.freeContinuation.clear();
       this.warmTranscript.complete(this.sessionId, [requestId]);
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
-      void finishTrace('complete').catch(() => undefined);
+      void finishTrace(timeLimited ? 'failed' : 'complete', timeLimited ? 'free-agent-time-limit' : undefined).catch(() => undefined);
     } catch (error) {
       // A stopped turn already has its ending: the server wrote `cancelled` and
       // named who stopped it when it accepted the request. Nothing to post, and

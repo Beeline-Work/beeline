@@ -730,6 +730,11 @@ export class DaemonService {
           (name === 'postRoomMessage' && candidate.relay === undefined) ||
           name === 'retractAgentLiveOutput' ||
           (name === 'postAgentTurnReceipt' && candidate.status === 'complete');
+        const freeTimeoutReceipt = name === 'postAgentTurnReceipt' && candidate.status === 'failed' &&
+          candidate.reason === 'free-agent-time-limit' && Boolean((await db.query(
+            'SELECT 1 FROM free_agents WHERE agent_id=$1 AND removed_at IS NULL',
+            [authenticatedAgentId],
+          )).rowCount);
         const command =
           name === 'postAgentTurnReceipt' && candidate.status === 'failed'
             ? await authorizeFailedTurnOutput(
@@ -738,6 +743,10 @@ export class DaemonService {
                 authenticatedAgentId,
                 requestId,
                 candidate.generationId,
+                // Publishing the retained partial reply completes its command.
+                // Only the matching free-agent timeout receipt may correct that
+                // success; generation and cancellation fences still apply.
+                freeTimeoutReceipt,
               )
             : await authorizeCommandOutput(
                 db,
@@ -817,7 +826,7 @@ export class DaemonService {
             throw new Error('command already completed');
           // A durable reply completes the command before its terminal receipt.
           // That receipt still owns usage and the institutional review enqueue.
-          if (name !== 'postAgentTurnReceipt' || candidate.status !== 'complete')
+          if (name !== 'postAgentTurnReceipt' || (candidate.status !== 'complete' && !freeTimeoutReceipt))
             return this.writeResult() as Output<Name>;
         }
         const scoped = new DaemonService(

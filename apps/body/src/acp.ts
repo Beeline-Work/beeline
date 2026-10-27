@@ -1504,7 +1504,7 @@ export class AcpClient extends EventEmitter {
 
       checkTerminalContext();
       const agentText = terminalReason === 'free-agent-time-limit'
-        ? "I've hit the time limit for this turn. Send another message and I can continue from here."
+        ? agentMessageRuns(updates, this.agentLabel).join('\n\n')
         : terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
 
       const toolCalls = toolCallEntries(updates);

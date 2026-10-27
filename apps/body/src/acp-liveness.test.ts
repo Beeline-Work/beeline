@@ -97,7 +97,7 @@ describe('ACP turn liveness over real stdio', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('FREE-ABUSE-1: cancels a busy free-agent turn at the wall clock cap and returns a continuation note', async () => {
+  it('FREE-ABUSE-1: cancels a busy free-agent turn at the wall clock cap and returns its partial text', async () => {
     agentEnv.BEELINE_FREE_AGENT_ID = 'free-agent';
     agentEnv.BEELINE_FREE_AGENT_MAX_TURN_SECONDS = '900';
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
@@ -112,7 +112,7 @@ describe('ACP turn liveness over real stdio', () => {
     expect(cancel).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(cancel).toHaveBeenCalledWith(sessionId);
-    expect(await prompt).toMatchObject({ stopReason: 'free-agent-time-limit', agentText: expect.stringContaining('Send another message') });
+    expect(await prompt).toMatchObject({ stopReason: 'free-agent-time-limit', agentText: '' });
   });
 
   it('Reproduction LOOP-1: successful no_reply_needed immediately settles without a final reply', async () => {

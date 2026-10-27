@@ -384,7 +384,7 @@
     "reason": "kept, already inset: face picker sheet owns its content inset."
   },
   {
-    "layoutHash": "2dc0a475f5ddc966671e758c0b561c4ba5f9670cda618350cf8ab8b51e295e0b",
+    "layoutHash": "ee1b919b31745fd1b156f8e4cc9c591a32e7678b2dcbd5adf9a07d0ff3aaa02c",
     "file": "components/buzz/MemberPickerSheet.tsx",
     "line": 117,
     "tag": "Text",
@@ -394,7 +394,7 @@
       "<View style={styles.footer}>",
       "<HullActionSheetModal\n      accessibilityLabel=\"Close member picker\"\n      contentStyle={styles.modalContent}\n      onClose={busy ? () => undefined : onClose}\n      dismissOnBackdrop={!busy}\n      visible={visible}\n      testID={testID}\n      title={agentConnectOnly ? undefined : MEMBER_PICKER_TITLE}\n      footer={\n        !agentConnectOnly || error ? (\n          <View style={styles.footer}>\n            {error && (\n              <Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\">\n                ! {error}\n              </Text>\n            )}\n            {!agentConnectOnly && (\n              <View style={styles.addInset}>\n                <Button\n                  disabled={chosen.length === 0}\n                  label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'}\n                  loading={busy}\n                  onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))}\n                  testID=\"member-picker-add\"\n                />\n              </View>\n            )}\n          </View>\n        ) : undefined\n      }\n    >"
     ],
-    "reason": "kept, already inset: member picker footer owns its content inset."
+    "reason": "kept, already inset: member picker error text owns its horizontal inset inside the footer; the Add button has a separate sheet inset."
   },
   {
     "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

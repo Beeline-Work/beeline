@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type ClassifiedTurnSilence,
+  TURN_SILENCE_KINDS,
   classifyTurnSilence,
   HICCUP_ATTEMPT_LIMIT,
   phraseTurnSilence,
@@ -293,5 +294,25 @@ describe('hiccup restart budget', () => {
     expect(shouldRestartHiccup('allowance-spent', 1)).toBe(false);
     expect(shouldRestartHiccup('not-signed-in', 1)).toBe(false);
     expect(shouldRestartHiccup('workspace-failure', 1)).toBe(false);
+  });
+});
+
+describe('free-agent failure wording', () => {
+  it.each(TURN_SILENCE_KINDS)('%s keeps Beeline recovery separate from owned-agent instructions', kind => {
+    const classified = { kind };
+    const owned = phraseTurnSilence('Bee', classified);
+    expect(phraseTurnSilence('Bee', classified, { freeAgent: false })).toEqual(owned);
+    for (const restarting of [false, true]) {
+      const free = phraseTurnSilence('Bee', classified, {
+        freeAgent: true, restarting, login: { handle: 'bee', harness: 'pi' },
+      });
+      expect(free).toEqual({
+        verb: "hit a problem on Beeline's side",
+        consequence: restarting
+          ? 'Beeline will retry your message; you do not need to do anything.'
+          : 'Your message was not retried; please send it again.',
+      });
+      expect(free.consequence).not.toMatch(/login|key|machine|beeline start|beeline connect/);
+    }
   });
 });

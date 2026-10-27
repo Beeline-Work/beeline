@@ -87,7 +87,7 @@ describe('first-silence notice', () => {
     it.each([
       ['allowance', 'provider allowance is spent', 'allowance-spent', 'midnight UTC'],
       ['timeout', 'free-agent-time-limit', 'hiccup', '15-minute limit'],
-      ['crash', 'runtime_exited: code=1', 'hiccup', 'runtime failure'],
+      ['crash', 'runtime_exited: code=1', 'hiccup', "Beeline's side"],
     ])('%s: receipt replay posts exactly one closing line', async (_, reason, reasonKind, expected) => {
       const requestId = 'e'.repeat(64);
       await ask(database, requestId);
@@ -99,7 +99,7 @@ describe('first-silence notice', () => {
       const rows = await database.query(`SELECT text FROM messages WHERE card->>'freeAgentClosed'='true'`);
       expect(rows.rows).toHaveLength(1);
       expect(rows.rows[0].text).toContain(expected);
-      expect(rows.rows[0].text).toMatch(/continue/);
+      expect(rows.rows[0].text).toMatch(reasonKind === 'allowance-spent' || reason === 'free-agent-time-limit' ? /continue/ : /not retried; please send it again/);
       expect((await commandState(database, (await database.query<{ id: string }>(
         `SELECT id FROM agent_commands WHERE turn_request_id=$1`, [requestId])).rows[0].id))?.state).toBe('complete');
     });
@@ -134,7 +134,7 @@ describe('first-silence notice', () => {
       for (let i = 0; i < 2; i++) await service.execute('postAgentTurnReceipt', {
         roomId: ROOM, requestId, generationId: 'g1', status: 'complete',
       }, AGENT);
-      expect((await failureLine(database, requestId))?.text).toContain('ended without a reply');
+      expect((await failureLine(database, requestId))?.text).toContain("hit a problem on Beeline's side");
     });
 
     it('a dead lease closes without a helper receipt', async () => {
@@ -143,9 +143,84 @@ describe('first-silence notice', () => {
       await database.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '10 minutes'`);
       await reclaimExpiredCommandLeases(database,new LiveHub());
       await reclaimExpiredCommandLeases(database,new LiveHub());
-      expect((await failureLine(database,requestId))?.text).toContain('runtime failure');
+      expect((await failureLine(database,requestId))?.text).toContain("hit a problem on Beeline's side");
       expect((await database.query(`SELECT id FROM messages WHERE card->>'freeAgentClosed'='true'`)).rowCount).toBe(1);
     });
+  });
+
+  it('Reproduction free-agent-failure-wording: names Beeline for every infrastructure failure and preserves the cause', async () => {
+    await database.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys)
+      VALUES($1,$2,$3,'test')`, [AGENT, WORKSPACE, HUMAN]);
+    // A deliberately different name proves this is data-driven, not a Beebee special case.
+    await database.query(`UPDATE agents SET harness='pi' WHERE agent_id=$1`, [AGENT]);
+    const service = new DaemonService(database, new LiveHub());
+    const failures = [
+      ['not-signed-in', 'ACP error -32000: Authentication required'],
+      ['offline', 'its helper is offline'],
+      ['helper-out-of-date', 'server command protocol is required'],
+      ['hiccup', 'turn_backstop: the turn stalled'],
+      ['resource-limit', 'resource_limit: session exceeded memory'],
+      ['wrong-model', 'model selection unavailable'],
+      ['workspace-failure', 'repository not found'],
+      ['context-overflow', 'maximum context length exceeded'],
+      ['update-interrupted', 'helper update interrupted this turn'],
+    ] as const;
+    for (const [index, [reasonKind, reason]] of failures.entries()) {
+      const requestId = (index + 100).toString(16).padStart(64, '0');
+      const command = await ask(database, requestId);
+      const input = { roomId: ROOM, requestId, generationId: 'g1', status: 'failed' as const, reason, reasonKind };
+      const result = await service.execute('postAgentTurnReceipt', input, AGENT);
+      const retrying = reasonKind === 'update-interrupted';
+      expect(await failureLine(database, requestId)).toEqual({
+        text: "@candy hit a problem on Beeline's side · " + (retrying
+          ? 'Beeline will retry your message; you do not need to do anything.'
+          : 'Your message was not retried; please send it again.'),
+        silence: reasonKind, state: 'failed',
+      });
+      expect((await commandState(database, command.id))?.state).toBe(retrying ? 'pending' : 'complete');
+      expect(Boolean(result.updateRequeued)).toBe(retrying);
+      const turn = (await database.query<{ status: string; failure_reason: string }>(
+        `SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [ROOM, requestId, AGENT],
+      )).rows[0];
+      expect(turn).toEqual({ status: 'failed', failure_reason: reason });
+    }
+  });
+
+  it('keeps an unclaimed free-agent message queued and accurately promises a retry', async () => {
+    await database.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys)
+      VALUES($1,$2,$3,'test')`, [AGENT, WORKSPACE, HUMAN]);
+    const requestId = 'c'.repeat(64);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`,
+      [requestId, ROOM, HUMAN]);
+    const command = await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: requestId, reason: 'human_tag',
+    });
+    await noteFirstSilence(database, new LiveHub(), {
+      roomId: ROOM, requestId, agentId: AGENT, reason: 'its helper is offline', reasonKind: 'offline',
+    });
+    expect((await commandState(database, command!.id))?.state).toBe('pending');
+    expect((await failureLine(database, requestId))?.text).toBe(
+      "@candy hit a problem on Beeline's side · Beeline will retry your message; you do not need to do anything.",
+    );
+    // The healthy helper can claim exactly that message, with no second human send.
+    expect(await claimAgentCommand(database, ROOM, AGENT, command!.id, 'recovered')).toBeTruthy();
+  });
+
+  it('keeps owned-agent recovery instructions even when its name is Beebee or its free-agent row was removed', async () => {
+    await database.query(`UPDATE identities SET name='Beebee',handle='beebee' WHERE id=$1`, [AGENT]);
+    await database.query(`UPDATE agents SET harness='pi' WHERE agent_id=$1`, [AGENT]);
+    await database.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,removed_at)
+      VALUES($1,$2,$3,'test',now())`, [AGENT, WORKSPACE, HUMAN]);
+    const requestId = 'd'.repeat(64);
+    await ask(database, requestId);
+    await new DaemonService(database, new LiveHub()).execute('postAgentTurnReceipt', {
+      roomId: ROOM, requestId, generationId: 'g1', status: 'failed',
+      reason: 'ACP error -32000: Authentication required', reasonKind: 'not-signed-in',
+    }, AGENT);
+    expect((await failureLine(database, requestId))?.text).toBe(
+      '@beebee needs a new provider key · send @beebee login here. If that fails, its owner can run `beeline connect` on its machine.',
+    );
   });
 
   it('harness-node-missing-path: writes an actionable Room row from a failed daemon receipt', async () => {

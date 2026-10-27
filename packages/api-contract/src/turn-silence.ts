@@ -315,6 +315,8 @@ export function phraseTurnSilence(
   name: string,
   classified: ClassifiedTurnSilence,
   options: {
+    /** Set only from an active server-side free_agents row. */
+    readonly freeAgent?: boolean;
     readonly givingUp?: boolean;
     readonly restarting?: boolean;
     /** The agent's harness signs in from a Room, so its owner can send `@handle login`. */
@@ -322,6 +324,11 @@ export function phraseTurnSilence(
   } = {},
 ): TurnSilencePhrase {
   const agent = name.trim() || 'The agent';
+  if (options.freeAgent) {
+    return capLine(agent, "hit a problem on Beeline's side", options.restarting
+      ? 'Beeline will retry your message; you do not need to do anything.'
+      : 'Your message was not retried; please send it again.');
+  }
   switch (classified.kind) {
     case 'wrong-model':
       return capLine(

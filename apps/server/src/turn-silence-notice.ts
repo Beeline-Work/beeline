@@ -18,6 +18,7 @@ import {
   isRepositoryCacheDamagedFault,
   phraseTurnSilence,
   shouldRestartHiccup,
+  shouldCompletePendingFailedCommand,
   type TurnSilenceKind,
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
@@ -337,10 +338,15 @@ async function inscribeSilence(
   // bounded fault formatter, without changing its workspace classification
   // or implying that another attempt was scheduled.
   const bootstrapDiagnostic = input.generationId == null && classified.kind === 'workspace-failure' && reason;
+  const freeAgent = (await database.query(
+    `SELECT 1 FROM free_agents WHERE agent_id=$1 AND removed_at IS NULL`, [input.agentId],
+  )).rowCount > 0;
   const phrase = phraseTurnSilence(
     agentName,
     bootstrapDiagnostic ? { kind: 'hiccup', fault: bootstrapDiagnostic } : renderClassified,
-    { givingUp, restarting: restart, ...(login ? { login } : {}) },
+    { givingUp, restarting: restart || (freeAgent && Boolean(command) && (classified.kind === 'update-interrupted' ||
+      (command?.state === 'pending' && !shouldCompletePendingFailedCommand(classified.kind, reason)))),
+      freeAgent, ...(login ? { login } : {}) },
   );
   const systemPhrase: SystemPhrase = {
     subject: { kind: 'agent', id: input.agentId, name: agentName },

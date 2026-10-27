@@ -93,6 +93,17 @@ soul. Existing free agents keep their names.
   owner's allowance like any turn. Several events while the Machine sleeps are
   coalesced on return into one turn.
 
+Free-agent infrastructure failures name Beeline as responsible, never ask the
+person for a provider login, key, or machine command. The server recognizes an
+active `free_agents` row, not a name. A still-pending message or an update
+interruption keeps its queued retry and says no action is needed. A terminal
+failed turn says it was not retried and asks the person to send the message
+again. The real `agent_turns.failure_reason` and operator error reporting stay
+intact. Allowance exhaustion and the deliberate turn time limit retain their
+existing continuation instructions; personal agents retain their own recovery
+commands. Coverage: `turn-silence-notice.test.ts`, `turn-silence.test.ts`; built
+phone-read proof: `node --import tsx scripts/prove-free-agent-failure-wording.mjs`.
+
 Every transition writes `free_agent_events`. These rows are the source of the
 rewake latency numbers from `scripts/prove-free-agent.mjs`: created, provisioned,
 bootstrapped, connected, sleep_requested, slept, wake_requested, machine_started,

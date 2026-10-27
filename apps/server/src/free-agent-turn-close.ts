@@ -1,3 +1,4 @@
+import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { systemLine, restateSystemLine } from './system-line.js';
 
@@ -16,10 +17,10 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
     [`silence:${input.roomId}:${input.requestId}:${input.agentId}`]);
   const command = (await database.query<{
-    generation_id: string | null; cancellation_reason: string | null;
+    state: string; generation_id: string | null; cancellation_reason: string | null;
     completion_kind: string | null; allowance: string | null;
     private_payload: unknown; review_context: unknown; passive: boolean;
-  }>(`SELECT command.generation_id,command.cancellation_reason,turn.completion_kind,
+  }>(`SELECT command.state,command.generation_id,command.cancellation_reason,turn.completion_kind,
       command.private_payload,command.review_context,source.system_event->>'kind'='computer-session-activity' passive,
       (SELECT event.detail->>'limit' FROM free_agent_events event
        WHERE event.agent_id=command.agent_id AND event.kind='allowance_reached'
@@ -41,6 +42,8 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
   if ((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND request_id=$2
     AND author_id=$3 AND presentation='message' AND deleted_at IS NULL LIMIT 1`,
     [input.roomId,input.requestId,input.agentId])).rowCount) return true;
+  // The ordinary silence path owns pending-command retry eligibility.
+  if (command.state === 'pending') return false;
   if (!input.normal) {
     await database.query(`UPDATE agent_turns SET status='failed',failure_reason=$4,created_at=now()
       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='working'`,
@@ -53,16 +56,20 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
   const timeout = /free-agent-time-limit/.test(input.reason ?? '') ||
     command.cancellation_reason === 'free-agent-time-limit';
   const allowance = command.allowance || (input.reasonKind === 'allowance-spent' ? 'daily' : null);
-  const crashed = /runtime_exited|lease expired|crash/i.test(input.reason ?? '');
+  const infrastructureFailure = !allowance && !timeout;
+  const classified = classifyTurnSilence(input.reason, input.reasonKind);
   const phrase = {
     subject: { kind: 'agent' as const, id: input.agentId, name: agent.name },
     verb: allowance ? 'ran out of free allowance mid-task' : timeout ? 'hit the 15-minute limit' :
-      input.normal ? 'ended without a reply' : crashed ? 'stopped after a runtime failure' : 'stopped before replying',
+      'ended without a reply',
     consequence: allowance === 'lifetime' ? 'connect your own agent from Members to continue' : allowance ?
       'it resets at midnight UTC; ask to continue then' : 'say "continue" to pick up where work stopped',
+    ...(infrastructureFailure ? phraseTurnSilence(agent.name, classified, {
+      freeAgent: true, restarting: false,
+    }) : {}),
   };
   const card = { requestId: input.requestId, agentId: input.agentId, state: 'failed',
-    silenceKind: allowance ? 'allowance-spent' : 'hiccup', freeAgentClosed: true };
+    silenceKind: allowance ? 'allowance-spent' : infrastructureFailure ? classified.kind : 'hiccup', freeAgentClosed: true };
   const previous = (await database.query<{ id: string; closed: boolean | null }>(
     `SELECT id,(card->>'freeAgentClosed')::boolean closed FROM messages
      WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2

@@ -2,14 +2,15 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { redactReplayError } from '@beeline/api-contract/daemon';
 import { createAgentCommand } from '../../server/src/agent-command.js';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
-import { DaemonService } from '../../server/src/daemon-service.js';
+const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../server/dist/daemon-service.js' : '../../server/src/daemon-service.js');
 import { LiveHub } from '../../server/src/live.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
-import { RoomRuntimeCoordinator } from './room-runtime.js';
+const { MonolithCornerTurnLoop } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/monolith-corner-turn.js' : './monolith-corner-turn.js');
+const { RoomRuntimeCoordinator } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/room-runtime.js' : './room-runtime.js');
 import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 
 const HUMAN = 'a'.repeat(64);
@@ -307,6 +308,12 @@ describe('corner-start transient clone against the real server', () => {
         )
       ).rows[0],
     ).toEqual({ state: 'pending', hiccup_attempts: 0 });
+    // Reproduction PRESESSION-TRACE: worktree failure must be visible to friction queries.
+    const failedReceipt = execute.mock.calls.find(([name, input]) => name === 'postAgentTurnReceipt' && input.status === 'failed')![1];
+    expect(failedReceipt.trace).toEqual({ totalMs: 0, attempts: [],
+      reason: redactReplayError(failedReceipt.reason as string), reasonKind: 'workspace-failure' });
+    const traces = await database.query(`SELECT outcome,trace FROM agent_turn_traces WHERE room_id=$1 AND request_id=$2`, [CORNER, REQUEST]);
+    expect(traces.rows).toEqual([{ outcome: 'failed', trace: failedReceipt.trace }]);
     const failure = (
       await database.query<{ text: string }>(
         `SELECT text FROM messages WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2`,

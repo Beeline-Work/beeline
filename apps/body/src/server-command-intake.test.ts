@@ -376,6 +376,7 @@ describe('command intake mechanics', () => {
     expect(ctx.current).toBeUndefined();
     expect(execute).toHaveBeenCalledWith('postAgentTurnReceipt', expect.objectContaining({
       roomId: 'room', requestId: 'turn', generationId: ctx.generationId, status: 'failed',
+      trace: {totalMs: 0, attempts: [], reason: 'Could not enter command execution context'},
     }));
     expect(run).toHaveBeenCalledWith(command('next'));
     expect(onError).toHaveBeenCalledWith(error);

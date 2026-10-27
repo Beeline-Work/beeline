@@ -31,11 +31,14 @@ describe('forced update interruption handoff', () => {
     await reportInterruptedTurns(root, api, 'agent');
     expect(execute.mock.calls.map(([name, input]) => [name, input])).toEqual([
       ['postAgentTurnReceipt', { agentId: 'agent', ...turns[0], status: 'failed',
-        reason: 'interrupted by update', reasonKind: 'update-interrupted' }],
+        reason: 'interrupted by update', reasonKind: 'update-interrupted',
+        trace: { totalMs: 0, attempts: [], reason: 'interrupted by update', reasonKind: 'update-interrupted' } }],
       ['postAgentTurnReceipt', { agentId: 'agent', ...turns[1], status: 'failed',
-        reason: 'interrupted by update', reasonKind: 'update-interrupted' }],
+        reason: 'interrupted by update', reasonKind: 'update-interrupted',
+        trace: { totalMs: 0, attempts: [], reason: 'interrupted by update', reasonKind: 'update-interrupted' } }],
       ['postAgentTurnReceipt', { agentId: 'agent', ...turns[1], status: 'failed',
-        reason: 'interrupted by update', reasonKind: 'update-interrupted' }],
+        reason: 'interrupted by update', reasonKind: 'update-interrupted',
+        trace: { totalMs: 0, attempts: [], reason: 'interrupted by update', reasonKind: 'update-interrupted' } }],
     ]);
   });
 

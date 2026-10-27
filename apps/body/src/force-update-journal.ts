@@ -7,6 +7,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
+import { redactReplayError, type TurnReplay } from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 
@@ -94,6 +95,7 @@ export async function reportInterruptedTurns(
       status: 'failed',
       reason: 'interrupted by update',
       reasonKind: 'update-interrupted',
+      trace: { totalMs: 0, attempts: [], reason: redactReplayError('interrupted by update'), reasonKind: 'update-interrupted' } satisfies TurnReplay,
     } as const;
     try {
       await api.execute('postAgentTurnReceipt', receipt);

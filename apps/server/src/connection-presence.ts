@@ -793,8 +793,10 @@ async function writeAgentAnnouncement(
     observedAt,
     evidenceNonce: randomUUID(),
     ...(lifecycle ? { lifecycleId: lifecycle } : {}),
-    ...(metadata.releaseVersion ? { releaseVersion: metadata.releaseVersion } : {}),
-    ...(metadata.sourceSha ? { sourceSha: metadata.sourceSha } : {}),
+    ...(metadata.releaseVersion || previous?.body.releaseVersion
+      ? { releaseVersion: metadata.releaseVersion ?? previous?.body.releaseVersion } : {}),
+    ...(metadata.sourceSha || previous?.body.sourceSha
+      ? { sourceSha: metadata.sourceSha ?? previous?.body.sourceSha } : {}),
     ...held,
   };
   if (previous)

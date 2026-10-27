@@ -445,6 +445,12 @@ describe('delivery-driven presence', () => {
     });
   });
 
+  it('keeps the helper version recovery signal across announcements without version metadata', async () => {
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-new', releaseVersion: 'v9', sourceSha: 'source-v9' });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-new' });
+    expect(await body()).toMatchObject({ releaseVersion: 'v9', sourceSha: 'source-v9' });
+  });
+
   it('makes a first lifecycle announcement authoritative over a concurrent evidence insert', async () => {
     await presence.stop();
     let insertedEvidence = false;

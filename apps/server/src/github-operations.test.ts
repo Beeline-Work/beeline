@@ -286,6 +286,44 @@ describe('GitHub phone operations', () => {
     await Promise.all([failure, shutdown]);
   });
 
+  it('WAKE-STORM: persists installation cooldown across server clients and keeps restore readable', async () => {
+    const { corners } = await checksFixture();
+    const { privateKey } = await generateKeyPair('RS256');
+    const config = { appId: '42', slug: 'test', privateKey: await exportPKCS8(privateKey) };
+    const app = new GitHubAppClient(config);
+    const first = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const fetcher = vi.fn(async (input: string | URL) => String(input).endsWith('/access_tokens')
+      ? Response.json({ token: 'installation-77', expires_at: new Date(Date.now() + 3600_000).toISOString() })
+      : new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(first.refreshCornerReviewHead(corners[0]!)).rejects.toMatchObject({ rateLimited: true });
+    expect((await database.query<{ reset: string }>(
+      'SELECT api_retry_at::text reset FROM github_installations WHERE installation_id=77')).rows[0]?.reset)
+      .toBeDefined();
+    const requests = fetcher.mock.calls.length;
+    const replica = new GitHubAppClient(config);
+    const second = new GitHubOperations(database, {} as GitHubOAuthClient, replica, 'secret');
+    await expect(second.refreshCornerReviewHead(corners[0]!)).rejects.toMatchObject({ rateLimited: true });
+    expect(fetcher).toHaveBeenCalledTimes(requests);
+    const daemon = new DaemonService(database, new LiveHub(), id => second.roomToken(id));
+    Object.assign(daemon, { github: second });
+    for (let i = 0; i < 20; i++) {
+      const restore = await daemon.execute('getCornerRestoreState', { cornerId: corners[0]! }, REVIEWER);
+      expect(restore.lifecycle?.pr?.headSha).toBe('a'.repeat(40));
+    }
+    expect(fetcher).toHaveBeenCalledTimes(requests);
+    // Reset expiry permits fresh provider evidence; the stored deadline is
+    // shared, while each client's in-memory deadline remains authoritative too.
+    await database.query("UPDATE github_installations SET api_retry_at=now()-interval '1 second' WHERE installation_id=77");
+    const recovered = new GitHubOperations(database, {} as GitHubOAuthClient, new GitHubAppClient(config), 'secret');
+    fetcher.mockImplementation(async input => String(input).endsWith('/access_tokens')
+      ? Response.json({ token: 'recovered', expires_at: new Date(Date.now() + 3600_000).toISOString() })
+      : Response.json({ head: { sha: 'a'.repeat(40) }, state: 'open' }));
+    await recovered.refreshCornerReviewHead(corners[0]!);
+    expect(fetcher).toHaveBeenCalledTimes(requests + 2);
+  });
+
   it.each(['workflow completion', 'live checks read'])(
     'CHECK-HEADER-1: %s replaces the stale rerun summary seen by the phone', async trigger => {
       const { corners, app, payload, headSha } = await checksFixture();

@@ -375,6 +375,17 @@ export class GitHubOperations {
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
     this.armRoomTokenCache();
+    this.app.setRateLimitStore?.({
+      get: async installationId => {
+        const row = (await this.database.query<{ retry_at: string | null }>(
+          'SELECT api_retry_at::text retry_at FROM github_installations WHERE installation_id=$1', [installationId])).rows[0];
+        return row?.retry_at ? Date.parse(row.retry_at) : 0;
+      },
+      set: async (installationId, retryAt) => {
+        await this.database.query(`UPDATE github_installations SET api_retry_at=GREATEST(api_retry_at,$2::timestamptz)
+          WHERE installation_id=$1`, [installationId, new Date(retryAt).toISOString()]);
+      },
+    });
   }
 
   async beginIdentity(viewerId: string, input: Input<'beginGitHubIdentityBind'>) {

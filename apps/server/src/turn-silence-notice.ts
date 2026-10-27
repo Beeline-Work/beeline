@@ -335,6 +335,9 @@ async function inscribeSilence(
 
   const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX);
   const classified = classifyTurnSilence(reason || undefined, input.reasonKind);
+  const standing = ['helper-out-of-date', 'not-signed-in'].includes(classified.kind);
+  if (standing) await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+    [`silence-span:${input.roomId}:${input.agentId}`]);
   const command = (
     await database.query<CommandRow>(
       `SELECT * FROM agent_commands
@@ -411,11 +414,16 @@ async function inscribeSilence(
   if (!command?.private_payload || cornerFailure) {
     const recent = (
       await database.query<{ id: string }>(
-        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
-         AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
-         AND ($4::boolean OR created_at>now()-interval '10 minutes')
+        `SELECT id FROM messages notice WHERE room_id=$1 AND card_type='turn-failed'
+         AND card->>'agentId'=$3 AND card->>'state'='failed'
+         AND ((card->>'requestId'=$2 AND ($4::boolean OR created_at>now()-interval '10 minutes'))
+           OR ($5::boolean AND card->>'silenceKind'=$6 AND NOT EXISTS (
+             SELECT 1 FROM agent_turns recovered WHERE recovered.room_id=$1 AND recovered.agent_id=$3
+               AND recovered.status='complete' AND recovered.created_at>COALESCE((
+                 SELECT failed.created_at FROM agent_turns failed WHERE failed.room_id=$1
+                   AND failed.agent_id=$3 AND failed.request_id=notice.card->>'requestId'),notice.created_at))))
        ORDER BY created_at DESC,id DESC LIMIT 1`,
-        [input.roomId, input.requestId, input.agentId, classified.kind === 'update-interrupted'],
+        [input.roomId, input.requestId, input.agentId, classified.kind === 'update-interrupted', standing, classified.kind],
       )
     ).rows[0];
     if (recent) {

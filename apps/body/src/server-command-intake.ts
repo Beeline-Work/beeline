@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { redactReplayError, isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
+import { isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
 import { isNetworkFailure } from './live-link.js';
 
 /** Session-local output context. No transcript or sender policy enters this boundary. */
@@ -113,6 +114,7 @@ export async function runServerCommandIntake(options: {
   restart?: (command: AgentCommand) => void;
   canStartTurn?: () => boolean;
   onWake?: (wake: (() => void) | undefined) => void;
+  onRecovery?: (recover: (() => void) | undefined) => void;
   onPoll?: () => void;
   onSubscriptionState?: (connected: boolean) => void;
   /**
@@ -146,6 +148,21 @@ export async function runServerCommandIntake(options: {
   let reconciliation: Promise<void> | undefined;
   let reconciliationError: unknown;
   let stopped = false;
+  let retryAt = 0;
+  let standingFailure = false;
+  let configurationVersion = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const canStartTurn = () => !standingFailure && Date.now() >= retryAt && options.canStartTurn?.() !== false;
+  const parkFailure = (error: unknown, sameConfiguration: boolean) => {
+    if (sameConfiguration && isStandingRuntimeFault(error)) standingFailure = true;
+    const reset = retryNotBefore(error);
+    if (reset === undefined) return;
+    retryAt = Math.max(retryAt, reset);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => { if (!stopped) wake?.(false); },
+      Math.min(2_147_483_647, Math.max(0, retryAt - Date.now()) + 50 + Math.floor(Math.random() * 250)));
+    retryTimer.unref?.();
+  };
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
   // The server may requeue a command this helper is still running (a stalled
@@ -177,6 +194,7 @@ export async function runServerCommandIntake(options: {
       });
   };
   options.onWake?.(notify);
+  options.onRecovery?.(() => { configurationVersion++; standingFailure = false; notify(); });
   const off = api.liveSubscribe?.(
     roomId,
     undefined,
@@ -206,7 +224,7 @@ export async function runServerCommandIntake(options: {
         if (busy && command.action !== 'stop' && command.action !== 'restart') continue;
         if (
           (command.action === 'input' || command.action === 'resume') &&
-          options.canStartTurn?.() === false
+          !canStartTurn()
         )
           continue;
         pending.delete(command.id);
@@ -266,7 +284,7 @@ export async function runServerCommandIntake(options: {
               }
               if (attempt === 3) throw error;
               const waitMs = Math.max(250 * 2 ** attempt,
-                error instanceof DaemonApiError ? error.retryAfterMs ?? 0 : 0);
+                (retryNotBefore(error) ?? Date.now()) - Date.now());
               await new Promise<void>((resolve) => {
                 const done = () => {
                   clearTimeout(timer);
@@ -344,9 +362,11 @@ export async function runServerCommandIntake(options: {
             }
             continue;
           }
+          const configuration = configurationVersion;
           busy = Promise.resolve()
             .then(() => options.run(command))
             .catch((error) => {
+              parkFailure(error, configuration === configurationVersion);
               options.onError?.(error);
             })
             .finally(async () => {
@@ -387,7 +407,7 @@ export async function runServerCommandIntake(options: {
             (command) =>
               command.action === 'stop' ||
               command.action === 'restart' ||
-              options.canStartTurn?.() !== false,
+              canStartTurn(),
           )
         )
           done(false);
@@ -400,8 +420,10 @@ export async function runServerCommandIntake(options: {
     throw error;
   } finally {
     stopped = true;
+    clearTimeout(retryTimer);
     off?.();
     options.onWake?.(undefined);
+    options.onRecovery?.(undefined);
     const current = context.current;
     const stopCurrent = () => {
       if (current) options.stop(current.turnRequestId);

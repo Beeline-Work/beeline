@@ -37,6 +37,7 @@ import { reclaimHelperStorage, capturePrivateProcessUse, removeStoragePath, stor
 import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout, type StorageOwner } from './storage-owners.js';
 import { cornerProofRetentionActive } from './corner-proof-output.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
+import { cornerStarts, isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
@@ -622,6 +623,9 @@ export class RoomRuntimeCoordinator {
   /** Set by `shutdown`: a pushed event may no longer start anything. */
   private stopped = false;
   /** Per corner, the requests whose start failure has already been said out loud. */
+  private readonly standingRuntimeStartFaults = new Set<string>();
+  private cornerStartRetryAt = 0;
+  private cornerStartRetryTimer?: ReturnType<typeof setTimeout>;
   private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
   private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
@@ -707,6 +711,9 @@ export class RoomRuntimeCoordinator {
     // this. Optional like the wake above: a stub API without the listener
     // still reconciles, and the per-turn currency check remains the net.
     this.options.daemonApi.setConfigChangedListener?.(() => {
+      this.supervisor.configurationChanged();
+      this.standingRuntimeStartFaults.clear();
+      for (const running of this.running.values()) running.body.configurationChanged();
       void this.scheduler
         .suspendIdle()
         .catch((error) => console.error('[body] config-change session restart failed', error));
@@ -1354,10 +1361,13 @@ export class RoomRuntimeCoordinator {
       this.storageDeferredStarts.add(corner.cornerId);
       return;
     }
+    if (this.cornerStartRetryAt > Date.now() || this.standingRuntimeStartFaults.has(corner.cornerId)) return;
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
+    const releaseStart = await cornerStarts.acquire();
     let configKey: string | undefined;
     try {
+      if (this.stopped || this.cornerStartRetryAt > Date.now()) return;
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
         this.parentRepositoryState(corner.parentRoomId),
@@ -1514,14 +1524,29 @@ export class RoomRuntimeCoordinator {
     } catch (error) {
       this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
+      const retryAt = retryNotBefore(error instanceof CornerCredentialLookupError ? error.cause : error);
+      if (retryAt !== undefined) {
+        this.cornerStartRetryAt = Math.max(this.cornerStartRetryAt, retryAt);
+        clearTimeout(this.cornerStartRetryTimer);
+        this.cornerStartRetryTimer = setTimeout(() => {
+          this.cornerStartRetryTimer = undefined;
+          if (!this.stopped) this.wakeDiscovery();
+        }, Math.min(2_147_483_647, Math.max(0, this.cornerStartRetryAt - Date.now()) + 50 + Math.floor(Math.random() * 250)));
+        this.cornerStartRetryTimer.unref?.();
+        // Keep the authoritative command pending until its provider recovers.
+        return;
+      }
       // Keep the pending command available for the next reconciliation. A
       // temporary token lookup must not turn into a human repair request.
       if (error instanceof CornerCredentialLookupError) return;
+      if (isStandingRuntimeFault(error) || error instanceof DaemonApiError && !error.retryable && [401,403].includes(error.status))
+        this.standingRuntimeStartFaults.add(corner.cornerId);
       const reported = await this.reportCornerStartFailure(corner.cornerId, error);
       if (reported && isStandingCornerStartFault(error) && configKey) {
         this.standingCornerStartFaults.set(corner.cornerId, { configKey, error });
       }
     } finally {
+      releaseStart();
       this.startingCorners.delete(corner.cornerId);
     }
   }
@@ -2167,6 +2192,7 @@ export class RoomRuntimeCoordinator {
   }
 
   beginShutdown(): void {
+    clearTimeout(this.cornerStartRetryTimer);
     if (this.stopped) return;
     this.stopped = true;
     this.stopStorageAvailable();

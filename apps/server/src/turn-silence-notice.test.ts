@@ -540,6 +540,35 @@ describe('first-silence notice', () => {
     });
   });
 
+  it('WAKE-STORM: repeated ACP rejections settle each command and share one notice until recovery', async () => {
+    const daemon = new DaemonService(database, new LiveHub());
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const command = await ask(database, `protocol-${attempt}`);
+      const result = await daemon.execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId: command.turn_request_id, generationId: 'g1', status: 'failed',
+        reason: 'ACP error -32602: Invalid params', reasonKind: 'hiccup',
+      }, AGENT);
+      expect(result.hiccupRestart).toBeUndefined();
+      expect(await commandState(database, command.id)).toMatchObject({ state: 'complete', hiccup_attempts: 0 });
+      // A long outage must not start another failure span every ten minutes.
+      await database.query(`UPDATE messages SET created_at=now()-interval '1 hour' WHERE card_type='turn-failed'`);
+    }
+    const notices = async () => (await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'`, [ROOM])).rows;
+    expect(await notices()).toHaveLength(1);
+    // Transcript ordering can put a notice after its cause's timestamp.
+    await database.query(`UPDATE messages SET created_at=now()+interval '1 day' WHERE card_type='turn-failed'`);
+    const recovered = await ask(database, 'protocol-recovered');
+    await daemon.execute('postAgentTurnReceipt', {
+      roomId: ROOM, requestId: recovered.turn_request_id, generationId: 'g1', status: 'complete',
+    }, AGENT);
+    const failed = await ask(database, 'protocol-new-span');
+    await daemon.execute('postAgentTurnReceipt', {
+      roomId: ROOM, requestId: failed.turn_request_id, generationId: 'g1', status: 'failed',
+      reason: 'ACP error -32602: Invalid params', reasonKind: 'hiccup',
+    }, AGENT);
+    expect(await notices()).toHaveLength(2);
+  });
+
   it.each(['human', 'agent'])('retries a hung harness once for a %s trigger, then completes its command', async (author) => {
     const requestId = 'hang-request';
     const command = await ask(database, requestId);

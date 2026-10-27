@@ -1327,7 +1327,7 @@ describe('installation token diagnostics (Reproduction 7801305644)', () => {
       .mockRejectedValueOnce(networkError);
     vi.stubGlobal('fetch', fetchMock);
     await expect(app.installationToken(1)).resolves.toMatchObject({ token: 'private-token' });
-    await expect(app.installationToken(1)).rejects.toBe(networkError);
+    await expect(app.installationToken(1, { repositoryIds: [2] })).rejects.toBe(networkError);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(warn).not.toHaveBeenCalled();
   });
@@ -1411,8 +1411,8 @@ it.each(['primary', 'secondary', 'plain', 'invalid', 'reset-with-budget'])(
         expect(githubRetryDelay(error, 0)).toBeGreaterThan(kind === 'primary' ? 590_000 : 119_000);
       } else expect(error.retryAfter).toBeNull();
     }
-    // Long waits belong to the durable queue; no immediate request retries.
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // A timed installation cooldown also blocks later endpoints using this token.
+    expect(fetchMock).toHaveBeenCalledTimes(kind === 'primary' || kind === 'secondary' ? 1 : 4);
   },
 );
 

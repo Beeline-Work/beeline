@@ -10,6 +10,12 @@ import {
 } from './turn-silence.js';
 
 describe('turn silence classification', () => {
+  it.each(['-32600', '-32601', '-32602'])('WAKE-STORM: ACP %s is a standing adapter failure even on a legacy hiccup receipt', code => {
+    const classified = classifyTurnSilence(`ACP error ${code}: Invalid params`, 'hiccup');
+    expect(classified.kind).toBe('helper-out-of-date');
+    expect(shouldRestartHiccup(classified.kind, 1, classified.fault)).toBe(false);
+  });
+
   it('harness-node-missing-path: gives old helper receipts the same recovery command', () => {
     const reason = 'runtime_exited: ACP agent /nvm/bin/codex-acp exited code=127: env: node: No such file or directory';
     const classified = classifyTurnSilence(reason, 'hiccup');

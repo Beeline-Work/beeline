@@ -1069,7 +1069,10 @@ async function queueReviewerCommand(
  * a new PR/check event cannot repair credentials or a missing model. */
 function reviewerConfigurationSql(agent: string): string {
   return `SELECT jsonb_build_object('harness',harness,'model',selected_model,'effort',selected_effort,
-    'unavailable',model_unavailable,'signIn',(SELECT card->>'attemptId' FROM messages
+    'unavailable',model_unavailable,'helper',(SELECT jsonb_build_object(
+      'release',body->>'releaseVersion','source',body->>'sourceSha') FROM live_outputs
+      WHERE agent_id=${agent} AND kind='presence' ORDER BY updated_at DESC LIMIT 1),
+    'signIn',(SELECT card->>'attemptId' FROM messages
       WHERE card_type='agent-sign-in' AND card->>'agentId'=${agent} AND card->>'status'='signed-in'
       ORDER BY created_at DESC,id DESC LIMIT 1))
     FROM agents WHERE agent_id=${agent}`;
@@ -1094,7 +1097,7 @@ async function reviewerStandingFailure(db: SqlDatabase, agentId: string): Promis
     jsonb_build_object('reviewerConfiguration',(${reviewerConfigurationSql('$2')}))
     WHERE id=$1 AND NOT review_context ? 'reviewerConfiguration'`, [failed.id,agentId]);
   return isAuthShapedFault(failed.reason ?? '') ||
-    ['wrong-model','allowance-spent','not-signed-in'].includes(failed.kind ?? classifyTurnSilence(failed.reason).kind);
+    ['wrong-model','allowance-spent','not-signed-in','helper-out-of-date'].includes(failed.kind ?? classifyTurnSilence(failed.reason).kind);
 }
 
 /**

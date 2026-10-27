@@ -1,6 +1,36 @@
 import { accessSync, constants, statSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+/** Expand env split strings for inspection only; execution retains the original argv.
+ * Grant targets exclude quoting, escapes and substitutions. Refuse those forms
+ * here too rather than guess at GNU env's additional split-string syntax.
+ */
+export function expandGrantEnvSplitStrings(input: readonly string[]): readonly string[] {
+  const argv = [...input];
+  let head = 0;
+  let expansions = 0;
+  while (argv[head]?.split('/').pop() === 'env') {
+    head += 1;
+    while (head < argv.length) {
+      const word = argv[head]!;
+      if (word === '--') { head += 1; break; }
+      if (word === '-S' || word === '--split-string' || word.startsWith('-S') || word.startsWith('--split-string=')) {
+        const separate = word === '-S' || word === '--split-string';
+        const value = separate ? argv[head + 1] : word.startsWith('-S') ? word.slice(2) : word.slice('--split-string='.length);
+        if (!value || /[^a-zA-Z0-9_./:=,+% @-]/.test(value) || ++expansions > 32) {
+          throw new Error('Cannot safely resolve env wrapper options: unsupported split string.');
+        }
+        argv.splice(head, separate ? 2 : 1, ...value.trim().split(/ +/));
+        continue;
+      }
+      if (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(word)) head += 2;
+      else if (word.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) head += 1;
+      else break;
+    }
+  }
+  return argv;
+}
+
 /** Resolve the first executable file exactly in the child execution PATH. */
 function resolveGrantExecutable(path: string, cwd: string, env: NodeJS.ProcessEnv): string | undefined {
   if (path.includes('/')) return resolve(cwd, path);

@@ -14,6 +14,7 @@ import {
   type AgentGrantDeps,
   type GrantRunDeps,
 } from './read-only-mcp.js';
+import { expandGrantEnvSplitStrings } from './grant-script.js';
 import { approvedDeviceGrant } from './monolith-room-turn.js';
 
 function deps(
@@ -32,7 +33,18 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
-  it.each(['-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('requests a native env %s command without a script binding', async (option) => {
+  it('expands literal env split strings without modifying execution argv', () => {
+    const argv = ['env', '-S', 'bash approved.sh', 'argument'];
+    expect(expandGrantEnvSplitStrings(argv)).toEqual(['env', 'bash', 'approved.sh', 'argument']);
+    expect(argv).toEqual(['env', '-S', 'bash approved.sh', 'argument']);
+    expect(expandGrantEnvSplitStrings(['env', '-u', 'PATH', '-S', '/bin/echo approved']))
+      .toEqual(['env', '-u', 'PATH', '/bin/echo', 'approved']);
+    for (const value of ['bash\\_changed.sh', 'bash ${SCRIPT}', 'bash "changed.sh"', 'bash #changed.sh']) {
+      expect(() => expandGrantEnvSplitStrings(['env', '-S', value])).toThrow('unsupported split string');
+    }
+  });
+
+  it.each(['-S', '--split-string', '--split-string=/bin/echo', '-S/bin/echo', '-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('requests a native env %s command without a script binding', async (option) => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await requestGrant({ kind: 'command', target: `env ${option} /bin/echo approved`,
       purpose: 'Print approved', reason: 'Native command regression' }, {

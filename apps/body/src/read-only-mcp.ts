@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
+import { expandGrantEnvSplitStrings, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
@@ -1995,12 +1995,13 @@ export function readGrantScript(
   rule: CommandGrantRule,
   deps: AgentGrantDeps,
 ): CommandGrantScript | undefined {
-  const argument = interpreterScriptArgument(rule.argv, true);
+  const argv = expandGrantEnvSplitStrings(rule.argv);
+  const argument = interpreterScriptArgument(argv, true);
   if (!argument) return undefined;
   const roots = deps.scriptRoots ?? [];
   if (!roots.length) return undefined;
   const candidatePath = resolveGrantScriptExecutable(
-    rule.argv, argument, roots[0]!, deps.scriptEnv ?? process.env, deps.readScript ?? readFileSync,
+    argv, argument, roots[0]!, deps.scriptEnv ?? process.env, deps.readScript ?? readFileSync,
   );
   const executable = argument.direct ? candidatePath : undefined;
   if (argument.direct && !executable) return undefined;

@@ -166,7 +166,7 @@ describe('command grant matching', () => {
 });
 
 describe('GrantCommandRunner', () => {
-  it.each(['-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('runs an approved native env %s command without a script binding', async (option) => {
+  it.each(['-S', '--split-string', '-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('runs an approved native env %s command without a script binding', async (option) => {
     const { runner } = await harness([grant({ target: `env ${option} /bin/echo approved`, script: undefined })]);
     const result = await runner.run({ roomId: ROOM, argv: ['env', ...option.split(' '), '/bin/echo', 'approved'] });
     expect(result.exitCode).toBe(0);

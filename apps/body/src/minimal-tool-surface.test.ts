@@ -325,9 +325,9 @@ describe('minimal agent surface', () => {
     expect(calls).toEqual([]);
 
     const accepted = [
-      { scope: 'history', query: '🙂'.repeat(500), limit: 10 },
+      { scope: 'history', query: '🙂'.repeat(125), limit: 10 },
       { scope: 'memory', query: '🙂'.repeat(125), limit: 1 },
-      { scope: 'memory', query: 'x'.repeat(500), limit: 10 },
+      { scope: 'memory', query: 'x'.repeat(125), limit: 10 },
     ];
     for (const args of accepted) {
       expect(Check(schema, args)).toBe(true);

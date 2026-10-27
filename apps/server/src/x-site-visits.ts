@@ -53,7 +53,7 @@ export async function syncXSiteVisits(
       accounts?.length !== 1 || !Array.isArray(groups) || groups.length >= LIMIT
     )
       throw new Error('Cloudflare site visits incomplete');
-    const days = new Map<string, { visits: number; ads: Map<string, number> }>();
+    const days = new Map<string, { visits: number; all: number; ads: Map<string, number> }>();
     for (const group of groups) {
       const d = group?.dimensions;
       const visits = group?.sum?.visits;
@@ -62,7 +62,9 @@ export async function syncXSiteVisits(
           new Date(`${d.date}T00:00:00Z`).toISOString().slice(0, 10) !== d.date || typeof d.refererHost !== 'string' ||
           typeof d.requestPath !== 'string' || !Number.isSafeInteger(visits) || visits < 0)
         throw new Error('Cloudflare site visits invalid');
-      const day = days.get(d.date) ?? { visits: 0, ads: new Map<string, number>() };
+      const day = days.get(d.date) ?? { visits: 0, all: 0, ads: new Map<string, number>() };
+      day.all += visits;
+      if (!Number.isSafeInteger(day.all)) throw new Error('Cloudflare site visits overflow');
       // A path and an X referrer on the same visit count only once.
       const ad = /^\/x\/([a-zA-Z0-9_-]+)\/?$/.exec(d.requestPath)?.[1];
       if (ad || X_REFERRERS.has(d.refererHost.toLowerCase())) {
@@ -76,9 +78,9 @@ export async function syncXSiteVisits(
       await db.query(`DELETE FROM x_site_visit_daily WHERE day>=$1 AND day<$2`, [start, end]);
       for (const [date, day] of days) {
         await db.query(
-          `INSERT INTO x_site_visit_daily(day,site_visits,by_ad) VALUES($1,$2,$3::jsonb)`,
+          `INSERT INTO x_site_visit_daily(day,site_visits,by_ad,all_site_visits) VALUES($1,$2,$3::jsonb,$4)`,
           [date, day.visits, JSON.stringify([...day.ads].sort(([a], [b]) => a.localeCompare(b))
-            .map(([adPath, siteVisits]) => ({ adPath: `/x/${adPath}`, siteVisits })))],
+            .map(([adPath, siteVisits]) => ({ adPath: `/x/${adPath}`, siteVisits }))), day.all],
         );
       }
       await db.query(`UPDATE x_ad_sync SET completed_at=$1,failed_at=NULL,
@@ -98,8 +100,8 @@ export async function dashboardXSiteVisits(database: SqlDatabase, measuredAt: st
   const available = !!sync?.completed_at && !sync.failed_at &&
     Date.parse(measuredAt) - new Date(sync.completed_at).getTime() <= 36 * 3_600_000;
   const rows = (await database.query<{
-    date: string; site_visits: string; by_ad: { adPath: string; siteVisits: number }[];
-  }>(`SELECT to_char(day,'YYYY-MM-DD') date,site_visits,by_ad
+    date: string; site_visits: string; all_site_visits: string | null; by_ad: { adPath: string; siteVisits: number }[];
+  }>(`SELECT to_char(day,'YYYY-MM-DD') date,site_visits,all_site_visits,by_ad
       FROM x_site_visit_daily WHERE day>=($1::timestamptz AT TIME ZONE 'UTC')::date-89 ORDER BY day`,
     [measuredAt],
   )).rows;
@@ -117,6 +119,7 @@ export async function dashboardXSiteVisits(database: SqlDatabase, measuredAt: st
       return {
         date,
         siteVisits: row ? Number(row.site_visits) : null,
+        allSiteVisits: row?.all_site_visits != null ? Number(row.all_site_visits) : null,
         byAd: row ? row.by_ad : null,
       };
     }),

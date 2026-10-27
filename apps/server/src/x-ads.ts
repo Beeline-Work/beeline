@@ -1,3 +1,4 @@
+import { dashboardSiteDownloadTaps } from './site-download-taps.js';
 import { dashboardXSiteVisits } from './x-site-visits.js';
 import { createHash } from 'node:crypto';
 import { parseXAttribution, X_PIXEL_ID } from '@beeline/api-contract/x-attribution';
@@ -193,7 +194,10 @@ export async function dashboardXAds(database: SqlDatabase, measuredAt: string) {
         : 'not_connected',
     lastSyncedAt: sync?.completed_at ?? null,
     rows,
-    siteVisits: await dashboardXSiteVisits(database, measuredAt),
+    siteVisits: await (async () => {
+      const visits = await dashboardXSiteVisits(database, measuredAt);
+      return {...visits, downloads: await dashboardSiteDownloadTaps(database, measuredAt, visits)};
+    })(),
     signups,
     coverage: {
       total: coverage.total,

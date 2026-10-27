@@ -380,7 +380,7 @@ describe('minimal agent surface', () => {
   it('does not expose corner apps outside corners or IO fallbacks with proven native access', async () => {
     vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
     await expect(callAgentTool('app_tool', { app: 'beeline:corner_app' }, 'd')).rejects.toThrow(
-      'unavailable',
+      'works only in a corner',
     );
     vi.stubEnv('BEELINE_NATIVE_IO_PROVEN', '1');
     await expect(callAgentTool('scratch_io', { action: 'quota' }, 'd')).rejects.toThrow(

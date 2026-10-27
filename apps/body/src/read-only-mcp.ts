@@ -3,7 +3,7 @@ import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecuta
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
-import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
+import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, placeBeelineApps, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
 import { nonhumanSilentWake } from './silent-wake.js';
 /**
@@ -2911,6 +2911,8 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       if (builtin && capabilities.includes(builtin) && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
         return JSON.stringify({ status: 'ready', app: builtin,
           next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` });
+      if (builtin && !capabilities.includes(builtin))
+        return JSON.stringify({ status: 'unavailable', app: builtin, next: placeRefusal(builtin) });
       if (args.mode === 'status') return JSON.stringify({ readiness: await execute('connectors_status'), capabilities });
       if (args.mode === 'discover') return JSON.stringify({ integrations: args.query ? JSON.parse(await execute('find_connectors')) : [], capabilities });
       if (args.mode !== undefined && args.mode !== 'ensure') throw new Error('mode must be discover, status or ensure');
@@ -2920,7 +2922,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       const app = String(args.app ?? '');
       if (app.startsWith('beeline:')) {
         const capability = app.slice('beeline:'.length);
-        if (!(await availableCapabilities(app === 'beeline:onboarding')).includes(app)) throw new Error('capability unavailable on this surface');
+        if (!(await availableCapabilities(app === 'beeline:onboarding')).includes(app)) throw new Error(placeRefusal(app));
         const routes = CAPABILITY_ROUTES[capability]!;
         if (args.tool === undefined) return JSON.stringify({ app, tools: Object.entries(routes).map(([action]) => {
           const definition = CAPABILITY_TOOLS[capability]![action]!;
@@ -3001,10 +3003,15 @@ async function availableCapabilities(checkOnboarding = true): Promise<string[]> 
     }
   } catch { /* Missing server eligibility always leaves the feature dark. */ }
 
-  return Object.keys(CAPABILITY_ROUTES).filter(capability =>
-    (capability !== 'onboarding' || onboarding) &&
-    (capability !== 'corner_app' || Boolean(process.env.BEELINE_DAEMON_CORNER_ID))
-  ).map(capability => `beeline:${capability}`);
+  return [...placeBeelineApps(Boolean(process.env.BEELINE_DAEMON_CORNER_ID)), ...(onboarding ? ['beeline:onboarding'] : [])];
+}
+
+/** The refusal for a Beeline app that does not work here names the apps that do. */
+function placeRefusal(app: string): string {
+  const here = placeBeelineApps(Boolean(process.env.BEELINE_DAEMON_CORNER_ID)).join(', ');
+  return app === 'beeline:corner_app'
+    ? `${app} works only in a corner; use it there. Beeline apps here: ${here}.`
+    : `${app} ${app.slice('beeline:'.length) in CAPABILITY_ROUTES ? 'is unavailable in this place' : 'is not a Beeline app'}. Beeline apps here: ${here}.`;
 }
 
 async function executeAgentOperation(

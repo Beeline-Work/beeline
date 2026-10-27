@@ -1177,7 +1177,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "app_tool",
-    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id or key from connect status, or beeline:workflow, beeline:wallet, beeline:browser_share, beeline:corner_app. First-party routes preserve each operation’s original authority. Discover before use.",
+    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id or key from connect status, or BEELINE_APPS. First-party routes preserve each operation’s original authority. Discover before use.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1360,7 +1360,22 @@ export const SILENT_TOOL: ToolDefinition = {
   "description": "On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, end the turn immediately and silently. No further tools or final text are accepted. This tool posts nothing and reports nothing. Human-triggered turns cannot use it.",
   "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
 };
-export function minimalTools(_cornerTurn: boolean): ToolDefinition[] { return structuredClone(ORDINARY_TOOLS); }
+/**
+ * The Beeline apps app_tool serves in a place. Corner apps work only in a
+ * corner. Onboarding is left out: it joins only while the server marks the
+ * Room eligible, and connect reports it then.
+ */
+export function placeBeelineApps(cornerTurn: boolean): string[] {
+  return Object.keys(CAPABILITY_ROUTES)
+    .filter(capability => capability !== 'onboarding' && (capability !== 'corner_app' || cornerTurn))
+    .map(capability => `beeline:${capability}`);
+}
+/** app_tool names only the Beeline apps that work in this place, so discovery never offers one that refuses. */
+export function minimalTools(cornerTurn: boolean): ToolDefinition[] {
+  const apps = placeBeelineApps(cornerTurn).join(', ');
+  return structuredClone(ORDINARY_TOOLS).map(tool =>
+    tool.name === 'app_tool' ? { ...tool, description: tool.description.replace('BEELINE_APPS', apps) } : tool);
+}
 export function repositoryTools(): ToolDefinition[] { return structuredClone(REPOSITORY_TOOLS); }
 export function scratchTools(quota: boolean): ToolDefinition[] {
  const tools = structuredClone(SCRATCH_TOOLS);

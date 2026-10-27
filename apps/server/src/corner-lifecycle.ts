@@ -761,7 +761,7 @@ async function checksReported(
     }
     await armFailingRepair(db, cornerId, headSha);
   } else if (plan.outcome === 'passing' && !plan.approved && !(await blockingReview(db, cornerId, headSha))) {
-    // A blocking verdict on this head and brief revision is handed back by
+    // A blocking verdict on this head is handed back by
     // `ensureReviewDispatch` instead of waking the reviewer again.
     const queued = await queueReviewerCommand(db, {
       roomId: cornerId,
@@ -949,12 +949,11 @@ const reviewChecksSql = `jsonb_build_object('status',lifecycle->>'checks','check
    FROM jsonb_array_elements(COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb)) item))`;
 
 /**
- * The reviewer's finished review of this head, dispatched since the current
- * brief revision (callers have already checked for an
- * approval on the head), while the corner was still in review. Another
- * review wake for the same head and brief revision would only repeat that
- * verdict. A turn that ended after the corner left review (checks re-ran)
- * gave no verdict.
+ * The reviewer's finished review of this head (callers have already checked
+ * for an approval on the head), while the corner was still in review. Another
+ * review wake for the same head would only repeat that verdict. A later brief
+ * revision does not reopen it: the code is unchanged. A new head does. A turn
+ * that ended after the corner left review (checks re-ran) gave no verdict.
  */
 export async function blockingReview(
   db: SqlDatabase,
@@ -983,9 +982,6 @@ export async function blockingReview(
             ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
          AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
            SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1))
-         AND CASE WHEN command.review_context IS NOT NULL THEN
-           (command.review_context->>'briefRevision')::int=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0)
-           ELSE command.created_at>=COALESCE((SELECT max(created_at) FROM corner_brief_revisions WHERE corner_id=$1),'-infinity') END
          AND NOT EXISTS (
            SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
              AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'

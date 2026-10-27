@@ -960,7 +960,7 @@ describe('corner message attribution', () => {
     );
   });
 
-  it('does not wake the reviewer again for the same head and brief revision after a blocking verdict', async () => {
+  it('does not wake the reviewer again for a verdicted head after the brief changes', async () => {
     const head = 'f'.repeat(40);
     /** A check verdict on `head`, as the GitHub webhook writes it. */
     const verdict = async (kind: 'check-passed' | 'rerun') => {
@@ -989,12 +989,20 @@ describe('corner message attribution', () => {
     console.info(`Reproduction REVIEW-DUP-1: wrong=1 repeat review wake; right=0; observed=${repeated}`);
     expect(repeated).toBe(0);
     expect((await commands(A, C)).map((command) => command.reason)).toContain('corner_review_needed');
-    // A revised brief is a new review on the same head.
+    // A revised brief leaves the head unchanged. The verdict still stands.
     await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
       VALUES($1,2,'Brief','Brief with the waiver',$2,$3)`, [C, A, R]);
     await verdict('rerun');
-    const [rereview] = await commands(B, C);
-    expect(rereview?.source.body).toContain('Review against brief revision 2');
+    const afterBrief = (await db.query<{ reason: string }>(
+      `SELECT reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+         AND created_at>(SELECT created_at FROM corner_brief_revisions WHERE corner_id=$1 AND revision=2)`,
+      [C, B],
+    )).rows;
+    console.info(
+      `Reproduction review-redeliver: brief revision on verdicted head; wrong=1 repeat review wake; right=0; observed=${afterBrief.length}`,
+    );
+    expect(await commands(B, C)).toEqual([]);
+    expect(afterBrief).toEqual([]);
   });
 
   it('returns missing review configuration to the implementer', async () => {
@@ -1351,6 +1359,10 @@ describe('corner message attribution', () => {
        ORDER BY created_at DESC LIMIT 1`, [C],
     )).rows[0]!.id;
     const parent = (await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [review!.id])).rows[0];
+    // A brief revision changes no code. The verdict on this head still stands.
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,1,'Revised brief','Revised brief',$2,$3)`, [C, A, R]);
+    await advanceCorner(db, C, { kind: 'brief-revised', revision: 1, sourceMessageId: sourceId, command: parent });
     const delivered: string[] = [];
     // Every path that asks for a review of this head. A chat tag or order is
     // not one of them: the reviewer still has to receive ordinary work.
@@ -1419,6 +1431,9 @@ describe('corner message attribution', () => {
     const [review] = await commands(B, C);
     await claim(review!);
     await result(review!, 'FAIL: show the repaired screen.');
+    // A brief revision on the judged head must not swallow the next head.
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,1,'Brief','Brief changed, code unchanged',$2,$3)`, [C, A, R]);
     await greenHead(92, '1'.repeat(40));
     const [nextHead] = await commands(B, C);
     expect(nextHead?.reason).toBe('subscribed_event');

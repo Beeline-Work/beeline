@@ -433,6 +433,7 @@ export function reviewerDispatchCarriesHead(
  * The shared review-wake decision. True means this head was already verdicted,
  * already has a yes, or already has a live review wake, so another wake
  * of a configured reviewer would hand them the same code again.
+ * A later brief revision does not clear a verdict on that head.
  * A failed turn is not a verdict, and an expired claim is the handoff to the
  * next reviewer on the list. Neither one keeps the head.
  * `createAgentCommand` applies it to every insert. `queueReviewerCommand`

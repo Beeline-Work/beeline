@@ -61,6 +61,7 @@ owner session. That account had no visible AI clients section. The vaulted
 reviewer-bypass link exists, but sealed login loading returned
 `POST /v1/vault/browser-fill → 400 unsupported_credential_type` for its `value`
 field. A live browser card was posted for human reviewer sign-in handback.
-Production reviewer listing and disconnect are not claimed. The concrete
-remaining check is reviewer sign-in through that card, then list and disconnect
-a dedicated test client. No production release was performed.
+Production reviewer listing and disconnect are not claimed. Ruby subsequently
+waived this check for the corner and accepted the local real-browser proof;
+Ruby owns the live listing/disconnect check after release. No production release
+was performed.

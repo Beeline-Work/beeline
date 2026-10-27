@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AiClientConnection } from '@beeline/api-contract/workbench';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Button } from './Button';
 import { SettingsRow } from './SettingsRow';
 import { ServiceMark } from './ServiceMark';
@@ -24,6 +23,7 @@ export function AiClientsSection({ clients, onChanged }: {
     if (!selected || busy) return;
     setBusy(true); setError(null);
     try {
+      const { monolithPhoneOperation } = await import('@/sync/transport/monolith-operation');
       await monolithPhoneOperation('disconnectAiClient', { clientId: selected.clientId });
       setSelected(null); await onChanged();
     } catch { setError('Could not disconnect this client. Try again.'); }

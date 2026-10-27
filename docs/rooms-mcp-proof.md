@@ -50,3 +50,11 @@ Evidence in [`apps/mobile/evidence/rooms-mcp`](../apps/mobile/evidence/rooms-mcp
 - `android-disconnected.png`: the remaining Muse connection and the next-call 401 result.
 
 Run the native harness only against the disposable `--ui` fixture; it contains no production login. Set `MCP_PROOF_PORT` for a stable local port if needed. The proof fixture bootstrap exposes only its synthetic session locally and is never mounted by production server code.
+
+## Section-surface startup regression
+
+On main `363348505bf4af187c5b02487ce2ac17f3b1319f`, the unchanged `section-surface.browser.test.ts` passed all ten cases. On PR head `0ff6ca59a`, all ten failed because the browser result stayed `PENDING`. Startup capture found `Uncaught ReferenceError: process is not defined` in `expo-constants/build/Constants.js`, reached through `sync/appConfig.ts`, `buzz/runtime-config.ts` and `auth/monolith-session.ts`.
+
+The cause was `AiClientsSection.tsx` eagerly importing `monolith-operation` when the Workbench module loaded. Importing that transport inside the Disconnect action preserves rendering without initializing account/device configuration. The unchanged surface fixture then passed all ten cases; the connector browser tests also passed all five cases, including actual invocation of the lazily loaded operation on Disconnect and its failure path. Diagnostic instrumentation was removed; no fixture mocks, skips or assertions changed.
+
+Full local mobile validation after the repair: 627 files passed, five skipped, one failed; 5,537 tests passed, six skipped, one failed. The only failure was `nativeFingerprint.test.ts` → “accepts this tree and rejects a real native edit, end to end”, reporting changed native fingerprints on the existing runtime pins. The same test also fails on the clean main source snapshot using this machine’s installed dependencies. Moving the generated Android proof project out of the source tree did not settle it. Runtime pins, native fingerprint records and test assertions were not changed. This local validation blocker prevents the requested push until resolved or explicitly addressed by the commander.

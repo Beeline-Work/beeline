@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect } from 'react';
 import { AppState, Linking, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
@@ -86,7 +87,7 @@ export function useGitHubInstallationSession({
           onRefreshPhase: handleRepositoryRefreshPhase,
         });
       } catch (err) {
-        onError(`Could not connect GitHub: ${String(err)}`);
+        onError(appErrorCopy(err, `Could not connect GitHub.`));
       }
     },
     [
@@ -119,7 +120,7 @@ export function useGitHubInstallationSession({
         await onColdResume();
         await refreshRepositories();
       })
-      .catch((err) => onError(`Could not connect GitHub: ${String(err)}`));
+      .catch((err) => onError(appErrorCopy(err, `Could not connect GitHub.`)));
   }, [onColdResume, onError, ready, refreshRepositories]);
 
   return { handleAddGitHubAccount, handleManageGitHubInstallation };

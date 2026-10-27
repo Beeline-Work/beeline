@@ -50,7 +50,7 @@ it('a failed read stays visible, stops automatic reads, and retry recovers', asy
   let current: any;
   function Reader() { current = useObservedResource<string>('error', { load }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
-  expect(current.error).toBe('offline');
+  expect(current.error).toBe('Couldn’t reach Beeline');
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => current.retry());
@@ -66,7 +66,7 @@ it('R9-OBS-01: reconnect recovers a failed room read', async () => {
   await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
-  expect(current.error).toBe('offline');
+  expect(current.error).toBe('Couldn’t reach Beeline');
   await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
   expect(load).toHaveBeenCalledTimes(3);
   expect(current.error).toBeNull();
@@ -78,7 +78,7 @@ it('R9-OBS-02: a room invalidation recovers after an error', async () => {
   let current: any;
   function Reader() { current = useObservedResource<string>('live-error', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
-  expect(current.error).toBe('offline');
+  expect(current.error).toBe('Couldn’t reach Beeline');
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
   expect(load).toHaveBeenCalledTimes(2);
   expect(current.error).toBeNull();

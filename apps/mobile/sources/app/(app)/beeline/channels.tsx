@@ -1,5 +1,6 @@
+import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { IndexRow } from '@/components/buzz/IndexRow';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
@@ -356,7 +357,7 @@ export default function BuzzChannels() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         chatStore.current?.force();
       } catch (reason) {
-        setError(`Could not close chat: ${String(reason)}`);
+        setError(appErrorCopy(reason, `Could not close chat.`));
       }
     },
     [transport],
@@ -381,7 +382,7 @@ export default function BuzzChannels() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         chatStore.current?.force();
       } catch (reason) {
-        setError(`Could not leave ${ROOM_LABEL}: ${String(reason)}`);
+        setError(appErrorCopy(reason, `Could not leave ${ROOM_LABEL}.`));
       }
     },
     [transport],
@@ -466,7 +467,7 @@ export default function BuzzChannels() {
             }
           }
         },
-        onError: (reason) => setError(String(reason)),
+        onError: (reason) => setError(appErrorCopy(reason)),
       });
       workspaceScheduler.current = workspaceRefresh;
 
@@ -486,7 +487,7 @@ export default function BuzzChannels() {
               onError: (reason) => {
                 if (selectedWorkspaceRemoved) return;
                 setRefreshing(false);
-                setError(String(reason));
+                setError(appErrorCopy(reason));
                 // A deleted Workspace's old route may be restored from storage
                 // before the authoritative workspace read has reconciled it.
                 if (reason instanceof RoomViewHttpError && (reason.status === 403 || reason.status === 404))
@@ -528,7 +529,7 @@ export default function BuzzChannels() {
         });
       await workspaceRefresh.startAfter(workspaceListenReady);
     })().catch((reason) => {
-      if (!cancelled) setError(String(reason));
+      if (!cancelled) setError(appErrorCopy(reason));
     });
     return () => {
       cancelled = true;
@@ -565,7 +566,7 @@ export default function BuzzChannels() {
       .then((cached) => cached ?? mobileSurfaceCache.fetch(address, isWorkspaceView,
         () => http.workspace(activeCommunityId)))
       .catch((reason) => {
-        if (!cancelled) setError(String(reason));
+        if (!cancelled) setError(appErrorCopy(reason));
       });
     return () => {
       cancelled = true;
@@ -626,7 +627,7 @@ export default function BuzzChannels() {
         setMemberPickerVisible(false);
         openRoom(room.channelId);
       } catch (reason) {
-        setError(String(reason));
+        setError(appErrorCopy(reason));
       } finally {
         setMessagingPubkey(null);
       }
@@ -717,7 +718,7 @@ export default function BuzzChannels() {
         setPendingRepo(repository);
         return repository;
       } catch (reason) {
-        setRepoPickerError(`Could not create repository: ${String(reason)}`);
+        setRepoPickerError(appErrorCopy(reason, `Could not create repository.`));
         throw reason;
       } finally {
         setCreatingRepository(false);
@@ -767,8 +768,8 @@ export default function BuzzChannels() {
     } catch (reason) {
       setError(
         publishAcknowledged
-          ? `${ROOM_LABEL} created, but membership is still syncing: ${String(reason)}`
-          : `Could not create ${ROOM_LABEL}: ${String(reason)}`,
+          ? appErrorCopy(reason, `${ROOM_LABEL} created, but membership is still syncing.`)
+          : appErrorCopy(reason, `Could not create ${ROOM_LABEL}.`),
       );
     } finally {
       setCreatingRoom(false);
@@ -809,7 +810,7 @@ export default function BuzzChannels() {
       ).createAgentPairingCode(activeCommunityId);
       setPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
-      setPairingError(`Could not create agent invite: ${String(reason)}`);
+      setPairingError(appErrorCopy(reason, `Could not create agent invite.`));
     } finally {
       setPairingBusy(false);
     }
@@ -849,12 +850,7 @@ export default function BuzzChannels() {
   if (landing.kind === 'error') {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.error}>{error}</Text>
-        <Button
-          label="Retry"
-          onPress={() => setRetryGeneration((value) => value + 1)}
-          variant="secondary"
-        />
+        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }
@@ -903,9 +899,7 @@ export default function BuzzChannels() {
           />
         )}
         {pinError && (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {pinError}
-          </Text>
+          <IndexRow title={pinError} />
         )}
         <NewRoomDialog
           draftContext={activeCommunityId ?? ''}
@@ -957,7 +951,7 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && <ErrorBanner inline title={error} onRetry={refreshNow} />}
+        {!!error && <View style={styles.failureInset}><IndexRow inset="flush" title={error!} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions
@@ -1236,6 +1230,7 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
       marginTop: hull.space.md,
     },
+    failureInset: { paddingHorizontal: hull.roomList.edge },
     rowSurface: {
       backgroundColor: hull.bgBase,
       borderLeftWidth: 1,

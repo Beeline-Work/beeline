@@ -1,3 +1,5 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -41,13 +43,13 @@ function AppSignInReturnScreen({ sessionUri }: { sessionUri: string }) {
       router.replace(destination?.roomId ? (connectorOfferCompletionRoute(destination.roomId) as Href )
             : ({ pathname: '/beeline/settings/workbench', params: { workspaceId: destination?.workspaceId ?? '', viewerId: destination?.viewerId ?? '' } } as Href),
         );
-    }).catch(cause => { if (live) setError(cause instanceof Error ? cause.message : 'Sign-in could not be verified'); });
+    }).catch(cause => { if (live) setError(appErrorCopy(cause, 'Sign-in could not be verified')); });
     return () => { live = false; };
   }, [sessionUri]);
   return (
     <View style={styles.returnScreen} testID="app-sign-in-return">
     {error ? (
-        <Text accessibilityRole="alert" style={styles.error}>{error}</Text> ) : (
+        <SettingsRow title={error} /> ) : (
         <ActivityIndicator accessibilityLabel="Completing app sign-in" />)}
   </View>);
 }
@@ -121,9 +123,7 @@ function ConnectorSignInOverlay() {
         {squire ? <Text style={styles.note}>Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.</Text> : null}
         {observed.error || pageError ? (
           <View>
-            <Text accessibilityRole="alert" style={styles.error}>
-              {observed.error ?? pageError}
-            </Text>
+            <SettingsRow title={(observed.error ?? pageError)!} />
             <Button
               size="inline"
               label="Retry"

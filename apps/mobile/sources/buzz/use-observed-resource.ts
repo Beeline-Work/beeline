@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useMemo, useSyncExternalStore } from 'react';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
@@ -93,7 +94,7 @@ class Resource<T> {
           installMissing: cause instanceof InstallMissingError,
           error:
             this.misses >= (this.options.missLimit ?? 1)
-              ? String(cause instanceof Error ? cause.message : cause)
+              ? appErrorCopy(cause)
               : null,
         });
       }
@@ -131,7 +132,7 @@ class Resource<T> {
         if (active) {
           this.options.onError?.(cause);
           this.stop = undefined;
-          this.publish({ ...this.snapshot, loading: false, error: String(cause) });
+          this.publish({ ...this.snapshot, loading: false, error: appErrorCopy(cause) });
         }
       });
   }

@@ -1,6 +1,5 @@
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import * as Clipboard from 'expo-clipboard';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
@@ -93,15 +92,14 @@ export default function Subscription() {
         title={subscription ? subscriptionTitle(subscription) : 'Subscription'}
       />
       {stopFailed ? (
-        <ErrorBanner
+        <SettingsRow
           title="Could not stop this subscription."
-          retryLabel="Retry"
-          onRetry={() => void stop()}
-          retryTestID="subscription-stop-error-retry"
+          action="Retry"
+          onPress={() => void stop()}
           testID="subscription-stop-error"
         />
       ) : error ? (
-        <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
+        <SettingsRow title={error} action="Retry" onPress={retry}
           />
       ) : null}
       {loading && !work ? (

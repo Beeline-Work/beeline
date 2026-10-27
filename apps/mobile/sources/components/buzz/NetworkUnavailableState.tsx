@@ -16,7 +16,7 @@ export function NetworkUnavailableState({
     <View accessibilityRole="alert" style={styles.container} testID={testID}>
       <Text style={styles.message}>Network is not available right now.</Text>
       {onRetry ? (
-        <Button label="Retry" variant="secondary" onPress={onRetry}
+        <Button size="inline" label="Retry" variant="secondary" onPress={onRetry}
           testID={`${testID}-retry`} />
       ) : null}
     </View>

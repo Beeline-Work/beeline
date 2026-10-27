@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import * as React from 'react';
 import { AppState, Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
@@ -18,8 +19,8 @@ async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' 
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
       ...((sessionId || expectedCallId) && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, expectedCallId }) } : {}) });
   const value = await response.json() as T & { error?: string; code?: string; budget?: VoiceBudget };
-  if (!response.ok) throw new Error(value.code === 'voice-daily-limit' && value.budget
-    ? dailyLimitMessage(value.budget) : value.error ?? 'Conversation mode could not connect');
+  if (!response.ok) throw Object.assign(new Error(value.code === 'voice-daily-limit' && value.budget
+    ? dailyLimitMessage(value.budget) : value.error ?? 'Conversation mode could not connect'), { status: response.status });
   return value;
 }
 
@@ -250,7 +251,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (version !== revision.current) return;
           void reportClientError('voice-join', cause);
           void end();
-          setError(errorDiagnostic(cause).message);
+          setError(appErrorCopy(cause, 'Conversation mode could not start'));
         }).finally(() => { recovering = false; });
       });
       await room.connect(joined.url, joined.token);
@@ -286,7 +287,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       if (version === revision.current) void reportClientError('voice-join', cause);
       await release();
       if (joined) await voiceRequest(joined.call.id, 'leave', joined.sessionId).catch(() => {});
-      if (version === revision.current) { setError(errorDiagnostic(cause).message); setConnecting(false); }
+      if (version === revision.current) { setError(appErrorCopy(cause, 'Conversation mode could not start')); setConnecting(false); }
     } finally {
       if (joiningCleanup.current === release) joiningCleanup.current = null;
       pending.current = false;

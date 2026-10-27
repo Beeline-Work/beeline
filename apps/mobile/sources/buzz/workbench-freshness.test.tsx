@@ -110,7 +110,7 @@ it('Reproduction squire-spinner: reopening Connectors with a hung read reaches a
   try {
     await act(async () => { renderer = create(React.createElement(Screen)); });
     await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
-    expect(renderer.root.findByType('Text').props.children).toContain('Connections did not answer');
+    expect(renderer.root.findByType('Text').props.children).toBe('Couldn’t reach Beeline');
     const calls = state.reads.workbench.mock.calls.length;
     await act(async () => { void resource.refresh(); });
     expect(state.reads.workbench.mock.calls.length).toBeGreaterThan(calls);

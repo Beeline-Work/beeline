@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useSyncExternalStore } from 'react';
 import { subscribeClientReset } from '@/sync/client-reset';
 
@@ -63,7 +64,7 @@ export async function runAvatarGeneration(
   } catch (reason) {
     publish(agentId, {
       pending: false,
-      error: reason instanceof Error ? reason.message : String(reason),
+      error: appErrorCopy(reason),
     });
   }
 }

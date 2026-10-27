@@ -84,7 +84,7 @@ describe('Chat-list swipe-left actions', () => {
     expect(closePath).toContain('chatStore.current?.force()');
     expect(closePath).not.toContain('Modal.confirm');
     expect(closePath).toContain("Modal.alert('Cannot close yet'");
-    expect(closePath).toContain('Could not close chat:');
+    expect(closePath).toContain('Could not close chat.');
     const actions = source.slice(
       source.indexOf('renderRightActions'),
       source.indexOf('testID={`chat-close-swipe-'),
@@ -108,7 +108,7 @@ describe('Chat-list swipe-left actions', () => {
 
   it('preserves the row and surfaces a failed leave instead of going silent', () => {
     expect(source).toContain("Modal.alert('Cannot leave yet'");
-    expect(source).toContain('Could not leave ${ROOM_LABEL}:');
+    expect(source).toContain('Could not leave ${ROOM_LABEL}.');
   });
 
   it('never replaces the manager Leave action with a constraint', () => {

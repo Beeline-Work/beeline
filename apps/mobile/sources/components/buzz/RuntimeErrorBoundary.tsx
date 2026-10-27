@@ -5,7 +5,7 @@ import * as Native from 'react-native';
 // the emergency view in the same styling runtime that may have failed.
 const { ScrollView, Text, View } = Native;
 import { beelineThemes } from '@/buzz/groknight';
-import { errorDiagnostic, reportClientError, type ClientErrorScope } from '@/buzz/client-error-report';
+import { reportClientError, type ClientErrorScope } from '@/buzz/client-error-report';
 
 /** Uses plain token styles, with no theme, navigation, modal or safe-area hooks. */
 export function RuntimeErrorView({ error, retry, scope }: {
@@ -13,7 +13,7 @@ export function RuntimeErrorView({ error, retry, scope }: {
 }) {
   React.useEffect(() => { void reportClientError(scope, error); }, [scope, error]);
   const theme = Native.Appearance.getColorScheme() === 'dark' ? beelineThemes.obsidian : beelineThemes.bone;
-  const diagnostic = errorDiagnostic(error);
+  const explanation = scope === 'app' ? 'Beeline could not display this screen' : 'Conversation mode could not start';
   return (
     <View style={{ backgroundColor: theme.bgBase, padding: 16, gap: 8,
     ...(scope === 'app' ? { flex: 1, paddingTop: 48 } : {}) }} testID="runtime-error">
@@ -21,12 +21,10 @@ export function RuntimeErrorView({ error, retry, scope }: {
       {scope === 'app' ? 'Beeline could not display this screen' : 'Conversation mode could not start'}
     </Text>
     <ScrollView style={{ maxHeight: 256 }}>
-      <Text selectable style={{ ...theme.type.body, color: theme.textPrimary }} testID="runtime-error-message">{diagnostic.message}</Text>
-      {diagnostic.stack ? (
-          <Text selectable style={{ ...theme.type.meta, color: theme.textSecondary }} testID="runtime-error-stack">{diagnostic.stack}</Text>
-        ) : null}
+      <Text selectable style={{ ...theme.type.body, color: theme.textPrimary }} testID="runtime-error-message">{explanation}</Text>
+
     </ScrollView>
-    <Button
+    <Button size="inline"
       label="Retry"
       accessibilityLabel="Retry"
       onPress={retry}

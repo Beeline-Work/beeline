@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from '@/components/buzz/Button';
 import { Text, View } from 'react-native';
 import * as React from 'react';
@@ -55,7 +56,7 @@ export default function Home() {
         setBuzzCheckDone(true);
       })
       .catch((err: unknown) => {
-        setBuzzStorageError(String(err));
+        setBuzzStorageError(appErrorCopy(err));
         setBuzzCheckDone(true);
       });
   }, []);

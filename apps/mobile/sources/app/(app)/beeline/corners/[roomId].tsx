@@ -1,5 +1,6 @@
+import { connectionErrorDescription } from '@/buzz/app-error-copy';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
@@ -174,8 +175,7 @@ export default function BuzzCorners() {
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
-        <Button label="Retry" onPress={() => void corners.refresh()} variant="secondary" />
+        <SettingsRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => void corners.refresh()} />
       </View>
     );
   }
@@ -209,10 +209,8 @@ export default function BuzzCorners() {
           onAdd={() => void createCorner()}
         />
         {!!error && (
-          <ErrorBanner inline
-            title={`! ${error}`}
-            retryLabel="Retry"
-            onRetry={() => void corners.refresh()} />
+          <SettingsRow title={error!} description={connectionErrorDescription} action="Retry"
+            onPress={() => void corners.refresh()} />
         )}
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList

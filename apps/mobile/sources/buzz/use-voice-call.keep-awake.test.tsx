@@ -83,7 +83,7 @@ it('never holds the screen when the join fails', async () => {
   try {
     await act(async () => handle.voice.join());
     await settle();
-    expect(handle.voice.error).toBe('no');
+    expect(handle.voice.error).toBe('Couldn’t reach Beeline');
     expect(fixture.changes).toEqual([]);
   } finally { await act(async () => handle.renderer.unmount()); }
 });

@@ -162,7 +162,7 @@ describe('GitHub installation host session', () => {
       await session.get().handleAddGitHubAccount();
     });
     expect(session.onError).toHaveBeenCalledWith(
-      'Could not connect GitHub: Error: installation exploded',
+      'installation exploded',
     );
   });
 });

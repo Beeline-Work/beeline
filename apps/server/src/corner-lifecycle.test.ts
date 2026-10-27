@@ -2997,6 +2997,21 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     },
   );
 
+  it('Reproduction merge-check-mismatch: closed corner with pending checks returns the same reason through both service paths at the exact head', async () => {
+    const cornerId = await approved();
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    githubRollupState = 'pending';
+
+    const service = mergeDaemon();
+    const checks = await service.execute('getPrChecksStatus', { cornerId }, A);
+    const merged = await service.execute('mergeCorner', { cornerId }, A);
+
+    expect(checks).toMatchObject({ headSha: SHA, checks: 'pending', mergeAllowed: false,
+      blockedReason: 'the corner is closed; checks are pending' });
+    expect(merged).toEqual({ status: 'blocked', blocker: checks.blockedReason, holds: [] });
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it.each(['checks', 'read', 'target', 'approval', 'claim'] as const)(
     'Reproduction MERGE-RETRY-REASON: %s rejection after a confirmed refusal names the actual blocker', async change => {
       const cornerId = await approved();

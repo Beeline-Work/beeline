@@ -3790,8 +3790,7 @@ export class DaemonService {
     ).rows[0];
     await this.reach(input.cornerId, agentId);
     if (!corner) throw new Error('corner not found');
-    if (corner.archived) return { status: 'blocked', blocker: 'the corner is closed' };
-    if (!corner.head_sha) return { status: 'blocked', blocker: 'the corner has no pull request' };
+    if (!corner.head_sha) return { status: 'blocked', blocker: corner.archived ? 'the corner is closed' : 'the corner has no pull request' };
     if (!this.landCorner || !this.prChecksStatus)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
     const gate = await this.prChecksStatus({ cornerId: input.cornerId });

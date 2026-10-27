@@ -848,13 +848,36 @@ function SwipeToReply({
   const swipeableRef = useRef<Swipeable | null>(null);
   const returnTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Swipeable hides its action panels at rest only by translating them
+  // off-screen through a native interpolation. On Android that translation
+  // can be lost, which painted the CORNER panel under the transparent message
+  // text. The corner panel paints only from the start of a swipe until it closes.
+  const [swipeShown, setSwipeShown] = useState(false);
   const cancelReturn = useCallback(() => {
     clearTimeout(returnTimer.current);
     clearTimeout(closeTimer.current);
+    clearTimeout(hideTimer.current);
   }, []);
-  useEffect(() => cancelReturn, [cancelReturn, messageId]);
-  const commitSwipe = (direction: 'left' | 'right') => {
+  const showSwipe = useCallback(() => {
     cancelReturn();
+    setSwipeShown(true);
+  }, [cancelReturn]);
+  const hideSwipe = useCallback(() => {
+    cancelReturn();
+    setSwipeShown(false);
+  }, [cancelReturn]);
+  // A closing spring that never reports its end must not leave the panel painted.
+  const hideSwipeSoon = useCallback(() => {
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setSwipeShown(false), 700);
+  }, []);
+  useEffect(() => {
+    setSwipeShown(false);
+    return cancelReturn;
+  }, [cancelReturn, messageId]);
+  const commitSwipe = (direction: 'left' | 'right') => {
+    showSwipe();
     // WillOpen runs after the swipe commits, even if its opening spring is
     // interrupted. Wait for Swipeable's rowState update before closing it.
     closeTimer.current = setTimeout(() => {
@@ -960,7 +983,9 @@ function SwipeToReply({
   const cornerAction = (poseStyle?: object) => (
     <View
       accessibilityLabel={`Forward message to a new ${CORNER_LABEL}`}
-      style={[styles.cornerSwipeAction, poseStyle]}
+      accessibilityElementsHidden={!swipeShown}
+      importantForAccessibility={swipeShown ? 'auto' : 'no-hide-descendants'}
+      style={[styles.cornerSwipeAction, !swipeShown && styles.swipeActionAtRest, poseStyle]}
       testID={`corner-swipe-action-${messageId}`}
     >
       <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
@@ -982,9 +1007,10 @@ function SwipeToReply({
       dragOffsetFromRightEdge={18}
       friction={1.35}
       onSwipeableWillOpen={commitSwipe}
-      onSwipeableClose={cancelReturn}
-      onSwipeableOpenStartDrag={cancelReturn}
-      onSwipeableCloseStartDrag={cancelReturn}
+      onSwipeableWillClose={hideSwipeSoon}
+      onSwipeableClose={hideSwipe}
+      onSwipeableOpenStartDrag={showSwipe}
+      onSwipeableCloseStartDrag={showSwipe}
       overshootLeft={false}
       overshootRight={false}
       renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
@@ -1780,6 +1806,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgHighlight,
   },
   cornerSwipeGlyph: { color: theme.buzz.accent },
+  // Keeps the panel's width, which Swipeable measures for its open distance.
+  swipeActionAtRest: { opacity: 0 },
   replySwipeGlyph: {
     ...theme.buzz.type.body,
     fontFamily: theme.buzz.proseSemibold,

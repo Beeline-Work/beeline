@@ -27,12 +27,18 @@ test('committed landing tracking bundle matches its source and only loads X for 
       createElement: () => ({}),
       head: { appendChild: (value) => scripts.push(value) },
     };
+    const beacons = [];
+    const fetch = (url, options) => {
+      beacons.push({ url, options });
+      return Promise.resolve();
+    };
     const window = {};
     runInNewContext(committed, {
       window,
       document,
       location: new URL(`https://usebeeline.app/${search}`),
       URL,
+      fetch,
     });
     assert.equal(scripts.length, count);
     if (count) {
@@ -72,12 +78,18 @@ test('each landing tile sends its platform conversion only for X visitors withou
         return tiles;
       },
     };
+    const beacons = [];
+    const fetch = (url, options) => {
+      beacons.push({ url, options });
+      return Promise.resolve();
+    };
     const window = {};
     runInNewContext(bundle, {
       window,
       document,
       location: new URL(`https://usebeeline.app/${search}`),
       URL,
+      fetch,
     });
     const tracked = search === '?utm_source=x&twclid=test';
     assert.equal(scripts.length, tracked ? 1 : 0);
@@ -85,6 +97,15 @@ test('each landing tile sends its platform conversion only for X visitors withou
       const click = new Event('click', { cancelable: true });
       assert.equal(tile.dispatchEvent(click), true);
       assert.equal(click.defaultPrevented, false);
+      assert.equal(beacons.length, index + 1);
+      assert.equal(beacons[index].url, 'https://server.usebeeline.app/v1/site/download-tap');
+      assert.deepEqual(JSON.parse(beacons[index].options.body), {
+        platform: platforms[index],
+        source: search ? 'x' : 'organic',
+      });
+      assert.equal(beacons[index].options.credentials, 'omit');
+      assert.equal(beacons[index].options.referrerPolicy, 'no-referrer');
+      assert.equal(beacons[index].options.keepalive, true);
       if (tracked) {
         const events = window.twq.queue.filter(([command]) => command === 'event');
         assert.equal(events.length, index + 1);

@@ -9,17 +9,28 @@ const downloadEvents: Record<string, string> = {
   linux: 'tw-rhefr-ri2w6',
 };
 
-const pixel = loadXPixel(readWebXAttribution());
-if (pixel) {
+const attribution = readWebXAttribution();
+const pixel = loadXPixel(attribution);
+{
   for (const tile of document.querySelectorAll<HTMLElement>('[data-platform]')) {
     const platform = tile.dataset.platform;
     const eventId =
       platform && Object.hasOwn(downloadEvents, platform) ? downloadEvents[platform] : undefined;
     if (!eventId) continue;
     tile.addEventListener('click', () => {
+      try {
+        void fetch('https://server.usebeeline.app/v1/site/download-tap', {
+          method: 'POST',
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+          keepalive: true,
+          headers: { 'content-type': 'text/plain' },
+          body: JSON.stringify({ platform, source: attribution ? 'x' : 'organic' }),
+        }).catch(() => {});
+      } catch {}
       // Tracking must never interrupt the download link's default navigation.
       try {
-        pixel('event', eventId, { contents: [{ content_id: platform, content_name: platform }] });
+        pixel?.('event', eventId, { contents: [{ content_id: platform, content_name: platform }] });
       } catch {}
     });
   }

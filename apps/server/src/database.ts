@@ -2465,6 +2465,15 @@ CREATE TABLE IF NOT EXISTS x_site_visit_daily (
   by_ad jsonb NOT NULL DEFAULT '[]'::jsonb
 );
 
+ALTER TABLE x_site_visit_daily ADD COLUMN IF NOT EXISTS all_site_visits bigint CHECK(all_site_visits>=0);
+CREATE TABLE IF NOT EXISTS site_download_tap_daily (
+  day date NOT NULL,
+  platform text NOT NULL CHECK(platform IN ('ios','android','macos','windows','linux')),
+  source text NOT NULL CHECK(source IN ('x','organic')),
+  taps bigint NOT NULL CHECK(taps>=0 AND taps<=100000),
+  PRIMARY KEY(day,platform,source)
+);
+
 CREATE TABLE IF NOT EXISTS signin_funnel_installs (
   install_id uuid PRIMARY KEY,
   internal boolean NOT NULL DEFAULT false,

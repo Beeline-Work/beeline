@@ -1,3 +1,4 @@
+import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
 import type { RoomsMcp } from './rooms-mcp.js';
 import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
@@ -640,7 +641,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       json(response, 426, { error: 'update_required', minVersion: minimum });
       return;
     }
-    if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
+    if (url.pathname !== '/v1/site/download-tap' && isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
     void route(
       request,
       response,
@@ -1856,6 +1857,29 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       ...(helperVersionGate.minimum ? { minimumHelperVersion: helperVersionGate.minimum } : {}),
     });
     return;
+  }
+  if (url.pathname === '/v1/site/download-tap') {
+    response.setHeader('vary', 'Origin');
+    response.setHeader('cache-control', 'no-store');
+    if (request.headers.origin !== 'https://usebeeline.app') {
+      json(response, 403, { error: 'origin_denied' }); return;
+    }
+    response.setHeader('access-control-allow-origin', 'https://usebeeline.app');
+    if (method === 'OPTIONS') {
+      response.writeHead(204, { 'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' });
+      response.end(); return;
+    }
+    if (method !== 'POST') { json(response, 405, { error: 'method_not_allowed' }); return; }
+    let input: unknown;
+    try { input = JSON.parse((await bytes(request, 256)).toString('utf8')); }
+    catch { json(response, 400, { error: 'invalid_download_tap' }); return; }
+    const tap = parseSiteDownloadTap(input);
+    if (!tap) { json(response, 400, { error: 'invalid_download_tap' }); return; }
+    if (!await recordSiteDownloadTap(options.database, tap)) {
+      json(response, 429, { error: 'daily_cap_reached' }); return;
+    }
+    response.writeHead(204); response.end(); return;
   }
   if (method === 'POST' && url.pathname === '/v1/admin/dashboard/x-ads/screen') {
     if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {

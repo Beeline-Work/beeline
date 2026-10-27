@@ -605,3 +605,30 @@ recorded counts, and provider failure through the authenticated built HTTP
 `GET /v1/admin/dashboard` path on loopback with isolated PGlite. The proof rebases
 only the recorded date to remain within the rolling window and saves the full
 payload under the declared `.beeline-proof/` directory.
+
+### Website download intent
+
+`POST /v1/site/download-tap` accepts only `{platform,source}` with platform
+`ios`, `android`, `macos`, `windows`, or `linux` and source `x` or `organic`.
+It requires the website origin `https://usebeeline.app`; other origins are denied,
+including other configured web-app origins. The website uses a keepalive fetch
+with credentials omitted and no referrer. No cookies, click IDs, IPs, user agents,
+or request headers enter the aggregate table. The endpoint caps each UTC
+platform/source row at 100,000 taps per day (429 after the cap); this is a coarse
+abuse guard, not protection against fabricated intent. Counts are directional.
+
+`xAds.siteVisits.daily` additionally includes nullable `allSiteVisits`, the sum of
+all validated Cloudflare groups. Old snapshots retain null until naturally
+refreshed; there is no backfill. `xAds.siteVisits.downloads` exposes 90 UTC daily
+rows with platform/source `counts`, `total`, `x`, `organic`, visit totals and rates.
+`last7` and `prior7` summarize complete UTC days, excluding today. Today's daily
+row is partial. Download totals represent recorded taps, not installs or unique
+people; no historical taps are reconstructed. Rates are null for unavailable or
+zero visit denominators, and weekly rates require complete visit coverage.
+
+Rates are explicitly **indicative estimates**: Cloudflare lite-mode visits are
+about 10% sampled and left unscaled, while taps are unsampled. Rates can exceed
+100%; X visit estimates also include organic X referrals and use a different
+attribution basis from the website's persisted X context. They must not be read as
+exact conversion probabilities. The separate dashboard frontend can render these
+additive rows next to site visits through its existing proxy.

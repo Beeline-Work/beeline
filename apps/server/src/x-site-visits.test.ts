@@ -32,7 +32,7 @@ describe('daily X site visits (feature, not a defect report)', () => {
     const payload = await read();
     expect(payload).toMatchObject({ state: 'estimated', estimated: true, source: 'cloudflare_web_analytics' });
     expect(payload.daily).toHaveLength(90);
-    expect(payload.daily.find(d => d.date === '2026-10-25')).toEqual({ date: '2026-10-25', siteVisits: 256, byAd: [] });
+    expect(payload.daily.find(d => d.date === '2026-10-25')).toEqual({ date: '2026-10-25', siteVisits: 256, allSiteVisits: recorded.data.viewer.accounts[0]!.rumPageloadEventsAdaptiveGroups.reduce((sum,g)=>sum+g.sum.visits,0), byAd: [] });
     expect(payload.daily.find(d => d.date === '2026-10-24')!.siteVisits).toBeNull();
     expect(JSON.stringify(payload)).not.toContain('fixture-private-token');
     await syncXSiteVisits(db, 'fixture-private-token', provider, now);
@@ -45,8 +45,8 @@ describe('daily X site visits (feature, not a defect report)', () => {
       group('com.twitter.android', '/', 5), group('x.com.evil', '/', 99),
       group('example.com', '/', 40, '2026-10-26'),
     ])), now);
-    expect((await read()).daily.find(d => d.date === '2026-10-25')).toEqual({ date: '2026-10-25', siteVisits: 14, byAd: [{ adPath: '/x/clip', siteVisits: 7 }] });
-    expect((await read()).daily.find(d => d.date === '2026-10-26')!.siteVisits).toBe(0);
+    expect((await read()).daily.find(d => d.date === '2026-10-25')).toEqual({ date: '2026-10-25', siteVisits: 14, allSiteVisits: 113, byAd: [{ adPath: '/x/clip', siteVisits: 7 }] });
+    expect((await read()).daily.find(d => d.date === '2026-10-26')).toMatchObject({siteVisits:0,allSiteVisits:40});
     await retry();
     await syncXSiteVisits(db, 'fixture', send(response([group('t.co', '/x/new', 1)])), now);
     expect((await read()).daily.find(d => d.date === '2026-10-25')!.byAd).toEqual([{ adPath: '/x/new', siteVisits: 1 }]);

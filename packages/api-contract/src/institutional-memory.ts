@@ -125,13 +125,14 @@ export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
 export const INSTITUTIONAL_SKILL_INDEX_MAX_BYTES = 1_000;
 /** The always-first index line: the Workspace's own start-of-task procedure. */
 export const WORKSPACE_CORE_SKILL_SLUG = 'workspace-core';
+/** Search query limits use Unicode code points across history and memory. */
+export const INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS = 500;
 /** JSON Schema string lengths count Unicode code points, not UTF-8 bytes. */
 export const INSTITUTIONAL_HISTORY_QUERY_SCHEMA = {
-  type: 'string', minLength: 1, maxLength: 500,
+  type: 'string', minLength: 1, maxLength: INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS,
   // PostgreSQL text cannot contain NUL; a trimmed query must contain a term.
   pattern: '^(?![\\s\\S]*\\u0000)[\\s\\S]*\\S[\\s\\S]*$',
 } as const;
-export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;
 /**
  * search_memory matches on the query's individual words (the same tokenizer

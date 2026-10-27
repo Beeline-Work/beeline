@@ -34,7 +34,7 @@ describe('corner text', () => {
 });
 
 import { Check } from 'typebox/value';
-import { agentToolsFor } from './read-only-mcp.js';
+import { agentToolsFor, callAgentTool } from './read-only-mcp.js';
 import { CAPABILITY_TOOLS } from './minimal-tool-surface.js';
 
 const schema = (name: string) => agentToolsFor(true,false,true,true).find(tool => tool.name === name)!.inputSchema;
@@ -60,6 +60,20 @@ describe('canonical tool contracts', () => {
     expect(Check(schema('remember'),{...procedure,action:'update'})).toBe(false);
     expect(Check(schema('remember'),{kind:'fact',action:'save',body:'Unattributed fact'})).toBe(false);
     expect(Check(schema('remember'),{kind:'fact',action:'delete',item_id:'item'})).toBe(false);
+  });
+
+  it('keeps memory query character limits inside the advertised schema and tool path', async () => {
+    const searchSchema = schema('search');
+    const memoryQuery = (query: string) => ({ scope: 'memory', query, limit: 1 });
+    expect(searchSchema.properties.query.description).toMatch(/1–500 characters/);
+    const withinCap = memoryQuery('🙂'.repeat(500));
+    const overCap = memoryQuery('🙂'.repeat(501));
+
+    expect(Buffer.byteLength(withinCap.query, 'utf8')).toBe(2_000);
+    expect(Check(searchSchema, withinCap)).toBe(true);
+    expect(Check(searchSchema, overCap)).toBe(false);
+    await expect(callAgentTool('search', overCap, 'memory-search-over-cap'))
+      .rejects.toThrow(/query: at most 500 characters/);
   });
 
   it('separates assignment completion, feedback, discovery and execution', () => {

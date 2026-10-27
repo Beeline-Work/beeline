@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import {
   INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES,
   INSTITUTIONAL_SKILL_INDEX_MAX_BYTES,
+  INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS,
   WORKSPACE_CORE_SKILL_SLUG,
   institutionalMemoryRequestWords,
-  INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
   INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX,
   INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX,
   INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX,
@@ -957,17 +957,18 @@ export async function searchInstitutionalMemory(
   input: SearchInstitutionalMemoryInput,
   embed: EmbedFn = createDefaultEmbedFn(),
 ): Promise<SearchInstitutionalMemoryResult> {
-  const query = typeof input.query === 'string' ? input.query.trim() : '';
+  const rawQuery = typeof input.query === 'string' ? input.query : '';
+  const query = rawQuery.trim();
   if (
     !query ||
-    query.includes('\0') ||
-    Buffer.byteLength(query, 'utf8') > INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES
+    rawQuery.includes('\0') ||
+    [...rawQuery].length > INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS
   ) {
-    throw new Error('institutional memory search query is invalid');
+    throw new Error(`institutional memory query must be non-empty after trimming, contain no NUL, and be at most ${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS} characters`);
   }
   const limit = input.limit === undefined ? 5 : input.limit;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX) {
-    throw new Error('institutional memory search limit is invalid');
+    throw new Error('institutional memory limit must be an integer from 1 to 10');
   }
   const queryEmbedding = await withDeadline(embed, SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS)(
     query, 'query');

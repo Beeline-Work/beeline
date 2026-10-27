@@ -132,10 +132,6 @@ export const INSTITUTIONAL_HISTORY_QUERY_SCHEMA = {
   pattern: '^(?![\\s\\S]*\\u0000)[\\s\\S]*\\S[\\s\\S]*$',
 } as const;
 export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
-/** Non-standard schema annotation enforced by the server for UTF-8 byte bounds. */
-export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_SCHEMA = {
-  ...INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
-} as const;
 export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;
 /**
  * search_memory matches on the query's individual words (the same tokenizer

@@ -89,6 +89,9 @@ beforeEach(async () => {
   // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
+  // Each case starts a fresh failure episode despite reusing the same corner.
+  await db.query(`DELETE FROM automatic_report_wakes`);
+  await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
@@ -374,6 +377,9 @@ describe('corner message attribution', () => {
 
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
     await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
+  // Each case starts a fresh failure episode despite reusing the same corner.
+  await db.query(`DELETE FROM automatic_report_wakes`);
+  await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);
     await db.query(

@@ -181,6 +181,13 @@ describe('free starter agents', () => {
     const view = (await phone.readRoom(other.id, FRIEND))!;
     const card = view.messages.find(message => message.id === welcome.messageId)!.choice!;
     expect(card.onboardingManual).toBe(true);
+    // Reproduction welcome-order-1: the greeting sits directly above the card and nothing from Beebee follows it.
+    const ordered = (await db.query<{ id: string; author_id: string; text: string; created_at: Date }>(
+      `SELECT id,author_id,text,created_at FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at,id`, [other.id, beebee])).rows;
+    const cardIndex = ordered.findIndex(row => row.id === welcome.messageId);
+    expect(ordered[cardIndex - 1]!.text).toBe("Hi Friend, I'm Beebee. What should we do first?");
+    expect(ordered[cardIndex - 1]!.created_at.getTime()).toBeLessThanOrEqual(ordered[cardIndex]!.created_at.getTime());
+    expect(ordered.slice(cardIndex + 1)).toEqual([]);
     expect(card.options.map(option => option.optionId)).toEqual(['A', 'B', 'C', 'D']);
     expect((await phone.readRoom(roomId, FRIEND))!.messages.some(message => message.id === welcome.messageId)).toBe(false);
     await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'D' }, FRIEND);

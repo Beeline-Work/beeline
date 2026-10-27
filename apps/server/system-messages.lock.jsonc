@@ -29,6 +29,7 @@
 // Workspace-wide permissions approved by lunchboxfortwo, message cdced5f2 (go, brief revision 3): lifecycle refusal lines removed because restart/stop/retry/debug are open to the Room; Squire spending card names its owner; run cancel opens to the Room. Wording unchanged elsewhere.
 // Free agent start-limit notice ("could not start") approved by lunchboxfortwo in brief revision 1 (message 3f079b490bc6649c3741482c3e59fb5f64b595f5e629a6a171adb6db2909c0cf): tell the person in their room; #stopStarts producer and its wake wrapper only.
 [
+  {"id":"src/rooms-mcp.ts:RoomsMcp.call:wrapper:7f84d496c775deb0","file":"apps/server/src/rooms-mcp.ts","kind":"wrapper","template":"$databaseResult","literals":[".identity_id",".text","FirstLiteralToken:16000","textArg()"],"occurrences":1},
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:77bffb8ed6e15ac5",
     "file": "apps/server/src/agent-class-retirement.ts",

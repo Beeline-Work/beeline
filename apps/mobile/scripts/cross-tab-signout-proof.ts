@@ -11,13 +11,20 @@ if (new URLSearchParams(location.search).get('tab') === 'other') {
     localStorage.clear();
     await mobileSurfaceCache.write(address, { text: 'first account' }, guard);
     const before = mobileSurfaceCache.peek(address, guard)?.text ?? 'none';
-    const signedOut = new Promise((resolve) => window.addEventListener('storage', resolve, { once: true }));
     const frame = document.createElement('iframe');
     frame.src = `${location.href.split('?')[0]}?tab=other`;
     document.body.append(frame);
-    await signedOut;
+    // The other tab's clear lands in localStorage before the cross-window
+    // storage event reaches this tab, and under load the page can end
+    // before a one-shot event wait returns. Poll the hot copy instead: the
+    // event handler is what drops it, so polling checks exactly what the
+    // assertions need, with a bound instead of an unbounded wait.
+    let hot = mobileSurfaceCache.peek(address, guard)?.text ?? 'none';
+    for (let tick = 0; tick < 300 && hot !== 'none'; tick++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      hot = mobileSurfaceCache.peek(address, guard)?.text ?? 'none';
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const hot = mobileSurfaceCache.peek(address, guard)?.text ?? 'none';
     const read = (await mobileSurfaceCache.read(address, guard))?.text ?? 'none';
     const shared = Object.keys(localStorage).filter((key) => key.startsWith('beeline.surface.')).length;
     document.getElementById('result')!.textContent = [

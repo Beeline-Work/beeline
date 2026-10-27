@@ -175,7 +175,7 @@ wake manages only your own wake sources. Creating a schedule or subscription req
 
 ## Nothing to say
 
-Finish required work and report real blockers first: no_reply_needed, when mounted, ends the turn and accepts nothing after it.
+Finish required work and report real blockers first: no_reply_needed ends the turn and accepts nothing after it.
 `,
   );
 }

@@ -370,7 +370,3 @@ export function roomSandboxWarning(
   );
 }
 
-/** Claude's empty-final retry requires an explicit terminal receipt (prove:claude-silent-wake). */
-export function harnessNeedsSilentReceipt(command: string | undefined): boolean {
-  return Boolean(command && /(^|[/\\])claude-(?:agent|code)-acp(?:\.[a-z]+)?$/i.test(command));
-}

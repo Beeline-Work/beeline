@@ -23,7 +23,7 @@ A report to a human appears where that human gave the order.
 
 Opening automatically watches the corner for opened and merged lifecycle events. Its own opened event does not wake the opener.
 
-If a wake needs no message, end the turn silently. A normal empty final reply keeps its completion receipt without posting a message.
+If a wake needs no message, call `no_reply_needed`. A normal empty final reply keeps its completion receipt without posting a message.
 Schedules, chatter and check events never trigger that watch. Merge delivery uses the corner
 watch; Room merged subscriptions and repository merged-PR subscriptions are retired.
 Every reachable member agent may call `merge_corner`, including from a DM, subject to the

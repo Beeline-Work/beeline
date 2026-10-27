@@ -705,16 +705,22 @@ export default function BuzzMembers({
     }
   };
 
+  // The soul reaches the agent through the server: unsaved edits are saved
+  // first and the agent draws from its saved soul. The visible request stays
+  // a short "/draw-avatar" and never carries the soul text.
   const requestSoulAvatar = async (soul: string) => {
     if (!identity || !workspaceId || !selectedAgent || !ownsSelectedAgent)
       throw new Error('Agent settings are unavailable.');
+    if (!soul.trim()) throw new Error('The soul is empty; set a soul before generating an avatar.');
+    if (editingAgentSoul && agentEditDirty && !(await saveAgentSoul()))
+      throw new Error('Could not save the soul for avatar generation.');
     const client = new BuzzRigTransport(identity);
     const agent = selectedAgent.agent.identity;
     const room = await client.resolveDirectMessage(workspaceId, agent.pubkey);
     const message = await client.composeMessage(
       {
         sessionId: room.channelId,
-        text: `/draw-avatar Generate and save my avatar from this current soul input: ${JSON.stringify(soul)}`,
+        text: '/draw-avatar',
       },
       { mentionAgent: agent.pubkey },
     );
@@ -794,17 +800,17 @@ export default function BuzzMembers({
     return () => window.removeEventListener('keydown', escape, true);
   }, [profileAgentId, agentEditDirty, onClose]);
 
-  const saveAgentSoul = async () => {
-    if (!selectedAgent || !ownsSelectedAgent || !workspaceId) return;
+  const saveAgentSoul = async (): Promise<boolean> => {
+    if (!selectedAgent || !ownsSelectedAgent || !workspaceId) return false;
     const name = agentNameDraft.trim().slice(0, AGENT_NAME_MAX_LENGTH);
     const soul = agentSoulDraft.trim();
     if (!isReasonableAgentName(name)) {
       setError('Agent name must be a short spoken name.');
-      return;
+      return false;
     }
     if (!soul) {
       setError('Agent soul instructions cannot be empty.');
-      return;
+      return false;
     }
     const clearName = nameDraft.capture(false);
     const clearSoul = soulDraft.capture(false);
@@ -824,8 +830,10 @@ export default function BuzzMembers({
       clearName();
       clearSoul();
       setEditingAgentSoul(false);
+      return true;
     } catch (reason) {
       setError(appErrorCopy(reason, `Could not save agent settings.`));
+      return false;
     } finally {
       finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);

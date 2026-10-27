@@ -189,7 +189,7 @@ export async function refreshCornerAttention(
         text,
         undefined,
         id,
-        { automatic: true, agentOnly: true },
+        { automatic: true, agentOnly: true, wakeInCorner: true },
       );
     }
     const now = Date.now();

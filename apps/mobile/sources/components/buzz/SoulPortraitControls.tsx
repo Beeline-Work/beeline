@@ -77,7 +77,7 @@ export function SoulPortraitControls({
       await runAvatarGeneration(agentId, detail.avatarGenerationId, async () => {
         const confirmed = await Modal.confirm(
           'Generate avatar from soul?',
-          'This sends the current soul text to the agent. Unsaved soul edits are not saved by this action.',
+          'The agent saves your current soul first, then draws from it in its DM.',
           { cancelText: 'Cancel', confirmText: 'Generate' },
         );
         if (!confirmed || attempt !== generation.current) return;

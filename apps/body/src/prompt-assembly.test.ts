@@ -128,7 +128,8 @@ describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
   it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system', 'corner_background_tool', 'corner_brief_revision'])('makes a %s wake quiet without a progress nudge', (commandReason) => {
     const text = assembleTurnPrompt({ surface: 'room', task: { body: 'Handle this wake', commandReason } }).text;
     expect(text).toContain('Do not post an update merely because time has passed');
-    expect(text).toContain('use no_reply_needed when mounted');
+    expect(text).toContain('call the no_reply_needed tool');
+    expect(text).not.toContain('end silently');
     expect(text).not.toContain("The user hasn't heard from you in a while");
   });
   it.each(['human_tag', 'direct_message'])('preserves the reply owed on a %s turn', (commandReason) => {
@@ -950,7 +951,8 @@ describe('assembled prompts', () => {
     const gib = Number((ACP_SESSION_MEMORY_MAX_BYTES / 1024 ** 3).toFixed(2));
     for (const surface of PROMPT_SURFACES) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee', agentCommand: 'codex-acp' });
-      expect(session.systemPrompt).toContain('If a wake needs no message, end the turn silently.');
+      expect(session.systemPrompt).toContain('If a wake needs no message, call no_reply_needed.');
+      expect(session.systemPrompt).not.toContain('end silently');
       expect(session.systemPrompt).toContain(`Memory cap: ${gib} GiB per session.`);
       expect(session.systemPrompt).toContain('Size builds, tests and data jobs to fit it; split heavy work.');
       expect(assembleTurnPrompt({ surface, sessionPrefix: session.turnPrefix, task: { body: 'Hi' } }).text)

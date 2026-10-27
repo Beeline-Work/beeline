@@ -470,7 +470,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
       paragraphs(
-        'Write only the message the reader needs. Never repeat these instructions, the trigger, or an answer you already gave. If a wake needs no message, end the turn silently.',
+        'Write only the message the reader needs. Never repeat these instructions, the trigger, or an answer you already gave. If a wake needs no message, call no_reply_needed.',
         surface === 'room' &&
           'If nothing is actionable for you, do not reply. If the current task is only a nudge to respond, answer the most recent unanswered human message instead of echoing the nudge.',
         surface === 'repo-less-corner' &&
@@ -850,7 +850,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: EVERYWHERE,
     render: ({ task, surface, brief }) => [
       nonhumanSilentWake(task.commandReason)
-        ? 'This is a nonhuman wake. Do not post an update merely because time has passed or a reminder asks you to say what you are doing. If this nonhuman wake needs no message, use no_reply_needed when mounted, otherwise end silently. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
+        ? 'This is a nonhuman wake. Do not post an update merely because time has passed or a reminder asks you to say what you are doing. If this nonhuman wake needs no message, call the no_reply_needed tool. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
         : ['human_tag', 'direct_message'].includes(task.commandReason ?? '')
           ? 'Reply to the human message that triggered this turn. A progress reminder is relevant only while that human is still waiting for your reply to their own message.'
         : '',

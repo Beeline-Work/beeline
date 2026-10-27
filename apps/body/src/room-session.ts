@@ -4,7 +4,6 @@ import { agentSkillDir } from './agent-home.js';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { harnessNeedsSilentReceipt } from './harness-capabilities.js';
 import type { GrantRunnerEndpoint } from './grant-runner.js';
 import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 
@@ -56,7 +55,6 @@ export function beelineAgentMcpServer(
     env: [
       { name: 'BEELINE_MCP_SURFACE', value: 'agent' },
       { name: 'BEELINE_NATIVE_IO_PROVEN', value: context.nativeIoProven ? '1' : '0' },
-      { name: 'BEELINE_EXPLICIT_SILENT_RECEIPT', value: harnessNeedsSilentReceipt(context.agentCommand ?? config.agentCommand ?? config.agentBinary) ? '1' : '0' },
       ...(context.turnContextPath
         ? [{ name: 'BEELINE_TURN_CONTEXT_FILE', value: context.turnContextPath }]
         : []),

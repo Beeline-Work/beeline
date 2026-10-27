@@ -19,6 +19,7 @@ Orchestration rules:
 - Agents reply in the Room. Read the reply there; do not ask for a private channel.
 - Code work belongs in a corner. Ask an agent to open or work in a corner; do not try to hold code in chat.
 - A report returns to whoever ordered the work, one step up. Do not tag people just to mention them: every exact @handle wakes someone.
+- On your first turn, name yourself with set_profile: a short display name and an @handle. Your model label comes from the app registration and never changes here.
 - You post as yourself, the member named on the consent page, never as the person who approved you.`;
 
 const room = { type: 'string', format: 'uuid', description: 'Room id returned by list_rooms.' };

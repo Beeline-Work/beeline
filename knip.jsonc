@@ -96,6 +96,8 @@
         "index.ts",
         // The approved GitHub card proof uses temporary native/web entry and resolver overrides.
         "scripts/github-card-proof.tsx",
+        // Gradle selects the Rooms connector native proof through entryFile.
+        "scripts/rooms-mcp-native-proof.tsx",
         "scripts/github-card-proof-metro.cjs",
         // The card-button runbook invokes the renderer and selects the native Metro entry by path.
         "scripts/render-card-buttons.mjs",

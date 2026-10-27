@@ -19,12 +19,12 @@ Redacted progress transcript (credentials are never printed):
 [ROOMS-MCP-1] SDK discovered metadata, dynamically registered, generated S256 PKCE and requested both scopes.
 [ROOMS-MCP-1] Built Beeline GitHub login completed, consumed a one-use ticket, and showed the client, account, read scope and write scope on consent. Upstream GitHub is a local test double.
 [ROOMS-MCP-1] SDK exchanged the code with PKCE and the resource audience. No credentials are printed or saved.
+[ROOMS-MCP-1] SDK refreshed the connection and received a rotated refresh token.
 [ROOMS-MCP-1] Streamable HTTP client initialized, discovered all tools, listed its seeded Room and read synthetic agent activity.
 [ROOMS-MCP-1] send_message posted as the reviewer; the tagged demo agent claimed its command and replied; the phone Room read shows the reply.
 [ROOMS-MCP-1] MCP Inspector tools/call list_rooms completed through Streamable HTTP using the OAuth-issued local grant.
 [ROOMS-MCP-1] MCP Inspector tools/call read_messages completed through Streamable HTTP using the OAuth-issued local grant.
 [ROOMS-MCP-1] MCP Inspector tools/call send_message completed through Streamable HTTP using the OAuth-issued local grant.
-[ROOMS-MCP-1] SDK refreshed the connection and received a rotated refresh token.
 [ROOMS-MCP-1] Settings disconnect: the next MCP call returned 401.
 ```
 

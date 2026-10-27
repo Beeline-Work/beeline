@@ -57,8 +57,12 @@ async function prove() {
     checks.newest = scroll.scrollTop > 0 && Math.abs(scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop) < 3;
     checks.formatted = !panel.textContent!.includes('**') && !!panel.textContent!.includes('FIRST LINE');
     checks.bold = Array.from(panel.querySelectorAll('*')).some(el => el.textContent === 'FIRST LINE' && getComputedStyle(el).fontFamily.includes('SemiBold'));
-    if (!location.search.includes('newest')) scroll.scrollTop = 0;
     await wait(100);
+    if (!location.search.includes('newest')) {
+      // Let late content-size callbacks finish before proving a reader can move back to the first line.
+      scroll.scrollTop = 0;
+      await wait(100);
+    }
     checks.composerSeparate = find('viewer-conversation-pill').getBoundingClientRect().top > panel.getBoundingClientRect().bottom;
     const rect = find('viewer-control').getBoundingClientRect();
     checks.viewerTappable = !!document.elementFromPoint(rect.x+10, rect.y+10)?.closest('[data-testid="viewer-control"]');

@@ -262,7 +262,7 @@ const INTERPRETER_COMMANDS = new Set([
 ]);
 
 /** Wrappers whose real command is an argument; the script lookup steps over them. */
-const COMMAND_WRAPPERS = new Set([
+export const COMMAND_WRAPPERS = new Set([
   'env',
   'xargs',
   'nohup',
@@ -492,24 +492,47 @@ export function grantScriptTooLongMessage(path: string, bytes: number, lines: nu
 }
 
 /**
- * The file an interpreter command will run: the first argument that is not a
- * flag. Undefined when the head is not an interpreter, or when the line carries
+ * The file an interpreter command will run, or an explicit executable path.
+ * With includePathCommands, bare executable names are candidates for PATH lookup.
+ * Readers distinguish native executables from scripts, including ENOEXEC shell text.
+ * Undefined when the command has neither candidate, or when the line carries
  * no such argument (`python3 -V`) — that still asks a human, it just has no
  * body to show.
  */
 export function interpreterScriptArgument(
   argv: readonly string[],
-): { index: number; path: string } | undefined {
+  includePathCommands = false,
+): { index: number; path: string; direct?: true } | undefined {
   // Step over `env FOO=1 …`, `sudo …`, `timeout 30 …`: the interpreter is what
   // matters, and a wrapper must not be a way around the binding.
   const skippable = (word: string) =>
     word.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || /^\d+$/.test(word);
   let head = 0;
   while (head < argv.length - 1 && COMMAND_WRAPPERS.has(commandBasename(argv[head]!))) {
+    const wrapper = commandBasename(argv[head]!);
     head += 1;
-    while (head < argv.length - 1 && skippable(argv[head]!)) head += 1;
+    if (wrapper === 'env') {
+      // These options consume a separate operand, which is never the executable.
+      while (head < argv.length - 1) {
+        const word = argv[head]!;
+        if (word === '--') { head += 1; break; }
+        if (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(word)) {
+          head += 2;
+        } else if (word.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
+          head += 1;
+        } else break;
+      }
+      while (head < argv.length - 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[head]!)) head += 1;
+    } else {
+      while (head < argv.length - 1 && skippable(argv[head]!)) head += 1;
+    }
   }
-  if (!INTERPRETER_COMMANDS.has(commandBasename(argv[head] ?? ''))) return undefined;
+  if (!INTERPRETER_COMMANDS.has(commandBasename(argv[head] ?? ''))) {
+    // Explicit executable paths may be scripts too. Callers inspect the bytes
+    // to distinguish native executables from scripts and ENOEXEC shell text.
+    const path = argv[head];
+    return path && (includePathCommands || path.includes('/')) ? { index: head, path, direct: true } : undefined;
+  }
   for (let index = head + 1; index < argv.length; index += 1) {
     const word = argv[index]!;
     if (word.startsWith('-')) continue;

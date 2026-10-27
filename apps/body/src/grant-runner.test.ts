@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rm, rmdir, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, rmdir, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,6 +166,13 @@ describe('command grant matching', () => {
 });
 
 describe('GrantCommandRunner', () => {
+  it.each(['-S', '--split-string', '-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('runs an approved native env %s command without a script binding', async (option) => {
+    const { runner } = await harness([grant({ target: `env ${option} /bin/echo approved`, script: undefined })]);
+    const result = await runner.run({ roomId: ROOM, argv: ['env', ...option.split(' '), '/bin/echo', 'approved'] });
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toBe('approved\n');
+  });
+
   it('refuses without a matching rule and never runs anything', async () => {
     const { runner, calls } = await harness([]);
     await expect(runner.run({ roomId: ROOM, argv: ['echo', 'hi'] })).rejects.toThrow(
@@ -719,12 +726,56 @@ describe('the two hard stops', () => {
     );
   });
 
+  it.each(['#!/bin/sh\n', ''])('R-SCRIPT-HASH refuses changed direct script bytes with prefix %j', async (prefix) => {
+    const { runner, cwd, live } = await harness([grant({ target: './approved' })]);
+    const original = `${prefix}printf approved\n`;
+    await writeFile(join(cwd, 'approved'), original, { mode: 0o700 });
+    live[0] = { ...live[0]!, script: {
+      path: './approved', contents: original, bytes: Buffer.byteLength(original),
+      sha256: createHash('sha256').update(original).digest('hex'),
+    } };
+    expect((await runner.run({ roomId: ROOM, argv: ['./approved'] })).output).toBe('approved');
+    await writeFile(join(cwd, 'approved'), `${prefix}printf changed\n`);
+    await expect(runner.run({ roomId: ROOM, argv: ['./approved'] })).rejects.toThrow('changed after it was approved');
+  });
+
   it('refuses a script that changed after it was approved', async () => {
     const { runner, cwd } = await harness([grant({ target: `${process.execPath} one.mjs` })]);
     await writeFile(join(cwd, 'one.mjs'), "console.log('rewritten after the yes');\n");
     await expect(runner.run({ roomId: ROOM, argv: [process.execPath, 'one.mjs'] })).rejects.toThrow(
       'changed after it was approved',
     );
+  });
+
+  it('rechecks bytes after asynchronous Once consumption', async () => {
+    const { runner, cwd, api } = await harness([grant({ target: 'bash one.mjs', status: 'once' })]);
+    const execute = api.execute.getMockImplementation()!;
+    api.execute.mockImplementation(async (name, input) => {
+      const result = await execute(name, input);
+      if (name === 'consumeAgentGrant') await writeFile(join(cwd, 'one.mjs'), 'printf changed\n');
+      return result;
+    });
+    await expect(runner.run({ roomId: ROOM, argv: ['bash', 'one.mjs'] })).rejects.toThrow('changed after it was approved');
+  });
+
+  it.each(['#!/bin/sh\n', ''])('requires reapproval for a legacy direct script with prefix %j', async (prefix) => {
+    const { runner, cwd } = await harness([grant({ target: './legacy' })]);
+    await writeFile(join(cwd, 'legacy'), `${prefix}printf unapproved\n`, { mode: 0o700 });
+    await expect(runner.run({ roomId: ROOM, argv: ['./legacy'] })).rejects.toThrow('no human has read');
+  });
+
+  it('R-SCRIPT-HASH refuses a symlink retargeted after approval', async () => {
+    const { runner, cwd, live } = await harness([grant({ target: 'bash linked' })]);
+    const body = 'printf approved\n';
+    await writeFile(join(cwd, 'original'), body);
+    await writeFile(join(cwd, 'replacement'), 'printf changed\n');
+    await symlink('original', join(cwd, 'linked'));
+    live[0] = { ...live[0]!, script: { path: 'linked', contents: body,
+      bytes: Buffer.byteLength(body), sha256: createHash('sha256').update(body).digest('hex') } };
+    expect((await runner.run({ roomId: ROOM, argv: ['bash', 'linked'] })).output).toBe('approved');
+    await rm(join(cwd, 'linked'));
+    await symlink('replacement', join(cwd, 'linked'));
+    await expect(runner.run({ roomId: ROOM, argv: ['bash', 'linked'] })).rejects.toThrow('changed after it was approved');
   });
 
   it('runs an interpreter line whose script still hashes to the approved bytes', async () => {

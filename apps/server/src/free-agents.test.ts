@@ -438,6 +438,7 @@ describe('free starter agents', () => {
       { name: 'Luna', model: 'openai/gpt-6-luna', owner_id: OWNER },
     ]);
     expect(team.every(member => member.instructions.includes('never ask back'))).toBe(true);
+    expect(team.every(member => member.instructions.includes('tagging the requesting agent once to deliver your opinion'))).toBe(true);
     await freeAgents.sweep();
     await settle();
     expect(machines.calls).toEqual([]);

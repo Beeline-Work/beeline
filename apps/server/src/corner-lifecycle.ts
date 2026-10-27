@@ -12,6 +12,7 @@ import type { SqlDatabase } from './database.js';
 import {
   createAgentCommand,
   noteCornerAgentUnreachable,
+  refuseVerdictedReviewerWake,
   repairReviewerCornerMembership,
   type CommandRow,
 } from './agent-command.js';
@@ -1016,6 +1017,12 @@ async function queueReviewerCommand(
        'checks',${reviewChecksSql},'reviewerConfiguration',(${reviewerConfigurationSql('$3')})) ELSE NULL END context
      FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0, input.agentId],
   )).rows[0]?.context;
+  const headSha = typeof context?.headSha === 'string' ? context.headSha : undefined;
+  const rawPull = context?.pullRequest;
+  const pullRequest = typeof rawPull === 'number' ? rawPull
+    : typeof rawPull === 'string' && /^\d+$/.test(rawPull) ? Number(rawPull) : null;
+  if (headSha && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest))
+    return { blocked: true };
   const prior = (await db.query<{ text: string }>(
     `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.review_context IS NOT NULL

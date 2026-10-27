@@ -8,8 +8,8 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
-import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
-import { advanceCorner } from './corner-lifecycle.js';
+import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
+import { advanceCorner, reassignFailedCornerReviewer } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
@@ -90,6 +90,7 @@ beforeEach(async () => {
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
@@ -1315,6 +1316,94 @@ describe('corner message attribution', () => {
     await greenHead(10,'4'.repeat(40));
     expect((await commands(B,C)).map(command => command.reason)).toEqual(['subscribed_event']);
     expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1',[C])).rowCount).toBe(0);
+  });
+
+  it('Reproduction review-redeliver: a verdict on a head is not delivered again by any review path', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    const head = 'e'.repeat(40);
+    // The reviewer already ordered a repair. Their next report walks up to that
+    // order and would otherwise be handed back to them as a new review.
+    await createAgentCommand(db, {
+      roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
+      privatePayload: { kind: 'order', authorId: B, fromRoomId: C, text: 'Repair the previous head' },
+    });
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND reason='order'`, [C]);
+    await greenHead(91, head);
+    const [review] = await commands(B, C);
+    expect(review?.reason).toBe('subscribed_event');
+    await claim(review!);
+    const beforeEcho = (await db.query<{ id: string }>(
+      `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B],
+    )).rows.map(row => row.id);
+    const echoed = await daemon.execute('report', {
+      roomId: C, requestId: review!.turnRequestId, generationId: 'g1', status: 'failed',
+      text: 'failed: FAIL: the pull request is unchanged.',
+    }, B);
+    const afterEcho = (await db.query<{ id: string }>(
+      `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B],
+    )).rows.map(row => row.id);
+    expect(echoed).toMatchObject({ delivered: true, skipped: true });
+    expect(afterEcho).toEqual(beforeEcho);
+    await result(review!, 'FAIL: the pull request is unchanged.');
+    const verdicted = new Set(afterEcho);
+    const sourceId = (await db.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-passed'
+       ORDER BY created_at DESC LIMIT 1`, [C],
+    )).rows[0]!.id;
+    const parent = (await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [review!.id])).rows[0];
+    const delivered: string[] = [];
+    for (const reason of REVIEWER_DISPATCH_REASONS) {
+      const created = await createAgentCommand(db, {
+        roomId: C,
+        agentId: B,
+        sourceMessageId: reason === 'subscribed_event' || reason === 'corner_review_dispatch' ? sourceId : null,
+        reason,
+        ...(reason === 'report' ? { parent, reportSource: parent } : {}),
+        ...(reason === 'report' || reason === 'order' ? {
+          privatePayload: {
+            kind: reason, authorId: A, fromRoomId: C,
+            text: reason === 'report' ? 'failed: FAIL: same head again.' : 'Review the same head again',
+          },
+        } : {}),
+      });
+      if (created && !verdicted.has(created.id)) delivered.push(`${reason}:${created.id}`);
+    }
+    await routeSystemCommand(db, { roomId: C, sourceMessageId: sourceId, kind: 'check-passed', targets: [B] });
+    await advanceCorner(db, C, { kind: 'checks', result: 'passing', sourceMessageId: sourceId });
+    await reconcileConfiguredCornerReviewers(db, R);
+    await reassignFailedCornerReviewer(db, { roomId: C, requestId: review!.turnRequestId, agentId: B });
+    const afterPaths = (await db.query<{ id: string; reason: string }>(
+      `SELECT id,reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND NOT (id=ANY($3::text[]))`,
+      [C, B, [...verdicted]],
+    )).rows;
+    console.info(
+      `Reproduction review-redeliver: head ${head}; wrong=a reviewer wake after the verdict; right=0; direct=${delivered.length}; later=${afterPaths.length}`,
+    );
+    expect(delivered).toEqual([]);
+    expect(afterPaths).toEqual([]);
+  });
+
+  it('Reproduction review-redeliver: a new head and a repair handback still wake the reviewer', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(92, 'f'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, 'FAIL: show the repaired screen.');
+    await greenHead(92, '1'.repeat(40));
+    const [nextHead] = await commands(B, C);
+    expect(nextHead?.reason).toBe('subscribed_event');
+    expect(nextHead?.source.body).toContain('1'.repeat(40));
+    // A repair handback is an order whose purpose is repair. It is not a repeat review.
+    expect(reviewerDispatchCarriesHead('order', undefined, { purpose: 'repair', headSha: '1'.repeat(40) })).toBe(false);
+    await db.query(`DELETE FROM corner_report_blockers WHERE corner_id=$1`, [C]);
+    const parent = (await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [nextHead!.id])).rows[0];
+    const handback = await createAgentCommand(db, {
+      roomId: C, agentId: B, sourceMessageId: null, reason: 'order', parent,
+      privatePayload: { kind: 'order', authorId: A, fromRoomId: C, text: 'The repair is ready for review' },
+    });
+    expect(handback?.reason).toBe('order');
+    expect(handback?.review_context).toMatchObject({ purpose: 'repair' });
+    console.info('Reproduction review-redeliver: new head subscribed_event and repair handback both woke the reviewer');
   });
 });
 

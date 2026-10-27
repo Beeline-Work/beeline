@@ -395,6 +395,73 @@ function isGreenReviewWake(reason: string, sourceKind: string | null | undefined
   return false;
 }
 
+/**
+ * Reasons that ask a reviewer to look at a pull request head.
+ * `createAgentCommand` inserts every one of them, so the refusal below is the
+ * only decision that can stop a verdicted head from being delivered again.
+ */
+export const REVIEWER_DISPATCH_REASONS = [
+  'corner_review_dispatch',
+  'subscribed_event',
+  'agent_tag',
+  'order',
+  'report',
+] as const;
+
+/** A repair handback is an order or tag whose purpose is `repair`. It is not a repeat review. */
+export function reviewerDispatchCarriesHead(
+  reason: string,
+  sourceKind: string | undefined,
+  reviewContext: Record<string, unknown> | undefined,
+): boolean {
+  if (reason === 'corner_review_dispatch') return true;
+  if (reason === 'subscribed_event' && sourceKind === 'check-passed') return true;
+  if (!reviewContext || reviewContext.purpose === 'repair') return false;
+  return reason === 'agent_tag' || reason === 'order' || reason === 'report';
+}
+
+/**
+ * The shared review-wake decision. True means this head was already verdicted,
+ * already has a yes, or already has a review wake in flight, so another wake
+ * of a configured reviewer would hand them the same code again.
+ * `createAgentCommand` applies it to every insert. `queueReviewerCommand`
+ * applies it first so a refusal is not reported as a lost wake.
+ */
+export async function refuseVerdictedReviewerWake(
+  db: SqlDatabase,
+  roomId: string,
+  agentId: string,
+  headSha: string,
+  pullRequest?: number | null,
+): Promise<boolean> {
+  if (!(await isCornerReviewer(db, roomId, agentId))) return false;
+  if (await blockingReview(db, roomId, headSha)) return true;
+  if ((await db.query(
+    `SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1 AND head_sha=$2
+       AND ($3::integer IS NULL OR pull_request_number=$3::integer) LIMIT 1`,
+    [roomId, headSha, pullRequest ?? null],
+  )).rowCount) return true;
+  return (await db.query(
+    `SELECT 1 FROM agent_commands command
+     JOIN rooms corner ON corner.id=command.room_id
+     JOIN rooms parent ON parent.id=corner.parent_id
+     LEFT JOIN messages source ON source.id=command.source_message_id
+     WHERE command.room_id=$1 AND command.action='input'
+       AND command.state IN ('pending','claimed')
+       AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
+       AND (
+         command.reason='corner_review_dispatch'
+         OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed')
+         OR (command.reason IN ('agent_tag','order','report')
+           AND command.review_context->>'purpose' IS DISTINCT FROM 'repair')
+       )
+       AND COALESCE(command.review_context->>'headSha', source.system_event->'object'->>'headSha')=$2
+       AND ($3::text IS NULL OR COALESCE(command.review_context->>'pullRequest',$3::text)=$3::text)
+     LIMIT 1`,
+    [roomId, headSha, pullRequest == null ? null : String(pullRequest)],
+  )).rowCount > 0;
+}
+
 /** Automatic work cannot answer a worker's explicit waiting report.
  * A green review wake still goes out: that report is often the pending gate. */
 function waitingReportSql(command: string): string {
@@ -561,9 +628,27 @@ export async function createAgentCommand(
       [input.roomId, input.agentId, input.reason === 'corner_review_needed'],
     )).rows[0]?.context;
   }
-  if (input.reason === 'agent_tag' && reviewContext && reviewContext.purpose !== 'repair' &&
-      await blockingReview(db, input.roomId, String(reviewContext.headSha))) return undefined;
   if (reviewContext && input.reason === 'corner_review_needed') reviewContext.purpose = 'repair';
+  const sourceEvent = member.rows[0]!.source_event as { kind?: string; object?: { headSha?: string } } | null;
+  // Every review dispatch is inserted here. A verdicted or in-flight head is not delivered again.
+  if (reviewerDispatchCarriesHead(input.reason, sourceEvent?.kind, reviewContext)) {
+    const recordedHead = typeof reviewContext?.headSha === 'string' ? reviewContext.headSha : undefined;
+    const recordedPull = typeof reviewContext?.pullRequest === 'number' ? reviewContext.pullRequest
+      : typeof reviewContext?.pullRequest === 'string' && /^\d+$/.test(reviewContext.pullRequest)
+        ? Number(reviewContext.pullRequest) : undefined;
+    const current = recordedHead && recordedPull != null ? undefined : (await db.query<{ head: string | null; pull: number | null }>(
+      `SELECT lifecycle->'pr'->>'headSha' head,(lifecycle->'pr'->>'number')::integer pull
+       FROM corner_facts WHERE corner_id=$1`,
+      [input.roomId],
+    )).rows[0];
+    const headSha = recordedHead
+      ?? (typeof sourceEvent?.object?.headSha === 'string' ? sourceEvent.object.headSha : undefined)
+      ?? current?.head
+      ?? undefined;
+    const pullRequest = recordedPull ?? current?.pull ?? null;
+    if (headSha && await refuseVerdictedReviewerWake(db, input.roomId, input.agentId, headSha, pullRequest))
+      return undefined;
+  }
   if (reviewContext) input = { ...input, wakeNote: [input.wakeNote,
     `Current handoff target: PR #${reviewContext.pullRequest} at ${reviewContext.headSha}. Older heads in the conversation are historical.`].filter(Boolean).join('\n') };
   const sourceText = member.rows[0]!.source_text;

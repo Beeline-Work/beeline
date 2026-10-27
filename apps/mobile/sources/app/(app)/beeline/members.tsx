@@ -145,13 +145,6 @@ function agentSoulCopy(detail: AgentDetailView): string {
   );
 }
 
-function operationMessage(reason: unknown): string {
-  if (reason && typeof reason === 'object' && 'code' in reason) {
-    const code = (reason as { code?: unknown }).code;
-    if (typeof code === 'string' && code && code !== 'request_failed') return code;
-  }
-  return appErrorCopy(reason);
-}
 
 /**
  * What the access switch means right now, naming the owner the way the Room's
@@ -948,7 +941,7 @@ export default function BuzzMembers({
       applyAgentReceipt(receipt);
     } catch (reason) {
       setSelectedAgent(previous);
-      setYoloError(operationMessage(reason));
+      setYoloError(appErrorCopy(reason));
     } finally {
       finishConfigWrite(pubkey);
       setWorking(null);
@@ -976,7 +969,7 @@ export default function BuzzMembers({
       applyAgentReceipt(receipt);
     } catch (reason) {
       setSelectedAgent(previous);
-      setAccessError(operationMessage(reason));
+      setAccessError(appErrorCopy(reason));
     } finally {
       finishConfigWrite(pubkey);
       setWorking(null);

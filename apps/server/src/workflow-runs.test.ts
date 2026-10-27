@@ -8,6 +8,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { describedWorkflow } from './test-support.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { CHOICE_LABEL_MAX_LENGTH } from '@beeline/api-contract/phone';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -429,8 +430,8 @@ describe('save_workflow error reasons', () => {
       'handoffs.summary: outcome "Posted" must be lowercase letters, digits, _ or -': withStates({
         summary: { ...MM_DESK.handoffs.summary, on: { Posted: 'done' } },
       }),
-      [`handoffs.kill_switch: outcome "${'a'.repeat(33)}" is longer than 32 characters`]: withStates({
-        kill_switch: { ...MM_DESK.handoffs.kill_switch, on: { ['a'.repeat(33)]: 'watch', stop: 'stopped' } },
+      [`handoffs.kill_switch: outcome "${'a'.repeat(CHOICE_LABEL_MAX_LENGTH + 1)}" is longer than ${CHOICE_LABEL_MAX_LENGTH} characters`]: withStates({
+        kill_switch: { ...MM_DESK.handoffs.kill_switch, on: { ['a'.repeat(CHOICE_LABEL_MAX_LENGTH + 1)]: 'watch', stop: 'stopped' } },
       }),
       'handoffs.summary: outcome "posted" goes to "nowhere", which is not a state': withStates({
         summary: { ...MM_DESK.handoffs.summary, on: { posted: 'nowhere' } },

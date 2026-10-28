@@ -38,6 +38,7 @@ class DelayedCountingDatabase extends CountingDatabase {
   constructor(
     database: SqlDatabase,
     private readonly delayMs: number,
+    private readonly injectedOverheadMs = 0,
   ) {
     super(database);
   }
@@ -49,7 +50,9 @@ class DelayedCountingDatabase extends CountingDatabase {
     const delayStartedAt = performance.now();
     await new Promise((resolve) => setTimeout(resolve, this.delayMs));
     this.delayElapsedMs += performance.now() - delayStartedAt;
-    return super.query<Row>(sql, values);
+    const result = await super.query<Row>(sql, values);
+    if (this.injectedOverheadMs) await new Promise(resolve => setTimeout(resolve, this.injectedOverheadMs));
+    return result;
   }
 }
 
@@ -214,9 +217,9 @@ describe('addressed-message routing and claim scaling', () => {
     expect(notifications.rows[0]?.count).toBe(20 * 4);
   }, 20_000);
 
-  it('keeps sustained atomic claims to one statement with bounded query overhead', async () => {
-    const requests = Array.from({ length: 20 }, (_, index) =>
-      (index + 40).toString(16).padStart(64, '0'),
+  it.each([0, 60])('keeps sustained atomic claims bounded and detects injected overhead (%s ms)', async injectedOverheadMs => {
+    const requests = Array.from({ length: 60 }, (_, index) =>
+      (index + 40 + injectedOverheadMs * 100).toString(16).padStart(64, '0'),
     );
     const commands: string[] = [];
     for (const request of requests) {
@@ -239,31 +242,32 @@ describe('addressed-message routing and claim scaling', () => {
     // at 206 ms. Measure the actual timer wait separately: CI scheduler delay
     // must not be mistaken for extra claim work. The exact query/transaction
     // counts below still reject an added statement or BEGIN + COMMIT.
-    const measurements = await Promise.all(
-      commands.map(async (command, index) => {
-        const delayed = new DelayedCountingDatabase(database, 206);
-        const beganAt = performance.now();
-        await claimAgentCommand(
-          delayed,
-          BASE_ROOM,
-          TARGET,
-          command,
-          `sustained-generation-${index}`,
-        );
-        const wallMs = performance.now() - beganAt;
-        return {
-          wallMs,
-          overheadMs: wallMs - delayed.delayElapsedMs,
-          queries: delayed.queries,
-          transactions: delayed.transactions,
-        };
-      }),
-    );
+    const batches = [];
+    for (let batch = 0; batch < 3; batch += 1) {
+      const measurements = await Promise.all(
+        commands.slice(batch * 20, (batch + 1) * 20).map(async (command, index) => {
+          const delayed = new DelayedCountingDatabase(database, 206, injectedOverheadMs);
+          const beganAt = performance.now();
+          await claimAgentCommand(delayed, BASE_ROOM, TARGET, command, `sustained-${batch}-${index}`);
+          const wallMs = performance.now() - beganAt;
+          return {
+            wallMs,
+            overheadMs: wallMs - delayed.delayElapsedMs,
+            queries: delayed.queries,
+            transactions: delayed.transactions,
+          };
+        }),
+      );
+      batches.push(measurements);
+    }
+    const measurements = batches.flat();
 
     const wall = measurements.map(({ wallMs }) => wallMs);
     const overhead = measurements.map(({ overheadMs }) => overheadMs);
     console.info('[claim-latency-regression]', {
       samples: measurements.length,
+      injectedOverheadMs,
+      batchOverheadP95Ms: batches.map(batch => Math.round(percentile(batch.map(sample => sample.overheadMs), 0.95))),
       representativeQueryMs: 206,
       wallP95Ms: Math.round(percentile(wall, 0.95)),
       overheadP95Ms: Math.round(percentile(overhead, 0.95)),
@@ -271,10 +275,18 @@ describe('addressed-message routing and claim scaling', () => {
     });
     expect(measurements.every(({ queries }) => queries === 1)).toBe(true);
     expect(measurements.every(({ transactions }) => transactions === 0)).toBe(true);
-    // The old 250 ms wall limit allowed only 44 ms above the synthetic 206 ms
-    // delay; passing CI already reaches 248 ms. Local query overhead is 2 ms.
-    // A sustained 50 ms query regression still fails this gate.
-    expect(percentile(overhead, 0.95)).toBeLessThan(50);
-    expect(percentile(overhead, 0.99)).toBeLessThan(100);
+    // A single runner scheduling pause is not sustained claim work. Require
+    // the median of three independent concurrent batches to meet the same
+    // p95 budget, while retaining the p99 limit across every sample.
+    const sustainedP95 = percentile(batches.map(batch =>
+      percentile(batch.map(sample => sample.overheadMs), 0.95)), 0.5);
+    if (injectedOverheadMs) {
+      // Verify the sampling still rejects a consistent added query cost.
+      expect(sustainedP95).toBeGreaterThanOrEqual(50);
+    } else {
+      expect(sustainedP95).toBeLessThan(50);
+      expect(percentile(overhead, 0.99)).toBeLessThan(100);
+    }
+
   }, 20_000);
 });

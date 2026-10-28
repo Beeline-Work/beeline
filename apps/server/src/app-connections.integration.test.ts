@@ -315,6 +315,26 @@ describe('connect_app', () => {
     console.info(`Reproduction TIKTOK-ROUTE-1: ${name} setup keys → phone Connect → OAuth → authenticated completion → connected; key retained`);
   });
 
+  it('TIKTOK-ROUTE-1: Connectors search offers OAuth with an account access token', async () => {
+    await connectSquire();
+    await applyVaultList(database, { owner_identity_id: OWNER, machine_id: 'machine-one', workspace_id: WORKSPACE }, [{
+      reference: 'vault:tiktok-account', service: 'tiktok', label: 'Account', fieldNames: ['access_token'],
+      allowedHosts: ['open.tiktokapis.com'], state: 'active', createdAt: 1,
+    }]);
+    const provider = fakeComposio('tiktok');
+    provider.supportsOAuth.mockResolvedValue(true);
+    provider.searchToolkits = vi.fn(async () => []);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.companies?.rows.find(row => row.id === 'tiktok')?.alsoAvailable)
+      .toContainEqual(expect.objectContaining({ appKey: 'tiktok', flow: 'app' }));
+    const results = await phone.execute('searchWorkbenchApps', { query: 'TikTok' }, OWNER);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.company).toMatchObject({ appKey: 'tiktok', flow: 'app' });
+    expect(results[0]?.companyId).toBeUndefined();
+  });
+
   it('distinguishes automatic GitHub discovery from the owner selecting that same connection', async () => {
     await connectSquire();
     await applyVaultList(database,

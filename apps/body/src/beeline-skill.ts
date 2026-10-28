@@ -302,7 +302,7 @@ For commands that need the tree, use a detached temporary worktree; never the wo
 
 Check every story and criterion, confirm non-goals stayed out, and resolve or explicitly accept each risk. Keep your working notes private; do not post an outline ledger.
 
-For UI changes, reject visual changes outside the brief's Visual scope and PRs missing its listed screenshots.
+For UI changes, reject visual changes outside the brief's Visual scope and PRs missing its listed screenshots. Any visual change the owner has not approved fails review: the approved state is the supplied mock and Visual scope, or the current UI where neither covers it.
 
 For a bug, reproduce the reported behavior on the target branch and repeat the recorded reproduction on the PR head. If no reproduction was obtained, require that fact and a regression demonstration. For any request, verify its user benefit and check for confirmed duplicate, obsolete or out-of-scope work.
 
@@ -317,7 +317,8 @@ Test one concrete failure sequence for each changed behavior. Confirm every bloc
 - List each user-visible behavior the diff adds, removes or brings back.
 - Match each one to a quoted line in the brief's Intent. An item with no match is outside the mandate.
 - For each touched feature, look for an earlier human decision: Search the Room for the feature name together with remove, revert or "don't". Run \`git log -S<symbol>\` on the touched files to find earlier removals and reverts.
-- A conflict, or a change much larger than the brief, blocks PASS. The reviewer then reports \`needs-decision:\` to its commander, quoting the old decision and the diff line. It does not send a FAIL to the worker, because the worker cannot resolve a missing mandate.
+- A conflict, or a change much larger than the brief, blocks PASS. Send a FAIL to the worker, quoting the old decision or Intent and the diff line, and order it to restore the approved state. Do not escalate the deviation to the commander or owner.
+- Only when the brief itself orders a change that conflicts with an earlier human decision, report \`needs-decision:\` to your commander, quoting both. The worker cannot restore it without breaking its brief.
 
 Block only on a behavior with no Intent match or a quoted conflicting human decision, never on taste. For a no-match behavior, quote the applicable Intent and the unmatched diff line; do not invent an old decision.
 

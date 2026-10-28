@@ -3,12 +3,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ lookup: vi.fn(), request: vi.fn(), agents: [] as any[] }));
 vi.mock('node:dns/promises', () => ({ lookup: mocks.lookup }));
 vi.mock('node:https', () => ({ Agent: class { constructor(options: unknown) { mocks.agents.push(options); } destroy() {} }, request: mocks.request }));
-import { CompanyMcpDiscovery, companyMcpResponse, companyMcpUrl } from './company-mcp-discovery.js';
+import { CompanyMcpDiscovery, companyForMcp, companyMcpResponse, companyMcpUrl } from './company-mcp-discovery.js';
 import { McpRegistryClient } from './mcp-registry.js';
 const metadata = { resource: 'https://mcp.fly.io', authorization_servers: ['https://fly.io/mcp/oauth'] };
 const good = { status: 200, body: JSON.stringify(metadata) };
 beforeEach(() => { vi.clearAllMocks(); mocks.agents.length = 0; mocks.lookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]); });
 describe('company-hosted MCP discovery', () => {
+  it('recognizes company subdomains without accepting lookalike suffixes or credentials', () => {
+    expect(companyForMcp('https://mcp.fly.io')?.id).toBe('fly');
+    expect(companyForMcp('https://mcp.sentry.io/mcp')?.id).toBe('sentry');
+    for (const value of ['https://mcp.fly.io.evil.test', 'https://evilfly.io', 'https://user:pass@mcp.fly.io', 'https://127.0.0.1']) {
+      expect(companyForMcp(value)).toBeUndefined();
+    }
+  });
   it('discovers Fly on its own domain, coalesces and caches positive and negative probes', async () => {
     const transport = vi.fn(async () => good);
     const discovery = new CompanyMcpDiscovery(transport);

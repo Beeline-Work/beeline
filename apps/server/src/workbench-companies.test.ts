@@ -211,3 +211,14 @@ it('Reproduction squire-false-card: projects the signed-in account and active re
   expect(project(false).machines[0]).toMatchObject({ statusText: 'owner@example.com', signedInAs: 'owner@example.com' });
   expect(project(true)).toMatchObject({ status: 'Reconnecting…', machines: [{ reconnecting: true, statusText: 'Reconnecting…' }] });
 });
+
+it('Reproduction CONNECTOR-SEARCH-REMOVAL: saved keys retain an actionable MCP search option', () => {
+  const raw = { ...base(), connections: [key('fly-key', 'fly', ['api.fly.io'])] };
+  const view = { ...raw, companies: projectWorkbenchCompanies(raw, origin) };
+  const candidate = { appKey: 'fly', name: 'Fly.io', domain: 'fly.io', description: 'Fly MCP', registryServerName: 'io.fly/company-mcp', registryVersion: '1' };
+  const results = companySearchResults(view, [candidate, candidate], 'fly', origin);
+  expect(results).toHaveLength(1);
+  expect(results[0]).toMatchObject({ company: { registryServerName: candidate.registryServerName, flow: 'app' } });
+  expect(results[0]?.companyId).toBeUndefined();
+  expect(view.connections).toHaveLength(1);
+});

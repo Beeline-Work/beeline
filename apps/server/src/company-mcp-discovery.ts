@@ -15,7 +15,7 @@ export function companyForMcp(query: string): CompanyProvider | undefined {
   const q = query.trim().toLowerCase();
   const key = q.includes('.') || q.includes('/') ? undefined : appIdentity(q)?.key;
   const host = companyHost(q);
-  return COMPANY_REGISTRY.find(p => p.domain && (q === p.id || host && p.hosts.includes(host) || q === p.name.toLowerCase()
+  return COMPANY_REGISTRY.find(p => p.domain && (q === p.id || host && p.hosts.some(domain => host === domain || host.endsWith(`.${domain}`)) || q === p.name.toLowerCase()
     || key === appIdentity(p.domain)?.key));
 }
 export function companyMcpUrl(value: unknown, domain: string): URL | undefined {

@@ -158,6 +158,23 @@ describe('app connections on the info page', () => {
     setWorkbenchSource(source); params.service = 'notion';
     return source;
   }
+  it('CONNECTOR-SEARCH-REMOVAL: expired managed sign-in offers removal without restarting authorization', async () => {
+    const source = new MockWorkbenchSource();
+    let removed = false;
+    source.readWorkbench = async () => ({ ...companyWorkbench(removed ? [] : [notionRow('error')]), apps: removed ? [] : [{ ...notionApp('error'), transport: 'composio' }] });
+    const disconnect = vi.spyOn(source, 'disconnectApp').mockImplementation(async () => { removed = true; });
+    const begin = vi.spyOn(source, 'beginAppSignIn');
+    setWorkbenchSource(source); params.service = 'notion';
+    const renderer = await render();
+    await act(async () => renderer.root.findByProps({ testID: 'company-item-notion-app' }).props.onPress());
+    const sheet = renderer.root.findAllByType('HullActionSheetModal').find((node: any) => node.props.title === 'Notion')!;
+    const remove = sheet.findAllByType('HullActionSheetRow').find((node: any) => node.props.label === 'Disconnect')!;
+    await act(async () => { await remove.props.onPress(); });
+    expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', appId: 'notion' });
+    expect(begin).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'company-item-notion-app' })).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
   it('connected: disconnects from the info page itself, with no app page pushed', async () => {
     navigation.push.mockClear();
     const source = serveNotion('connected');

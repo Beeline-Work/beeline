@@ -14,6 +14,8 @@ primary_region = "iad"
   MEDIA_MAX_BYTES = "26214400"
   PUBLIC_ORIGIN = "https://server.usebeeline.app"
   BEELINE_WEB_APP_ORIGINS = "https://web.usebeeline.app"
+  # Android OAuth client registered for the active Play app-signing certificate.
+  BEELINE_AUTH_GOOGLE_ANDROID_CLIENT_IDS = "856844667369-u6shseggso8gamd9kf4ajohn4p7jsnmo.apps.googleusercontent.com"
 
 [http_service]
   internal_port = 8080

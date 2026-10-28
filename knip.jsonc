@@ -120,6 +120,8 @@
         "scripts/emoji-clip-proof.tsx",
         // member-sheets.browser.test.ts bundles this browser entry by path through esbuild.
         "scripts/member-sheets-browser-proof.tsx",
+        // label-sweep-proof.browser.test.ts bundles this browser entry by path through esbuild.
+        "scripts/label-sweep-components-proof.tsx",
         "scripts/render-waveform-proof.mjs",
         // Documented browser proof bundles the real webhook subscription screen.
         "scripts/render-subscription-webhook-proof.mjs",

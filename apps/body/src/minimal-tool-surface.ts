@@ -642,7 +642,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "scope": {"type": "string", "enum": ["history", "memory"]},
         "query": {
           ...INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
-          "description": `1–${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS} Unicode characters (at most ${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS * 4} UTF-8 bytes); same limit for history and memory.`
+          "description": `1–${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS} characters (Unicode; at most ${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS * 4} UTF-8 bytes); same limit for history and memory.`
         },
         "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX, "description": `Integer ${INSTITUTIONAL_HISTORY_RESULT_MIN}–${INSTITUTIONAL_HISTORY_RESULT_MAX}; default ${INSTITUTIONAL_HISTORY_RESULT_MAX}.`}
       },

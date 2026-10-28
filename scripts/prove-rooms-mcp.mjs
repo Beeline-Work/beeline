@@ -20,6 +20,10 @@ import { DaemonService } from '../apps/server/dist/daemon-service.js';
 import { createBeelineServer } from '../apps/server/dist/server.js';
 import { claimAgentCommand } from '../apps/server/dist/agent-command.js';
 import { deliverMcpMemberWebhooks } from '../apps/server/dist/rooms-mcp-members.js';
+import { PREREGISTERED_MCP_CLIENTS } from '../apps/server/dist/rooms-mcp-preregistered.js';
+import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener } from '../apps/server/dist/postgres-live.js';
+import { EventEmitter } from 'node:events';
+import { createHash } from 'node:crypto';
 
 const db = new PgliteDatabase();
 let server, mount, client;
@@ -38,7 +42,8 @@ try {
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Today I prepared the connector review. This is synthetic demo content.')`, ['b'.repeat(64), room, agent]);
   const tokenAuth = new TokenAuth(db, ticket => mount.verifyGitHubTicket(ticket), () => new Date(), ticket => mount.verifyGoogleTicket(ticket));
   const live = new LiveHub();
-  const options = { database: db, auth: tokenAuth, live, mediaMaximumBytes: 1024, phone: new PhoneService(db, 'http://127.0.0.1', undefined, undefined, live),
+  const options = { database: db, auth: tokenAuth, live, mediaMaximumBytes: 1024,
+    ...(process.env.MCP_PROOF_WEB_ORIGIN ? { webAppOrigins: [process.env.MCP_PROOF_WEB_ORIGIN] } : {}), phone: new PhoneService(db, process.env.MCP_PROOF_PORT ? `http://127.0.0.1:${process.env.MCP_PROOF_PORT}` : 'http://127.0.0.1', undefined, undefined, live),
     daemon: new DaemonService(db, live), authHandler: (request, response) => {
       const incoming = new URL(request.url, 'http://127.0.0.1');
       if (incoming.pathname === '/auth/proof-provider') {
@@ -68,7 +73,81 @@ try {
     BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://oauth2.googleapis.com/token', BEELINE_AUTH_OIDC_JWKS_URI: 'https://www.googleapis.com/oauth2/v3/certs', BEELINE_AUTH_OIDC_CLIENT_ID: 'fixture-client',
   } });
   options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, tokenAuth), options.phone, live);
-  if (process.argv.includes('--serve')) {
+  if (process.argv.includes('--connect-pages')) {
+    // CONNECT-1: Meta Muse signs in with its published client id, joins every
+    // public Room, shows its logo, and a tag reaches its webhook on commit.
+    // Only the upstream GitHub provider and the outside webhook receiver are doubles.
+    process.env.BEELINE_MCP_WEBHOOK_KEY ??= 'local-proof-key';
+    const publicRooms = [['33333333-3333-4333-8333-333333333333', 'general'], ['44444444-4444-4444-8444-444444444444', 'design']];
+    for (const [id, name] of publicRooms) {
+      await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,$3,'public')`, [id, workspace, name]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [workspace, id, person, agent]);
+    }
+    const posts = [];
+    class Listen extends EventEmitter {
+      async connect() {}
+      async query() { this.release = await db.client.listen(POSTGRES_LIVE_CHANNEL, payload => this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload })); }
+      async end() { await this.release?.(); }
+    }
+    const listener = new PostgresLiveListener(db, live, () => new Listen(), 1);
+    listener.setMcpWebhookWake(() => void deliverMcpMemberWebhooks(db, async (url, init) => {
+      posts.push({ url: String(url), at: Date.now(), authorization: new Headers(init.headers).get('authorization'), body: JSON.parse(init.body) });
+      return new Response('', { status: 200 });
+    }));
+    void listener.run();
+    const muse = PREREGISTERED_MCP_CLIENTS[0];
+    const verifier = randomBytes(32).toString('base64url');
+    const authorizeUrl = `${origin}/mcp/oauth/authorize?${new URLSearchParams({ client_id: muse.id, redirect_uri: muse.redirects[0], response_type: 'code',
+      resource: origin + '/mcp', code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state: 'connect-proof' })}`;
+    const handler = server.listeners('request')[0];
+    server.removeAllListeners('request');
+    server.on('request', async (req, res) => {
+      const url = new URL(req.url, origin);
+      if (url.pathname !== '/proof/finish') return handler(req, res);
+      try {
+        const token = await (await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+          grant_type: 'authorization_code', client_id: muse.id, code: url.searchParams.get('code'), code_verifier: verifier, redirect_uri: muse.redirects[0], resource: origin + '/mcp' }) })).json();
+        assert.ok(token.access_token, 'token exchange');
+        const member = (await db.query('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2', [muse.id, person])).rows[0].member_id;
+        const identity = (await db.query('SELECT name,handle,avatar FROM identities WHERE id=$1', [member])).rows[0];
+        const joined = (await db.query(`SELECT r.name FROM memberships m JOIN rooms r ON r.id=m.room_id WHERE m.identity_id=$1 AND m.removed_at IS NULL ORDER BY r.name`, [member])).rows.map(row => row.name);
+        const avatar = await fetch(origin + identity.avatar);
+        client = new Client({ name: 'connect-proof', version: '1.0.0' });
+        await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${token.access_token}` } } }));
+        const firstRead = JSON.parse((await client.callTool({ name: 'list_rooms', arguments: {} })).content[0].text).data;
+        const { default: sharp } = await import('sharp');
+        const museJpeg = await sharp(new URL('../apps/server/assets/mcp/muse.svg', import.meta.url).pathname, { density: 300 })
+          .resize(192, 192, { fit: 'contain', background: '#ffffff' }).flatten({ background: '#ffffff' }).jpeg().toBuffer();
+        const profile = JSON.parse((await client.callTool({ name: 'set_profile', arguments: { name: 'Muse', handle: 'muse',
+          avatar: `data:image/jpeg;base64,${museJpeg.toString('base64')}` } })).content[0].text).data;
+        const afterProfile = JSON.parse((await client.callTool({ name: 'list_rooms', arguments: {} })).content[0].text).data;
+        identity.handle = 'muse';
+        const webhook = await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.invalid/muse', secret: 'proof-bearer' } });
+        const sentAt = Date.now();
+        const tag = await options.phone.execute('sendRoomMessage', { roomId: publicRooms[0][0], text: `@${identity.handle} what changed today?` }, person);
+        for (let i = 0; i < 100 && !posts.length; i++) await new Promise(resolve => setTimeout(resolve, 20));
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const mentions = JSON.parse((await client.callTool({ name: 'list_mentions', arguments: {} })).content[0].text).data;
+        const replyStarted = Date.now();
+        const reply = JSON.parse((await client.callTool({ name: 'send_message', arguments: { room: publicRooms[0][0],
+          text: '@demo-agent please summarize today for the owner', replyTo: tag.messageId, idempotencyKey: 'connect-proof-reply' } })).content[0].text).data;
+        const replyMs = Date.now() - replyStarted;
+        const threaded = (await db.query('SELECT reply_to_message_id FROM messages WHERE id=$1', [reply.messageId])).rows[0].reply_to_message_id === tag.messageId;
+        const soul = (await options.phone.readAgent(workspace, member, person)).seededSoul;
+        const result = { setupNoteBeforeProfile: Boolean(firstRead.setup), setupNoteAfterProfile: Boolean(afterProfile.setup), profileAvatar: profile.avatar,
+          mentions: mentions.mentions.map(m => m.text), reply: { ...reply, ms: replyMs, threaded }, profileSoul: soul, registeredClients: (await db.query('SELECT count(*)::int n FROM rooms_mcp_clients')).rows[0].n, member: identity, joined,
+          avatar: { status: avatar.status, type: avatar.headers.get('content-type') }, webhookResult: webhook.content[0].text,
+          posts: posts.filter(post => post.body.messageId === tag.messageId).map(post => ({ url: post.url, authorization: post.authorization, ms: post.at - sentAt, text: post.body.text, instruction: post.body.instruction })),
+          phoneToken: phone };
+        transcript(`CONNECT-1 ${JSON.stringify({ ...result, phoneToken: undefined })}`);
+        res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result));
+      } catch (error) { res.writeHead(500); res.end(String(error?.stack ?? error)); }
+    });
+    const phone = randomBytes(32).toString('base64url');
+    await db.query("INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at) VALUES($1,$2,$3,now()+interval '1 day')", [tokenHash(phone), person, '11111111-1111-4111-8111-111111111111']);
+    transcript(`CONNECT-1 fixture ${origin}; start ${authorizeUrl}`);
+    await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });
+  } else if (process.argv.includes('--serve')) {
     transcript(`Local demo server: ${origin}/mcp. Use GitHub in consent; the fixture supplies only the synthetic reviewer identity.`);
     transcript('This loopback fixture has no production account access. Stop with Ctrl+C.');
     await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });
@@ -110,7 +189,7 @@ try {
   response = await browser(response.headers.get('location'));
   const target = new URL(redirectUrl);
   assert.ok(response.headers.get('content-security-policy').includes(`form-action 'self' ${target.origin === 'null' ? target.protocol : target.origin};`));
-  const html = await response.text(); assert.match(html, /JOINS AS/); assert.match(html, /Read Rooms you add it to/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
+  const html = await response.text(); assert.match(html, /Joins as/); assert.match(html, /Read your public Rooms/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
   transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the joining member, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
   response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow' }) });
   assert.equal(response.status, 302);
@@ -129,7 +208,7 @@ try {
   transcript('SDK refreshed the connection and received a rotated refresh token.');
   client = new Client({ name: 'beeline-rooms-proof', version: '1.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { authProvider: provider }));
-  assert.equal((await client.listTools()).tools.length, 7);
+  assert.equal((await client.listTools()).tools.length, 9);
   const rooms = await client.callTool({ name: 'list_rooms', arguments: {} }); assert.match(JSON.stringify(rooms), /connector-demo/);
   const read = await client.callTool({ name: 'read_messages', arguments: { room, limit: 10 } }); assert.match(JSON.stringify(read), /synthetic demo content/);
   transcript('Streamable HTTP client initialized, discovered all tools, listed its seeded Room and read synthetic agent activity.');

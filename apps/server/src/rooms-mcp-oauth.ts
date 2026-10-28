@@ -13,16 +13,49 @@ export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
 const opaque = () => randomBytes(32).toString('base64url');
 const escape = (text: string) => text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
+// The real Beeline app icon, inline because the page CSP allows only data images.
+const BEELINE_ICON = `data:image/svg+xml;base64,${readFileSync(new URL('../assets/mcp/beeline.svg', import.meta.url)).toString('base64')}`;
+/** DESIGN.md Bone, and Obsidian when the device is dark; type, spacing and buttons follow the app. */
+const PAGE_STYLE = `@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Regular.ttf')}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Medium.ttf');font-weight:500}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-SemiBold.ttf');font-weight:600}
+:root{--canvas:#F3EEE4;--raised:#ECE4D5;--border:#DED2BC;--strong:#C9BBA0;--t1:#171310;--t2:#4A4038;--quiet:#6F6455;--muted:#8B7F6E;--brass:#8a6323;--fill:#1C1712;--fillText:#F3EDE3}
+@media (prefers-color-scheme:dark){:root{--canvas:#14091A;--raised:#190e21;--border:#291e33;--strong:#3b3048;--t1:#f0f0f3;--t2:#c9c9d1;--quiet:#90909B;--muted:#83838d;--brass:#b08a4a;--fill:#F3EDE3;--fillText:#1C1712}}
+*{box-sizing:border-box}html{background:var(--canvas)}body{margin:0;background:var(--canvas);color:var(--t1);font:16px/23px SG,system-ui,sans-serif}
+main{display:flex;flex-direction:column;min-height:100vh;max-width:440px;margin:0 auto;padding:48px 24px 32px}
+a{color:var(--brass);text-decoration:none}a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+.brand{display:flex;align-items:center;gap:16px;margin-bottom:32px}
+.mark{width:48px;height:48px;border-radius:10px;display:block;border:1px solid var(--border);object-fit:contain}
+.mark.client{background:var(--raised);padding:8px}.initial{display:grid;place-items:center;font-weight:500;font-size:22px;color:var(--t1)}
+.link{flex:0 0 32px;height:0;border-top:1px dashed var(--strong)}
+h1{font-weight:500;font-size:22px;line-height:32px;letter-spacing:-.3px;margin:0 0 8px}
+.lede{color:var(--t2);margin:0 0 32px}.lede b,.who b{font-weight:500}.lede b{color:var(--t1)}
+.btn{height:44px;border-radius:3px;font:500 16px/23px SG,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;width:100%;border:1px solid var(--strong);background:transparent;color:var(--t1);cursor:pointer;padding:0 16px}
+.btn.primary{background:var(--fill);color:var(--fillText);border-color:var(--fill)}
+.stack{display:flex;flex-direction:column;gap:8px}.row{display:flex;gap:8px}.row .btn{flex:1}
+.meta,.who,.fine{font-size:13px;line-height:19px;color:var(--quiet);margin:0}
+.meta{margin-top:16px}.who{margin-bottom:24px}.who b{color:var(--brass)}.fine{margin-bottom:24px}
+.head{font-weight:500;font-size:10px;line-height:15px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.joins{display:flex;align-items:center;gap:16px;border:1px solid var(--border);border-radius:3px;padding:12px 16px;margin-bottom:24px}
+.plate{width:36px;height:36px;flex:0 0 36px;border-radius:3px;background:var(--raised);padding:6px;object-fit:contain}
+span.plate{display:grid;place-items:center;padding:0;font-weight:500}
+.joins .who-am{flex:1;min-width:0}.joins .name{font-weight:500;overflow-wrap:anywhere}.joins .tag{font-size:13px;line-height:19px;color:var(--quiet);overflow-wrap:anywhere}
+.edit{font-size:13px;line-height:19px;display:flex;align-items:center;min-height:44px}
+.perms{border-top:1px solid var(--border);margin-bottom:24px}.perm{padding:16px 0;border-bottom:1px solid var(--border)}
+.perm strong{display:block;font-weight:500}.perm span{font-size:13px;line-height:19px;color:var(--quiet)}
+label{display:block;font-weight:500;margin-bottom:8px}.field{margin-bottom:24px}.field p{font-size:13px;line-height:19px;color:var(--quiet);margin:8px 0 0}
+input{width:100%;height:44px;font:16px SG,system-ui,sans-serif;padding:0 12px;border:1px solid var(--strong);border-radius:3px;background:var(--raised);color:var(--t1)}
+.foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}`;
+/** Whose privacy terms cover Room text a known client reads. */
+const PUBLISHERS: Record<string, string> = { 'meta muse': 'Meta', muse: 'Meta', grok: 'xAI', 'grok bot': 'xAI', chatgpt: 'OpenAI', claude: 'Anthropic' };
 export function mcpJson(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   response.end(JSON.stringify(value));
 }
-export async function mcpBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+export async function mcpBody(request: IncomingMessage, maxBytes = 32_768): Promise<Record<string, unknown>> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     size += Buffer.byteLength(chunk);
-    if (size > 32_768) throw new Error('invalid_request');
+    if (size > maxBytes) throw new Error('invalid_request');
     chunks.push(Buffer.from(chunk));
   }
   const raw = Buffer.concat(chunks).toString('utf8');
@@ -104,7 +137,14 @@ export class RoomsMcpOAuth {
       'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; form-action ${formAction}; frame-ancestors 'none'`,
       'x-content-type-options': 'nosniff',
     });
-    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)} · Beeline</title><style>@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Regular.ttf')}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-Medium.ttf');font-weight:500}@font-face{font-family:SG;src:url('/mcp/oauth/SpaceGrotesk-SemiBold.ttf');font-weight:600}*{box-sizing:border-box}body{margin:0;background:#F3EDE3;color:#171310;font:16px/1.5 SG,system-ui}main{display:flex;flex-direction:column;max-width:28rem;margin:8vh auto;padding:24px}h1{font-weight:600;font-size:24px;line-height:1.25;margin:0 0 8px}p{color:#4A4038}a{color:#8a6323}button{display:block;width:100%;font:500 16px SG;padding:13px;margin-top:8px;border:0;border-radius:12px;background:#1C1712;color:#F3EDE3;cursor:pointer}button[value=deny]{background:transparent;color:#171310}a:focus-visible,button:focus-visible{outline:3px solid #8a6323;outline-offset:4px}.brand{order:-1;display:flex;align-items:center;gap:12px;margin:8px 0 24px}.mark{width:44px;height:44px;border-radius:11px;object-fit:contain;background:#ECE4D5;display:grid;place-items:center}.bee{background:#1C1712;color:#E5A645;font-weight:600;font-size:24px}.dots{color:#B8A27A}.who{font-size:14px;margin-bottom:20px}.who strong{font-weight:500;color:#8a6323}.perm{border-top:1px solid #E2D9CB}.perm section{padding:13px 0;border-bottom:1px solid #E2D9CB}.perm strong{display:block;font-weight:500}.perm p{font-size:14px;margin:0}.fine,.links{font-size:13px;color:#6F6558}.links{text-align:center;margin-top:16px}</style><main><h1>${escape(title)}</h1>${content}</main></html>`);
+    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main></html>`);
+  }
+  /** The client's own mark joined to the real Beeline icon by a dashed line. */
+  private brand(flow: Pick<Flow, 'name' | 'logo'>): string {
+    const client = flow.logo
+      ? `<img class="mark client" src="${escape(flow.logo)}" alt="${escape(flow.name)}">`
+      : `<span class="mark client initial" role="img" aria-label="${escape(flow.name)}">${escape((flow.name[0] ?? 'C').toUpperCase())}</span>`;
+    return `<div class="brand">${client}<span class="link" aria-hidden="true"></span><img class="mark" src="${BEELINE_ICON}" alt="Beeline"></div>`;
   }
   private redirect(response: ServerResponse, location: string): void {
     response.writeHead(302, { location, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); response.end();
@@ -261,7 +301,8 @@ export class RoomsMcpOAuth {
       }
       if (request.method === 'GET' && path === '/mcp/oauth/consent') {
         const flow = await this.flow(url.searchParams.get('flow'), request);
-        if (!flow.identity_id) this.page(response, 'Connect your Rooms', `<p>Sign in to Beeline to review access for <strong>${escape(flow.name)}</strong>.</p><p><a href="/mcp/oauth/login?flow=${flow.id}&amp;provider=google">Continue with Google</a></p><p><a href="/mcp/oauth/login?flow=${flow.id}&amp;provider=github">Continue with GitHub</a></p>`);
+        const client = escape(flow.name);
+        if (!flow.identity_id) this.page(response, `Connect ${flow.name} to Beeline`, `${this.brand(flow)}<h1>Connect ${client} to Beeline</h1><p class="lede">Sign in to Beeline. Next, you see what <b>${client}</b> can do before you allow it.</p><div class="stack"><a class="btn primary" href="/mcp/oauth/login?flow=${flow.id}&amp;provider=google">Continue with Google</a><a class="btn" href="/mcp/oauth/login?flow=${flow.id}&amp;provider=github">Continue with GitHub</a></div><p class="meta">Beeline never shares your sign-in with ${client}.</p>`);
         else {
           const member = await mcpMemberId(this.database, flow.client_id, flow.identity_id);
           const existing = member
@@ -269,13 +310,15 @@ export class RoomsMcpOAuth {
             : undefined;
           const name = flow.joiner_name ?? existing?.name ?? flow.name;
           const handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
-          const initial = escape((name[0] ?? 'F').toUpperCase());
-          const handleInput = `/mcp/oauth/consent`;
+          const who = `<p class="who">Signed in as <b>${escape(flow.identity_name ?? 'Beeline user')}</b></p>`;
           if (url.searchParams.get('edit') === '1') {
-            this.page(response, `Name ${flow.name}'s Beeline member`, `<p class="who">Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong></p><form class="perm" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><section><strong><label for="joiner_name">Name</label></strong><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60" style="width:100%;font:16px SG;padding:8px;border:1px solid #E2D9CB;border-radius:8px;background:#fff"></section><section><strong><label for="joiner_handle">Handle</label></strong><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40" style="width:100%;font:16px SG;padding:8px;border:1px solid #E2D9CB;border-radius:8px;background:#fff"><p>Tag it as @${escape(handle)} in a Room.</p></section><button name="decision" value="save">Save</button></form><p class="links"><a href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a></p>`);
+            this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
             return true;
           }
-          this.page(response, `Allow ${flow.name} to join your Beeline team?`, `<div class="brand">${flow.logo ? `<img class="mark" src="${escape(flow.logo)}" alt="${escape(flow.name)}">` : `<span class="mark">${escape(flow.name[0] ?? 'C')}</span>`}<span class="dots" aria-hidden="true">···</span><span class="mark bee" aria-label="Beeline">b</span></div><p class="who">Signed in as <strong>${escape(flow.identity_name ?? 'Beeline user')}</strong></p><p class="fine" style="margin-bottom:6px">JOINS AS</p><div style="display:flex;align-items:center;gap:12px;border:1px solid #E2D9CB;border-radius:12px;padding:12px;margin-bottom:8px"><span class="mark" style="width:36px;height:36px;border:1px solid #E2D9CB">${initial}</span><span style="flex:1;min-width:0"><strong>${escape(name)}</strong><br><span class="fine">@${escape(handle)} · ${escape(flow.name)}</span></span><a href="${handleInput}?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="fine">Name and picture come from ${escape(flow.name)}. Change them here or later.</p><div class="perm">${flow.scope.includes(MCP_READ) ? '<section><strong>Read Rooms you add it to</strong><p>It sees only the Rooms where you add it under Members.</p></section>' : ''}${flow.scope.includes(MCP_WRITE) ? `<section><strong>Post as ${escape(name)}</strong><p>Its messages show as ${escape(name)}, never as you. Tagging an agent starts that agent's work, the same as your other agents.</p></section>` : ''}</div><p class="fine">Room text ${escape(name)} reads goes to ${escape(flow.name)} and its AI providers under their own privacy terms. Remove it any time in Beeline, under Settings → Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><button name="decision" value="allow">Allow</button><button name="decision" value="deny">Cancel</button></form><p class="links"><a href="https://usebeeline.app/privacy/">Privacy</a> · <a href="mailto:hello@usebeeline.app">Support</a></p>`, flow.redirect_uri);
+          const plate = flow.logo ? `<img class="plate" src="${escape(flow.logo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
+          const publisher = PUBLISHERS[flow.name.toLowerCase()];
+          const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms">${flow.scope.includes(MCP_READ) ? '<div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div>' : ''}${flow.scope.includes(MCP_WRITE) ? `<div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div>` : ''}</div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`, flow.redirect_uri);
         }
         return true;
       }
@@ -302,7 +345,7 @@ export class RoomsMcpOAuth {
             await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name });
             const member = await mcpMemberId(db, flow.client_id, flow.identity_id);
             if (member && (flow.joiner_name || flow.joiner_handle))
-              await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined });
+              await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined }, false);
             const code = opaque();
             await db.query(`INSERT INTO rooms_mcp_codes(hash,client_id,identity_id,redirect_uri,challenge,scope,expires_at)
               VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute')`, [tokenHash(code), flow.client_id, flow.identity_id, flow.redirect_uri, flow.challenge, flow.scope]);

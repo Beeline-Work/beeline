@@ -2,7 +2,7 @@ import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { recordMcpMemberWebhook } from './rooms-mcp-members.js';
+import { recordMcpMention, recordMcpMemberWebhook } from './rooms-mcp-members.js';
 import { CORNER_CHECKS_BLOCKED_AFTER, cornerReportWaiting } from './corner-state.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
@@ -1127,7 +1127,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   for (const target of targets) {
     const agent = (
       await db.query<{ owner_id: string; access_policy: unknown; mcp_callback_url: string | null; mcp_member: boolean }>(
-        `SELECT a.owner_id,a.access_policy,client.callback_url mcp_callback_url,
+        `SELECT a.owner_id,a.access_policy,COALESCE(member.callback_url,client.callback_url) mcp_callback_url,
      member.member_id IS NOT NULL mcp_member FROM agents a
    LEFT JOIN rooms_mcp_members member ON member.member_id=a.agent_id
    LEFT JOIN rooms_mcp_clients client ON client.id=member.client_id
@@ -1146,6 +1146,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     )
       continue;
     if (agent.mcp_member) {
+      await recordMcpMention(db, target, source.room_id, sourceId);
       if (agent.mcp_callback_url)
         await recordMcpMemberWebhook(db, target, agent.mcp_callback_url, source.room_id, sourceId, source.text);
       continue;
@@ -1237,9 +1238,12 @@ export async function routeAgentResult(
     if (mention.mcpMember) {
       if (parent && nextAgentDepth(parent.agent_depth) === undefined) {
         notWoken.push({ handle: mention.handle, reason: 'agent tag chain depth limit reached' });
-      } else if (mention.mcpCallbackUrl) {
-        await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
-        woken.push(mention.handle);
+      } else {
+        await recordMcpMention(db, mention.id, roomId, sourceId);
+        if (mention.mcpCallbackUrl) {
+          await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
+          woken.push(mention.handle);
+        }
       }
       continue;
     }

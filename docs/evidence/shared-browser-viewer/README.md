@@ -47,4 +47,22 @@ machine exits before boot, so a native WebView run was not possible.
   returns the selected text. Agent-owned Chromium shares now copy: the viewer
   asks the agent's tab for its selection and writes it to the clipboard.
 
+## Paste with no text on the viewer's clipboard
+
+Review found that the first version of this fix still sent Ctrl+V to the
+remote page when the viewer's clipboard had no text, so the remote page pasted
+the agent machine's clipboard.
+
+- Reproduction SB-PASTE-2: on the live Squire share, the agent machine's
+  clipboard holds `REMOTE-CLIP-SENTINEL` (copied from a field in the remote
+  page). Click the remote text area, Ctrl+V with an empty viewer clipboard,
+  then Ctrl+V with only an image on it
+  (`SCENARIO=paste-without-text npm run repro:shared-browser`).
+  **Wrong (first version):** the text area read
+  `REMOTE-CLIP-SENTINELREMOTE-CLIP-SENTINEL` (`before-paste-without-text.png`).
+- After: the same steps leave the text area empty
+  (`after-paste-without-text.png`). With `PASTE-4412` on the viewer's
+  clipboard, Ctrl+V puts exactly `PASTE-4412` there
+  (`after-paste-with-text.png`).
+
 Screenshots: `before-*.png` and `after-*.png` in this folder.

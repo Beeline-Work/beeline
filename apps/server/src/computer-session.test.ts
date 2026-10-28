@@ -1379,10 +1379,27 @@ describe('computer session handoff', () => {
       expect(zoomedOut.left).toBeCloseTo((zoomedOut.view - zoomedOut.width) / 2, 0);
       expect(forwarded.filter((message) => message.type === 'wheel')).toHaveLength(0);
       // Ctrl+V pastes this device's clipboard as text, never the remote's.
-      await evaluate(`navigator.clipboard.writeText('from the viewer clipboard')`);
       await mouse('mousePressed', 450, 300); await mouse('mouseReleased', 450, 300);
-      await command('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2, commands: ['paste'] });
-      await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+      const pasteShortcut = async () => {
+        await command('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2, commands: ['paste'] });
+        await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+      };
+      // Reproduction SB-PASTE-2: with no text on this device's clipboard
+      // (empty, or only an image) the shortcut sends nothing, so the remote
+      // page cannot paste the remote machine's clipboard.
+      await evaluate(`window.pastes = 0; document.addEventListener('paste', () => window.pastes++, true)`);
+      await evaluate(`navigator.clipboard.writeText('')`);
+      await pasteShortcut();
+      await evaluate(`(async () => { const image = new OffscreenCanvas(2, 2); image.getContext('2d').fillRect(0, 0, 2, 2);
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': await image.convertToBlob({ type: 'image/png' }) })]); })()`);
+      expect(await evaluate<string>(`navigator.clipboard.read().then((items) => items.flatMap((item) => item.types).join())`)).toBe('image/png');
+      await pasteShortcut();
+      await until(async () => await evaluate<number>('window.pastes') === 2 ? true : undefined);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(forwarded.filter((message) => message.type === 'key' || message.type === 'text')).toEqual([]);
+      expect(await evaluate<string>('document.activeElement.id')).toBe('canvas');
+      await evaluate(`navigator.clipboard.writeText('from the viewer clipboard')`);
+      await pasteShortcut();
       await until(async () => forwarded.some((message) => message.type === 'text') ? true : undefined);
       expect(forwarded.filter((message) => message.type === 'text')).toEqual([{ type: 'text', text: 'from the viewer clipboard' }]);
       expect(forwarded.some((message) => message.type === 'key' && message.key === 'v')).toBe(false);

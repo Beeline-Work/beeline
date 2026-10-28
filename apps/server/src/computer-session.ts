@@ -508,17 +508,16 @@ export async function serveComputerSession(
       // Paste the viewer's own clipboard as text. Squire forwards Ctrl/Cmd+V
       // as a key, which pastes the remote machine's clipboard instead. A
       // focused canvas is not editable, so the shortcut moves focus to a
-      // hidden field and the browser pastes there.
+      // hidden field and the browser pastes there. The shortcut never
+      // reaches the remote page, even when this clipboard has no text, so
+      // the remote machine's clipboard is never pasted.
       const beelinePaste=document.createElement('textarea');
       beelinePaste.setAttribute('aria-hidden','true');beelinePaste.tabIndex=-1;
       beelinePaste.style.cssText='position:fixed;left:-1000px;top:0;width:1px;height:1px;opacity:0';document.body.append(beelinePaste);
-      let beelinePasteKey={ctrl:false,meta:false};
       addEventListener('keydown',event=>{if(!(event.ctrlKey||event.metaKey)||event.altKey||event.key.toLowerCase()!=='v'||document.activeElement!==beelineCanvas)return;
-        event.stopImmediatePropagation();beelinePasteKey={ctrl:event.ctrlKey,meta:event.metaKey};beelinePaste.value='';beelinePaste.focus();},true);
+        event.stopImmediatePropagation();beelinePaste.value='';beelinePaste.focus();},true);
       beelinePaste.addEventListener('paste',event=>{event.preventDefault();event.stopImmediatePropagation();
-        const text=event.clipboardData?.getData('text/plain');beelineCanvas.focus();
-        // With nothing to paste here, let the remote page paste its own clipboard.
-        if(text)sendText(text);else send({type:'key',key:'v',...beelinePasteKey});});
+        const text=event.clipboardData?.getData('text/plain');beelineCanvas.focus();if(text)sendText(text);});
       beelinePaste.addEventListener('keyup',()=>beelineCanvas.focus());
       // Phones have no paste shortcut: this button reads the clipboard after a tap.
       const beelinePasteButton=document.createElement('button');beelinePasteButton.id='beeline-paste';beelinePasteButton.type='button';

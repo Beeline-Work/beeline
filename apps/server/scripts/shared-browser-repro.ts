@@ -5,6 +5,9 @@
  *
  *   SQUIRE_SHARE_URL=https://….trycloudflare.com/s/<token>/ OUT=/tmp/out \
  *     npm run repro:shared-browser --prefix apps/server
+ *
+ * SCENARIO=desktop|phone|paste-without-text runs one part (default: desktop
+ * and phone).
  */
 import { createServer } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -181,6 +184,31 @@ async function desktop(browser: Awaited<ReturnType<typeof launch>>) {
   return results;
 }
 
+// Ctrl+V with no text on this device's clipboard (empty, then an image only)
+// must leave the remote field alone, never paste the remote clipboard.
+async function pasteWithoutText(browser: Awaited<ReturnType<typeof launch>>) {
+  await browser.open({ width: 900, height: 700, mobile: false });
+  const box = await browser.frameEval<Box>(canvasBox);
+  const x = box.left + 300 * box.width / box.remoteWidth, y = box.top + 150 * box.height / box.remoteHeight;
+  await browser.command('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await browser.command('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  await sleep(800);
+  const paste = async () => {
+    await browser.command('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2, commands: ['paste'] });
+    await browser.command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86, modifiers: 2 });
+    await sleep(2_500);
+  };
+  await browser.topEval(`navigator.clipboard.writeText('')`);
+  await paste();
+  await browser.shot('empty-1-after-empty-paste');
+  const imageOnly = await browser.topEval<string>(`(async () => { const image = new OffscreenCanvas(2, 2); image.getContext('2d').fillRect(0, 0, 2, 2);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': await image.convertToBlob({ type: 'image/png' }) })]);
+    return (await navigator.clipboard.read()).flatMap((item) => item.types).join(); })()`);
+  await paste();
+  await browser.shot('empty-2-after-image-paste');
+  return { localClipboardTypes: imageOnly };
+}
+
 async function phone(browser: Awaited<ReturnType<typeof launch>>) {
   const results: Record<string, unknown> = {};
   await browser.open({ width: 390, height: 800, mobile: true });
@@ -230,8 +258,11 @@ const browser = await launch(served.hostUrl);
 try {
   const scenario = process.env.SCENARIO ?? 'both';
   const report: Record<string, unknown> = {};
-  if (scenario !== 'phone') report.desktop = await desktop(browser);
-  if (scenario !== 'desktop') report.phone = await phone(browser);
+  if (scenario === 'paste-without-text') report.pasteWithoutText = await pasteWithoutText(browser);
+  else {
+    if (scenario !== 'phone') report.desktop = await desktop(browser);
+    if (scenario !== 'desktop') report.phone = await phone(browser);
+  }
   console.log(JSON.stringify(report, null, 2));
   await writeFile(join(out, 'report.json'), JSON.stringify(report, null, 2));
 } finally {

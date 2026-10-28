@@ -1,5 +1,6 @@
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { starterHello, consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
+import { postRoomChoice } from './room-choice.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
@@ -267,7 +268,7 @@ describe('free starter agents', () => {
     const commands = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM agent_commands`)).rows;
     expect(commands).toHaveLength(1);
     const agent = commands[0]!.agent_id;
-    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, {}))).rejects.toThrow('tap Post');
     const objects = new ObjectService(db, new MemoryObjectStorage().asStorage(), 'https://server.test');
     const clip = await objects.uploadArtifact(OWNER, Buffer.from('clip bytes'), 'video/mp4', 'clip.mp4');
     const frame = await objects.uploadArtifact(OWNER, Buffer.from('frame bytes'), 'image/jpeg', 'frame.jpg');
@@ -275,15 +276,24 @@ describe('free starter agents', () => {
       ['f'.repeat(64), workspace.roomId, OWNER, JSON.stringify([clip,frame].map(file => ({url:file.url,name:file.title,mimeType:file.mimeType,size:file.size})))]);
     await expect(db.transaction(tx => postStarterVideoPreview(tx, objects, { roomId: workspace.roomId!, agentId: agent,
       videoObjectId: clip.objectId, frameObjectId: clip.objectId, title: 'Picnic', description: 'A picnic.', visibility: 'unlisted' }))).rejects.toThrow('video clip and an image frame');
+    const unrelated = await postRoomChoice(db, { roomId: workspace.roomId!, agentId: agent, mode: 'question',
+      prompt: 'Post a draft message to this Room?', options: [{ label: 'Post', consequence: 'Post' }, { label: 'Cancel', consequence: 'Cancel' }] });
+    await phone.execute('answerChoice', { choiceId: unrelated.choiceId, optionId: 'A' }, OWNER);
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, {}))).rejects.toThrow('tap Post');
+    const args = { title: 'Picnic', description: 'A picnic.', privacyStatus: 'unlisted', videoFile: { beelineObjectId: clip.objectId } };
     const preview = await db.transaction(tx => postStarterVideoPreview(tx, objects, { roomId: workspace.roomId!, agentId: agent,
       videoObjectId: clip.objectId, frameObjectId: frame.objectId, title: 'Picnic', description: 'A picnic.', visibility: 'unlisted' }));
     const previewCard = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.id === preview.messageId)!.choice!;
     expect(previewCard.videoPreview).toMatchObject({frameUrl:frame.url,title:'Picnic',visibility:'unlisted',videoObjectId:clip.objectId});
-    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, args))).rejects.toThrow('tap Post');
     await phone.execute('answerChoice', { choiceId: preview.choiceId, optionId: 'A' }, OWNER);
     expect((await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.id === preview.messageId)!.choice!.videoPreview?.frameUrl).toBe(frame.url);
-    await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent));
-    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
+    for (const changed of [{ title: 'Changed' }, { description: 'Changed' }, { privacyStatus: 'public' },
+      { videoFile: { beelineObjectId: frame.objectId } }, { videoFile: 'https://other.test/clip.mp4' }, { unexpected: true }]) {
+      await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, { ...args, ...changed }))).rejects.toThrow('match the approved video preview');
+    }
+    await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, args));
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, args))).rejects.toThrow('tap Post');
   });
 
   it('routes an untagged first task to Beebee with the starter pair present', async () => {

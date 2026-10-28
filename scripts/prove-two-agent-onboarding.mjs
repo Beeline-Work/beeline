@@ -55,7 +55,7 @@ try {
   };
   const youtube = await rerun();
   await phone.execute('answerChoice', { choiceId: youtube.choiceId, optionId: 'B' }, owner);
-  await assert.rejects(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee)), /tap Post/);
+  await assert.rejects(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee, {})), /tap Post/);
   const objects = new ObjectService(db, new MemoryObjectStorage().asStorage(), 'http://127.0.0.1:8127');
   const clipBytes = await readFile('docs/evidence/starter-onboarding/test-clip.mp4');
   const frameBytes = await readFile('docs/evidence/starter-onboarding/test-frame.jpg');
@@ -69,9 +69,10 @@ try {
   await mkdir(`${output}/v1/media`, {recursive:true});
   await writeFile(`${output}/v1/media/${frame.objectId}`,frameBytes);
   await snapshot('youtube-preview');
+  const uploadArgs = { title: 'Beeline onboarding upload test', description: 'A short clip to verify the upload flow.', privacyStatus: 'unlisted', videoFile: { beelineObjectId: clip.objectId } };
   await phone.execute('answerChoice', { choiceId: preview.choiceId, optionId: 'A' }, owner);
-  await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee));
-  await assert.rejects(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee)), /tap Post/);
+  await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee, uploadArgs));
+  await assert.rejects(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee, uploadArgs)), /tap Post/);
   const other = await rerun();
   const before = (await db.query(`SELECT 1 FROM agent_commands`)).rowCount;
   await phone.execute('answerChoice', { choiceId: other.choiceId, optionId: 'C' }, owner);

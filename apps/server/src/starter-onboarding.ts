@@ -49,20 +49,29 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
 }
 
 /** Only the starter YouTube job adds this preview-tap requirement to the existing app boundary. */
-export async function consumeStarterVideoPost(database: SqlDatabase, roomId: string, agentId: string): Promise<void> {
+export async function consumeStarterVideoPost(database: SqlDatabase, roomId: string, agentId: string, args: Record<string, unknown>): Promise<void> {
   const welcome = (await database.query<{ selected: string | null; created_at: Date }>(
     `SELECT m.card->>'selectedOptionId' selected,m.created_at FROM messages m
      WHERE m.room_id=$1 AND m.author_id=$2 AND m.card->>'starterOnboarding'='welcome'
      ORDER BY m.created_at DESC,m.id DESC LIMIT 1`, [roomId, agentId])).rows[0];
   if (welcome?.selected !== 'B') return;
-  const preview = (await database.query<{ id: string; card: { status?: string; selectedOptionId?: string; options?: { optionId: string; label: string }[]; youtubeUploadUsed?: boolean } }>(
+  const preview = (await database.query<{ id: string; card: { status?: string; selectedOptionId?: string; options?: { optionId: string; label: string }[]; youtubeUploadUsed?: boolean; videoPreview?: { videoObjectId: string; title: string; description: string; visibility: string } } }>(
     `SELECT m.id,m.card FROM messages m JOIN room_choices c ON c.message_id=m.id
-     WHERE m.room_id=$1 AND m.author_id=$2 AND m.created_at>$3 AND m.card->>'starterOnboarding' IS NULL
+     WHERE m.room_id=$1 AND m.author_id=$2 AND m.created_at>$3 AND m.card->>'starterOnboarding' IS NULL AND m.card->'videoPreview' IS NOT NULL
      ORDER BY m.created_at DESC,m.id DESC LIMIT 1 FOR UPDATE OF m`, [roomId, agentId, welcome.created_at])).rows[0];
   const card = preview?.card;
-  if (!preview || card?.status !== 'answered' || card.youtubeUploadUsed ||
+  if (!preview || !card?.videoPreview || card?.status !== 'answered' || card.youtubeUploadUsed ||
     card.options?.find(option => option.optionId === card.selectedOptionId)?.label !== 'Post')
     throw new Error('Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.');
+  const approved = card.videoPreview;
+  const file = args.videoFile;
+  if (args.title !== approved.title || args.description !== approved.description ||
+    args.privacyStatus !== approved.visibility || !file || typeof file !== 'object' ||
+    Array.isArray(file) || Object.keys(file).length !== 1 ||
+    (file as Record<string, unknown>).beelineObjectId !== approved.videoObjectId ||
+    Object.keys(args).some(key => !['title', 'description', 'privacyStatus', 'videoFile', 'categoryId'].includes(key)) ||
+    (args.categoryId !== undefined && args.categoryId !== '22'))
+    throw new Error('Upload arguments must match the approved video preview exactly. Show a new preview for any changes.');
   await database.query(`UPDATE messages SET card=card || '{"youtubeUploadUsed":true}'::jsonb WHERE id=$1`, [preview.id]);
 }
 

@@ -7944,7 +7944,7 @@ export class DaemonService {
       JSON.stringify(args).length > 65_536)
       throw new Error('App tool arguments are invalid');
     if (input.tool === 'YOUTUBE_MULTIPART_UPLOAD_VIDEO')
-      await this.database.transaction(db => consumeStarterVideoPost(db, input.roomId, agentId));
+      await this.database.transaction(db => consumeStarterVideoPost(db, input.roomId, agentId, args));
     const data = await this.composio.execute({ accountId: row.composio_account_id,
       userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
       tool: input.tool, arguments: args, files });

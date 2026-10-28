@@ -56,10 +56,10 @@ try {
   await mkdir(`/tmp/beeline-two-agent-proof/v1/media`,{recursive:true});
   await writeFile(`/tmp/beeline-two-agent-proof/v1/media/${frame.objectId}`,frameBytes);
   await writeFile(`/tmp/beeline-two-agent-proof/youtube-preview.json`,JSON.stringify(snapshot,null,2));
-  await assert.rejects(db.transaction(tx=>consumeStarterVideoPost(tx,workspace.roomId,beebee)),/tap Post/);
-  await phone.execute('answerChoice',{choiceId:preview.choiceId,optionId:'A'},owner);
-  await db.transaction(tx=>consumeStarterVideoPost(tx,workspace.roomId,beebee));
   const args={title,description,categoryId:'22',privacyStatus:'unlisted',videoFile:{beelineObjectId:clip.objectId}};
+  await assert.rejects(db.transaction(tx=>consumeStarterVideoPost(tx,workspace.roomId,beebee,args)),/tap Post/);
+  await phone.execute('answerChoice',{choiceId:preview.choiceId,optionId:'A'},owner);
+  await db.transaction(tx=>consumeStarterVideoPost(tx,workspace.roomId,beebee,args));
   const files=await resolveAppFiles(args,id=>objects.readRoomObject(workspace.roomId,beebee,id));
   const provider=new ComposioApps('sealed-controller-injects-key',transport);
   const uploaded=await provider.execute({accountId:'ca_7GLSGlRRwrWU',userId:owner,toolkit:'youtube',tool:'YOUTUBE_MULTIPART_UPLOAD_VIDEO',arguments:args,files});

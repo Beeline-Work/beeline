@@ -73,6 +73,7 @@
     "prove:rooms-mcp-consent-browser": "node scripts/prove-rooms-mcp-consent-browser.mjs",
     "prove:company-mcp-discovery": "node --import tsx scripts/prove-company-mcp-discovery.mjs",
     "prove:connect-flow": "npm run build && node --import tsx scripts/prove-connect-flow.mjs",
+    "prove:youtube-publisher": "npm run build && node --import tsx scripts/prove-youtube-publisher.mjs",
     "prove:tailscale-connector": "node --import tsx scripts/prove-tailscale-connector.ts",
     "prove:connector-adapters": "node --import tsx scripts/prove-connector-adapters.ts",
     "prove:voice-speed": "node --import tsx scripts/prove-voice-speed.ts",

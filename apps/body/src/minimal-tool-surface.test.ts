@@ -236,6 +236,52 @@ describe('minimal agent surface', () => {
     });
   });
 
+  it('revise-schema keeps the complete object visible without discriminator unions', async () => {
+    const tool = agentToolsFor(true, false, true).find(tool => tool.name === 'revise_corner')!;
+    expect(JSON.stringify(tool.inputSchema)).not.toContain('"anyOf":[{"properties":{"action"');
+    expect(tool.description).toContain('top-level');
+    expect(tool.description).toContain('Reproduction');
+    const input = { action: 'brief', address: 'target', expectedRevision: 1,
+      change: 'Retain proof', brief: { spec: 'Fix upload.\nReproduction upload-1:\nStand-in: upload fixture.',
+        approval: { sourceMessageId: 'synthetic-message' },
+        attachments: [{ objectId: '11111111-1111-4111-8111-111111111111', purpose: 'Fixture', required: true }] } };
+    expect(Check(tool.inputSchema, input)).toBe(true);
+    await callAgentTool('revise_corner', input, 'revise-schema');
+    expect(calls.at(-1)?.input.brief).toMatchObject({ ...input.brief, change: input.change });
+    for (const brief of [{}, { spec: 42 }, { spec: 'Fix', change: 'misplaced' },
+      { spec: 'Fix', approval: { sourceMessageId: 'source', text: 'unsupported' } },
+      { spec: 'Fix', attachments: [{ purpose: 'Fixture', required: true }] }]) {
+      expect(Check(tool.inputSchema, { ...input, brief })).toBe(false);
+      await expect(callAgentTool('revise_corner', { ...input, brief }, 'nested')).rejects.toThrow();
+    }
+    for (const field of ['address', 'brief', 'expectedRevision', 'change']) {
+      const invalid = { ...input } as Record<string, unknown>;
+      delete invalid[field];
+      expect(Check(tool.inputSchema, invalid)).toBe(false);
+      await expect(callAgentTool('revise_corner', invalid, 'missing')).rejects.toThrow();
+    }
+  });
+
+  it('search-limit states numeric bounds in text as well as schema constraints', async () => {
+    const tool = agentToolsFor(true, false).find(tool => tool.name === 'search')!;
+    const limit = (tool.inputSchema.properties as Record<string, { minimum: number; maximum: number; description: string }>).limit!;
+    expect(limit.description).toContain(`${limit.minimum}–${limit.maximum}`);
+    const query = (tool.inputSchema.properties as Record<string, { maxLength: number; description: string }>).query!;
+    expect(query.description).toContain(`${query.maxLength * 4} UTF-8 bytes`);
+    for (const scope of ['history', 'memory']) {
+      for (const value of [limit.minimum, limit.maximum]) {
+        const input = { scope, query: '🙂'.repeat(500), limit: value };
+        expect(Check(tool.inputSchema, input)).toBe(true);
+        await callAgentTool('search', input, 'search-limit');
+      }
+      for (const value of [limit.minimum - 1, limit.maximum + 1]) {
+        const input = { scope, query: 'term', limit: value };
+        expect(Check(tool.inputSchema, input)).toBe(false);
+        await expect(callAgentTool('search', input, 'search-limit')).rejects.toThrow(/limit/);
+      }
+    }
+  });
+
   it('R-REVISE names an invalid nested field before side effects', async () => {
     await expect(callAgentTool('revise_corner', { action: 'brief', address: 'target',
       expectedRevision: 1, change: 'Correction', brief: { spec: 42 } }, 'invalid'))
@@ -277,6 +323,18 @@ describe('minimal agent surface', () => {
     await expect(callAgentTool('read', { facet: 'messages', cursor: '123' }, 'bad')).rejects.toThrow('pass the returned next object unchanged');
     expect(calls).toEqual([]);
   });
+  it('read-limit advertises the same bounds its validator accepts', async () => {
+    const tool = agentToolsFor(true, false).find(tool => tool.name === 'read')!;
+    const limit = (tool.inputSchema.properties as Record<string, { minimum: number; maximum: number; description: string }>).limit!;
+    expect(limit.description).toContain(`${limit.minimum}–${limit.maximum}`);
+    for (const value of [limit.minimum - 1, limit.maximum + 1]) {
+      const input = { facet: 'messages', limit: value };
+      expect(Check(tool.inputSchema, input)).toBe(false);
+      await expect(callAgentTool('read', input, 'read-limit')).rejects.toThrow();
+    }
+    expect(calls).toEqual([]);
+  });
+
   it('routes searches and sourced memory writes without changing privacy/version/used inputs', async () => {
     await callAgentTool('search', { scope: 'history', query: 'prior decision', limit: 3 }, 'h');
     await callAgentTool('search', { scope: 'memory', query: 'preference' }, 'm');

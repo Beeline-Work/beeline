@@ -7,12 +7,12 @@ const sources = resolve(__dirname, '..');
 
 /**
  * Characters that must never stand in for a mark on a label, button, action or
- * icon: arrows, crosses, checks, pluses, stars, play/stop, boxes and dots.
+ * icon: arrows, crosses, checks, pluses, stars, gears, play/stop, boxes and dots.
  * Labels carry words; marks are drawn (`CloseGlyph`, `ChevronGlyph`,
  * `ExternalGlyph`, `Button.destination`). Same set as the label audit.
  */
 const GLYPH =
-  /[↗↘↙↖→←↑↓⟶⟵⇢⇠›‹»«▸▹▾▿▴▵▶▷◀◁►◄✕✖×✗✘✓✔☐☑⨯⌄⌃⌵✚＋□■▪▫⊘●○◉◎⬤★☆⚠⚑✎✏🔗↻⟳⤴⤵⇗➜➔➤]/u;
+  /[↗↘↙↖→←↑↓⟶⟵⇢⇠›‹»«▸▹▾▿▴▵▶▷◀◁►◄✕✖×✗✘✓✔☐☑⨯⌄⌃⌵✚＋□■▪▫⊘●○◉◎⬤★☆⚙⚠⚑✎✏🔗↻⟳⤴⤵⇗➜➔➤]/u;
 
 /**
  * Status marks inside text or prose, not labels on controls (the audit's
@@ -116,6 +116,8 @@ describe('label glyph guard', () => {
       `<Button label="Open ↗" />`,
       `const actions = [{ label: 'Continue ›' }];`,
       `<Button icon={<Text>✕</Text>} />`,
+      `<Pressable accessibilityLabel="Settings"><Text>⚙</Text></Pressable>`,
+      `<Text style={styles.icon}>⚙️</Text>`,
       `<View accessibilityValue={{ text: '×' }} />`,
     ];
     for (const text of sample) expect(glyphLiterals('Sample.tsx', text)).toHaveLength(1);

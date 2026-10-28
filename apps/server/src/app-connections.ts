@@ -358,9 +358,9 @@ type Derived = {
 /** A composio row that is not actually connected — a fresh sign-in is the remedy. */
 const APP_SIGN_IN_NEEDS_ATTENTION = 'App sign-in needs attention';
 const APP_SIGN_IN_TIMEOUT_MS = 10 * 60_000;
-const APP_SIGN_IN_TIMED_OUT = 'App sign-in timed out. Ask to sign in again.';
+const APP_SIGN_IN_TIMED_OUT = 'App sign-in timed out. Open the connection card and sign in again.';
 
-async function failAppSignInCards(database: SqlDatabase, appId: string, reason: string): Promise<void> {
+export async function failAppSignInCards(database: SqlDatabase, appId: string, reason: string): Promise<void> {
   await database.query(
     `UPDATE messages SET card=jsonb_set(jsonb_set(card,'{status}','"failed"'::jsonb),
        '{errorMessage}',to_jsonb($2::text))

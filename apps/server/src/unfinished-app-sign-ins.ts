@@ -1,3 +1,4 @@
+import { failAppSignInCards } from './app-connections.js';
 import type { SqlDatabase } from './database.js';
 
 /** Only abandoned managed sign-ins; successful routes and vault keys are untouched. */
@@ -18,10 +19,8 @@ export async function cleanupUnfinishedAppSignIns(database: SqlDatabase, apply =
        ORDER BY a.created_at LIMIT 1000 FOR UPDATE OF a SKIP LOCKED`,
     )).rows;
     for (const row of rows) {
-      await db.query(`UPDATE messages SET card=jsonb_set(jsonb_set(card,'{status}','"failed"'::jsonb),
-        '{errorMessage}',to_jsonb($2::text)) WHERE card_type='app-sign-in'
-        AND card->>'appId'=$1 AND card->>'status'='pending'`,
-      [row.id, row.sign_in_error ?? 'App sign-in timed out. Ask to sign in again.']);
+      await failAppSignInCards(db, row.id,
+        row.sign_in_error ?? 'App sign-in timed out. Open the connection card and sign in again.');
       await db.query(`DELETE FROM workspace_apps WHERE id=$1 AND authorised_at IS NULL`, [row.id]);
     }
     return rows.length;

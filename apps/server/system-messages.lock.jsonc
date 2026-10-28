@@ -20,6 +20,7 @@
 // Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
 // Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
+// Unfinished app sign-in cleanup fails the pending chat card; required by the owner-approved brief revision 2 (lunchboxfortwo, message b1dd35c16c366217c06cc07a43f4cd52bfe9abc9530d91be2eef3286ec8df564). Existing wording only, this cleanupUnfinishedAppSignIns wrapper only.
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
 // Merge-refusal notification ID change approved by lunchboxfortwo in Room message 1c880c7a; wording unchanged.
@@ -12805,6 +12806,19 @@
       "FirstLiteralToken:3",
       "binary:===",
       "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/unfinished-app-sign-ins.ts:cleanupUnfinishedAppSignIns:wrapper:4488c38b5bd3ace6",
+    "file": "apps/server/src/unfinished-app-sign-ins.ts",
+    "kind": "wrapper",
+    "template": "failAppSignInCards(db, row.id, row.sign_in_error ?? 'App sign-in timed out. Open the connection card and sign in again.')",
+    "literals": [
+      "\"App sign-in timed out. Open the connection card and sign in again.\"",
+      ".sign_in_error",
+      "binary:??",
       "end:expression"
     ],
     "occurrences": 1

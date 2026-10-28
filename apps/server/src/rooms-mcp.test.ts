@@ -12,7 +12,7 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
-import { claimAgentCommand, routeHumanMessage } from './agent-command.js';
+import { claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
@@ -234,7 +234,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
   });
   it('keeps the wake chain across member replies so a tag loop still stops at the depth limit', async () => {
-    const { client, member } = await connected();
+    const { client, grant, member } = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/loop' WHERE id=$1`, [grant.clientId]);
     const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
     const latestMemberCommand = async () => (await db.query<{ agent_depth: number }>(
       'SELECT agent_depth FROM agent_commands WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1',
@@ -242,19 +243,20 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const agentCommand = async (sourceMessageId: string) => (await db.query<{ id: string; turn_request_id: string; agent_depth: number }>(
       'SELECT id,turn_request_id,agent_depth FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3',
       [ROOM, AGENT, sourceMessageId])).rows[0]!;
-    // A person's tag opens the member's first turn at depth zero.
+    // A person's tag wakes the webhook without a helper turn.
     await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} begin the handoff` }, USER);
-    expect((await latestMemberCommand())!.agent_depth).toBe(0);
+    expect(await latestMemberCommand()).toBeUndefined();
     // The member replies through MCP and tags the demo agent: depth one, not a reset.
     const first = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step one' } });
     const firstId = JSON.parse((first.content as { text: string }[])[0]!.text).data.messageId as string;
     const firstCommand = await agentCommand(firstId);
     expect(firstCommand.agent_depth).toBe(1);
-    // The demo agent answers, tagging the member: depth two.
+    // The demo agent answers, tagging the external member at depth two.
     await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: firstCommand.id, generationId: 'loop-1' }, AGENT);
     await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, agentId: AGENT, requestId: firstCommand.turn_request_id, generationId: 'loop-1', status: 'working' }, AGENT);
     await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: firstCommand.turn_request_id, generationId: 'loop-1', text: `@${handle} step one done` }, AGENT);
-    expect((await latestMemberCommand())!.agent_depth).toBe(2);
+    expect(await latestMemberCommand()).toBeUndefined();
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
     // The member replies again: depth three, the last depth the limit allows.
     const second = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
     const secondId = JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId as string;
@@ -266,6 +268,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, agentId: AGENT, requestId: secondCommand.turn_request_id, generationId: 'loop-2', status: 'working' }, AGENT);
     await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: secondCommand.turn_request_id, generationId: 'loop-2', text: `@${handle} step two done` }, AGENT);
     expect(await latestMemberCommand()).toEqual(stopped);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
   });
   it('sets this member’s own profile without changing its registered model label', async () => {
     const { client, member } = await connected();
@@ -285,7 +288,63 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId).toBe(id);
     expect((await db.query('SELECT 1 FROM messages WHERE text=$1', ['idempotent handoff @demo-agent'])).rowCount).toBe(1);
   });
+  it.each(['human tag', 'DM', 'agent tag'])('MCP-WAKE-1: %s wakes only the webhook', async path => {
+    const { client, grant, member } = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/wake' WHERE id=$1`, [grant.clientId]);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    let roomId = ROOM;
+    if (path === 'DM') {
+      roomId = (await phone.execute('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: member }, USER)).id;
+    }
+    const text = path === 'DM' ? 'reply pong please' : `@${handle} reply pong please`;
+    const sent = await phone.execute('sendRoomMessage', { roomId, text }, path === 'agent tag' ? AGENT : USER);
+    if (path === 'agent tag') {
+      const routed = await routeAgentResult(db, undefined, sent.messageId, { roomId, agentId: AGENT });
+      expect(routed.woken).toEqual([handle]);
+      expect(routed.notWoken).toEqual([]);
+      await routeAgentResult(db, undefined, sent.messageId, { roomId, agentId: AGENT });
+    } else await routeHumanMessage(db, sent.messageId);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1', [member])).rowCount).toBe(0);
+    const reply = await client.callTool({ name: 'send_message', arguments: { room: roomId, text: 'pong' } });
+    expect(reply.isError).not.toBe(true);
+    await phone.flushPendingMentionNotices(Date.now() + 120_000);
+    const view = await phone.readRoom(roomId, USER);
+    expect(JSON.stringify(view)).toContain('pong');
+    expect(JSON.stringify(view)).not.toContain('helper is offline');
+    expect(view.pendingAgentCommands?.some(command => command.agentPubkey === member)).toBe(false);
+    expect(view.latestAgentTurns.some(turn => turn.agentPubkey === member && turn.status === 'working')).toBe(false);
+    expect((await db.query('SELECT 1 FROM pending_mention_notices WHERE agent_id=$1', [member])).rowCount).toBe(0);
+  });
+  it.each(['human tag', 'DM', 'agent tag'])('keeps an MCP member without a webhook silent on %s', async path => {
+    const { member } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const roomId = path === 'DM' ? (await phone.execute('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: member }, USER)).id : ROOM;
+    const sent = await phone.execute('sendRoomMessage', { roomId, text: path === 'DM' ? 'hello' : `@${handle} hello` }, path === 'agent tag' ? AGENT : USER);
+    if (path === 'agent tag') expect((await routeAgentResult(db, undefined, sent.messageId, { roomId, agentId: AGENT })).woken).toEqual([]);
+    const own = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} self` }, member);
+    const routed = await routeAgentResult(db, undefined, own.messageId, { roomId: ROOM, agentId: member });
+    expect(routed.woken).toEqual([]);
+    await phone.flushPendingMentionNotices(Date.now() + 120_000);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1', [member])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM pending_mention_notices WHERE source_message_id=$1', [sent.messageId])).rowCount).toBe(0);
+  });
+  it('returns the webhook member in send_message woken without creating its command', async () => {
+    const sender = await connected();
+    const target = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/member' WHERE id=$1`, [target.grant.clientId]);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [target.member])).rows[0]!.handle;
+    const result = await sender.client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `@${handle} hello`, idempotencyKey: 'webhook-wake' } });
+    const data = JSON.parse((result.content as { text: string }[])[0]!.text).data;
+    expect(data.woken).toEqual([handle]);
+    const retry = await sender.client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `@${handle} hello`, idempotencyKey: 'webhook-wake' } });
+    expect(JSON.parse((retry.content as { text: string }[])[0]!.text).data).toEqual(data);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1', [target.member])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [target.member, data.messageId])).rowCount).toBe(1);
+  });
   it('fires one outgoing webhook per (message, member) and never for its own post', async () => {
+    await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
     const { client, grant, member } = await connected();
     await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/firstmate' WHERE id=$1`, [grant.clientId]);
     const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;

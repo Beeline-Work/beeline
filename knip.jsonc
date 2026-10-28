@@ -38,6 +38,8 @@
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/prove-corner-startup.mjs",
+        // Reproduction CONNECTORS-1 invokes the built local PhoneService proof by path.
+        "scripts/prove-connectors-cleanup.mjs",
         // Reproduction IDLE-1 invokes the isolated built-service proof by path.
         "scripts/prove-idle-corner.mjs",
         // Reproduction STALE-CAUSE-1 invokes the isolated HTTP proof by path.
@@ -100,6 +102,8 @@
         "scripts/github-card-proof.tsx",
         // Gradle selects the Rooms connector native proof through entryFile.
         "scripts/rooms-mcp-native-proof.tsx",
+        // Reproduction CONNECTORS-1 selects this native Connectors proof as the Metro entry.
+        "scripts/connectors-cleanup-native-proof.tsx",
         "scripts/github-card-proof-metro.cjs",
         // The card-button runbook invokes the renderer and selects the native Metro entry by path.
         "scripts/render-card-buttons.mjs",

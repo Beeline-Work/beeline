@@ -324,7 +324,7 @@ export function usageSummary(usage?: AgentUsage, now = Date.now() / 1000): strin
         : undefined;
     return `Usage: ${[`${parts.length ? `${parts.join(', ')} on` : 'on'} the shared OpenRouter key`, ...(limit ? [limit] : []), ...(context ? [context] : [])].join(', ')}, ${asOf(usage)}.`;
   }
-  if (usage?.windows.length) {
+  if (usage?.windows.length || usage?.credits) {
     const windows = usage.windows.map((w) => {
       const label = usageWindowLabel(w.rateLimitType, w.label).toLowerCase();
       if (w.status === 'rejected')

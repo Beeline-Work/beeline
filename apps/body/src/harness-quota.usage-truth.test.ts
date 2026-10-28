@@ -23,6 +23,17 @@ describe('R-USAGE-3: a stale quota-axi report keeps its read time and status', (
     expect(usage.read).toEqual({ status: 'stale', at: now, reason: 'fetch failed' });
   });
 
+  it('stamps a stale credit-only Codex read with refreshedAt and keeps its balance', () => {
+    const usage = quotaAxiUsage({
+      providers: [{
+        provider: 'codex', windows: [], credits: { unit: 'credits', remaining: 123 },
+        state: { status: 'stale', stale: true, refreshedAt: threeHoursAgo, error: 'network failed' },
+      }],
+    }, 'codex', now)!;
+    expect(usage).toMatchObject({ updatedAt: now - 3 * 3600, windows: [], credits: { remaining: 123 } });
+    expect(usage.read).toEqual({ status: 'stale', at: now, reason: 'network failed' });
+  });
+
   it('names an expired sign-in and a rate limit with its retry time', () => {
     const expired = quotaAxiUsage({
       providers: [{ ...claude, state: { status: 'stale', stale: true, refreshedAt: threeHoursAgo, reason: 'credentials_expired' } }],

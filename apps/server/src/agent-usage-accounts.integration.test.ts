@@ -221,6 +221,24 @@ describe('R-USAGE-3: a stale fallback is never shown as fresh', () => {
     expect(profile?.read).toMatchObject({ status: 'stale', reason: 'fetch failed' });
     expect(usageSummary(tool)).toMatch(/\(couldn't read: fetch failed\)\.$/);
   });
+
+  it('keeps a stale credit-only Codex balance and its real read time on every view', async () => {
+    const now = Date.now() / 1000;
+    const refreshedAt = new Date((now - 3 * 3600) * 1000).toISOString();
+    const codex = JSON.stringify({ providers: [{
+      provider: 'codex', windows: [], credits: { unit: 'credits', remaining: 123 },
+      account: { accountId: 'acct-1', organization: 'org-1', identityStatus: 'verified' },
+      state: { status: 'stale', stale: true, refreshedAt, error: 'network failed' },
+    }] });
+    await reader(RUBY, new Map(), async () => codex, now).publish('codex', {}, true);
+    const { profile, row, tool } = await views(RUBY);
+    for (const usage of [profile, row, tool]) {
+      expect(usage?.credits).toEqual({ remaining: 123 });
+      expect(usage?.updatedAt).toBeCloseTo(now - 3 * 3600, 0);
+    }
+    expect(profile?.read).toMatchObject({ status: 'stale', reason: 'network failed' });
+    expect(usageSummary(tool)).toMatch(/^Usage: 123 credits left, as of .*\(couldn't read: network failed\)\.$/);
+  });
 });
 
 describe('R-USAGE-4: the updated time is never newer than the oldest number', () => {

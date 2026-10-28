@@ -113,6 +113,10 @@ export async function agentUsage(
 const oldest = (windows: readonly UsageWindow[]) =>
   windows.length ? Math.min(...windows.map((w) => w.updatedAt)) : undefined;
 
+/** When a record's shown numbers were read: its oldest window, or its stamp when it shows only credits. */
+const shownAt = (usage: AgentUsage | undefined) =>
+  usage ? (oldest(usage.windows) ?? (usage.credits ? usage.updatedAt : undefined)) : undefined;
+
 /** Per-window merge for partial reports (Claude's in-turn limits); older reports never replace newer windows. */
 function mergeWindows(previous: AgentUsage | undefined, usage: AgentUsage, receivedAt: number): UsageWindow[] {
   const windows = new Map(previous?.windows.map((w) => [w.rateLimitType, w]));
@@ -133,8 +137,9 @@ function mergeWindows(previous: AgentUsage | undefined, usage: AgentUsage, recei
  */
 function applyAccountRead(previous: AgentUsage | undefined, usage: AgentUsage, receivedAt: number): AgentUsage {
   const windows = usage.windows.map((w) => ({ ...w, updatedAt: Math.min(w.updatedAt, receivedAt) }));
+  const readAt = shownAt({ ...usage, windows, updatedAt: Math.min(usage.updatedAt, receivedAt) });
   const replace = usage.read?.status === 'fresh' ||
-    (windows.length > 0 && oldest(windows)! >= (oldest(previous?.windows ?? []) ?? -Infinity));
+    (readAt !== undefined && readAt >= (shownAt(previous) ?? -Infinity));
   const kept = replace ? { windows, plan: usage.plan, credits: usage.credits }
     : { windows: previous?.windows ?? [], plan: previous?.plan, credits: previous?.credits };
   const read = usage.read ? { ...usage.read, at: Math.min(usage.read.at, receivedAt) } : previous?.read;

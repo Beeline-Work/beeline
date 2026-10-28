@@ -145,7 +145,8 @@ export function quotaAxiUsage(
   if (!windows.size && creditsLeft === undefined && read.status === 'fresh') return;
   const plan = typeof entry.plan === 'string' ? entry.plan.trim().slice(0, 40) : '';
   return {
-    updatedAt: windows.size ? readAt : now,
+    // Numbers carry when the vendor answered; a bare failure is stamped now.
+    updatedAt: windows.size || creditsLeft !== undefined ? readAt : now,
     windows: [...windows.values()],
     ...(plan ? { plan } : {}),
     ...(creditsLeft !== undefined ? { credits: { remaining: creditsLeft } } : {}),

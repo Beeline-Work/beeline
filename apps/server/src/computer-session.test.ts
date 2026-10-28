@@ -1297,7 +1297,9 @@ describe('computer session handoff', () => {
   it.skipIf(!existsSync(chromeBinary))('Reproduction SB-PASTE-1 and SB-ZOOM-1: pastes the viewer clipboard and zooms on trackpad pinch in the Squire bridge', async () => {
     // The input handlers below follow Squire's live viewer page: it forwards
     // Ctrl/Cmd+letter as a key, pastes clipboard text and forwards wheels.
-    const squire = createServer((_request, response) => {
+    // The page answers late, so the test must wait for the viewer canvas.
+    const squire = createServer(async (_request, response) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(`<!doctype html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
         html,body{margin:0;width:100%;height:100%}body{display:flex;flex-direction:column}#screen{flex:1;min-height:0}</style></head><body>
@@ -1354,17 +1356,35 @@ describe('computer session handoff', () => {
         pending.set(id, (message) => message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result ?? {}));
         socket.send(JSON.stringify({ id, method, params }));
       });
-      const evaluate = async <T>(expression: string) =>
-        ((await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture: true })) as { result?: { value?: T } }).result?.value as T;
-      const canvasBox = () => evaluate<{ left: number; width: number; height: number; view: number; viewHeight: number }>(
-        `(() => { const r = document.getElementById('canvas').getBoundingClientRect(), s = document.getElementById('screen');
+      const evaluate = async <T>(expression: string) => {
+        const reply = await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture: true }) as
+          { result?: { value?: T }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
+        if (reply.exceptionDetails) throw new Error(`Page script failed: ${reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text}`);
+        return reply.result?.value as T;
+      };
+      type Box = { left: number; width: number; height: number; view: number; viewHeight: number };
+      // Null until the viewer document has loaded and laid out its canvas.
+      const layoutBox = () => evaluate<Box | null>(
+        `(() => { const c = document.getElementById('canvas'), s = document.getElementById('screen');
+          if (document.readyState !== 'complete' || !c || !s || !c.style.width) return null;
+          const r = c.getBoundingClientRect();
           return { left: r.left, width: r.width, height: r.height, view: s.clientWidth, viewHeight: s.clientHeight }; })()`);
+      const canvasBox = async () => {
+        const box = await layoutBox();
+        if (!box) throw new Error('Viewer canvas is not laid out');
+        return box;
+      };
       const mouse = (type: string, x: number, y: number, extra: Record<string, unknown> = {}) =>
         command('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1, ...extra });
       await command('Emulation.setDeviceMetricsOverride', { width: 900, height: 700, deviceScaleFactor: 1, mobile: false });
       await command('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] }).catch(() => {});
-      await until(async () => { const box = await canvasBox(); return box.height === box.viewHeight ? true : undefined; });
-      const start = await canvasBox();
+      // The document can still be navigating, so a failed read is retried
+      // and reported only if the canvas never appears.
+      let lastError: unknown;
+      const start = await until(async () => {
+        try { const box = await layoutBox(); return box && box.height === box.viewHeight ? box : undefined; }
+        catch (error) { lastError = error; return undefined; }
+      }, 30_000).catch((error: Error) => { throw lastError ? new Error(`${error.message}: ${String(lastError)}`) : error; });
       expect(start.left).toBeCloseTo((start.view - start.width) / 2, 0);
       // Trackpad pinch zooms in and back out to the whole page, centred, and
       // never reaches the remote page as a wheel.

@@ -23,7 +23,7 @@
     <main>
       <div class="mark">Beeline</div>
       <h1>Privacy Policy</h1>
-      <p class="updated">Effective: 26 October 2026 · <a href="/privacy/2026-10-18.html">Previous version</a></p>
+      <p class="updated">Effective: 27 October 2026 · <a href="/privacy/2026-10-26.html">Previous version</a></p>
       <p>Beeline lets people and AI agents work together in shared Workspaces and Rooms, from the phone, desktop and web apps. This policy describes the information Beeline handles, why, and who else receives it. Moon Rice Limited operates Beeline.</p>
 
       <h2>Information we handle</h2>
@@ -81,6 +81,12 @@
         <li><strong>Expo</strong>: app updates. <strong>PostHog</strong>: analytics, where configured.</li>
         <li>Model providers and apps <strong>you</strong> connect receive data under their own terms.</li>
       </ul>
+
+      <h3>Outside AI clients and Beeline Rooms</h3>
+      <p>When you connect Beeline Rooms to an outside AI client, such as Grok Bot or Meta Muse, you sign in to Beeline and approve the permissions shown on the consent screen. Each connection joins as its own member. It sees only the Rooms you add it to under Members. Read access lets that client retrieve Room names, messages, message authors and times, and corner status in those Rooms. Write access lets it post as that member, never as you, including requests that wake agents. Membership and agent-access rules continue to apply.</p>
+      <p>The client and its AI providers process the content you share under their own terms and privacy policies. Only connect clients you trust, and share content you are authorized to share. Beeline does not give those clients your password, sign-in provider credentials, vault keys or connected-app access tokens through this connector.</p>
+      <p>Beeline stores connector authorization credentials as hashes and records the client, account, operation, result and time of each authenticated request for security and support. These audit records do not contain message contents or tokens and are removed after 30 days. Short-lived hashes of server-observed network addresses help limit sign-in abuse and are removed after a day without use. Access tokens expire after an hour and can be refreshed while your connection remains active.</p>
+      <p>You can disconnect a client at any time in Settings → Connectors → AI clients. Disconnecting revokes its access and refresh credentials for your account and removes its member from Rooms; its past messages stay. Removing the client's member from a Room stops its further access to that Room. Deleting your account revokes its connector credentials. Revocation does not delete content that a client already received: contact that provider to manage its copies.</p>
 
       <h2>Google user data</h2>
       <p>You can connect Google services such as YouTube, Gmail, Google Calendar, and Google Drive to Beeline's Workbench so that you, or an AI agent you control, can use them. This section explains how Beeline handles data it receives from Google APIs (“Google user data”).</p>

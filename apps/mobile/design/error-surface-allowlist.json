@@ -419,6 +419,18 @@
     "reason": "kept, already inset: corner dialog owns its content inset."
   },
   {
+    "layoutHash": "584542c48749ca3e1890928666bd03e0b5b7bbeccc497d06c1d0cc2bc4c05bf1",
+    "file": "components/buzz/PersonInviteSheet.tsx",
+    "line": 18,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner inline title={error} />",
+    "ancestors": [
+      "<View style={styles.content}>",
+      "<HullActionSheet title=\"Invite a person\" footer={<HullActionSheetCancel onPress={onClose} />}>"
+    ],
+    "reason": "kept, already inset: clipboard failure belongs to the invite sheet content inset beside the link and Copy action."
+  },
+  {
     "layoutHash": "e121a745bbbe1049f4a4eab1c7c7df300edfbe2a7829710d82c437fb343ab86b",
     "file": "components/buzz/PushLevelSetting.tsx",
     "line": 86,

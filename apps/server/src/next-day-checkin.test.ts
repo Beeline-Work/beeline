@@ -1,0 +1,169 @@
+import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PgliteDatabase } from './test-support.js';
+import { migrate } from './database.js';
+import { NextDayCheckin, checkinDueAt, renderCheckinEmail, type CheckinEmail } from './next-day-checkin.js';
+import { PhoneService } from './phone-service.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { claimAgentCommand, readAgentCommands } from './agent-command.js';
+
+const W='11111111-1111-4111-8111-111111111111', R='22222222-2222-4222-8222-222222222222';
+const U='a'.repeat(64), A='b'.repeat(64), M='c'.repeat(64);
+let db: PgliteDatabase, phone: PhoneService, clock: Date;
+let emails: CheckinEmail[];
+const sender = async (mail: CheckinEmail) => { emails.push(mail); return 'sent'; };
+const runner = () => new NextDayCheckin(db,'https://web.usebeeline.app',sender,()=>clock);
+async function first() {
+  await phone.execute('sendRoomMessage',{roomId:R,messageId:M,text:'Help me plan a pottery class'},U);
+  // Move the committed first message into yesterday; only the clock is advanced for the worker.
+  await db.query(`UPDATE messages SET created_at=$2 WHERE id=$1`,[M,new Date('2026-10-26T20:00:00Z')]);
+  await db.query(`UPDATE next_day_checkin_candidates SET first_at=$2,due_at=$3 WHERE identity_id=$1`,
+    [U,new Date('2026-10-26T20:00:00Z'),checkinDueAt(new Date('2026-10-26T20:00:00Z'))]);
+}
+async function reply() {
+  const command=(await db.query<{id:string;turn_request_id:string}>(`SELECT id,turn_request_id FROM agent_commands WHERE reason='free_agent_checkin'`)).rows[0]!;
+  expect(command).toBeTruthy();
+  await claimAgentCommand(db,R,A,command.id,'checkin-proof');
+  await new DaemonService(db,new LiveHub()).execute('postRoomMessage',{
+    roomId:R,requestId:command.turn_request_id,generationId:'checkin-proof',
+    text:'@outside We were planning your pottery class. Shall we pick the first project?',
+  },A);
+  return command;
+}
+async function record() { return (await db.query(`SELECT * FROM next_day_checkins WHERE identity_id=$1`,[U])).rows[0]; }
+
+beforeEach(async()=>{
+  vi.stubEnv('BEELINE_NEXT_DAY_CHECKIN','on');
+  db=new PgliteDatabase(); await migrate(db);
+  clock=new Date('2026-10-27T13:00:00Z'); emails=[];
+  await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery','2026-01-01')`);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Outside','outside'),($2,'agent','Beebee','beebee')`,[U,A]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[A,U]);
+  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Outside workspace')`,[W]);
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`,[R,W]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+    ($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member')`,[W,R,U,A]);
+  await db.query(`INSERT INTO free_agents(agent_id,owner_id,workspace_id,sealed_keys,starter_role) VALUES($1,$2,$3,'unused','beebee')`,[A,U,W]);
+  phone=new PhoneService(db,'http://local.test',undefined,undefined,new LiveHub());
+});
+afterEach(async()=>{ await db.close(); vi.unstubAllEnvs(); });
+
+describe('next morning check-in (not a defect report)',()=>{
+  it('chooses the next morning with at least twelve hours, including DST and known zones',()=>{
+    expect(checkinDueAt(new Date('2026-10-27T02:00:00Z')).toISOString()).toBe('2026-10-28T13:00:00.000Z');
+    expect(checkinDueAt(new Date('2026-10-27T01:00:00Z')).toISOString()).toBe('2026-10-27T13:00:00.000Z');
+    expect(checkinDueAt(new Date('2026-10-31T23:00:00Z')).toISOString()).toBe('2026-11-01T14:00:00.000Z');
+    expect(checkinDueAt(new Date('2026-10-26T18:00:00Z'),'Asia/Tokyo').toISOString()).toBe('2026-10-28T00:00:00.000Z');
+  });
+  it('is not due eleven hours after the first message and becomes due the following morning',async()=>{
+    await first();
+    await db.query(`UPDATE next_day_checkin_candidates SET first_at=$2,due_at=$3 WHERE identity_id=$1`,
+      [U,new Date('2026-10-27T02:00:00Z'),checkinDueAt(new Date('2026-10-27T02:00:00Z'))]);
+    await runner().runOnce(); expect(await record()).toBeUndefined();
+    clock=new Date('2026-10-28T13:00:00Z'); await runner().runOnce(); expect(await record()).toBeTruthy();
+  });
+  it('records the first real message only and preserves it across later messages',async()=>{
+    await first();
+    await phone.execute('sendRoomMessage',{roomId:R,messageId:'d'.repeat(64),text:'Make it a bowl'},U);
+    expect((await db.query(`SELECT count(*)::int n FROM next_day_checkin_candidates`)).rows[0]?.n).toBe(1);
+    expect(new Date((await db.query(`SELECT first_at FROM next_day_checkin_candidates`)).rows[0]!.first_at).toISOString()).toBe('2026-10-26T20:00:00.000Z');
+  });
+  it('queues a real agent command once across concurrent runners and restart, then exposes one Room message',async()=>{
+    await first();
+    const install='33333333-3333-4333-8333-333333333333';
+    await db.query(`INSERT INTO signin_funnel_installs(install_id,account_hash) VALUES($1,$2)`,
+      [install,createHash('sha256').update(`beeline-onboarding:${U}`).digest('hex')]);
+    await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+      VALUES($1,$1,'signed_in','web','1.0.0','server',now()),($1,$1,'signup','web','1.0.0','server',now())`,[install]);
+    await Promise.all([runner().runOnce(),runner().runOnce()]);
+    const c=(await db.query(`SELECT * FROM agent_commands WHERE reason='free_agent_checkin'`)).rows;
+    expect(c).toHaveLength(1); expect(c[0]?.wake_context.checkinPrompt).toContain("only this Room's visible messages");
+    const delivered=await readAgentCommands(db,R,A);
+    const checkin=delivered.commands.find(c=>c.reason==='free_agent_checkin');
+    expect(checkin?.private).toBeUndefined(); expect(checkin?.source.body).toContain('one concrete next step');
+    await reply(); await runner().runOnce();
+    const snapshot=await db.snapshot(); await db.close(); db=PgliteDatabase.fromSnapshot(snapshot);
+    await runner().runOnce();
+    expect((await db.query(`SELECT count(*)::int n FROM next_day_checkins`)).rows[0]?.n).toBe(1);
+    expect((await db.query(`SELECT count(*)::int n FROM messages WHERE author_id=$1 AND request_id=$2`,[A,c[0]!.turn_request_id])).rows[0]?.n).toBe(1);
+    phone=new PhoneService(db,'http://local.test',undefined,undefined,new LiveHub());
+    expect(JSON.stringify(await phone.readRoom(R,U))).toContain('pick the first project');
+    expect((await db.query(`SELECT 1 FROM signin_funnel_events WHERE event='next_day_checkin_sent'`)).rowCount).toBe(1);
+  });
+  it('skips a later Eastern day return at least six hours after first message',async()=>{
+    await first(); await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'Back again',$4)`,
+      ['d'.repeat(64),R,U,new Date('2026-10-27T04:00:00Z')]);
+    await runner().runOnce(); expect((await record())?.skip_reason).toBe('returned');
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='free_agent_checkin'`)).rowCount).toBe(0);
+  });
+  it('does not treat a later-day message less than six hours later as a return',async()=>{
+    await first(); await db.query(`UPDATE next_day_checkin_candidates SET first_at=$2 WHERE identity_id=$1`,[U,new Date('2026-10-26T23:00:00Z')]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'One more thought',$4)`,
+      ['d'.repeat(64),R,U,new Date('2026-10-27T04:00:00Z')]);
+    await runner().runOnce(); expect((await record())?.skip_reason).toBeNull();
+  });
+  it('writes no check-in when disabled and fences an already generated reply',async()=>{
+    await first(); vi.stubEnv('BEELINE_NEXT_DAY_CHECKIN','off'); await runner().runOnce(); expect(await record()).toBeUndefined();
+    vi.stubEnv('BEELINE_NEXT_DAY_CHECKIN','on'); await runner().runOnce();
+    vi.stubEnv('BEELINE_NEXT_DAY_CHECKIN','off'); await expect(reply()).rejects.toThrow('no longer due');
+    expect((await record())?.sent_at).toBeNull();
+  });
+  it.each(['person_left','starter_removed','internal_workspace','team_person'])('skips %s',async kind=>{
+    await first();
+    if(kind==='person_left') await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`,[U,R]);
+    if(kind==='starter_removed') await db.query(`UPDATE free_agents SET removed_at=now()`);
+    if(kind==='internal_workspace') await db.query(`UPDATE workspaces SET internal=true`);
+    if(kind==='team_person') await db.query(`UPDATE identities SET handle='lunchboxfortwo' WHERE id=$1`,[U]);
+    await runner().runOnce(); expect((await record())?.skip_reason).toBe(kind==='person_left'?'left_room':kind==='starter_removed'?'starter_removed':'internal');
+  });
+  it.each([[false,false],[true,false],[false,true],[true,true]])('uses available channels: push %s, email %s',async(push,email)=>{
+    if(push) await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES('test-device',$1,'ios','physical','2026-01-01')`,[U]);
+    if(!email) await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('github','outside',$1,'github','app','not-an-email-source@example.test')`,[U]);
+    if(email) await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first(); await runner().runOnce(); expect(emails).toHaveLength(0); await reply(); await runner().runOnce();
+    expect(emails).toHaveLength(email?1:0);
+    const row=await record(); expect(row?.push_outcomes).toHaveLength(push?1:0);
+    if(push) {
+      expect((await db.query(`SELECT 1 FROM push_outbox WHERE message_id=$1 AND device_token='test-device'`,[row!.message_id])).rowCount).toBe(1);
+      await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES($1,'test-device','delivered')`,[row!.message_id]);
+      await runner().runOnce(); expect((await record())?.push_outcomes).toEqual([{platform:'ios',status:'delivered'}]);
+    }
+    if(email) expect(emails[0]?.html).toContain(`/beeline/chat/${R}?communityId=${W}`);
+    await runner().runOnce(); expect(emails).toHaveLength(email?1:0);
+  });
+  it('skips missing email configuration without blocking the Room message',async()=>{
+    vi.stubEnv('BEELINE_EMAIL_API_KEY',''); vi.stubEnv('BEELINE_EMAIL_FROM','');
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first(); await runner().runOnce(); await reply();
+    await new NextDayCheckin(db,'https://web.usebeeline.app',undefined,()=>clock).runOnce();
+    expect((await record())?.email_status).toBe('unconfigured'); expect((await record())?.sent_at).toBeTruthy();
+  });
+  it('never retries an uncertain email after restart or a second Room post',async()=>{
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first(); await runner().runOnce(); const command=await reply();
+    const failing=vi.fn(async()=>{throw new Error('timeout');});
+    await new NextDayCheckin(db,'https://web.usebeeline.app',failing,()=>clock).runOnce();
+    await runner().runOnce(); expect(failing).toHaveBeenCalledTimes(1); expect(emails).toHaveLength(0);
+    await expect(db.query(`INSERT INTO messages(id,room_id,author_id,request_id,text) VALUES($1,$2,$3,$4,'duplicate')`,
+      ['f'.repeat(64),R,A,command.turn_request_id])).rejects.toThrow('already settled');
+  });
+  it('records a skip if the person returns while the agent is writing',async()=>{
+    await first(); await runner().runOnce();
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'I came back',$4)`,
+      ['d'.repeat(64),R,U,new Date('2026-10-27T12:00:00Z')]);
+    await expect(reply()).rejects.toThrow('no longer due');
+    await runner().runOnce(); expect((await record())?.skip_reason).toBe('returned');
+    expect((await record())?.sent_at).toBeNull(); expect(emails).toHaveLength(0);
+  });
+  it('retires an agent turn that completed without a message so it cannot clog future batches',async()=>{
+    await first(); await runner().runOnce();
+    await db.query(`UPDATE agent_commands SET state='complete' WHERE reason='free_agent_checkin'`);
+    await runner().runOnce(); expect((await record())?.skip_reason).toBe('agent_no_message');
+  });
+  it('escapes Room text and links in minimal email HTML',()=>{
+    const mail=renderCheckinEmail('Beebee','<script>"&hi</script>','https://web.usebeeline.app/?a="');
+    expect(mail.html).not.toContain('<script>'); expect(mail.html).toContain('&lt;script&gt;');
+    expect(mail.text).toContain('<script>'); expect(mail.html).toContain('one-time note');
+  });
+});

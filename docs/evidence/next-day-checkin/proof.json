@@ -1,0 +1,69 @@
+{
+  "feature": "next-day-checkin",
+  "classification": "not a defect report",
+  "standIns": [
+    "PGlite database",
+    "deterministic helper reply instead of live model",
+    "captured email and push providers"
+  ],
+  "visibleMessage": "@outside We were planning your pottery class. Shall we pick the first project?",
+  "command": {
+    "reason": "free_agent_checkin",
+    "prompt": "Write exactly one short check-in message to @outside in this Room. Use only this Room's visible messages to name what they were doing when they stopped. Offer exactly one concrete next step. Do not guess private context. This is their one-time next-morning check-in. Post one plain message only; no other posts or agent tags."
+  },
+  "records": [
+    {
+      "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "due_at": "2026-10-27T13:00:00.000Z",
+      "sent_at": "2026-10-28T00:31:24.817Z",
+      "room_id": "22222222-2222-4222-8222-222222222222",
+      "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "message_id": "09e7a90fa07e1ab90b86dffddc3044487edf41cdf56e0e0d45d500236f3cb5ee",
+      "email_status": "sent",
+      "push_outcomes": [
+        {
+          "status": "delivered",
+          "platform": "ios"
+        }
+      ],
+      "skip_reason": null
+    }
+  ],
+  "emails": [
+    {
+      "method": "POST",
+      "url": "https://api.resend.com/emails",
+      "body": {
+        "from": "Beeline <hello@example.test>",
+        "to": [
+          "outside@example.test"
+        ],
+        "subject": "Beebee picked up where you left off",
+        "text": "@outside We were planning your pottery class. Shall we pick the first project?\n\nOpen in Beeline: https://web.usebeeline.app/beeline/chat/22222222-2222-4222-8222-222222222222?communityId=11111111-1111-4111-8111-111111111111\n\nThis is a one-time note from your starter agent.",
+        "html": "<!doctype html><html><body style=\"font:16px/1.6 system-ui,sans-serif;max-width:560px;margin:40px auto;padding:24px;color:#222\"><p style=\"white-space:pre-wrap\">@outside We were planning your pottery class. Shall we pick the first project?</p><p><a href=\"https://web.usebeeline.app/beeline/chat/22222222-2222-4222-8222-222222222222?communityId=11111111-1111-4111-8111-111111111111\">Open in Beeline</a></p><p style=\"font-size:12px;color:#666\">This is a one-time note from your starter agent.</p></body></html>"
+      },
+      "idempotencyKey": "next-day-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "push": [
+    [
+      "proof-device",
+      {
+        "messageId": "09e7a90fa07e1ab90b86dffddc3044487edf41cdf56e0e0d45d500236f3cb5ee",
+        "workspaceId": "11111111-1111-4111-8111-111111111111",
+        "roomId": "22222222-2222-4222-8222-222222222222",
+        "channelId": "22222222-2222-4222-8222-222222222222",
+        "target": "message",
+        "type": "message",
+        "text": "Beebee: @outside We were planning your pottery class. Shall we pick the first project?",
+        "collapseId": "09e7a90fa07e1ab90b86dffddc3044487edf41cdf56e0e0d45d500236f3cb5ee",
+        "title": "#General",
+        "action": {
+          "kind": "reply",
+          "authorName": "Beebee"
+        },
+        "recipientIdentityId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  ]
+}

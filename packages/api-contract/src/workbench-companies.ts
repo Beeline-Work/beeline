@@ -24,6 +24,7 @@ export type CompanyItem = {
   readonly state?: ConnectorViewState; readonly status?: string; readonly attention?: boolean;
 };
 export type WorkbenchCompany = {
+  readonly roomsClientId?: string;
   readonly id: string; readonly name: string; readonly domain?: string;
   readonly kind: 'company' | 'sign-in-service' | 'other'; readonly logo: CompanyLogo;
   readonly section: 'attention' | 'signin' | 'apps' | 'keys';

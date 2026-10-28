@@ -5,7 +5,6 @@ import type { AiClientConnection } from '@beeline/api-contract/workbench';
 import { Button } from './Button';
 import { SettingsRow } from './SettingsRow';
 import { ServiceMark } from './ServiceMark';
-import { RoomListSectionHeader } from './RoomListSectionHeader';
 import { HullActionSheetModal, HullActionSheetCancel } from './HullActionSheet';
 
 function permissions(scopes: readonly string[]) {
@@ -31,7 +30,6 @@ export function AiClientsSection({ clients, onChanged }: {
   }
   if (!clients.length && !selected) return null;
   return <View testID="connectors-ai-clients">
-    <RoomListSectionHeader title="AI clients" inset="content" spacing="flush" />
     {clients.map(client => <SettingsRow appBoard key={client.clientId} title={client.name}
       description={`${permissions(client.scopes)} · connected ${date(client.connectedAt)} · ${client.lastUsedAt ? `used ${date(client.lastUsedAt)}` : 'not used yet'}`}
       leading={<ServiceMark company={client.name} mark={client.logo ? { kind: 'image', uri: client.logo, plate: 'light' } : { kind: 'monogram' }} />}

@@ -20,7 +20,7 @@ function target(v: unknown): boolean {
 /** Validate the server-owned nested presentation before accepting it into durable storage. */
 export function isWorkbenchCompanyIndex(v: unknown): v is WorkbenchCompanyIndex {
   return record(v) && v.version === 1 && typeof v.hasConnections === 'boolean' && record(v.summary) && string(v.summary.value) && optionalString(v.summary.attention)
-    && list(v.suggestions, suggestion) && list(v.rows, r => record(r) && string(r.id) && string(r.name) && string(r.subtitle) && optionalString(r.domain)
+    && list(v.suggestions, suggestion) && list(v.rows, r => record(r) && string(r.id) && string(r.name) && string(r.subtitle) && optionalString(r.domain) && optionalString(r.roomsClientId)
       && ['company', 'sign-in-service', 'other'].includes(String(r.kind)) && ['attention', 'signin', 'apps', 'keys'].includes(String(r.section)) && logo(r.logo)
       && (r.state === undefined || ['connected', 'connect', 'error'].includes(String(r.state)))
       && optionalString(r.status) && optionalString(r.attention) && list(r.alsoAvailable, suggestion)

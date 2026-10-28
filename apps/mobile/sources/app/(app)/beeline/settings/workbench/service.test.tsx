@@ -12,6 +12,7 @@ vi.mock('@/buzz/surface-storage', async () =>
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
   register: async () => () => undefined,
 }) }));
+vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: vi.fn(async () => undefined) }));
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
@@ -158,21 +159,19 @@ describe('app connections on the info page', () => {
     setWorkbenchSource(source); params.service = 'notion';
     return source;
   }
-  it('CONNECTOR-SEARCH-REMOVAL: expired managed sign-in offers removal without restarting authorization', async () => {
+  it('CONNECTOR-SEARCH-REMOVAL: a managed sign-in reconnects from its row without a nested Disconnect sheet', async () => {
     const source = new MockWorkbenchSource();
-    let removed = false;
-    source.readWorkbench = async () => ({ ...companyWorkbench(removed ? [] : [notionRow('error')]), apps: removed ? [] : [{ ...notionApp('error'), transport: 'composio' }] });
-    const disconnect = vi.spyOn(source, 'disconnectApp').mockImplementation(async () => { removed = true; });
+    source.readWorkbench = async () => ({ ...companyWorkbench([notionRow('error')]), apps: [{ ...notionApp('error'), transport: 'composio' }] });
     const begin = vi.spyOn(source, 'beginAppSignIn');
+    const disconnect = vi.spyOn(source, 'disconnectApp');
     setWorkbenchSource(source); params.service = 'notion';
     const renderer = await render();
-    await act(async () => renderer.root.findByProps({ testID: 'company-item-notion-app' }).props.onPress());
-    const sheet = renderer.root.findAllByType('HullActionSheetModal').find((node: any) => node.props.title === 'Notion')!;
-    const remove = sheet.findAllByType('HullActionSheetRow').find((node: any) => node.props.label === 'Disconnect')!;
-    await act(async () => { await remove.props.onPress(); });
-    expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', appId: 'notion' });
-    expect(begin).not.toHaveBeenCalled();
-    expect(renderer.root.findAllByProps({ testID: 'company-item-notion-app' })).toHaveLength(0);
+    const row = renderer.root.findByProps({ testID: 'company-item-notion-app' });
+    expect(row.props.action).toBe('Connect');
+    await act(async () => { await row.props.onPress(); });
+    expect(begin).toHaveBeenCalledWith({ appId: 'notion' });
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('HullActionSheetModal').every((sheet: any) => !sheet.props.visible)).toBe(true);
     await act(async () => renderer.unmount());
   });
   it('connected: disconnects from the info page itself, with no app page pushed', async () => {
@@ -284,7 +283,7 @@ describe('three-state connection status', () => {
     }
     await act(async () => renderer.unmount());
   });
-  it('shows Connect and Error on the rows that need them, never Reconnect or Offline', async () => {
+  it('shows Connect and Reconnect on the rows that need them, never Offline', async () => {
     const source = new MockWorkbenchSource();
     source.readWorkbench = async () => ({ ...companyWorkbench([{
       ...companyRow('google', 'Google', 'attention'), subtitle: '4 apps', state: 'error' as const,
@@ -310,12 +309,11 @@ describe('three-state connection status', () => {
     expect(connect.props.action).toBe('Connect');
     expect(error.props.value).toBe('App provider request failed (403)');
     expect(error.props.valueTone).toBe('danger');
-    expect(error.props.action).toBeUndefined();
+    expect(error.props.action).toBe('Reconnect');
     expect(healthy.props.value).toBeUndefined();
     expect(healthy.props.action).toBeUndefined();
     const copy = renderer.root.findAllByType('SettingsRow').flatMap((row: any) =>
       [row.props.value, row.props.action, row.props.title, row.props.description]).join(' ');
-    expect(copy).not.toMatch(/Reconnect/);
     expect(copy).not.toMatch(/Offline/);
     await act(async () => renderer.unmount());
   });

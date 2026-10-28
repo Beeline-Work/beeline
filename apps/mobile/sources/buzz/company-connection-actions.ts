@@ -46,7 +46,11 @@ export function connectorDestination(row: WorkbenchCompany, apps: readonly Workb
   if (broken) {
     const target = broken.target;
     if (target.kind === 'connector' || target.kind === 'wallet') return { kind: 'item', target };
-    if (target.kind === 'app') return { kind: 'info' };
+    if (target.kind === 'app') {
+      const app = apps.find(app => app.id === target.appId);
+      if (app?.transport === 'composio') return { kind: 'app-sign-in', appId: target.appId };
+      return { kind: 'item', target };
+    }
     return { kind: 'info' };
   }
   const wallet = row.items.find(item => item.target.kind === 'wallet');

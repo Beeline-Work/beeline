@@ -3,13 +3,9 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { runBrowserProof, webProofShims } from './browserProof';
 
-/**
- * The real Connectors and info screens in the mobile web renderer. One tap on
- * a failed managed app opens one info page that holds its actions.
- * Its rows open no further page, and one Back leaves for Connectors.
- */
+/** A broken real connection reconnects directly from its visible list action. */
 describe('failed managed app in the mobile web renderer', () => {
-  it('opens one info page with its actions, and one Back returns to Connectors', async () => {
+  it('starts sign-in from the list without a nested Disconnect flow', async () => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/info-page-proof-'));
     try {
@@ -31,22 +27,9 @@ describe('failed managed app in the mobile web renderer', () => {
             find('connectors-company-notion').click();
             setTimeout(() => {
               output.pushes = globalThis.__pushes.map(push => push.pathname);
-              globalThis.__params = globalThis.__pushes[0].params;
-              root.render(<Service />);
-              setTimeout(() => {
-                output.status = find('connector-info-status')?.textContent ?? null;
-                output.appRow = find('company-item-notion-app')?.textContent ?? null;
-                output.vault = find('connector-squire-vault')?.textContent ?? null;
-                find('company-item-notion-key').click();
-                find('company-item-notion-app').click();
-                setTimeout(() => {
-                  output.sheet = document.body.innerText.includes('Disconnect');
-                  output.pushesAfterRows = globalThis.__pushes.length;
-                  document.querySelector('[aria-label="Back to Connectors"]').click();
-                  output.backs = globalThis.__backs;
-                  document.getElementById('result').textContent = JSON.stringify(output);
-                }, 300);
-              }, 1200);
+              output.started = globalThis.__started;
+              output.sheet = document.body.innerText.includes('Disconnect');
+              document.getElementById('result').textContent = JSON.stringify(output);
             }, 300);
           }, 1200);
         }`,
@@ -70,6 +53,7 @@ describe('failed managed app in the mobile web renderer', () => {
           '@/buzz/wallet-workspace': 'export const resolveWalletWorkspaceId = async id => id || "ws";',
           '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'viewer' });
             export const getEffectiveRelayUrl = async () => 'https://monolith.test';`,
+          './app-sign-in': 'export const openAppSignIn=async()=>{};',
           '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
           '@/sync/transport/monolith-operation': `import { companyWorkbench, companyRow } from '@/test/company-workbench';
             const notion = { ...companyRow('notion', 'Notion', 'attention'), subtitle: '1 app · 1 key', items: [
@@ -81,6 +65,7 @@ describe('failed managed app in the mobile web renderer', () => {
               if (operation === 'readWorkbench') return { workspaceId: 'ws', companies: companyWorkbench([notion]).companies, helpers: [], connectors: [], connections: [], catalog: [],
                 apps: [{ appId: 'notion', appKey: 'notion', name: 'Notion', domain: 'notion.so', transport: 'composio', route: 'composio', status: 'error',
                   helperId: 'laptop', helperName: 'Laptop', accountLabel: 'Owner', workspaceName: 'Work', useCount: 0, createdAt: 1 }] };
+              if (operation === 'beginAppSignIn') { globalThis.__started=true; return {authorizationUrl:'https://example.invalid/sign-in'}; }
               return {};
             };`,
         },
@@ -88,13 +73,9 @@ describe('failed managed app in the mobile web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Connected app info page:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof.pushes).toEqual(['/beeline/settings/workbench/service']);
-      expect(proof.status).toContain('Connect');
-      expect(proof.appRow).toContain('Notion');
-      expect(proof.vault).toContain('Manage in Trusty Squire');
-      expect(proof.sheet).toBe(true);
-      expect(proof.pushesAfterRows).toBe(1);
-      expect(proof.backs).toBe(1);
+      expect(proof.pushes).toEqual([]);
+      expect(proof.started).toBe(true);
+      expect(proof.sheet).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

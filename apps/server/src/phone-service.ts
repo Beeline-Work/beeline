@@ -9404,7 +9404,7 @@ export class PhoneService {
     // Squire API rows point at vault credentials. They remain installed for
     // agent use, but the person's Connectors page presents them under Keys.
     const apps = (await readOwnerApps(this.database, viewerId, this.composio))
-      .filter((app) => app.transport !== 'squire-api');
+      .filter((app) => app.transport !== 'squire-api' && app.hasConnected);
     const catalogKeys = new Set([
       'gmail',
       'googlecalendar',

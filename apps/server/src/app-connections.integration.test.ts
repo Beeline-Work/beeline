@@ -13,6 +13,7 @@ import { CompanyMcpDiscovery } from './company-mcp-discovery.js';
 import { applyVaultList } from './workbench.js';
 import { recordSquireSignIn } from './squire-machine.js';
 import { beginComposioAppSignIn, connectApp, readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
+import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { APP_FILE_MAXIMUM_BYTES, ComposioApps } from './composio-apps.js';
 import { ObjectService } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
@@ -867,7 +868,7 @@ describe('connect_app', () => {
     const provider = fakeComposio('github');
     provider.supportsOAuth.mockResolvedValue(true);
     const daemon = daemonWith(registry.client, provider);
-    const started = await daemon.execute('connectApp', { ...turn, app: 'GitHub', reason: 'connect personal GitHub' }, HELPER);
+    let started = await daemon.execute('connectApp', { ...turn, app: 'GitHub', reason: 'connect personal GitHub' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client, provider);
     await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
@@ -876,7 +877,8 @@ describe('connect_app', () => {
       sessionUri: 'session-fixture', appId: started.appId!,
     }, OWNER)).rejects.toThrow('App sign-in could not be verified');
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
-      .toContainEqual(expect.objectContaining({ appId: started.appId, selectedByOwner: false }));
+      .not.toContainEqual(expect.objectContaining({ appId: started.appId }));
+    started = await daemon.execute('connectApp', { ...turn, app: 'GitHub', reason: 'retry personal GitHub' }, HELPER);
     provider.account.mockResolvedValueOnce(false);
     await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
@@ -1182,7 +1184,7 @@ describe('connect_app', () => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockResolvedValue(true);
     const daemon = daemonWith(fakeRegistry([]).client, provider);
-    const first = await daemon.execute('connectApp',
+    let first = await daemon.execute('connectApp',
       { ...turn, app, reason: `connect ${app}` }, HELPER);
     expect(first).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
@@ -1195,15 +1197,15 @@ describe('connect_app', () => {
         status: 'failed', errorMessage: 'App provider request failed (403)',
       });
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
-      .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'error',
-        errorMessage: 'App provider request failed (403)' }));
+      .not.toContainEqual(expect.objectContaining({ appId: first.appId }));
+    first = await daemon.execute('connectApp', { ...turn, app, reason: 'retry sign-in' }, HELPER);
     await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
-      .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'connecting' }));
+      .not.toContainEqual(expect.objectContaining({ appId: first.appId }));
   });
 
   it('projects provider descriptions and logos to app rows and the connect catalog', async () => {
-    const provider = fakeComposio();
+    const provider = fakeComposio('gmail');
     provider.toolkit.mockImplementation(async (toolkit: string) => ({ slug: toolkit,
       description: `Use ${toolkit} tools.`, logo: `https://cdn.composio.dev/${toolkit}.png`,
       ...(toolkit === 'gmail' ? { appUrl: 'https://mail.google.com' } : {}) }));
@@ -1212,6 +1214,8 @@ describe('connect_app', () => {
       { ...turn, app: 'Gmail', reason: 'connect Gmail' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
     expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
       description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png',
@@ -1222,7 +1226,7 @@ describe('connect_app', () => {
   });
 
   it.each(['Instagram', 'Figma'])('Reproduction CARD-1: %s Room cards retain the same logo as Workbench', async (app) => {
-    const provider = fakeComposio();
+    const provider = fakeComposio(app.toLowerCase());
     provider.supportsOAuth.mockResolvedValue(true);
     provider.toolkit.mockImplementation(async (slug: string) => ({ slug,
       logo: `https://cdn.composio.dev/${slug}.png`, appUrl: `https://${slug}.com` }));
@@ -1231,6 +1235,8 @@ describe('connect_app', () => {
       reason: `connect ${app}` }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
     const expected = { logo: `https://cdn.composio.dev/${app.toLowerCase()}.png`,
       domain: `${app.toLowerCase()}.com` };
     const workbench = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
@@ -1337,7 +1343,7 @@ describe('connect_app', () => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockResolvedValue(true);
     const daemon = daemonWith(fakeRegistry([]).client, provider);
-    const first = await daemon.execute('connectApp',
+    let first = await daemon.execute('connectApp',
       { ...turn, app: 'Linear', reason: 'connect Linear' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
@@ -1350,11 +1356,11 @@ describe('connect_app', () => {
         status: 'failed', errorMessage: 'App provider request failed (403)',
       });
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
-      .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'error',
-        errorMessage: 'App provider request failed (403)' }));
+      .not.toContainEqual(expect.objectContaining({ appId: first.appId }));
+    first = await daemon.execute('connectApp', { ...turn, app: 'Linear', reason: 'retry sign-in' }, HELPER);
     await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
-      .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'connecting' }));
+      .not.toContainEqual(expect.objectContaining({ appId: first.appId }));
   });
 
   it.each(['Instagram', 'Runway'])('Reproduction OAuth-1: %s provider failure reaches Workbench and its card', async (app) => {
@@ -1376,8 +1382,7 @@ describe('connect_app', () => {
         status: 'failed', errorMessage: 'Provider rejected this account type',
       });
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
-    expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
-      status: 'error', errorMessage: 'Provider rejected this account type' }));
+    expect(view.apps).not.toContainEqual(expect.objectContaining({ appId: first.appId }));
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId,
         status: 'error', errorMessage: 'Provider rejected this account type' }));
@@ -1387,6 +1392,27 @@ describe('connect_app', () => {
         errorMessage: 'Provider rejected this account type' });
     if (process.env.BEELINE_SIGN_IN_PROOF === '1')
       console.log(`OAuth-1 ${app}: Workbench=error, agent status=error, card=failed; reason=Provider rejected this account type`);
+  });
+
+  it('Reproduction CONNECTORS-1: removes abandoned owner sign-ins and preserves a broken real connection', async () => {
+    for (const [index, name] of ['Slack', 'Supabase', 'WhatsApp', 'Notion'].entries()) {
+      await database.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,
+        transport,route,composio_account_id,composio_link_expires_at,authorised_at)
+        VALUES($1,$2,$3,$4,$5,'composio','composio',$6,now()-interval '1 day',
+          CASE WHEN $7 THEN now()-interval '2 days' ELSE NULL END)`,
+      [`99999999-9999-4999-8999-99999999999${index}`, WORKSPACE, OWNER, name.toLowerCase(), name, `account-${index}`, index === 3]);
+    }
+    expect(await cleanupUnfinishedAppSignIns(database)).toBe(3);
+    expect(await cleanupUnfinishedAppSignIns(database, true)).toBe(3);
+    const provider = fakeComposio();
+    provider.accountStatus.mockResolvedValue({ status: 'failed', reason: 'Token revoked' });
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.apps?.map(app => app.appKey)).toEqual(['notion']);
+    expect(view.companies?.rows.filter(row => row.section === 'attention').map(row => row.name)).toEqual(['Notion']);
+    expect(view.companies?.rows.find(row => row.name === 'Notion')?.items[0]?.attention).toBe(true);
+    expect(await cleanupUnfinishedAppSignIns(database)).toBe(0);
   });
 
   it.each(['Instagram', 'Runway'])('Reproduction OAuth-2: %s expires a pending sign-in', async (app) => {
@@ -1407,8 +1433,9 @@ describe('connect_app', () => {
     await database.query(`UPDATE workspace_apps SET composio_link_expires_at=now()-interval '1 second'
       WHERE id=$1`, [first.appId]);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
-    expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
-      status: 'error', errorMessage: expect.stringContaining('timed out') }));
+    expect(view.apps).not.toContainEqual(expect.objectContaining({ appId: first.appId }));
+    expect(view.companies?.rows.some(row => row.section === 'attention')).toBe(false);
+    expect((await database.query('SELECT id FROM workspace_apps WHERE id=$1', [first.appId])).rows).toEqual([]);
     expect((await phone.readRoom(ROOM, OWNER))?.messages.find((message) =>
       message.appSignIn?.appId === first.appId)?.appSignIn).toMatchObject({ status: 'failed',
         errorMessage: expect.stringContaining('timed out') });
@@ -1433,10 +1460,10 @@ describe('connect_app', () => {
       { sessionUri: 'session-fixture', appId: linear.appId! }, OWNER))
       .rejects.toThrow('App provider request failed (403)');
     const apps = (await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps;
-    expect(apps).toContainEqual(expect.objectContaining({ appId: linear.appId,
-      status: 'error', errorMessage: 'App provider request failed (403)' }));
-    expect(apps).toContainEqual(expect.objectContaining({ appId: slack.appId,
-      status: 'connecting' }));
+    expect(apps).toEqual([]);
+    const cards = (await phone.readRoom(ROOM, OWNER))?.messages;
+    expect(cards?.find(message => message.appSignIn?.appId === linear.appId)?.appSignIn?.status).toBe('failed');
+    expect(cards?.find(message => message.appSignIn?.appId === slack.appId)?.appSignIn?.status).toBe('pending');
   });
 
   it('rejects invalid card copy before creating a connection or card', async () => {
@@ -1540,8 +1567,7 @@ describe('connect_app', () => {
     const connected = await daemonWith(fakeRegistry([]).client, provider).execute('connectApp',
       { ...turn, app: 'Slack', reason: 'browser removal proof' }, HELPER);
     await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
-    provider.completeAuth.mockRejectedValueOnce(new Error('authorization timeout'));
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER).catch(() => {});
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER);
     const server = createServer(async (request, response) => {
       response.setHeader('Access-Control-Allow-Origin', '*');
       response.setHeader('Access-Control-Allow-Headers', 'content-type');
@@ -1588,12 +1614,12 @@ describe('connect_app', () => {
     await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture',
       appId: connected.appId! }, OWNER)).rejects.toThrow('authorization timeout');
     const read = () => phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
-    expect((await read()).apps).toContainEqual(expect.objectContaining({ appId: connected.appId, status: 'error' }));
+    expect((await read()).apps).not.toContainEqual(expect.objectContaining({ appId: connected.appId }));
+    expect((await database.query('SELECT id FROM workspace_apps WHERE id=$1', [connected.appId])).rows).toEqual([]);
     await expect(phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE,
       appId: connected.appId! }, 'c'.repeat(64))).rejects.toThrow();
     expect(provider.deleteAccount).not.toHaveBeenCalled();
-    await phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE, appId: connected.appId! }, OWNER);
-    expect(provider.deleteAccount).toHaveBeenCalledWith('ca_fixture');
+    await expect(phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE, appId: connected.appId! }, OWNER)).rejects.toThrow('app not found');
     expect((await read()).apps).not.toContainEqual(expect.objectContaining({ appId: connected.appId }));
     await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture',
       appId: connected.appId! }, OWNER)).rejects.toThrow();
@@ -2144,6 +2170,7 @@ describe('connect_app', () => {
       websiteUrl: 'https://fly.io', remotes: [{ type: 'streamable-http', url: 'https://third-party.example/mcp' }] }]);
     const daemon = daemonWith(registry.client);
     await daemon.execute('connectMcpServer', { ...turn, serverName: 'com.pulsemcp/fly-io', version: '1', reason: 'Use the third-party server' }, HELPER);
+    await database.query("UPDATE workspace_connectors SET status='connected',connected_at=now() WHERE registry_server_name='com.pulsemcp/fly-io'");
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);

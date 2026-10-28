@@ -220,7 +220,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 40;
+export const REQUIRED_SCHEMA_VERSION = 41;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2960,6 +2960,7 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
 ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS composio_account_id text;
 ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS composio_link_expires_at timestamptz;
 ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS sign_in_error text;
+ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS authorised_at timestamptz;
 ALTER TABLE workspace_apps DROP CONSTRAINT IF EXISTS workspace_apps_transport_check;
 ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_transport_check
   CHECK (transport IN ('registry-mcp','composio','squire-api','squire-browser'));
@@ -3164,6 +3165,16 @@ WHERE c.machine_id IS NOT NULL AND c.owner_identity_id=newer.owner_identity_id
   AND c.machine_id=newer.machine_id AND c.reference=newer.reference
   AND (c.updated_at,c.id)<(newer.updated_at,newer.id);
 UPDATE workspace_connections SET connector_id=NULL WHERE machine_id IS NOT NULL;
+-- Preserve every known successful route, including unused legacy connections.
+UPDATE workspace_apps a SET authorised_at=a.created_at WHERE a.authorised_at IS NULL AND (
+  (a.transport='composio' AND a.composio_account_id IS NOT NULL
+    AND a.composio_link_expires_at IS NULL AND a.sign_in_error IS NULL)
+  OR EXISTS(SELECT 1 FROM workspace_connectors c WHERE c.id=a.connector_id AND c.connected_at IS NOT NULL)
+  OR EXISTS(SELECT 1 FROM workspace_app_usage u WHERE u.app_id=a.id)
+  OR EXISTS(SELECT 1 FROM messages m WHERE m.card_type='app-sign-in'
+    AND m.card->>'appId'=a.id::text AND m.card->>'status'='connected')
+);
+
 UPDATE workspace_apps app SET machine_id=COALESCE(k.machine_id,k.helper_agent_id)
 FROM workspace_connectors k WHERE app.connector_id=k.id AND k.connector_type='trusty-squire';
 UPDATE agents a SET squire_work=jsonb_build_object('generation',k.pairing_generation,

@@ -232,9 +232,17 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     row.items.sort((a, b) => ({ connection: 0, login: 1, key: 2 })[a.kind] - ({ connection: 0, login: 1, key: 2 })[b.kind]
       || collator.compare(a.title, b.title) || a.id.localeCompare(b.id));
   }
+  for (const client of view.aiClients ?? []) {
+    companies.set(`rooms:${client.clientId}`, {
+      id: `rooms:${client.clientId}`, roomsClientId: client.clientId, name: client.name,
+      kind: 'company', logo: client.logo ? { kind: 'image', uri: client.logo, plate: 'light' } : { kind: 'monogram' },
+      section: 'apps', subtitle: client.scopes.includes('rooms:write') ? 'Reads and posts' : 'Reads only',
+      state: 'connected', items: [], machines: [], alsoAvailable: [],
+    });
+  }
   const rows = [...companies.values()].sort((a, b) => sectionRank[a.section] - sectionRank[b.section]
     || (a.id === 'other' ? 1 : b.id === 'other' ? -1 : 0) || collator.compare(a.name, b.name) || a.id.localeCompare(b.id));
-  const hasConnections = rows.some(r => r.items.length || r.machines.some(m => m.status !== 'not-added'));
+  const hasConnections = rows.some(r => r.roomsClientId || r.items.length || r.machines.some(m => m.status !== 'not-added'));
   const broken = rows.filter(r => r.attention).length;
   const count = hasConnections ? rows.length : 0;
   return { version: 1, rows, hasConnections, suggestions: companySuggestions(rows, origin, popularity),

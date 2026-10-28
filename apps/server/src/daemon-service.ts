@@ -7616,8 +7616,10 @@ export class DaemonService {
           console.warn(`[connect] Registry search failed for ${service}; using the managed route`, error);
           manifests = [];
         }
-        const match = manifests.find(entry => isAppRegistryPublisher(entry.name, service));
-        if (match) {
+        const match = manifests.find(entry => entry.name.toLowerCase() === normalized
+          || entry.title?.toLowerCase() === normalized || entry.websiteUrl && appIdentity(entry.websiteUrl)?.key === key);
+        // Relevance is not authority: a candidate must also have the app's official publisher.
+        if (match && isAppRegistryPublisher(match.name, service)) {
           const installed = await this.connectMcpServer({ ...input, serverName: match.name,
             version: match.version, reason }, agentId);
           if (installed.status === 'unsupported') return { status: 'unavailable', app: service, next: installed.reason };

@@ -213,7 +213,11 @@ export class RoomsMcpOAuth {
             (input.response_types !== undefined && JSON.stringify(input.response_types) !== '["code"]')) throw new Error('invalid_client_metadata');
         const redirects = input.redirect_uris.map(redirectUri);
         const id = opaque();
-        const logo = input.logo_uri === undefined ? await bundledMcpLogo(name) : await fetchMcpLogo(string(input.logo_uri));
+        // A logo Beeline cannot load must not block sign-in; fall back to the bundled logo or initial.
+        const logo = input.logo_uri === undefined ? await bundledMcpLogo(name) : await Promise.resolve(input.logo_uri).then(uri => fetchMcpLogo(string(uri))).catch(async (error: unknown) => {
+          console.warn('[rooms-mcp-oauth] registration logo skipped', JSON.stringify({ client_name: name, reason: error instanceof Error ? error.message : 'invalid_request' }));
+          return bundledMcpLogo(name);
+        });
         // An optional outgoing callback lets the client be pushed a tag instead of polling.
         const callback = input.webhook_uri === undefined ? null : callbackUri(input.webhook_uri);
         // Only the hash is kept; a client that loses its secret registers again.

@@ -207,6 +207,20 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(response.status).toBe(201);
       expect(await response.json()).toMatchObject({ token_endpoint_auth_method: 'none', redirect_uris: [redirect] });
     });
+  it('registers a client whose logo cannot be loaded and keeps the bundled logo', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      for (const [name, logo_uri, stored] of [['Cursor', 'https://127.0.0.1/favicon.svg', null], ['Grok Bot', 'http://grok.example/logo.png', 'data:image/png;base64,'], ['Cursor', 42, null]] as const) {
+        warn.mockClear();
+        const response = await post('/mcp/oauth/register', { client_name: name, logo_uri, redirect_uris: ['https://www.cursor.com/callback'], token_endpoint_auth_method: 'none' });
+        expect(response.status).toBe(201);
+        const { client_id } = await response.json() as { client_id: string };
+        const { logo } = (await db.query<{ logo: string | null }>('SELECT logo FROM rooms_mcp_clients WHERE id=$1', [client_id])).rows[0]!;
+        if (stored) expect(logo).toMatch(/^data:image\/png;base64,/); else expect(logo).toBeNull();
+        expect(warn).toHaveBeenCalledWith('[rooms-mcp-oauth] registration logo skipped', expect.stringContaining(name));
+      }
+    } finally { warn.mockRestore(); }
+  });
   it('signs in a native client through a private-use redirect scheme', async () => {
     for (const redirect of ['cursor://anysphere.cursor-mcp/oauth/callback', 'com.example.app:/oauth/callback']) {
     const registered = await post('/mcp/oauth/register', { client_name: 'Cursor', redirect_uris: [redirect] });

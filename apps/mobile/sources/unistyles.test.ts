@@ -30,6 +30,9 @@ vi.mock('react-native-unistyles', () => ({
 const setBackgroundColorAsync = vi.fn();
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync }));
 
+const setNavigationBarStyle = vi.fn();
+vi.mock('expo-navigation-bar', () => ({ setStyle: setNavigationBarStyle }));
+
 const setAndroidNightMode = vi.hoisted(() => vi.fn());
 vi.mock('./buzz/android-launch-appearance-native', () => ({
   setAndroidNightMode,
@@ -46,7 +49,37 @@ describe('the appearance toggle wired into Unistyles', () => {
     setTheme.mockClear();
     setRootViewBackgroundColor.mockClear();
     setBackgroundColorAsync.mockClear();
+    setNavigationBarStyle.mockClear();
     setAndroidNightMode.mockReset();
+  });
+
+  it('maps obsidian to light navigation buttons and bone to dark ones', async () => {
+    const { navigationBarStyleForTheme } = await import('./unistyles');
+    for (const name of ['obsidian', 'obsidianSmall', 'obsidianLarge'] as const) {
+      expect(navigationBarStyleForTheme(name)).toBe('dark');
+    }
+    for (const name of ['bone', 'boneSmall', 'boneLarge'] as const) {
+      expect(navigationBarStyleForTheme(name)).toBe('light');
+    }
+  });
+
+  it('styles the Android navigation bar at cold start and on every theme change', async () => {
+    const { setAppDisplay } = await import('./unistyles');
+    expect(setNavigationBarStyle).toHaveBeenLastCalledWith('dark');
+
+    setAppDisplay('light', 'small');
+    expect(setNavigationBarStyle).toHaveBeenLastCalledWith('light');
+
+    setAppDisplay('dark', 'large');
+    expect(setNavigationBarStyle).toHaveBeenLastCalledWith('dark');
+  });
+
+  it('leaves the navigation bar alone off Android', async () => {
+    const { Platform } = await import('react-native');
+    Object.assign(Platform, { OS: 'ios' });
+    const { setAppDisplay } = await import('./unistyles');
+    setAppDisplay('light', 'medium');
+    expect(setNavigationBarStyle).not.toHaveBeenCalled();
   });
 
   it('registers both obsidian and bone, defaulting cold start to obsidian', async () => {

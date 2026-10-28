@@ -239,6 +239,23 @@ describe('R-USAGE-3: a stale fallback is never shown as fresh', () => {
     expect(profile?.read).toMatchObject({ status: 'stale', reason: 'network failed' });
     expect(usageSummary(tool)).toMatch(/^Usage: 123 credits left, as of .*\(couldn't read: network failed\)\.$/);
   });
+
+  it('keeps OpenRouter key spend and its read time through a context-only update', async () => {
+    const now = Date.now() / 1000;
+    const spend = { today: 9.75, week: 16.4, limit: 20, remaining: 3.6 };
+    await daemon.execute('postAgentUsage', { agentId: RUBY, usage: { updatedAt: now, windows: [], spend } }, RUBY);
+    const spentAt = (await views(RUBY)).profile!.updatedAt;
+    await daemon.execute('postAgentUsage', { agentId: RUBY, usage: {
+      updatedAt: now + 60, windows: [], context: { used: 1000, size: 200000 },
+    } }, RUBY);
+    const { profile, row, tool } = await views(RUBY);
+    for (const usage of [profile, row, tool]) {
+      expect(usage?.spend).toEqual(spend);
+      expect(usage?.updatedAt).toBe(spentAt);
+    }
+    expect(profile?.context).toEqual({ used: 1000, size: 200000 });
+    expect(usageSummary(tool)).toContain('$3.60');
+  });
 });
 
 describe('R-USAGE-4: the updated time is never newer than the oldest number', () => {

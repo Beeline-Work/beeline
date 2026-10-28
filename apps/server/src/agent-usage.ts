@@ -189,6 +189,11 @@ export async function saveAgentUsage(
       await writeSnapshot({ updatedAt: receivedAt, windows: [], spend: usage.spend }, null);
       return;
     }
+    if (previous?.spend && !usage.windows.length && !usage.plan && !usage.credits && !usage.read && !usage.account) {
+      // A context-only update keeps the key's spend and the time it was read.
+      await writeSnapshot(previous, agent.usage_account_id);
+      return;
+    }
     let account: { id: string; usage: unknown } | undefined;
     if (usage.account && agent.owner_id) {
       // A new account starts from this agent's own last numbers, so nothing flashes empty.

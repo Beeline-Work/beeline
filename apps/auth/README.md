@@ -55,8 +55,10 @@ The mounted auth library preserves identity labels without publishing a public n
 Custom NIP-05 identifiers remain ordinary optional profile data. They are not
 part of managed display handles and are never an authentication prerequisite.
 
-There is deliberately no endpoint that accepts a bearer ID token and no OIDC
-token that can authorize `/events`, `/query`, WebSockets, or Room state.
+OIDC tokens cannot authorize `/events`, `/query`, WebSockets, or Room state.
+Android Credential Manager submits its ID token only to the nonce-bound
+`/auth/oidc/native/complete` ceremony, which creates the same one-use bind
+ticket used by browser sign-in, never a Room or device session directly.
 
 ## Deployment shape
 
@@ -232,6 +234,23 @@ ticket remain server verified. `/auth/oidc/completion` recovers dropped
 redirects through the state-bound recovery secret on native, web and desktop.
 Profiles are initialized once and are preserved on subsequent sign-ins.
 Accounts are never linked by email.
+
+Android store builds with the `GoogleAccountPicker` module use Credential
+Manager's explicit Sign in with Google picker. The server provides its web
+client ID and a one-use nonce through `/auth/oidc/native/start`; completion
+checks Google's signature, issuer, web audience, nonce, expiry and authorized
+party before issuing the existing recovery ticket. Configure
+`BEELINE_AUTH_GOOGLE_ANDROID_CLIENT_IDS` with the comma-separated Android
+OAuth client IDs registered in the same Google Cloud project for
+`app.usebeeline`, including the Play app-signing and EAS development SHA-1
+certificates. Never substitute an Android client ID for the server's web
+client ID. The native start route fails closed until the Android clients are
+configured. Any native-picker or native-route failure falls back to browser
+Google sign-in, including unregistered test signing keys and servers without
+these routes or client configuration. Native and browser attempts use separate
+recovery secrets, so a failed native flow cannot block the browser retry.
+Browser sign-in on iOS and existing Android binaries is unchanged.
+Shipping the picker requires a new Android store build, not an OTA alone.
 
 Environment naming: `BEELINE_AUTH_TENANTS_JSON`, `BEELINE_AUTH_SETUP_TOKEN`, and
 `BEELINE_AUTH_HOST` prefer the Beeline spelling; the matching `BUZZY_` names still work.

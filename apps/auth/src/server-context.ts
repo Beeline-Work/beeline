@@ -870,6 +870,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       avatar?: string;
     },
     reply: FastifyReply,
+    nativeJson = false,
   ) => {
     const audience =
       identity.issuer === 'https://github.com' ? GITHUB_IDENTITY_AUDIENCE : identity.audience;
@@ -911,6 +912,10 @@ export function createAuthRouteContext(options: AuthServerOptions) {
         );
       }
       const completion = nativeCompletion(flow, { completed: 1 });
+      if (nativeJson) {
+        noStore(reply);
+        return reply.send({ completed: true });
+      }
       if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(400, 'invalid_oauth_flow', 'Native recovery flow has no redirect');
     }

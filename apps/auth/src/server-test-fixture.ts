@@ -27,7 +27,7 @@ export class PgliteDatabase implements TransactionalDatabase {
     values: unknown[] = [],
   ): Promise<SqlResult<Row>> {
     const result = await this.client.query<Row>(sql, values);
-    return { rows: result.rows, rowCount: result.affectedRows ?? result.rows.length };
+    return { rows: result.rows, rowCount: result.rows.length || result.affectedRows || 0 };
   }
 
   async transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
@@ -42,7 +42,7 @@ export class PgliteDatabase implements TransactionalDatabase {
     return {
       query: async <Row extends QueryResultRow>(sql: string, values: unknown[] = []) => {
         const result = await transaction.query<Row>(sql, values);
-        return { rows: result.rows, rowCount: result.affectedRows ?? result.rows.length };
+        return { rows: result.rows, rowCount: result.rows.length || result.affectedRows || 0 };
       },
     };
   }
@@ -76,6 +76,15 @@ export class DemoOidcProvider {
 
   get issuer(): string {
     return `${this.baseUrl}/issuer`;
+  }
+
+  async nativeIdToken(nonce: string): Promise<string> {
+    return new SignJWT({ nonce, azp: this.claims.authorizedParty ?? 'android-client' })
+      .setProtectedHeader({ alg: 'RS256', kid: this.kid })
+      .setIssuer(this.claims.issuer ?? 'https://accounts.google.com')
+      .setAudience(this.claims.audience ?? this.clientId)
+      .setSubject(this.claims.subject ?? 'google-subject-123')
+      .setIssuedAt().setExpirationTime('5m').sign(this.privateKey);
   }
 
   async start(): Promise<void> {
@@ -313,7 +322,7 @@ export const state: {
   logLines: [],
 };
 
-export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>} = {}): void {
+export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>; nativeGoogle?: boolean} = {}): void {
   beforeEach(async () => {
     provider = new DemoOidcProvider();
     await provider.start();
@@ -348,7 +357,8 @@ export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthO
       onFunnelAuth: options.onFunnelAuth,
       store,
       oidc: new OidcClient({
-        issuer: provider.issuer,
+        issuer: options.nativeGoogle ? 'https://accounts.google.com' : provider.issuer,
+        ...(options.nativeGoogle ? { androidClientIds: ['android-client'] } : {}),
         authorizationEndpoint: `${provider.baseUrl}/authorize`,
         tokenEndpoint: `${provider.baseUrl}/token`,
         jwksUri: `${provider.baseUrl}/jwks`,

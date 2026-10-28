@@ -274,6 +274,31 @@ describe('GitHub callback delivery into onboarding', () => {
       .toEqual(['Continue with GitHub', 'Continue with Google']);
   });
 
+  it('R-signin-entry: enters after exchange even when GitHub repository discovery is unavailable', async () => {
+    await persistGitHubSignInState(STATE);
+    linking.initialUrl = callbackUrl();
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'getAuthCapabilities') return { repositoryOnboarding: true };
+      if (name === 'listGitHubRepositories') throw new Error('GitHub unavailable');
+      return {};
+    });
+    await render();
+    expect(monolith.exchangeGitHubTicket).toHaveBeenCalledOnce();
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('R-signin-entry: restores a saved session before touching a consumed Google continuation', async () => {
+    monolith.identityId.mockResolvedValue(MONOLITH_IDENTITY);
+    storage.set('beeline.google-sign-in.v1', JSON.stringify({
+      state: STATE, recoveryToken: RECOVERY_TOKEN, startedAt: Date.now(),
+    }));
+    network.fetch.mockImplementation(async () => new Response('{}', { status: 410 }));
+    const tree = await render();
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+    expect(noticeText(tree)).not.toContain('Sign-in expired');
+    expect(network.fetch).not.toHaveBeenCalled();
+  });
+
   it.each(['browser_canceled', 'ticket_expired', 'offline'])(
     'shows one primary recovery action for %s on the full screen', async (code) => {
       const tree = await render();

@@ -69,7 +69,12 @@ export class StarterOnboardingService {
   }
 
   open(roomId: string, userId: string): void {
-    void this.enter(roomId, userId).catch(error => console.error('[onboarding] playback failed', error));
+    const work = () => this.enter(roomId, userId)
+      .then(() => undefined)
+      .catch(error => console.error('[onboarding] playback failed', error));
+    // Playback outlives the Room read, so closing the database must drain it.
+    if (this.database.backgroundWork) this.database.backgroundWork.run(work);
+    else void work();
   }
 
   async queueRerun(database: SqlDatabase, roomId: string, userId: string, agentId: string) {

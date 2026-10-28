@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentUsage } from '@beeline/api-contract/daemon';
-import { HarnessQuotaReader, quotaAxiUsage } from './harness-quota.js';
+import { HarnessQuotaReader, QUOTA_READ_INTERVAL_MS, quotaAxiUsage } from './harness-quota.js';
 import { QUOTA_AXI_CLAUDE_REPORT } from './harness-quota.fixtures.js';
 
 const now = Date.parse('2026-10-28T14:00:00.000Z') / 1000;
@@ -97,6 +97,74 @@ describe('one read per plan account on this machine', () => {
     await expect(later.publish('claude', {}, true)).resolves.toEqual({ status: 'signed_out' });
     expect(posts[1]!.account).toEqual(posts[0]!.account);
     expect(JSON.stringify(posts)).not.toContain('acct-1');
+  });
+
+  describe('agents with their own copy of one login', () => {
+    const setup = (accountOf: Record<string, string>) => {
+      let clock = now * 1000;
+      const slots = new Map();
+      const posts: Array<[string, AgentUsage]> = [];
+      const run = vi.fn(async (_launch: unknown, env: Record<string, string>) =>
+        JSON.stringify(verified(accountOf[env.CLAUDE_CONFIG_DIR!]!)));
+      const publish = (agentId: string, force = false) => new HarnessQuotaReader({
+        agentId, slots, run, launch, now: () => clock,
+        post: async (usage) => { posts.push([agentId, usage]); },
+        credentialPath: (_provider, env) => `${env.CLAUDE_CONFIG_DIR}/.credentials.json`,
+      }).publish('claude', { CLAUDE_CONFIG_DIR: `/agents/${agentId}/claude` }, force);
+      return { run, posts, publish, advance: (ms: number) => { clock += ms; } };
+    };
+
+    it('share one read per interval once quota-axi verifies the account', async () => {
+      const { run, posts, publish, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
+      await publish('ruby');
+      await publish('nerd');
+      advance(QUOTA_READ_INTERVAL_MS + 1);
+      await publish('ruby');
+      await expect(publish('nerd')).resolves.toEqual({ status: 'fresh' });
+      expect(run).toHaveBeenCalledTimes(3);
+      const [ruby, nerd] = posts.slice(2);
+      expect([ruby![0], nerd![0]]).toEqual(['ruby', 'nerd']);
+      expect(nerd![1]).toEqual(ruby![1]);
+    });
+
+    it('join a read in flight from another home on the account', async () => {
+      const { run, posts, publish, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
+      await publish('ruby');
+      await publish('nerd');
+      advance(QUOTA_READ_INTERVAL_MS + 1);
+      let finish!: (stdout: string) => void;
+      run.mockImplementationOnce(() => new Promise<string>((resolve) => { finish = resolve; }));
+      const ruby = publish('ruby', true);
+      const nerd = publish('nerd', true);
+      finish(JSON.stringify(verified('acct-1')));
+      await expect(Promise.all([ruby, nerd])).resolves.toEqual([{ status: 'fresh' }, { status: 'fresh' }]);
+      expect(run).toHaveBeenCalledTimes(3);
+      expect(posts.slice(2).map(([agent]) => agent).sort()).toEqual(['nerd', 'ruby']);
+    });
+
+    it('keep reading separately when the accounts differ', async () => {
+      const { run, posts, publish, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-2' });
+      await publish('ruby');
+      await publish('nerd');
+      advance(QUOTA_READ_INTERVAL_MS + 1);
+      await publish('ruby');
+      await publish('nerd');
+      expect(run).toHaveBeenCalledTimes(4);
+      expect(posts[3]![1].account).toEqual(posts[1]![1].account);
+      expect(posts[3]![1].account).not.toEqual(posts[2]![1].account);
+    });
+
+    it("never hand one home's expired sign-in to another home", async () => {
+      const { run, posts, publish, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
+      await publish('ruby');
+      await publish('nerd');
+      advance(QUOTA_READ_INTERVAL_MS + 1);
+      run.mockResolvedValueOnce(JSON.stringify(verified('acct-1', { status: 'auth_required', stale: true })));
+      await expect(publish('ruby')).resolves.toEqual({ status: 'signed_out' });
+      await expect(publish('nerd')).resolves.toEqual({ status: 'fresh' });
+      expect(run).toHaveBeenCalledTimes(4);
+      expect(posts[3]![0]).toBe('nerd');
+    });
   });
 
   it('answers a failed read with a reason instead of dropping it', async () => {

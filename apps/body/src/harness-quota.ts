@@ -221,6 +221,8 @@ type ReadSlot = {
 /**
  * Every agent loop on this machine shares these slots, one per plan login:
  * agents whose homes link one credential file get one read per interval.
+ * `account:<key>` names the slot that last read a verified account, so homes
+ * with their own copy of one login share its reads too.
  */
 const ACCOUNT_READ_SLOTS = new Map<string, ReadSlot>();
 
@@ -232,6 +234,14 @@ const outcomeOf = (usage: AgentUsage): UsageRefreshOutcome =>
         ...(usage.read.retryAfter ? { retryAfter: usage.read.retryAfter } : {}),
       }
     : { status: 'fresh' };
+
+/**
+ * Whether a read from another home on `account` stands for this one too: same
+ * verified account, and not a sign-in or reader failure that belongs to that
+ * home alone.
+ */
+const sharesAccount = (usage: AgentUsage, account: string) =>
+  usage.account?.key === account && usage.read?.status !== 'signed_out' && usage.read?.status !== 'failed';
 
 /**
  * Throttled plan reader for one agent. `publish` never throws and never
@@ -259,7 +269,15 @@ export class HarnessQuotaReader {
     env: Record<string, string>,
     force = false,
   ): Promise<UsageRefreshOutcome | undefined> {
-    if (!provider) return Promise.resolve(undefined);
+    return provider ? this.start(provider, env, force, true) : Promise.resolve(undefined);
+  }
+
+  private start(
+    provider: string,
+    env: Record<string, string>,
+    force: boolean,
+    shareAccount: boolean,
+  ): Promise<UsageRefreshOutcome | undefined> {
     const now = this.options.now?.() ?? Date.now();
     const credential = (this.options.credentialPath ?? quotaCredentialPath)(provider, env);
     const login = `${provider}:${credential ?? `agent:${this.options.agentId}`}`;
@@ -267,16 +285,33 @@ export class HarnessQuotaReader {
     let slot = slots.get(login);
     if (!slot) slots.set(login, (slot = { lastStartedAt: -Infinity, posts: new Map() }));
     if (slot.running) return this.deliver(slot, slot.running);
-    const since = now - slot.lastStartedAt;
+    const account = slot.accountKey;
+    const sibling = shareAccount && account ? slots.get(`account:${account}`) : undefined;
+    // Another home on this verified account is reading it now: join, unless
+    // that read finds its login moved or its own sign-in broken.
+    if (account && sibling && sibling !== slot && sibling.accountKey === account && sibling.running) {
+      const running = sibling.running;
+      return running.then((usage) =>
+        sharesAccount(usage, account)
+          ? this.deliver(sibling, running)
+          : this.start(provider, env, force, false));
+    }
+    const latest = account && sibling && sibling.accountKey === account && sibling.lastStartedAt > slot.lastStartedAt
+      && sibling.last && sharesAccount(sibling.last, account) ? sibling : slot;
+    const since = now - latest.lastStartedAt;
     if (since < (force ? REFRESH_REUSE_MS : (this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS)))
-      return slot.last ? this.deliver(slot, Promise.resolve(slot.last)) : Promise.resolve(undefined);
+      return latest.last ? this.deliver(latest, Promise.resolve(latest.last)) : Promise.resolve(undefined);
     // Turn-loop tests must never read the developer's real vendor quota.
     if (!this.options.run && process.env.VITEST) return Promise.resolve(undefined);
     const held = slot;
     held.lastStartedAt = now;
     held.posts = new Map();
+    if (account) slots.set(`account:${account}`, held);
     held.running = this.read(provider, env, held, login, now / 1000).finally(() => {
       held.running = undefined;
+    });
+    void held.running.then(() => {
+      if (held.accountKey && held.accountKey !== account) slots.set(`account:${held.accountKey}`, held);
     });
     return this.deliver(held, held.running);
   }

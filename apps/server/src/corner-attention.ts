@@ -167,6 +167,8 @@ type Row = CornerStateRow & {
   episode: string;
   reported_episode: string;
   scheduled_wait: boolean;
+  held: boolean;
+  review_queued: boolean;
 };
 function attentionSql() {
   return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
@@ -175,6 +177,13 @@ function attentionSql() {
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
     blocker.agent_commander,blocker.human_blocker,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,span.reported_episode::text,
+    EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL) held,
+    EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
+      AND command.action='input' AND (command.state='pending' OR
+        (command.state='claimed' AND command.lease_expires_at>now()))
+      AND command.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
+      AND command.review_context->>'purpose' IS NULL
+      AND command.agent_id IS DISTINCT FROM f.worker_agent_id) review_queued,
     EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.next_run_at>now()
       AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) scheduled_wait
@@ -196,9 +205,9 @@ export async function refreshCornerAttention(
     // Pending CI and standing scheduled waits are not idle-alert episodes.
     // Ending a wait can open a real episode.
     const summary = row.lifecycle?.checksSummary;
-    const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' ||
+    const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' || row.lifecycle?.checks === 'pending' ||
       (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
-    const suppressed = row.scheduled_wait || pendingHead || row.worker_active || row.reviewer_active;
+    const suppressed = row.scheduled_wait || row.held || row.review_queued || pendingHead || row.worker_active || row.reviewer_active;
     if (suppressed) {
       await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
       return { parentId: row.parent_id, deadlines: [] };

@@ -687,6 +687,18 @@ describe('GitHub phone operations', () => {
     } finally { clock.mockRestore(); }
   });
 
+  it('Reproduction REVIEW-LOOP: checks expose an ended review without claiming a verdict', async () => {
+    const {corners,app}=await checksFixture();
+    const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
+    await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`,[corners[0]]);
+    expect((await operations.prChecksStatus({cornerId:corners[0]!})).reviewerWake.status).toBe('dispatched');
+    await database.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1`,[corners[0]]);
+    await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`,[corners[0]]);
+    expect((await operations.prChecksStatus({cornerId:corners[0]!})).reviewerWake).toMatchObject({
+      status:'waiting',detail:expect.stringContaining('without a verdict'),
+    });
+  });
+
   it('Reproduction F1-6: live verdict and dispatch remain separate, with no self-review special case', async () => {
     const { corners, app } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');

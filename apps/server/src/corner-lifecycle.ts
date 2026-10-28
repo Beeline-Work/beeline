@@ -1,3 +1,4 @@
+import { REVIEW_VERDICT_SQL, missingReviewAttachments } from './review-evidence.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cornerReportWaiting } from './corner-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -842,8 +843,8 @@ async function noteReviewDispatchFailure(
 /**
  * Repair a green review state whose reviewer wake is missing or failed. Any
  * active reviewer command since the run's newest card counts. A completed
- * review without PASS returns the unresolved review to the implementer once
- * its current work ends; only a new push automatically repeats that review.
+ * verdict without PASS returns findings to the implementer. Empty completions
+ * retry on the same head up to the per-head cap; they are never verdicts.
  * A report filed while the gate was still pending is not that review, so it
  * does not swallow the one wake for this head.
  */
@@ -905,6 +906,12 @@ async function ensureReviewDispatch(
     return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
       reason, false);
   }
+  const attempts = (await db.query<{ count: number }>(
+    `SELECT count(*)::int count FROM agent_commands WHERE room_id=$1
+       AND review_context->>'headSha'=$2 AND review_context->>'purpose' IS NULL
+       AND review_context->'pullRequest'=$3::jsonb
+       AND action='input' AND state='complete'`, [cornerId,pr.headSha,JSON.stringify(pr.number)])).rows[0]!.count;
+  if (attempts >= 3) return noteMissingReviewVerdict(db, cornerId, corner, pr.headSha);
   const sourceId = transition.lastCardId ?? (
     await db.query<{ id: string }>(
       `SELECT id FROM messages WHERE room_id=$1 AND card_type=$2
@@ -940,6 +947,10 @@ async function ensureReviewDispatch(
     console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
     return noteReviewBlocked(db, cornerId, corner, pr.headSha, reason);
   }
+  if (attempts && queued.command) await db.query(
+    `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{text}',
+       to_jsonb((private_payload->>'text')||E'\n'||$2::text)) WHERE id=$1`,
+    [queued.command.id, `The prior review ended without a verdict. Retry (${attempts}) on the same head; deliver PASS or actionable findings.`]);
   return { ok: true, wake: { queued: true, agentId: reviewerAgentId } };
 }
 
@@ -947,6 +958,21 @@ async function ensureReviewDispatch(
 const reviewChecksSql = `jsonb_build_object('status',lifecycle->>'checks','checks',
   (SELECT jsonb_agg(jsonb_build_object('name',item->>'name','status',item->>'status') ORDER BY item->>'name')
    FROM jsonb_array_elements(COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb)) item))`;
+
+/** Exhausted empty reviews are a private missing-verdict handback, never a completed review. */
+async function noteMissingReviewVerdict(db: SqlDatabase, cornerId: string, corner: CornerRow, headSha: string): Promise<Applied> {
+  const text = 'blocked: the reviewer ended without a verdict after bounded retries; arrange review or restore reviewer access';
+  await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, text, undefined,
+    createHash('sha256').update(`review-no-verdict:${cornerId}:${headSha}`).digest('hex'),
+    {automatic: true, agentOnly: true});
+  const command = corner.worker_agent_id ? await createAgentCommand(db, {
+    id: createHash('sha256').update(`review-no-verdict-worker:${cornerId}:${headSha}`).digest('hex'),
+    roomId: cornerId, agentId: corner.worker_agent_id, sourceMessageId: null,
+    privatePayload: {text, authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId, kind: 'lifecycle'},
+    reason: 'corner_review_needed',
+  }) : undefined;
+  return {ok: true, wake: {queued: Boolean(command), ...(command ? {agentId: corner.worker_agent_id!} : {})}};
+}
 
 /**
  * The reviewer's finished review of this head (callers have already checked
@@ -971,6 +997,14 @@ export async function blockingReview(
          AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
        WHERE command.room_id=$1 AND command.action='input'
          AND command.state='complete' AND turn.status='complete'
+         AND (EXISTS (SELECT 1 FROM messages verdict
+           WHERE verdict.room_id=command.room_id AND verdict.author_id=command.agent_id
+             AND (verdict.id=command.result_message_id OR verdict.request_id=command.turn_request_id
+               OR verdict.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb))))
+             AND verdict.deleted_at IS NULL AND verdict.text ~* $4)
+           OR EXISTS (SELECT 1 FROM agent_commands report
+             WHERE report.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb)))
+               AND report.private_payload->>'authorId'=command.agent_id AND report.private_payload->>'text' ~* $4))
          AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
          AND (command.reason='corner_review_dispatch'
            OR (command.reason IN ('agent_tag','order') AND command.review_context IS NOT NULL
@@ -988,7 +1022,7 @@ export async function blockingReview(
              AND card.created_at>command.created_at
              AND card.created_at<=COALESCE(command.completed_at,now()))
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-      [cornerId, headSha, CORNER_LIFECYCLE_CARD_TYPE],
+      [cornerId, headSha, CORNER_LIFECYCLE_CARD_TYPE, REVIEW_VERDICT_SQL],
     )
   ).rows[0]?.id;
 }
@@ -1390,6 +1424,7 @@ export type CornerMergeGate = {
    * current Workspace owner or admin's order, or the zero-check commander's yes.
    */
   approved: boolean;
+  evidenceMissing?: boolean;
   held: boolean;
   holds: Awaited<ReturnType<typeof activeCornerHolds>>;
   /** Everything but checks: a yes on this head and no hold. */
@@ -1398,6 +1433,7 @@ export type CornerMergeGate = {
 
 export type CornerMergeabilityInput = {
   checks: string;
+  evidenceMissing?: boolean;
   approved: boolean;
   held: boolean;
   holds: readonly { id: string; holderId?: string; holderName?: string | null }[];
@@ -1416,7 +1452,7 @@ export function cornerMergeability(input: CornerMergeabilityInput) {
       : '',
     input.mergeability === 'draft' ? 'PR is a draft' : '',
     input.checks !== 'passed' ? `checks are ${input.checks}` : '',
-    input.approved ? '' : 'no yes on this head',
+    input.evidenceMissing ? 'missing review attachments: attach the screenshots or files claimed by the verdict' : input.approved ? '' : 'no yes on this head',
     input.held
       ? `a hold stands${input.holds.length ? `: ${input.holds.map(hold => `${hold.id}${hold.holderName ? ` (${hold.holderName}, ${hold.holderId ?? ''})` : ''}`).join('; ')}` : ''}`
       : '',
@@ -1489,8 +1525,16 @@ export async function cornerMergeGate(
     )).rows[0];
     if (approval) corner.approved = await isZeroCheckCommander(db, cornerId, approval.approved_by);
   }
+  const approval = (await db.query<{ approved_by: string }>(
+    `SELECT approval.approved_by FROM corner_merge_approvals approval JOIN identities reviewer
+       ON reviewer.id=approval.approved_by AND reviewer.kind='agent'
+     WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3`,
+    [cornerId,head.number,head.headSha])).rows[0];
+  const evidenceMissing = Boolean(approval && await missingReviewAttachments(db, cornerId, head, approval.approved_by));
+  if (evidenceMissing) corner.approved=false;
   const held = corner.holds.length > 0;
   return {
+    ...(evidenceMissing ? {evidenceMissing:true} : {}),
     reviewerExists: Boolean(corner.configured_reviewer_id),
     approved: corner.approved,
     held,
@@ -1526,7 +1570,7 @@ export async function claimCornerMergeAttempt(
     // A brief revised during the GitHub read is seen here: revisions take this lock.
     await assertCornerBriefAllowsMerge(db, cornerId);
     const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
-    if (!gate.open) return blocked(gate.held ? 'a hold stands' : 'no yes on this head');
+    if (!gate.open) return blocked(gate.evidenceMissing ? 'missing review attachments: attach the screenshots or files claimed by the verdict' : gate.held ? 'a hold stands' : 'no yes on this head');
     const claimed = await db.query(
       `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
        WHERE corner_id=$1

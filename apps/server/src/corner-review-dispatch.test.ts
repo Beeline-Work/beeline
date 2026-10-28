@@ -568,7 +568,7 @@ describe('corner message attribution', () => {
     expect(reviewerWakes).toHaveLength(0);
   });
 
-  it.each(['FAIL: fix the demonstration.', 'PASS: reviewed all changed files.',
+  it.each(['FAIL: fix the demonstration.', '**FAIL**: A1 is unmet.', 'Verdict: FAIL: A1 is unmet.', 'PASS: reviewed all changed files.',
     'FAIL: the diff is empty; there is nothing to review.'])(
     'Reproduction REVIEW-QUIET-1: duplicate green deliveries retain %s', async verdict => {
       await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -646,7 +646,7 @@ describe('corner message attribution', () => {
     const [repaired] = await commands(B, C);
     expect(repaired?.reason).toBe('corner_review_dispatch');
     await claim(repaired!);
-    await result(repaired!, 'Review ended without a verdict.');
+    await result(repaired!, 'FAIL: the demonstration is missing.');
     for (let i = 0; i < 4; i++) await cycle();
     expect(await commands(B, C)).toHaveLength(0);
     const reports = (await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('the reviewer completed its review'));
@@ -1555,3 +1555,97 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
     ).toBe('passing');
   });
 });
+
+it.each(['empty','status','failed'])('Reproduction REVIEW-LOOP: a %s review without a verdict retries the same head, then stops', async ending => {
+  await phone.execute('updateRoom', {roomId:R,reviewerAgentId:B}, H);
+  await greenHead(91,'d'.repeat(40));
+  for (let attempt=0;attempt<3;attempt++) {
+    const pending=await commands(B,C);
+    expect(pending).toHaveLength(1);
+    await claim(pending[0]!,`empty-${attempt}`);
+    if (ending==='status') await result(pending[0]!, 'Review ended without a verdict.', `empty-${attempt}`);
+    else if (ending==='failed') {
+      await db.query(`UPDATE agent_turns SET status='failed',failure_reason='GitHub rate limit' WHERE request_id=$1`,[pending[0]!.turnRequestId]);
+      await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`,[pending[0]!.id]);
+    } else await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:pending[0]!.turnRequestId,
+      generationId:`empty-${attempt}`,status:'complete'},B);
+    await reconcileConfiguredCornerReviewers(db,R);
+  }
+  expect(await commands(B,C)).toHaveLength(0);
+  expect((await commands(A,C)).some(c=>c.source.body.includes('without a verdict'))).toBe(true);
+  for(let cycle=0;cycle<3;cycle++) await reconcileConfiguredCornerReviewers(db,R);
+  expect(await commands(B,C)).toHaveLength(0);
+});
+
+it('Reproduction REVIEW-LOOP: a current member tag reaches a reviewer after an empty completion', async () => {
+  await phone.execute('updateRoom', {roomId:R,reviewerAgentId:B},H);
+  await greenHead(92,'e'.repeat(40));
+  const [review]=await commands(B,C);
+  await claim(review!);
+  await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,
+    generationId:'g1',status:'complete'},B);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('retry-tag',$1,$2,'@goosy please review this head')`,[C,A]);
+  const {routeAgentResult}=await import('./agent-command.js');
+  const parent=(await db.query(`SELECT * FROM agent_commands WHERE id=$1`,[review!.id])).rows[0];
+  const routed=await routeAgentResult(db,{...parent,agent_id:A,review_context:{...parent.review_context,purpose:'repair'}},'retry-tag',{roomId:C,agentId:A});
+  expect(routed).toEqual({woken:['goosy'],notWoken:[]});
+});
+
+it('Reproduction REVIEW-LOOP: a PASS claiming absent screenshots cannot open the merge gate', async () => {
+  await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
+  const head='f'.repeat(40);
+  await greenHead(93,head);
+  const [review]=await commands(B,C);
+  await claim(review!);
+  await result(review!,'PASS: screenshots are attached here.');
+  await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).rejects.toThrow(/missing.*attachment/i);
+  // Guard an approval that was recorded before the claiming report arrived.
+  await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha)
+    VALUES($1,$2,93,$3)`,[C,B,head]);
+  const {cornerMergeGate}=await import('./corner-lifecycle.js');
+  const gate=await cornerMergeGate(db,C,{number:93,headSha:head});
+  expect(gate.open).toBe(false);
+  expect(gate).toMatchObject({evidenceMissing:true});
+});
+
+it.each(['Screenshots in the PR show the result.', 'No screenshots are attached.',
+  'Please attach screenshots before merging.', 'Screenshots should be attached.',
+  'The PR has screenshots attached.'])(
+  'Reproduction REVIEW-LOOP: discussing evidence is not a delivery claim: %s', async text => {
+    await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
+    const head='1'.repeat(40);
+    await greenHead(94,head);
+    const [review]=await commands(B,C);
+    await claim(review!);
+    await result(review!,`PASS: reviewed. ${text}`);
+    await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).resolves.toMatchObject({status:'approved'});
+  });
+
+it.each(['final','report'])(
+  'Reproduction REVIEW-LOOP: %s attachment claims require files on that review', async delivery => {
+    await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
+    const head='2'.repeat(40);
+    await greenHead(95,head);
+    const [review]=await commands(B,C);
+    await claim(review!);
+    if(delivery==='report') {
+      await daemon.execute('report',{roomId:C,requestId:review!.turnRequestId,generationId:'g1',
+        status:'done',text:'done: PASS. Screenshots are attached here.'},B);
+    } else await result(review!,'PASS: screenshots attached.');
+    await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).rejects.toThrow(/missing.*attachment/i);
+    // A file on an unrelated older message must not satisfy this verdict.
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES
+      ('unrelated-file',$1,$2,'Earlier file','[{"name":"older.png","url":"https://example.test/old.png"}]')`,[C,B]);
+    await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).rejects.toThrow(/missing.*attachment/i);
+    if(delivery==='final') {
+      await db.query(`UPDATE messages SET attachments='[{"name":"proof.png","url":"https://example.test/proof.png"}]'
+        WHERE request_id=$1`,[review!.turnRequestId]);
+    } else {
+      const reportId=(await db.query<{ids:string[]}>(`SELECT review_context->'reportIds' ids
+        FROM agent_commands WHERE id=$1`,[review!.id])).rows[0]!.ids[0]!;
+      await db.query(`UPDATE messages SET attachments='[{"name":"proof.png","url":"https://example.test/proof.png"}]' WHERE id=$1`,[reportId]);
+      await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{attachments}',
+        '[{"name":"proof.png","url":"https://example.test/proof.png"}]') WHERE id=$1`,[reportId]);
+    }
+    await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).resolves.toMatchObject({status:'approved'});
+  });

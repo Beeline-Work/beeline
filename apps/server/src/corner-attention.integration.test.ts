@@ -816,3 +816,23 @@ it.each(['human','push','check','reviewer'])('Reproduction IDLE-STORM: a real %s
   await refreshCornerAttention(db,C);
   expect(await commanderFlags()).toHaveLength(2);
 });
+
+it.each(['queued-review', 'hold-behind-report', 'pending-with-old-summary'])(
+  'Reproduction REVIEW-LOOP: %s never alerts the commander', async kind => {
+    await ci('passing');
+    if (kind === 'queued-review') {
+      const command = await wake(REVIEWER, 'queued-review');
+      await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`,
+        [command!.id, JSON.stringify({ headSha: 'head', pullRequest: 1 })]);
+      await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`, [C]);
+      await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=$1`,[C]);
+    } else if (kind === 'hold-behind-report') {
+      await db.query(`INSERT INTO corner_report_blockers(corner_id,report_id,person_id,commander_id,return_room_id,created_at)
+        VALUES($1,'opening-order',$2,$2,$3,now()-interval '1 hour')`, [C, COMMANDER, ROOM]);
+      await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`, [C,HUMAN]);
+    } else {
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+    }
+    for (let cycle=0;cycle<3;cycle++) await refreshCornerAttention(db,C);
+    expect(await commanderFlags()).toHaveLength(0);
+  });

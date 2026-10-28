@@ -5,12 +5,28 @@ export const REVIEW_VERDICT_SQL = String.raw`(^|\n)[[:space:]>#*-]*(@[[:alnum:]_
 
 /** Claim only delivery here, not evidence discussed in a PR or requested later. */
 function claimsAttachedEvidence(text: string): boolean {
-  return text.split(/[.!?\n]+/).some(sentence => {
-    if (/\b(?:not|no|never|missing|without|attach|please|should|must|will|need)\b/i.test(sentence)) return false;
-    if (/\b(?:(?:in|on|to|from) (?:the )?(?:PR|pull request)|(?:PR|pull request) (?:has|contains|includes))\b/i.test(sentence)) return false;
-    if (/\b(?:isn't|aren't|weren't|wasn't)\b/i.test(sentence)) return false;
-    return /\b(?:screenshots?|images?|photos?|PNGs?|files?|captures?|attachments?)\b.{0,60}\b(?:are |is |were |have been |has been )?attached\b/i.test(sentence)
-      || /\b(?:attached|attaching)\b.{0,60}\b(?:screenshots?|images?|photos?|PNGs?|files?|captures?)\b/i.test(sentence);
+  // Separate independent clauses before evaluating the words governing each claim.
+  return text.split(/[.!?;,\n]+|\b(?:and|but)\b/i).some(clause => {
+    const evidence = String.raw`\b(?:screenshots?|images?|photos?|PNGs?|files?|captures?|attachments?)\b`;
+    const patterns = [
+      new RegExp(`${evidence}(.{0,60}?)\\battached\\b`, 'gi'),
+      new RegExp(`\\b(?:attached|attaching)\\b(.{0,60}?)${evidence}`, 'gi'),
+    ];
+    for (const pattern of patterns) for (const match of clause.matchAll(pattern)) {
+      const prefix = clause.slice(0, match.index);
+      const suffix = clause.slice(match.index! + match[0].length);
+      // A negation or request must govern this subject/verb, not another claim.
+      if (/\b(?:no|not|never|without|missing)\s*(?:(?:the|any)\s*)?$/i.test(prefix)
+        || /\b(?:isn't|aren't|weren't|wasn't)\s*$/i.test(prefix)
+        || /\bplease(?:\s+(?:ensure|confirm|provide|include|send|make sure))?\s*$/i.test(prefix)
+        || /\b(?:should|must|will|need)(?:\s+(?:be|have|been|to)){0,3}\s*$/i.test(prefix)
+        || /\b(?:not|no|never|without|missing|please|should|must|will|need|isn't|aren't|weren't|wasn't)\b/i.test(match[1]!)) continue;
+      const prReference = /\b(?:in|on|to|from) (?:the )?(?:PR|pull request)\b/i;
+      if (prReference.test(match[0]) || /^\s*(?:in|on|to|from) (?:the )?(?:PR|pull request)\b/i.test(suffix)
+        || /\b(?:PR|pull request) (?:has|contains|includes)\s*$/i.test(prefix)) continue;
+      return true;
+    }
+    return false;
   });
 }
 

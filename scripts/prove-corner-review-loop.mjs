@@ -78,7 +78,7 @@ try {
  const retry=pending.body.commands[0];
  await claim(retry,'verdict');
  assert.equal((await call('approveCornerMerge',{cornerId:corner,headSha:head})).body.status,'approved');
- assert.equal((await call('postRoomMessage',{roomId:corner,requestId:retry.turnRequestId,generationId:'verdict',text:'PASS: screenshots attached here.'})).status,200);
+ assert.equal((await call('postRoomMessage',{roomId:corner,requestId:retry.turnRequestId,generationId:'verdict',text:'PASS: no blockers; screenshots attached here.'})).status,200);
  const refused=await call('approveCornerMerge',{cornerId:corner,headSha:head});
  assert.equal(refused.status,409);
  assert.match(JSON.stringify(refused.body),/missing review attachments/);

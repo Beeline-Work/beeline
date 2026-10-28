@@ -1591,13 +1591,17 @@ it('Reproduction REVIEW-LOOP: a current member tag reaches a reviewer after an e
   expect(routed).toEqual({woken:['goosy'],notWoken:[]});
 });
 
-it('Reproduction REVIEW-LOOP: a PASS claiming absent screenshots cannot open the merge gate', async () => {
+it.each(['PASS: screenshots are attached here.', 'PASS: no blockers; screenshots attached here.',
+  'PASS: no blockers and screenshots attached here.', 'PASS: no blockers screenshots attached here.',
+  'PASS: please merge screenshots attached here.', 'PASS: screenshots attached here, no blockers.',
+  'PASS: screenshots attached here; please merge.', 'PASS: screenshots attached here; the PR has no blockers.'])(
+  'Reproduction REVIEW-LOOP: absent attachments refuse the claim: %s', async text => {
   await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
   const head='f'.repeat(40);
   await greenHead(93,head);
   const [review]=await commands(B,C);
   await claim(review!);
-  await result(review!,'PASS: screenshots are attached here.');
+  await result(review!,text);
   await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).rejects.toThrow(/missing.*attachment/i);
   // Guard an approval that was recorded before the claiming report arrived.
   await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha)
@@ -1610,7 +1614,8 @@ it('Reproduction REVIEW-LOOP: a PASS claiming absent screenshots cannot open the
 
 it.each(['Screenshots in the PR show the result.', 'No screenshots are attached.',
   'Please attach screenshots before merging.', 'Screenshots should be attached.',
-  'The PR has screenshots attached.'])(
+  'The PR has screenshots attached.', 'Screenshots are not attached.', 'Screenshots are missing; please attach files.',
+  'No screenshots attached, but the checks pass.', 'The attached screenshots in the PR show the result.'])(
   'Reproduction REVIEW-LOOP: discussing evidence is not a delivery claim: %s', async text => {
     await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
     const head='1'.repeat(40);

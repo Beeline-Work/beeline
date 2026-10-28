@@ -5735,7 +5735,8 @@ export class PhoneService {
          FROM identities identity
          LEFT JOIN agents a ON a.agent_id=identity.id
          LEFT JOIN identities owner ON owner.id=a.owner_id
-         WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'`,
+         WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'
+           AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=identity.id)`,
         [[...agentIds], roomId, AGENT_REACHABLE_HORIZON_MS],
       );
       const bucket = accessNoticeBucket(Date.now());
@@ -5883,7 +5884,8 @@ export class PhoneService {
          LEFT JOIN agents a ON a.agent_id=d.agent_id
          LEFT JOIN identities owner ON owner.id=a.owner_id
          JOIN messages source ON source.id=d.source_message_id AND source.deleted_at IS NULL
-         WHERE d.notified_at IS NULL AND d.due_at <= $1`,
+         WHERE d.notified_at IS NULL AND d.due_at <= $1
+           AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=d.agent_id)`,
         [new Date(now), AGENT_REACHABLE_HORIZON_MS],
       );
       if (!due.rows.length) return 0;

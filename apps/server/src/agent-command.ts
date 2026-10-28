@@ -585,6 +585,8 @@ export async function createAgentCommand(
     reportSource?: CommandRow;
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
+    /** MCP replies start one hop after their external member, without a helper command. */
+    initialAgentDepth?: 1;
     /** Conversation tags retain chain depth without inheriting assignment privacy. */
     inheritPrivatePayload?: boolean;
     avatarJob?: boolean;
@@ -682,7 +684,7 @@ export async function createAgentCommand(
       ? { text: `${sourceText ?? ''}${note}`.trim(), authorId: SYSTEM_IDENTITY_ID, fromRoomId: input.roomId, kind: 'lifecycle' as const }
       : undefined);
   const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
-    ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
+    ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : input.initialAgentDepth ?? 0;
   if (depth === undefined) return undefined;
   const id = input.id ?? randomBytes(32).toString('hex');
   const minutes = member.rows[0]!.wake_batch_minutes;
@@ -830,6 +832,7 @@ async function routeTaggedLifecycleCommand(
          ORDER BY updated_at DESC LIMIT 1
        ) presence ON true
        WHERE agent.agent_id=$1
+         AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=agent.agent_id)
        FOR SHARE OF agent,target_member,sender`,
       [source.tagged_ids[0], source.room_id, source.author_id],
     )
@@ -1125,8 +1128,9 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   targets.delete(source.author_id);
   for (const target of targets) {
     const agent = (
-      await db.query<{ owner_id: string; access_policy: unknown; mcp_callback_url: string | null }>(
-        `SELECT a.owner_id,a.access_policy,client.callback_url mcp_callback_url FROM agents a
+      await db.query<{ owner_id: string; access_policy: unknown; mcp_callback_url: string | null; mcp_member: boolean }>(
+        `SELECT a.owner_id,a.access_policy,client.callback_url mcp_callback_url,
+     member.member_id IS NOT NULL mcp_member FROM agents a
    LEFT JOIN rooms_mcp_members member ON member.member_id=a.agent_id
    LEFT JOIN rooms_mcp_clients client ON client.id=member.client_id
    JOIN memberships m ON m.identity_id=$2 AND m.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$3) AND m.removed_at IS NULL
@@ -1143,6 +1147,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       )
     )
       continue;
+    if (agent.mcp_member) {
+      if (agent.mcp_callback_url)
+        await recordMcpMemberWebhook(db, target, agent.mcp_callback_url, source.room_id, sourceId, source.text);
+      continue;
+    }
     if (avatarJob) {
       if (agent.owner_id !== source.author_id)
         throw new Error('only the agent owner may generate its avatar (access denied)');
@@ -1152,15 +1161,13 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       );
       if (active.rowCount) throw new Error('avatar generation already active (conflict)');
     }
-    const dispatched = await createAgentCommand(db, {
+    await createAgentCommand(db, {
       roomId: source.room_id,
       agentId: target,
       avatarJob,
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
-    if (dispatched && agent.mcp_callback_url)
-      await recordMcpMemberWebhook(db, target, agent.mcp_callback_url, source.room_id, sourceId, source.text);
     if (source.parent_id) await setCornerImplementer(db, source.room_id, target);
   }
   return false;
@@ -1204,10 +1211,10 @@ export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow | undefined,
   sourceId: string,
-  speaker?: { roomId: string; agentId: string },
+  speaker?: { roomId: string; agentId: string; initialAgentDepth?: 1 },
 ) {
   const addressedRoomId = speaker?.roomId ?? parent?.room_id;
-  const agentId = parent?.agent_id ?? speaker?.agentId;
+  const agentId = speaker?.agentId ?? parent?.agent_id;
   const woken: string[] = [];
   const notWoken: { handle: string; reason: string }[] = [];
   if (!addressedRoomId || !agentId) return { woken, notWoken };
@@ -1229,6 +1236,15 @@ export async function routeAgentResult(
       notWoken.push({ handle: mention.handle, reason: 'person tagged; no agent turn' });
       continue;
     }
+    if (mention.mcpMember) {
+      if (parent && nextAgentDepth(parent.agent_depth) === undefined) {
+        notWoken.push({ handle: mention.handle, reason: 'agent tag chain depth limit reached' });
+      } else if (mention.mcpCallbackUrl) {
+        await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
+        woken.push(mention.handle);
+      }
+      continue;
+    }
     // Tags are conversation, never a delegation or an implementer change.
     const dispatched = await createAgentCommand(db, {
       roomId,
@@ -1236,13 +1252,12 @@ export async function routeAgentResult(
       sourceMessageId: sourceId,
       parent,
       reason: 'agent_tag',
+      initialAgentDepth: speaker?.initialAgentDepth,
       inheritPrivatePayload: false,
     });
     if (dispatched) woken.push(mention.handle);
     else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
-    if (dispatched && mention.mcpCallbackUrl)
-      await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
   }
   return { woken, notWoken };
 }

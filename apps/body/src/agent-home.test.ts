@@ -291,6 +291,36 @@ describe('per-room harness state isolation', () => {
     }
   });
 
+  it('gives every Claude Room the operator login store and its refresh lock', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
+    const roomB = resolve(await scratch('beeline-room-b-'), 'agent-home');
+    const codexRoom = resolve(await scratch('beeline-room-codex-'), 'agent-home');
+
+    // Not signed in yet: Claude keeps its default store.
+    expect(
+      (await prepareRoomAgentHome({ root: roomA, operatorHome, agentKind: 'claude' }))
+        .CLAUDE_SECURESTORAGE_CONFIG_DIR,
+    ).toBeUndefined();
+
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.claude/.credentials.json'), '{"claudeAiOauth":{}}');
+    const envA = await prepareRoomAgentHome({ root: roomA, operatorHome, agentKind: 'claude' });
+    const envB = await prepareRoomAgentHome({ root: roomB, operatorHome, agentKind: 'claude' });
+    const codex = await prepareRoomAgentHome({ root: codexRoom, operatorHome, agentKind: 'codex' });
+
+    // One store and one lock for every Room and the operator's terminal, so
+    // concurrent Rooms never refresh with the same single-use token.
+    for (const env of [envA, envB]) {
+      expect(env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(resolve(operatorHome, '.claude'));
+      expect(env.CLAUDE_CONFIG_DIR!.startsWith(resolve(operatorHome, '.claude'))).toBe(false);
+      // The Room sandbox keeps harness state writable; Claude writes the
+      // refreshed login and its lock in this store.
+      expect(harnessStateDirsFromEnv(env).stateDirs).toContain(resolve(operatorHome, '.claude'));
+    }
+    expect(codex.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined();
+  });
+
   it('repairs an isolated credential replaced by an atomic refresh and quarantines the stale file', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-stale-credential-'), 'agent-home');

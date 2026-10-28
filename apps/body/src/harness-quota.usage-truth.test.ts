@@ -180,6 +180,29 @@ describe('one read per plan account on this machine', () => {
       expect(run).toHaveBeenCalledTimes(6);
     });
 
+    it('read and post the new login on a refresh right after the credential file changes', async () => {
+      const { run, posts, publish, switchLogin, advance } = setup({ '/agents/nerd/claude': 'acct-1' });
+      await publish('nerd', true);
+      const before = posts.at(-1)![1];
+      run.mockImplementationOnce(async () => {
+        const report = verified('acct-2');
+        const [provider] = report.providers;
+        return JSON.stringify({
+          ...report,
+          providers: [{ ...provider!, windows: provider!.windows.map((w) => ({ ...w, percentRemaining: 20 })) }],
+        });
+      });
+      switchLogin('nerd', 'acct-2');
+      advance(1_000);
+      await expect(publish('nerd', true)).resolves.toEqual({ status: 'fresh' });
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(posts).toHaveLength(2);
+      const after = posts[1]![1];
+      expect(after.account).not.toEqual(before.account);
+      expect(before.windows[0]!.utilization).toBeCloseTo(0.09);
+      expect(after.windows.every((w) => Math.abs(w.utilization - 0.8) < 1e-9)).toBe(true);
+    });
+
     it('read their own login on a refresh, even when the file did not change', async () => {
       const { run, posts, publish, accountOf, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
       await publish('ruby');

@@ -185,6 +185,29 @@ describe('R-USAGE-2: agents on one plan account report the same numbers', () => 
     expect(ruby.profile?.sharedWith).toBeUndefined();
     expect(usageSummary(nerd.tool)).not.toContain('shared with');
   });
+
+  it('shows the new account on a refresh a second after the sign-in', async () => {
+    let clock = Date.now();
+    let login = 'login acct-1';
+    let account: [string, number] = ['acct-1', 60];
+    const run = vi.fn(async () => report(account[1]).replace('acct-1', account[0]));
+    const nerdReader = new HarnessQuotaReader({
+      agentId: NERD, slots: new Map(), launch, now: () => clock, run,
+      credentialPath: () => `/agents/${NERD}/claude/.credentials.json`,
+      fingerprint: () => login,
+      post: (usage) => daemon.execute('postAgentUsage', { agentId: NERD, usage }, NERD),
+    });
+    await nerdReader.publish('claude', {}, true);
+    expect((await views(NERD)).profile?.windows[0]?.utilization).toBe(0.4);
+    // `claude /login` to another account rewrites the credential file.
+    login = 'login acct-2';
+    account = ['acct-2', 20];
+    clock += 1_000;
+    await expect(nerdReader.publish('claude', {}, true)).resolves.toEqual({ status: 'fresh' });
+    expect(run).toHaveBeenCalledTimes(2);
+    const nerd = await views(NERD);
+    for (const view of [nerd.profile, nerd.row, nerd.tool]) expect(view?.windows[0]?.utilization).toBe(0.8);
+  });
 });
 
 describe('R-USAGE-3: a stale fallback is never shown as fresh', () => {

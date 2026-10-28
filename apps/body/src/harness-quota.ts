@@ -237,8 +237,8 @@ type ReadSlot = {
   accountKey?: string;
   /** When this home's own read last named `accountKey`, in ms. */
   verifiedAt?: number;
-  /** The credential file's stamp at that read; a new stamp drops `accountKey`. */
-  verifiedLogin?: string;
+  /** The credential file's stamp when the last read started; a new stamp drops that read. */
+  readLogin?: string;
 };
 /**
  * Every agent loop on this machine shares these slots, one per plan login:
@@ -309,9 +309,12 @@ export class HarnessQuotaReader {
     if (!slot) slots.set(login, (slot = { lastStartedAt: -Infinity, posts: new Map() }));
     if (slot.running) return this.deliver(slot, slot.running);
     const fingerprint = credential ? (this.options.fingerprint ?? credentialFingerprint)(credential) : undefined;
-    // The login in this home changed since it last named its account: forget
-    // that account until this home reads again.
-    if (slot.accountKey && slot.verifiedLogin !== fingerprint) slot.accountKey = undefined;
+    // The login in this home changed since its last read: forget that read,
+    // its account and who it reached, so the next read is of the new login.
+    if (slot.lastStartedAt > -Infinity && slot.readLogin !== fingerprint)
+      Object.assign(slot, {
+        lastStartedAt: -Infinity, last: undefined, posts: new Map(), accountKey: undefined, verifiedAt: undefined,
+      });
     const intervalMs = this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS;
     // A refresh, or a home that has not read itself for a while, reads its own
     // login rather than trust an account it named long ago.
@@ -336,9 +339,10 @@ export class HarnessQuotaReader {
     if (!this.options.run && process.env.VITEST) return Promise.resolve(undefined);
     const held = slot;
     held.lastStartedAt = now;
+    held.readLogin = fingerprint;
     held.posts = new Map();
     if (account) slots.set(`account:${account}`, held);
-    held.running = this.read(provider, env, held, login, now, fingerprint).finally(() => {
+    held.running = this.read(provider, env, held, login, now).finally(() => {
       held.running = undefined;
     });
     void held.running.then(() => {
@@ -353,7 +357,6 @@ export class HarnessQuotaReader {
     slot: ReadSlot,
     login: string,
     nowMs: number,
-    fingerprint: string | undefined,
   ): Promise<AgentUsage> {
     const now = nowMs / 1000;
     let usage: AgentUsage;
@@ -365,7 +368,7 @@ export class HarnessQuotaReader {
       );
       const report: unknown = JSON.parse(stdout);
       const accountKey = quotaAxiAccountKey(report, provider);
-      if (accountKey) Object.assign(slot, { accountKey, verifiedAt: nowMs, verifiedLogin: fingerprint });
+      if (accountKey) Object.assign(slot, { accountKey, verifiedAt: nowMs });
       usage = quotaAxiUsage(report, provider, now) ?? {
         updatedAt: now, windows: [], read: { status: 'failed', at: now, reason: 'no plan numbers' },
       };

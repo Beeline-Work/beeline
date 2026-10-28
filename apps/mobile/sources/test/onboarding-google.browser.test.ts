@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from './browserProof';
 
 describe.skipIf(!existsSync(CHROME))('Google browser handoff recovery', () => {
-  it('R-onb-1: completes the same attempt after interrupted reads instead of showing offline', async () => {
+  it('R-signin-dismiss: completes after browser dismissal and interrupted completion reads', async () => {
     const mobile=process.cwd();
     const directory=await mkdtemp(path.join(mobile,'sources/test/onboarding-google-proof-'));
     const output=process.env.ONBOARDING_EVIDENCE_DIR??'/tmp/jellybean-onboarding';mkdirSync(output,{recursive:true});
@@ -20,7 +20,7 @@ describe.skipIf(!existsSync(CHROME))('Google browser handoff recovery', () => {
           return new Response('{}',{status:reads===3?503:200});};
         function App(){const {theme}=useUnistyles();const [notice,setNotice]=useState(null);
           useEffect(()=>{runGoogleSignIn({state:'s'.repeat(43),recoveryToken:'r'.repeat(43),
-            openAuthSession:async()=>({type:'opened'}),subscribeToUrls:()=>({remove(){}})})
+            openAuthSession:async()=>({type:'dismiss'}),subscribeToUrls:()=>({remove(){}})})
             .then(()=>{setNotice({title:'Google proof recovered',message:'The first attempt recovered without restarting sign-in.'});
               document.getElementById('result').textContent=JSON.stringify({recovered:true,reads});})
             .catch(error=>{setNotice(noticeForAuthError(error));document.getElementById('result').textContent=JSON.stringify({recovered:false,code:error.code,reads});})

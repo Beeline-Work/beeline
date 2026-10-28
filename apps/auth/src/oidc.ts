@@ -18,6 +18,7 @@ export interface OidcProviderConfig {
   jwksUri: string;
   clientId: string;
   clientSecret?: string;
+  androidClientIds?: string[];
   allowInsecure?: boolean;
 }
 
@@ -240,7 +241,7 @@ export class OidcClient {
     return tokenResponse.id_token;
   }
 
-  async verifyIdToken(token: string, expectedNonce: string): Promise<OidcIdentity> {
+  async verifyIdToken(token: string, expectedNonce: string, nativeAndroid = false): Promise<OidcIdentity> {
     if (!token || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES)
       throw new Error('invalid ID token');
     const header = decodeProtectedHeader(token);
@@ -257,7 +258,7 @@ export class OidcClient {
       maxTokenAge: '1h',
       requiredClaims: ['iss', 'aud', 'sub', 'exp', 'iat', 'nonce'],
     });
-    this.#validateClaims(verified.payload, expectedNonce);
+    this.#validateClaims(verified.payload, expectedNonce, nativeAndroid);
     return {
       issuer: this.config.issuer,
       audience: this.config.clientId,
@@ -276,7 +277,7 @@ export class OidcClient {
     };
   }
 
-  #validateClaims(payload: JWTPayload, expectedNonce: string): void {
+  #validateClaims(payload: JWTPayload, expectedNonce: string, nativeAndroid: boolean): void {
     if (typeof payload.sub !== 'string' || !payload.sub.trim() || payload.sub.length > 512) {
       throw new Error('ID token subject is empty or invalid');
     }
@@ -289,7 +290,8 @@ export class OidcClient {
     if (audiences.length > 1 && typeof authorizedParty !== 'string') {
       throw new Error('multi-audience ID token requires azp');
     }
-    if (authorizedParty !== undefined && authorizedParty !== this.config.clientId) {
+    const allowedParties = [this.config.clientId, ...(nativeAndroid ? this.config.androidClientIds ?? [] : [])];
+    if (authorizedParty !== undefined && !allowedParties.includes(String(authorizedParty))) {
       throw new Error('ID token authorized party mismatch');
     }
   }

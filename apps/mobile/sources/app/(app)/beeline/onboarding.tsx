@@ -3,7 +3,7 @@ import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
-import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
+import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { clearPendingGoogleSignIn, resumeGoogleSignIn, runGoogleSignIn } from '@/auth/google-auth-session';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
@@ -147,8 +147,8 @@ export default function BuzzOnboarding() {
   const loading = loadingAction !== null;
 
   const enterAfterMonolithSignIn = async (_identityId: string | undefined) => {
-    if (await readRepositoryOnboardingEligibility())
-      await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
+    // Repository discovery belongs to the in-app picker. An unavailable
+    // GitHub service must never hold a successfully signed-in user here.
     router.replace('/beeline/channels');
   };
 
@@ -322,15 +322,21 @@ export default function BuzzOnboarding() {
       // arrived: it must neither spend the one-use ticket a second time nor
       // race the press while it completes sign-in.
       if (isSignInInFlight()) return;
+      const savedIdentityId = await monolithSession.identityId();
+      if (savedIdentityId && !(await isPendingGitHubReconnect())) {
+        // A process can stop after saving its session but before removing the
+        // one-use OAuth continuation. The saved session wins on the next boot.
+        if (alive) await enterAfterMonolithSignIn(savedIdentityId);
+        return;
+      }
       const googleTicket = await resumeGoogleSignIn(initialUrl);
       if (googleTicket) {
         void funnelCallback('success');
         const identityId = await exchangeFunnelTicket(googleTicket, 'google');
-        await clearPendingGoogleSignIn();
+        await clearPendingGoogleSignIn().catch(() => undefined);
         if (alive) await enterAfterMonolithSignIn(identityId);
         return;
       }
-      const savedIdentityId = await monolithSession.identityId();
       const challenge =
         (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl), undefined, {
           signedIn: savedIdentityId !== null,
@@ -356,7 +362,7 @@ export default function BuzzOnboarding() {
         void funnelCallback('success');
         if (repositoryOnboarding) setStatus('binding');
         const identityId = await exchangeFunnelTicket(challenge.ticket);
-        await clearPendingGitHubSignInState();
+        await clearPendingGitHubSignInState().catch(() => undefined);
         if (alive) await enterAfterMonolithSignIn(identityId);
         return;
       }
@@ -398,7 +404,7 @@ export default function BuzzOnboarding() {
       });
       void funnelCallback('success');
       const identityId = await exchangeFunnelTicket(ticket, 'google');
-      await clearPendingGoogleSignIn();
+      await clearPendingGoogleSignIn().catch(() => undefined);
       await enterAfterMonolithSignIn(identityId);
     } catch (error) {
       const cancelled = error instanceof OidcBindError && ['browser_canceled', 'oidc_denied'].includes(error.code);
@@ -446,7 +452,7 @@ export default function BuzzOnboarding() {
       void funnelCallback('success');
       if (repositoryOnboarding) setStatus('binding');
       const identityId = await exchangeFunnelTicket(challenge.ticket);
-      await clearPendingGitHubSignInState();
+      await clearPendingGitHubSignInState().catch(() => undefined);
       await enterAfterMonolithSignIn(identityId);
     } catch (error) {
       const cancelled=error instanceof OidcBindError && ['browser_canceled','github_denied','oidc_denied'].includes(error.code);

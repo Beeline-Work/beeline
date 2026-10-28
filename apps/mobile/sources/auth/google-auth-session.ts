@@ -6,6 +6,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { OidcBindError, parseOidcBindCallback } from '@beeline/buzz-client';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { desktopAuthRedirectUri } from './desktop-auth-redirect';
+import { googleAccountPicker } from './google-account-picker';
 
 const STORAGE_KEY = 'beeline.google-sign-in.v1';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -86,6 +87,44 @@ export async function runGoogleSignIn(input: {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(pending));
   const redirect = googleSignInRedirectUri();
   const base = getBuzzRuntimeConfig().monolithUrl;
+  if (googleAccountPicker) {
+    try {
+      const start = await googleAuthFetch(`${base}/auth/oidc/native/start`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recoveryChallenge: bytesToHex(sha256(utf8ToBytes(input.recoveryToken))),
+          ...(input.funnelContext ? { funnel: JSON.stringify(input.funnelContext) } : {}) }),
+      });
+      if (!start.ok) throw new OidcBindError('native_google_unavailable', 'Google sign-in could not start. Try again.');
+      const config = await start.json() as { state: string; nonce: string; serverClientId: string };
+      if (!TOKEN.test(config.state) || !TOKEN.test(config.nonce) ||
+          typeof config.serverClientId !== 'string' || !config.serverClientId.endsWith('.apps.googleusercontent.com'))
+        throw new OidcBindError('invalid_response', 'Invalid Google sign-in configuration');
+      const idToken = await googleAccountPicker.signIn(config.serverClientId, config.nonce);
+      const complete = await googleAuthFetch(`${base}/auth/oidc/native/complete`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ state: config.state, recoveryToken: input.recoveryToken, idToken }),
+      });
+      // A dropped response can follow a committed ticket. Recover the same
+      // one-use proof; neither account linking nor session exchange changes.
+      if (!complete.ok) throw new OidcBindError('invalid_oidc_proof', 'Google sign-in could not finish. Try again.');
+      return input.recoveryToken;
+    } catch (error) {
+      if (!(error instanceof OidcBindError) && (error as { code?: string })?.code === 'GOOGLE_CANCELLED') {
+        await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ recoveryToken: input.recoveryToken }),
+        }).catch(() => undefined);
+        await clearPendingGoogleSignIn();
+        throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
+      }
+      // Preserve the recovery secret if the complete response was interrupted.
+      if (!(error instanceof OidcBindError)) {
+        const recovered = await completion(pending).catch(() => null);
+        if (recovered) return recovered;
+      }
+      throw error;
+    }
+  }
   const url = new URL('/auth/oidc/start', base);
   if (input.funnelContext) url.searchParams.set('funnel', JSON.stringify(input.funnelContext));
   url.searchParams.set('app_redirect', redirect);
@@ -100,7 +139,9 @@ export async function runGoogleSignIn(input: {
   try {
     void input.openAuthSession(url.toString(), redirect).then((result) => {
       if (result.url) callbackUrl = result.url;
-      browserClosed = result.type !== 'opened';
+      // Android can dismiss the Custom Tab while delivering a successful
+      // redirect. Only an explicit cancel establishes user cancellation.
+      browserClosed = result.type === 'cancel';
     }, (error: unknown) => { browserFailure = error; browserClosed = true; });
     const deadline = Date.now() + 120_000;
     let closedAt: number | undefined;

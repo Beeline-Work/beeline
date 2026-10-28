@@ -197,6 +197,58 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     return reply.type('text/html; charset=utf-8').send(nativeReturnPage(target));
   });
 
+  // Credential Manager binds a Google ID token to a server nonce and the same
+  // app-held recovery secret used by browser sign-in. It never issues a session
+  // directly; exchange/link still consume the existing one-use bind ticket.
+  app.post('/auth/oidc/native/start', async (request, reply) => {
+    const tenant = tenantFor(request);
+    if (options.oidc.config.issuer !== 'https://accounts.google.com' || !options.oidc.config.androidClientIds?.length)
+      throw new ProtocolError(503, 'native_google_unavailable', 'Android Google sign-in is not configured');
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.recoveryChallenge !== 'string' || !/^[0-9a-f]{64}$/.test(body.recoveryChallenge))
+      throw new ProtocolError(400, 'invalid_request', 'Invalid Google recovery challenge');
+    const state = randomToken();
+    const nonce = randomToken();
+    const issuedAt = now();
+    await options.store.createFlow(sha256(state), {
+      community: tenant.community, issuer: options.oidc.config.issuer,
+      audience: options.oidc.config.clientId, nonce, pkceVerifier: '',
+      browserSessionHash: body.recoveryChallenge,
+      redirectUri: `${tenant.origin}/auth/oidc/native/complete`,
+      appRedirectUri: null, appState: null, appRecoveryHash: body.recoveryChallenge,
+      createdAt: issuedAt, expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
+    });
+    await startObservation(body, state, 'google');
+    noStore(reply);
+    return reply.send({ state, nonce, serverClientId: options.oidc.config.clientId });
+  });
+
+  app.post('/auth/oidc/native/complete', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.state !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.state) ||
+        typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken) ||
+        typeof body.idToken !== 'string' || body.idToken.length > 32_768)
+      throw new ProtocolError(400, 'invalid_request', 'Invalid native Google completion');
+    const flow = await options.store.consumeFlow(sha256(body.state), sha256(body.recoveryToken), now());
+    if (!flow || flow.community !== tenant.community ||
+        flow.issuer !== 'https://accounts.google.com' ||
+        flow.audience !== options.oidc.config.clientId ||
+        flow.redirectUri !== `${tenant.origin}/auth/oidc/native/complete`)
+      throw new ProtocolError(400, 'invalid_oidc_flow', 'Native Google flow is missing or expired');
+    let identity;
+    try {
+      identity = await options.oidc.verifyIdToken(body.idToken, flow.nonce, true);
+    } catch {
+      await callbackObservation(body.state, 'google', 'error');
+      throw new ProtocolError(401, 'invalid_oidc_proof', 'Google ID token validation failed');
+    }
+    await callbackObservation(body.state, 'google', 'success');
+    return issueBindChallenge(tenant, flow, {
+      ...identity, displayName: identity.name, login: identity.email, avatar: identity.picture,
+    }, reply, true);
+  });
+
   app.get('/auth/oidc/start', async (request, reply) => {
     const tenant = tenantFor(request);
     const query = request.query as Record<string, unknown>;

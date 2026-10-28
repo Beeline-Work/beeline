@@ -235,6 +235,24 @@ try {
     assert.equal(commands, 0); assert.equal(offline, false); assert.equal(working, false);
     assert.match(JSON.stringify(view), /pong/);
   }
+  // WEBHOOK-CLEAR-1: disabling must not fall back or leak an already queued tag.
+  assert.notEqual((await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.invalid/member' } })).isError, true);
+  const queuedBeforeClear = await options.phone.execute('sendRoomMessage', { roomId: room, text: `@${wakeHandle} queued before webhook clear` }, person);
+  const cleared = JSON.parse((await client.callTool({ name: 'set_webhook', arguments: { url: '' } })).content[0].text).data;
+  assert.equal(cleared.webhook, null);
+  await options.phone.execute('sendRoomMessage', { roomId: room, text: `@${wakeHandle} after webhook clear` }, person);
+  let clearedPosts = 0;
+  const clearTransport = async () => { clearedPosts++; return new Response('', { status: 200 }); };
+  assert.equal(await deliverMcpMemberWebhooks(db, clearTransport), 0);
+  assert.equal(clearedPosts, 0);
+  const cancelled = (await db.query('SELECT outcome FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, queuedBeforeClear.messageId])).rows[0];
+  assert.equal(cancelled.outcome, 'skipped');
+  await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.invalid/reenabled' } });
+  assert.equal(await deliverMcpMemberWebhooks(db, clearTransport), 0);
+  await options.phone.execute('sendRoomMessage', { roomId: room, text: `@${wakeHandle} fresh tag after enabling` }, person);
+  assert.equal(await deliverMcpMemberWebhooks(db, clearTransport), 1);
+  assert.equal(clearedPosts, 1);
+  transcript('WEBHOOK-CLEAR-1 PASS: authenticated clear cancelled the queued tag and blocked the registration fallback; enabling a new URL delivered only a fresh tag.');
   // MCP-INTERRUPTED-1: the authenticated HTTP retry must recover a saved post's wake.
   const interruptedArgs = { room, text: '@demo-agent please recover this interrupted handoff', idempotencyKey: 'interrupted-handoff-proof' };
   const query = db.query.bind(db);

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_members (
 CREATE INDEX IF NOT EXISTS rooms_mcp_members_member ON rooms_mcp_members(member_id);
 -- Each member sets its own inbound webhook, so a shared published client id
 -- never routes one person's Room text to another person's receiver.
+-- NULL inherits the registration callback; an empty string explicitly disables delivery.
 ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_url text;
 -- AES-GCM sealed bearer secret sent on each webhook POST; never returned.
 ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_secret text;

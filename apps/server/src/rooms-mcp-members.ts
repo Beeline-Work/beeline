@@ -319,11 +319,11 @@ export async function deliverMcpMemberWebhooks(
     );
     const row = claimed.rows[0];
     if (!row) break;
-    if (!row.deliverable) {
+    if (!row.deliverable || !row.callback_url) {
       await db.query('UPDATE rooms_mcp_webhook_outbox SET delivered_at=now() WHERE call_id=$1', [row.call_id]);
       await db.query(
-        `UPDATE subscription_webhook_calls SET outcome='skipped',reason='membership ended' WHERE id=$1`,
-        [row.call_id],
+        `UPDATE subscription_webhook_calls SET outcome='skipped',reason=$2 WHERE id=$1`,
+        [row.call_id, row.deliverable ? 'webhook disabled' : 'membership ended'],
       );
       continue;
     }
@@ -474,7 +474,8 @@ export async function setMcpMemberProfile(
 /**
  * A member sets where its tags are pushed. The webhook belongs to this member
  * only, so clients that share a published client id never share a receiver.
- * An empty url removes it; the optional bearer secret is sealed and never read back.
+ * NULL inherits the registration callback; an empty url explicitly disables it.
+ * Disabling also retires queued deliveries. The bearer secret is never read back.
  */
 export async function setMcpMemberWebhook(
   db: SqlDatabase,
@@ -496,10 +497,19 @@ export async function setMcpMemberWebhook(
     throw new McpToolError('Invalid webhook secret');
   if (secret !== undefined && !raw) throw new McpToolError('A webhook secret needs a webhook url');
   const sealed = secret === undefined ? null : sealSecrets(webhookKey(), secret);
-  await db.query(
-    'UPDATE rooms_mcp_members SET callback_url=$2,callback_secret=$3 WHERE member_id=$1',
-    [memberId, raw || null, sealed],
-  );
+  await db.transaction(async tx => {
+    // Keep the empty string: COALESCE must not restore the registration callback.
+    await tx.query(
+      'UPDATE rooms_mcp_members SET callback_url=$2,callback_secret=$3 WHERE member_id=$1',
+      [memberId, raw, sealed],
+    );
+    if (!raw)
+      await tx.query(`WITH cancelled AS (
+        UPDATE rooms_mcp_webhook_outbox SET delivered_at=now()
+        WHERE member_id=$1 AND delivered_at IS NULL RETURNING call_id
+      ) UPDATE subscription_webhook_calls SET outcome='skipped',reason='webhook disabled'
+        WHERE id IN (SELECT call_id FROM cancelled)`, [memberId]);
+  });
   return { webhook: raw || null, secret: Boolean(sealed) };
 }
 

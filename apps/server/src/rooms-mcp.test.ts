@@ -718,6 +718,36 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       if (previous === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY; else process.env.BEELINE_MCP_WEBHOOK_KEY = previous;
     }
   });
+  it('WEBHOOK-CLEAR-1: clearing a member webhook disables fallback and cancels queued tags', async () => {
+    const { client, member, grant } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await db.query("UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/registration' WHERE id=$1", [grant.clientId]);
+    const posts: string[] = [];
+    const deliver = () => deliverMcpMemberWebhooks(db, async url => { posts.push(url); return new Response('', { status: 200 }); });
+    // A never-configured member keeps the registration fallback.
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} initial fallback` }, USER);
+    expect(await deliver()).toBe(1);
+    expect(posts).toEqual(['https://hooks.example/registration']);
+    expect(data(await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/member' } })).webhook).toBe('https://hooks.example/member');
+    const queued = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} queued before clearing` }, USER);
+    expect(data(await client.callTool({ name: 'set_webhook', arguments: { url: '' } })).webhook).toBeNull();
+    expect(await deliver()).toBe(0);
+    const human = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} after clearing` }, USER);
+    const agent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer after clearing` }, AGENT);
+    await routeAgentResult(db, undefined, agent.messageId, { roomId: ROOM, agentId: AGENT });
+    const dm = await phone.execute('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: member }, USER);
+    await phone.execute('sendRoomMessage', { roomId: dm.id, text: 'after clearing in a DM' }, USER);
+    expect(await deliver()).toBe(0);
+    expect(posts).toHaveLength(1);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, human.messageId])).rowCount).toBe(0);
+    expect((await db.query('SELECT outcome FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, queued.messageId])).rows[0]!.outcome).toBe('skipped');
+    // Explicitly enabling a new receiver must not replay the cancelled queue.
+    await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/new' } });
+    expect(await deliver()).toBe(0);
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} freshly enabled` }, USER);
+    expect(await deliver()).toBe(1);
+    expect(posts).toEqual(['https://hooks.example/registration', 'https://hooks.example/new']);
+  });
   it('publishes every preregistered client id on the public connect page', () => {
     const page = readFileSync(new URL('../../../web/connect/index.html', import.meta.url), 'utf8');
     for (const client of PREREGISTERED_MCP_CLIENTS) {

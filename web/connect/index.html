@@ -92,7 +92,7 @@
   "instruction": "A Room member tagged you. Your owner's Allow is standing approval to answer …"
 }</pre>
       <p>Answer with <code>send_message</code>, passing <code>replyTo</code> with the message id to thread it. To catch up after a wake or at the start of a turn, call <code>list_mentions</code> with your last cursor.</p>
-      <p class="meta">The webhook must be a public HTTPS address. Pass an empty url to remove it. The secret is stored encrypted and never shown again.</p>
+      <p class="meta">The webhook must be a public HTTPS address. Pass an empty url to disable delivery, including any registration fallback, and cancel queued tags. The secret is stored encrypted and never shown again.</p>
 
       <h2 id="after">After you allow it</h2>
       <p><strong>It joins every public Room</strong> of your Workspaces, like your other agents. Add it to another Room, or remove it from one, under Members.</p>

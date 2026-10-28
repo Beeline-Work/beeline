@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fetchMcpLogo, bundledMcpLogo } from './rooms-mcp-logos.js';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
@@ -39,13 +39,34 @@ function string(value: unknown, max = 2048): string {
   if (typeof value !== 'string' || !value || value.length > max) throw new Error('invalid_request');
   return value;
 }
+const AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic'];
+// Schemes a browser runs or reads locally instead of handing to an app.
+const BLOCKED_SCHEMES = ['javascript:', 'data:', 'file:', 'vbscript:', 'blob:', 'about:', 'filesystem:', 'ftp:', 'ftps:', 'ws:', 'wss:', 'mailto:', 'tel:', 'intent:'];
 function redirectUri(value: unknown): string {
-  const raw = string(value);
-  const url = new URL(raw);
-  if (url.hash || url.username || url.password ||
-      (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname))))
+  if (typeof value !== 'string' || !value || value.length > 2048 || /[\u0000-\u0020\u007f]/.test(value)) throw new Error('invalid_redirect_uri');
+  const raw = value;
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new Error('invalid_redirect_uri'); }
+  const loopback = ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname);
+  // Native apps may use a private-use scheme (RFC 8252 section 7.1); PKCE and the Allow page guard the code.
+  const privateUse = !['https:', 'http:', ...BLOCKED_SCHEMES].includes(url.protocol);
+  if (raw.includes('#') || url.username || url.password ||
+      !(url.protocol === 'https:' || (url.protocol === 'http:' && loopback) || privateUse))
     throw new Error('invalid_redirect_uri');
   return raw;
+}
+/** Non-secret registration metadata, so a refused client can be diagnosed from the log. */
+function registrationSummary(input: Record<string, unknown> | undefined) {
+  const list = (value: unknown) => Array.isArray(value) ? value.slice(0, 10).map(item => String(item).slice(0, 60)) : value === undefined ? undefined : typeof value;
+  const redirects = Array.isArray(input?.redirect_uris) ? input.redirect_uris.slice(0, 10).map(value => {
+    try { const url = new URL(String(value)); return url.host ? `${url.protocol}//${url.host}` : url.protocol; } catch { return 'unparseable'; }
+  }) : input?.redirect_uris === undefined ? undefined : typeof input.redirect_uris;
+  return {
+    client_name: typeof input?.client_name === 'string' ? input.client_name.slice(0, 120) : undefined,
+    redirect_uris: redirects,
+    token_endpoint_auth_method: typeof input?.token_endpoint_auth_method === 'string' ? input.token_endpoint_auth_method.slice(0, 60) : input?.token_endpoint_auth_method === undefined ? undefined : typeof input.token_endpoint_auth_method,
+    grant_types: list(input?.grant_types), response_types: list(input?.response_types),
+  };
 }
 function callbackUri(value: unknown): string {
   const raw = string(value, 2048);
@@ -74,7 +95,9 @@ export class RoomsMcpOAuth {
   }
   private page(response: ServerResponse, title: string, content: string, formRedirect?: string): void {
     // Chrome also applies form-action to the redirect after a form POST.
-    const formAction = formRedirect ? `'self' ${new URL(formRedirect).origin}` : "'self'";
+    // A private-use scheme has an opaque origin, so allow that scheme instead.
+    const target = formRedirect ? new URL(formRedirect) : undefined;
+    const formAction = target ? `'self' ${target.origin === 'null' ? target.protocol : target.origin}` : "'self'";
     response.writeHead(200, {
       // Preserve Origin on same-origin form POSTs without sending referrers to other sites.
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
@@ -93,6 +116,34 @@ export class RoomsMcpOAuth {
       [string(id, 100), tokenHash(this.cookie(request))]);
     if (!result.rows[0]) throw new Error('invalid_request');
     return result.rows[0];
+  }
+  /** Require the registered authentication method before consuming any grant. */
+  private async client(request: IncomingMessage, input: Record<string, unknown>): Promise<string> {
+    let id = input.client_id, secret = input.client_secret;
+    const authorization = request.headers.authorization;
+    const basic = /^Basic\s+(\S+)$/i.exec(authorization ?? '');
+    if (authorization && !basic) throw new Error('invalid_client');
+    if (basic) {
+      const decoded = Buffer.from(basic[1]!, 'base64').toString('utf8');
+      const colon = decoded.indexOf(':');
+      if (colon < 0 || secret !== undefined) throw new Error('invalid_client');
+      // OAuth Basic credentials use application/x-www-form-urlencoded components.
+      const decode = (value: string) => decodeURIComponent(value.replace(/\+/g, ' '));
+      let basicId: string;
+      try { basicId = decode(decoded.slice(0, colon)); secret = decode(decoded.slice(colon + 1)); }
+      catch { throw new Error('invalid_client'); }
+      if (id !== undefined && id !== basicId) throw new Error('invalid_client');
+      id = basicId;
+    }
+    const clientId = string(id, 100);
+    const row = (await this.database.query<{ secret_hash: string | null; auth_method: string }>(
+      'SELECT secret_hash,auth_method FROM rooms_mcp_clients WHERE id=$1', [clientId])).rows[0];
+    if (row?.secret_hash) {
+      const method = basic ? 'client_secret_basic' : 'client_secret_post';
+      if (row.auth_method !== method || typeof secret !== 'string' ||
+          !timingSafeEqual(Buffer.from(tokenHash(secret)), Buffer.from(row.secret_hash))) throw new Error('invalid_client');
+    } else if (secret !== undefined || basic) throw new Error('invalid_client');
+    return clientId;
   }
   async audit(principal: McpPrincipal, operation: string, outcome: string): Promise<void> {
     await this.database.query(`INSERT INTO rooms_mcp_audit(client_id,identity_id,operation,outcome) VALUES($1,$2,$3,$4)`,
@@ -129,6 +180,8 @@ export class RoomsMcpOAuth {
       response.writeHead(204, { 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' });
       response.end(); return true;
     }
+    let registrationInput: Record<string, unknown> | undefined;
+    const registration = request.method === 'POST' && path === '/mcp/oauth/register';
     try {
       if (request.method === 'GET' && path === '/.well-known/oauth-protected-resource/mcp') {
         mcpJson(response, 200, { resource: this.resource, authorization_servers: [this.origin], scopes_supported: [MCP_READ, MCP_WRITE], bearer_methods_supported: ['header'] }); return true;
@@ -137,8 +190,8 @@ export class RoomsMcpOAuth {
         mcpJson(response, 200, { issuer: this.origin, authorization_endpoint: `${this.origin}/mcp/oauth/authorize`,
           token_endpoint: `${this.origin}/mcp/oauth/token`, registration_endpoint: `${this.origin}/mcp/oauth/register`,
           revocation_endpoint: `${this.origin}/mcp/oauth/revoke`, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
-          code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'],
-          revocation_endpoint_auth_methods_supported: ['none'], scopes_supported: [MCP_READ, MCP_WRITE], authorization_response_iss_parameter_supported: true }); return true;
+          code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: AUTH_METHODS,
+          revocation_endpoint_auth_methods_supported: AUTH_METHODS, scopes_supported: [MCP_READ, MCP_WRITE], authorization_response_iss_parameter_supported: true }); return true;
       }
       // Shared across server instances; never trust a caller-provided forwarded address.
       const admitted = await this.database.query(`INSERT INTO rooms_mcp_admission(key,calls) VALUES($1,1)
@@ -146,12 +199,16 @@ export class RoomsMcpOAuth {
         window_at=CASE WHEN rooms_mcp_admission.window_at<=now()-interval '1 minute' THEN now() ELSE rooms_mcp_admission.window_at END
         WHERE rooms_mcp_admission.window_at<=now()-interval '1 minute' OR rooms_mcp_admission.calls<300 RETURNING key`,
         [tokenHash(request.socket.remoteAddress ?? 'unknown')]);
-      if (!admitted.rowCount) { mcpJson(response, 429, { error: 'temporarily_unavailable' }); return true; }
+      if (!admitted.rowCount) {
+        if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
+        mcpJson(response, 429, { error: 'temporarily_unavailable' }); return true;
+      }
       if (request.method === 'POST' && path === '/mcp/oauth/register') {
-        const input = await mcpBody(request);
+        const input = registrationInput = await mcpBody(request);
         const name = input.client_name === undefined ? 'MCP client' : string(input.client_name, 120);
+        const method = input.token_endpoint_auth_method === undefined ? 'none' : string(input.token_endpoint_auth_method, 60);
         if (!Array.isArray(input.redirect_uris) || !input.redirect_uris.length || input.redirect_uris.length > 10 ||
-            (input.token_endpoint_auth_method !== undefined && input.token_endpoint_auth_method !== 'none') ||
+            !AUTH_METHODS.includes(method) ||
             (input.grant_types !== undefined && (!Array.isArray(input.grant_types) || !input.grant_types.includes('authorization_code') || input.grant_types.some(g => !['authorization_code', 'refresh_token'].includes(String(g))))) ||
             (input.response_types !== undefined && JSON.stringify(input.response_types) !== '["code"]')) throw new Error('invalid_client_metadata');
         const redirects = input.redirect_uris.map(redirectUri);
@@ -159,8 +216,12 @@ export class RoomsMcpOAuth {
         const logo = input.logo_uri === undefined ? await bundledMcpLogo(name) : await fetchMcpLogo(string(input.logo_uri));
         // An optional outgoing callback lets the client be pushed a tag instead of polling.
         const callback = input.webhook_uri === undefined ? null : callbackUri(input.webhook_uri);
-        await this.database.query('INSERT INTO rooms_mcp_clients(id,name,redirects,logo,callback_url) VALUES($1,$2,$3::jsonb,$4,$5)', [id, name, JSON.stringify(redirects), logo ?? null, callback]);
-        mcpJson(response, 201, { client_id: id, client_name: name, redirect_uris: redirects, token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }); return true;
+        // Only the hash is kept; a client that loses its secret registers again.
+        const secret = method === 'none' ? undefined : opaque();
+        await this.database.query('INSERT INTO rooms_mcp_clients(id,name,redirects,logo,callback_url,secret_hash,auth_method) VALUES($1,$2,$3::jsonb,$4,$5,$6,$7)',
+          [id, name, JSON.stringify(redirects), logo ?? null, callback, secret ? tokenHash(secret) : null, method]);
+        mcpJson(response, 201, { client_id: id, client_id_issued_at: Math.floor(Date.now() / 1000), client_name: name, redirect_uris: redirects, token_endpoint_auth_method: method,
+          ...(secret ? { client_secret: secret, client_secret_expires_at: 0 } : {}), grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }); return true;
       }
       if (request.method === 'GET' && path === '/mcp/oauth/authorize') {
         const q = url.searchParams;
@@ -256,17 +317,18 @@ export class RoomsMcpOAuth {
         const input = await mcpBody(request);
         if (input.grant_type === 'refresh_token') {
           if (input.resource !== undefined && input.resource !== this.resource) throw new Error('invalid_grant');
-          const token = await refreshMcp(this.database, string(input.refresh_token, 100), string(input.client_id, 100), input.scope === undefined ? undefined : string(input.scope, 100));
+          const token = await refreshMcp(this.database, string(input.refresh_token, 100), await this.client(request, input), input.scope === undefined ? undefined : string(input.scope, 100));
           if (!token) throw new Error('invalid_grant');
           mcpJson(response, 200, token); return true;
         }
         if (input.grant_type !== 'authorization_code' || input.resource !== this.resource ||
             typeof input.code_verifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(input.code_verifier)) throw new Error('invalid_grant');
+        const clientId = await this.client(request, input);
         const challenge = createHash('sha256').update(input.code_verifier).digest('base64url');
         const token = await this.database.transaction(async db => {
           const row = (await db.query<{ identity_id: string; client_id: string; scope: string }>(`DELETE FROM rooms_mcp_codes
             WHERE hash=$1 AND client_id=$2 AND redirect_uri=$3 AND challenge=$4 AND expires_at>now() RETURNING identity_id,client_id,scope`,
-            [tokenHash(string(input.code, 100)), input.client_id, input.redirect_uri, challenge])).rows[0];
+            [tokenHash(string(input.code, 100)), clientId, input.redirect_uri, challenge])).rows[0];
           if (!row) throw new Error('invalid_grant');
           return connectMcp(db, row);
         });
@@ -274,15 +336,19 @@ export class RoomsMcpOAuth {
       }
       if (request.method === 'POST' && path === '/mcp/oauth/revoke') {
         const input = await mcpBody(request);
-        await this.database.query('UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash=$1 AND client_id=$2', [tokenHash(string(input.token, 200)), string(input.client_id, 100)]);
-        await this.database.query(`UPDATE rooms_mcp_families SET revoked_at=now() WHERE client_id=$1 AND id IN (SELECT family_id FROM rooms_mcp_refresh WHERE hash=$2)`, [string(input.client_id, 100), tokenHash(string(input.token, 200))]);
+        const clientId = await this.client(request, input);
+        await this.database.query('UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash=$1 AND client_id=$2', [tokenHash(string(input.token, 200)), clientId]);
+        await this.database.query(`UPDATE rooms_mcp_families SET revoked_at=now() WHERE client_id=$1 AND id IN (SELECT family_id FROM rooms_mcp_refresh WHERE hash=$2)`, [clientId, tokenHash(string(input.token, 200))]);
         mcpJson(response, 200, {}); return true;
       }
       mcpJson(response, 404, { error: 'not_found' });
     } catch (error) {
-      const known = ['invalid_request', 'invalid_scope', 'invalid_grant', 'invalid_client_metadata', 'invalid_redirect_uri'];
+      const known = ['invalid_request', 'invalid_scope', 'invalid_grant', 'invalid_client', 'invalid_client_metadata', 'invalid_redirect_uri'];
       const message = error instanceof Error && known.includes(error.message) ? error.message : 'invalid_request';
-      mcpJson(response, 400, { error: message });
+      if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,
+        ...(error instanceof SyntaxError ? { reason: 'invalid_json' } : {}), ...registrationSummary(registrationInput) }));
+      if (message === 'invalid_client' && request.headers.authorization) response.setHeader('www-authenticate', 'Basic realm="Beeline MCP"');
+      mcpJson(response, message === 'invalid_client' ? 401 : 400, { error: message });
     }
     return true;
   }

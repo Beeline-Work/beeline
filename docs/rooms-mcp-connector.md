@@ -1,6 +1,6 @@
 # Beeline Rooms connector
 
-Status: implementation and local reviewer fixture; not deployed or submitted by this change. This is a feature, not a defect report.
+Status: implementation and local reviewer fixture. The connector is live at `https://server.usebeeline.app/mcp`. It was submitted to the Meta Muse connector directory on 2026-10-28. It is not listed anywhere yet. This is a feature, not a defect report.
 
 ## Listing pack
 
@@ -51,10 +51,12 @@ Discovery advertises both scopes. The initial unauthorized challenge asks only f
 - Protected resource metadata: `/.well-known/oauth-protected-resource/mcp`.
 - Authorization server metadata: `/.well-known/oauth-authorization-server`.
 - Registration, authorization, token and revocation: `/mcp/oauth/register`, `/mcp/oauth/authorize`, `/mcp/oauth/token`, `/mcp/oauth/revoke`.
-- Exact registered HTTPS redirects are accepted; HTTP is allowed only for loopback clients. An optional `logo_uri` is fetched once with HTTPS, public-address checks, pinned DNS, redirect refusal, a 256 KiB limit and image decoding; the cached PNG is served as inline data, never hotlinked.
-- `resource` must be the canonical MCP URL on authorization and token exchange. Authorization uses `S256`. Register `token_endpoint_auth_method:"none"`, `grant_types:["authorization_code","refresh_token"]`, `response_types:["code"]`.
+- Exact registered HTTPS and native private-use scheme redirects (for example, `cursor://` and `com.example.app:/`) are accepted; HTTP is allowed only for loopback clients. Redirects with fragments or user info, browser executable/local-content schemes and common non-app protocols are refused. Consent permits the registered native scheme through its form CSP. An optional `logo_uri` is fetched once with HTTPS, public-address checks, pinned DNS, redirect refusal, a 256 KiB limit and image decoding; the cached PNG is served as inline data, never hotlinked.
+- `resource` must be the canonical MCP URL on authorization and token exchange. Authorization uses `S256`. Register `token_endpoint_auth_method` as `none`, `client_secret_post` or `client_secret_basic`, `grant_types:["authorization_code","refresh_token"]`, `response_types:["code"]`.
 - Codes expire after a minute and are single use. Access tokens expire after an hour. Refresh tokens rotate on every use. Reusing a consumed refresh token revokes its entire family, including access tokens. Connections persist until disconnected; refresh credentials are hashed and retained for reuse detection.
 - Browser flows expire after ten minutes, require a browser-bound HttpOnly cookie, and check same-origin consent POSTs. Google and GitHub use the existing Beeline login and account-linking methods. Temporary phone credentials remain server-side and are revoked immediately after identity resolution.
+- Secret-based registrations return a random `client_secret` once; only its hash and the chosen authentication method are stored. Token exchange, refresh and revocation require that method and secret, alongside existing PKCE and resource binding. Lost secrets require re-registration. Legacy/public registrations remain `none`.
+- Refused registrations log their error code and bounded client name, redirect schemes/hosts, auth method, grant types and response types. Redirect paths, query strings, user info, tokens and secrets are excluded. Admission refusals log the error without parsing a rate-limited body.
 - Tokens and codes are stored only as hashes. MCP tokens cannot authenticate as phone or daemon tokens.
 - A client can revoke its token with a form POST containing `client_id` and `token`. The next call returns 401. Settings → Connectors → AI clients lists the signed-in person’s connections. Open a client and choose Disconnect to revoke every access and refresh token for that person/client pair and retire its member. The next MCP call returns 401.
 
@@ -67,6 +69,10 @@ The repeatable local fixture creates a synthetic **Connector Reviewer** account,
 ```sh
 npm run build
 node --import tsx scripts/prove-rooms-mcp.mjs
+# Reproduction R1: native redirect and each hosted-client secret method
+node --import tsx scripts/prove-rooms-mcp.mjs --native
+node --import tsx scripts/prove-rooms-mcp.mjs --secret-post
+node --import tsx scripts/prove-rooms-mcp.mjs --secret-basic
 # Keep the seeded service open for an interactive MCP Inspector session:
 node --import tsx scripts/prove-rooms-mcp.mjs --serve
 ```

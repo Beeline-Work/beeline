@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes, createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -50,6 +50,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth), phone, live);
   }, 60_000);
+  beforeEach(async () => {
+    // Each independent HTTP scenario starts with its own admission budget.
+    await db.query('DELETE FROM rooms_mcp_admission');
+  });
   afterAll(async () => {
     for (const client of clients) await client.close();
     server.closeAllConnections();
@@ -58,12 +62,12 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   async function post(path: string, input: Record<string, unknown>, headers: Record<string, string> = {}) {
     return fetch(origin + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
   }
-  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string) {
+  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback') {
     const registered = await post('/mcp/oauth/register', { client_name: 'Local MCP reviewer', redirect_uris: ['http://127.0.0.1:9876/callback'], token_endpoint_auth_method: 'none' });
     expect(registered.status).toBe(201);
     const client = clientId ? { client_id: clientId } : await registered.json() as { client_id: string };
     const verifier = opaque();
-    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:9876/callback', response_type: 'code', resource: origin + '/mcp',
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', resource: origin + '/mcp',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope, state: 'review-state' });
     const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
     expect(start.status).toBe(302);
@@ -76,11 +80,13 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(callback.status).toBe(302);
     const page = await fetch(origin + consent, { headers: { cookie } });
     expect(page.headers.get('referrer-policy')).toBe('same-origin');
-    expect(page.headers.get('content-security-policy')).toContain("form-action 'self' http://127.0.0.1:9876;");
-    expect(await page.text()).toContain('Local MCP reviewer');
+    const redirect = new URL(redirectUri);
+    expect(page.headers.get('content-security-policy')).toContain(`form-action 'self' ${redirect.origin === 'null' ? redirect.protocol : redirect.origin};`);
+    expect(await page.text()).toContain(clientId ? 'to join your Beeline team?' : 'Local MCP reviewer');
     const result = await post('/mcp/oauth/consent', { flow, decision }, { cookie, origin });
     expect(result.status).toBe(302);
     const target = new URL(result.headers.get('location')!);
+    expect(target.href.startsWith(redirectUri + '?')).toBe(true);
     expect(target.searchParams.get('state')).toBe('review-state');
     expect(target.searchParams.get('iss')).toBe(origin);
     return { clientId: client.client_id, code: target.searchParams.get('code'), verifier, error: target.searchParams.get('error'), cookie, flow };
@@ -146,7 +152,112 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const unauthorized = await fetch(origin + '/mcp'); expect(unauthorized.status).toBe(401);
     expect(unauthorized.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
     const metadata = await (await fetch(origin + '/.well-known/oauth-authorization-server')).json();
-    expect(metadata).toMatchObject({ code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'] });
+    expect(metadata).toMatchObject({ code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'] });
+  });
+  it('logs each refused registration once with its reason and non-secret metadata', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const refused = [
+        ['javascript:alert(1)', 'invalid_redirect_uri'], ['data:text/html,x', 'invalid_redirect_uri'], ['file:///tmp/cb', 'invalid_redirect_uri'],
+        ['vbscript:x', 'invalid_redirect_uri'], ['http://client.example/cb', 'invalid_redirect_uri'], ['https://client.example/cb#x', 'invalid_redirect_uri'],
+        ['https://user:pw@client.example/cb', 'invalid_redirect_uri'], ['cursor://anysphere.cursor-mcp/cb#x', 'invalid_redirect_uri'], ['not a uri', 'invalid_redirect_uri'],
+        ...['blob:https://x/y', 'about:blank', 'filesystem:https://x/y', 'ftp://x/cb', 'mailto:a@b', 'intent://cb', 'cursor://user:pw@host/cb', 'cursor://host/cb#', ' cursor://host/cb', 'cursor://host/\ncb'].map(uri => [uri, 'invalid_redirect_uri']),
+      ];
+      for (const [uri, error] of refused) {
+        warn.mockClear();
+        const response = await post('/mcp/oauth/register', { client_name: 'Refused', redirect_uris: [uri] });
+        expect([uri, response.status, await response.json()]).toEqual([uri, 400, { error }]);
+        expect(warn).toHaveBeenCalledTimes(1);
+      }
+      warn.mockClear();
+      const method = await post('/mcp/oauth/register', { client_name: 'Hosted bot', redirect_uris: ['https://user:secret-user@bot.example/oauth/cb?x=secret-path'], token_endpoint_auth_method: 'private_key_jwt', grant_types: ['authorization_code', 'client_credentials'] });
+      expect([method.status, await method.json()]).toEqual([400, { error: 'invalid_client_metadata' }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [label, line] = warn.mock.calls[0] as [string, string];
+      expect(label).toBe('[rooms-mcp-oauth] registration refused');
+      expect(JSON.parse(line)).toEqual({ error: 'invalid_client_metadata', client_name: 'Hosted bot', redirect_uris: ['https://bot.example'],
+        token_endpoint_auth_method: 'private_key_jwt', grant_types: ['authorization_code', 'client_credentials'] });
+      expect(line).not.toContain('secret-path');
+      expect(line).not.toContain('secret-user');
+      for (const invalid of [{ redirect_uris: [] }, { redirect_uris: Array(11).fill('https://bot.example/cb') }, { redirect_uris: 'https://bot.example/cb' },
+        { grant_types: ['client_credentials'] }, { grant_types: 'authorization_code' }, { response_types: ['token'] }, { response_types: 'code' }, { client_name: '' }, { webhook_uri: 'http://bot.example/cb' }]) {
+        warn.mockClear();
+        expect((await post('/mcp/oauth/register', { redirect_uris: ['https://bot.example/cb'], ...invalid })).status).toBe(400);
+        expect(warn).toHaveBeenCalledTimes(1);
+      }
+      warn.mockClear();
+      expect((await fetch(origin + '/mcp/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"client_secret":"leak' })).status).toBe(400);
+      expect(warn.mock.calls[0]![1]).toContain('invalid_json');
+      expect(warn.mock.calls[0]![1]).not.toContain('leak');
+    } finally { warn.mockRestore(); }
+  });
+  it('logs admission refusals once without reading or logging a rate-limited body', async () => {
+    await db.query('INSERT INTO rooms_mcp_admission(key,calls) VALUES($1,300)', [tokenHash('127.0.0.1')]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const response = await post('/mcp/oauth/register', { client_secret: 'never-log-this' });
+      expect([response.status, await response.json()]).toEqual([429, { error: 'temporarily_unavailable' }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
+    } finally { warn.mockRestore(); }
+  });
+  it.each(['https://example.com/cb', 'http://127.0.0.1:9876/cb', 'http://[::1]:9876/cb', 'http://localhost:9876/cb'])(
+    'keeps accepting web and loopback redirect %s without issuing a secret', async redirect => {
+      const response = await post('/mcp/oauth/register', { redirect_uris: [redirect] });
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({ token_endpoint_auth_method: 'none', redirect_uris: [redirect] });
+    });
+  it('signs in a native client through a private-use redirect scheme', async () => {
+    for (const redirect of ['cursor://anysphere.cursor-mcp/oauth/callback', 'com.example.app:/oauth/callback']) {
+    const registered = await post('/mcp/oauth/register', { client_name: 'Cursor', redirect_uris: [redirect] });
+    expect(registered.status).toBe(201);
+    const { client_id } = await registered.json() as { client_id: string };
+    const grant = await authorize(undefined, 'allow', client_id, redirect);
+    expect((await exchange(grant, { redirect_uri: redirect })).status).toBe(200);
+    }
+  });
+  it('issues and requires a client secret for client_secret_post and client_secret_basic', async () => {
+    for (const method of ['client_secret_post', 'client_secret_basic']) {
+      const registered = await post('/mcp/oauth/register', { client_name: 'Hosted bot', redirect_uris: ['https://bot.example/oauth/cb'], token_endpoint_auth_method: method });
+      expect(registered.status).toBe(201);
+      const client = await registered.json() as { client_id: string; client_secret: string; token_endpoint_auth_method: string; client_secret_expires_at: number };
+      expect(client).toMatchObject({ token_endpoint_auth_method: method, client_secret_expires_at: 0 });
+      expect(client.client_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const stored = (await db.query<{ secret_hash: string }>('SELECT secret_hash FROM rooms_mcp_clients WHERE id=$1', [client.client_id])).rows[0]!.secret_hash;
+      expect(stored).toBe(tokenHash(client.client_secret));
+      const basic = (id: string, secret: string) => ({ authorization: 'Basic ' + Buffer.from(`${encodeURIComponent(id)}:${encodeURIComponent(secret)}`).toString('base64') });
+      const auth = method === 'client_secret_post'
+        ? { body: { client_secret: client.client_secret }, headers: {} }
+        : { body: {}, headers: basic(client.client_id, client.client_secret) };
+      const grant = await authorize(undefined, 'allow', client.client_id, 'https://bot.example/oauth/cb');
+      const tokenBody = { grant_type: 'authorization_code', client_id: client.client_id, code: grant.code, code_verifier: grant.verifier, redirect_uri: 'https://bot.example/oauth/cb', resource: origin + '/mcp' };
+      for (const wrong of [{ body: {}, headers: {} }, { body: { client_secret: 'wrong' }, headers: {} }, { body: {}, headers: basic(client.client_id, 'wrong') }]) {
+        const refused = await post('/mcp/oauth/token', { ...tokenBody, ...wrong.body }, wrong.headers);
+        expect([refused.status, await refused.json()]).toEqual([401, { error: 'invalid_client' }]);
+      }
+      const otherMethod = method === 'client_secret_post' ? { body: {}, headers: basic(client.client_id, client.client_secret) } : { body: { client_secret: client.client_secret }, headers: {} };
+      expect((await post('/mcp/oauth/token', { ...tokenBody, ...otherMethod.body }, otherMethod.headers)).status).toBe(401);
+      expect((await post('/mcp/oauth/token', { ...tokenBody, client_secret: client.client_secret }, basic(client.client_id, client.client_secret))).status).toBe(401);
+      expect((await post('/mcp/oauth/token', tokenBody, { authorization: 'Basic ' + Buffer.from('%broken:secret').toString('base64') })).status).toBe(401);
+      for (const mismatch of [{ code_verifier: opaque() }, { resource: origin + '/other' }, { redirect_uri: 'https://evil.example/cb' }]) {
+        expect((await post('/mcp/oauth/token', { ...tokenBody, ...auth.body, ...mismatch }, auth.headers)).status).toBe(400);
+      }
+      const issued = await post('/mcp/oauth/token', { ...tokenBody, ...auth.body }, auth.headers);
+      expect(issued.status).toBe(200);
+      const tokens = await issued.json() as { access_token: string; refresh_token: string };
+      const refresh = { grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client.client_id, resource: origin + '/mcp' };
+      expect((await post('/mcp/oauth/token', refresh)).status).toBe(401);
+      const refreshed = await post('/mcp/oauth/token', { ...refresh, ...auth.body }, auth.headers);
+      expect(refreshed.status).toBe(200);
+      const next = await refreshed.json() as typeof tokens;
+      expect((await post('/mcp/oauth/revoke', { token: next.access_token, client_id: client.client_id })).status).toBe(401);
+      expect((await post('/mcp/oauth/revoke', { token: next.access_token, client_id: client.client_id, ...auth.body }, auth.headers)).status).toBe(200);
+      expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${next.access_token}` } })).status).toBe(401);
+    }
+    const publicGrant = await authorize();
+    const withSecret = await exchange(publicGrant, { client_secret: 'unexpected' });
+    expect(withSecret.status).toBe(401);
+    expect((await exchange(publicGrant)).status).toBe(200);
   });
   it('requires exact redirects, S256 and the intended resource, and refuses unsupported registration', async () => {
     expect((await post('/mcp/oauth/register', { client_name: 'Bad', redirect_uris: ['javascript:alert(1)'] })).status).toBe(400);

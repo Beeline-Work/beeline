@@ -21,5 +21,7 @@ for (const appearance of ['bone', 'obsidian']) for (const [file, marker, end] of
  export const runInvite=async()=>{${body}};`;
  const proof = await runBrowserProof({mobile,shims,width:900,entry:path.join(mobile,'scripts/person-invite-proof.tsx'),head: `<style>#result{display:none}#root{max-width:480px;margin:40px auto}body{background:${appearance==='bone'?'#F3EEE4':'#14091A'}}${['SpaceGrotesk-Regular','SpaceGrotesk-Medium','SpaceGrotesk-SemiBold'].map(name=>`@font-face{font-family:'${name}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile,'sources/assets/fonts',name+'.ttf')).toString('base64')})}`).join('')}</style>`,screenshotPath:`/tmp/beeline-teardown-evidence/invite-${baseline?'before':'after'}-${file.startsWith('chat')?'room':'members'}-${appearance}.png`});
  expect(proof.status,proof.stderr).toBe(0);
- expect(JSON.parse(proof.result)).toEqual({link:'https://example.test/join/existing',copy:true,email:true});
+ const { footerGap, ...result } = JSON.parse(proof.result);
+ expect(footerGap).toBeGreaterThanOrEqual(24);
+ expect(result).toEqual({link:'https://example.test/join/existing',copy:true,email:true});
 },120000);

@@ -16,3 +16,5 @@ INVITE_BASELINE=1 npx vitest run sources/buzz/person-invite.browser.test.ts
 The baseline browser run is expected to fail all four cases (no URL, Copy or email); the normal run passes them. The three helper cases cover absent sharing, successful sharing and rejected sharing.
 
 Other requested investigations remain outside this patch: repeat-clicking #beeline in the production browser stayed in the room; Room actions opened the expected menu (Repository, Reviewer, Members, Schedules, Delete, Leave). A second browser, new-signup duplicate-join reproduction and cold-login font reproduction remain outstanding. No changes to those behaviors are claimed. Revision 3 removed name, timer and timezone work.
+
+The footer spacing regression measured zero separation before the correction and now requires at least the existing large spacing token (24px) between Email invite and Cancel. All four browser cases pass. Email invite is intentionally disabled until the email field contains text. Updated after screenshots include this spacing correction.

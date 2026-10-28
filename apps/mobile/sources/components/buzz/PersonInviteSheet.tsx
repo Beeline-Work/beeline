@@ -43,4 +43,4 @@ export function presentPersonInvite(url: string): Promise<void> {
   });
 }
 
-const styles = StyleSheet.create(({ buzz }) => ({ content: { paddingHorizontal: buzz.space.lg, gap: buzz.space.sm } }));
+const styles = StyleSheet.create(({ buzz }) => ({ content: { paddingHorizontal: buzz.space.lg, paddingBottom: buzz.space.lg, gap: buzz.space.sm } }));

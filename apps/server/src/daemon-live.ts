@@ -137,7 +137,7 @@ export class DaemonAgentSession {
       live.subscribeAll((event) => {
         if (event.type === 'usage-refresh') {
           if (event.agentId === agentId && transport.isOpen())
-            transport.send({ type: 'usage-refresh' });
+            transport.send({ type: 'usage-refresh', ...(event.requestId ? { requestId: event.requestId } : {}) });
           return;
         }
         if (event.type === 'agent-sign-in') {

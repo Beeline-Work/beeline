@@ -8,6 +8,7 @@ import { useTextDraft } from '@/buzz/use-text-draft';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
+import { USAGE_REFRESH_CLIENT_TIMEOUT_MS } from '@/components/buzz/AgentUsageSection';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
 // so a screen beside its route is a second URL for the same screen.
@@ -562,10 +563,10 @@ export default function BuzzMembers({
       workspaceId,
       agentPubkey,
     });
+    // A cached profile shows at once; the server read below still replaces it.
+    const cached = await mobileSurfaceCache.read(address, isAgentDetailView).catch(() => undefined);
     try {
-      const cached = await mobileSurfaceCache.read(address, isAgentDetailView);
       if (generation !== agentRequestGenerationRef.current) return;
-      if (cached && profileRetryGeneration === 0) return;
       const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
         workspaceId,
         agentPubkey,
@@ -573,7 +574,9 @@ export default function BuzzMembers({
       if (generation !== agentRequestGenerationRef.current) return;
       await mobileSurfaceCache.write(address, value, isAgentDetailView);
     } catch (reason) {
-      if (generation === agentRequestGenerationRef.current) setError(appErrorCopy(reason));
+      // Keep a readable cached profile rather than replacing it with an error.
+      if (generation === agentRequestGenerationRef.current && (!cached || profileRetryGeneration > 0))
+        setError(appErrorCopy(reason));
     }
   };
 
@@ -1058,9 +1061,12 @@ export default function BuzzMembers({
         onGenerateAvatar={requestSoulAvatar}
         refreshAgent={() => readAgent(profileAgentId)}
         refreshUsage={async () => {
-          await monolithPhoneOperation('refreshAgentUsage', {
+          const outcome = await monolithPhoneOperation('refreshAgentUsage', {
             workspaceId: selectedAgent!.workspaceId, agentId: profileAgentId,
-          });
+          }, { timeoutMs: USAGE_REFRESH_CLIENT_TIMEOUT_MS });
+          // The read landed on the server; show its numbers now.
+          await readAgent(profileAgentId).catch(() => undefined);
+          return outcome;
         }}
         loadMoreWork={async (cursor) => {
           if (!identity || !relayUrl || !workspaceId)

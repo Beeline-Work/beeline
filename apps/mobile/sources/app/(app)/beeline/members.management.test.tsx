@@ -1561,6 +1561,21 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
   });
 
+  it('R-USAGE-6: shows a cached profile, then reads it again from the server', async () => {
+    const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
+    await act(async () => mobileSurfaceCache.write(
+      surfaceAddress('https://relay.test', VIEWER, '/workspace/:id/agents/:agentId',
+        { workspaceId: WORKSPACE, agentPubkey: AGENT }),
+      { ...state.agent, soul: { ...state.agent.soul, instructions: 'Cached soul.' } },
+      (value: unknown): value is typeof state.agent => Boolean(value)));
+    const renderer = await render();
+    await openAgentProfile(renderer);
+    expect(roomView.agent).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
+      state.agent.soul.instructions,
+    );
+  });
+
   it('retries a failed profile read without collapsing the profile', async () => {
     roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
     const renderer = await render();

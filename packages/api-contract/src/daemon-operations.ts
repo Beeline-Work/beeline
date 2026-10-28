@@ -1,7 +1,7 @@
 import type { TurnReplay } from './turn-replay.js';
 import type { SquireApprovalDetails } from './approval-copy.js';
 import type { RepositoryOnboardingCard } from './repository-onboarding.js';
-import type { AgentUsage } from './agent-usage.js';
+import type { AgentUsage, UsageRefreshOutcome } from './agent-usage.js';
 import type { RoomSubscriptionListResult, RoomSubscriptionView, SubscriptionSource, SubscriptionEventCatalog } from './subscriptions.js';
 import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
 import type { CornerHoldInput, CornerMergeHold } from './phone-operations.js';
@@ -544,6 +544,11 @@ export type DaemonOperationMap = {
   postAgentAvatar: Operation<RoomInput & { readonly drawing: unknown }, WriteResult>;
   postAgentUsage: Operation<AgentInput & { readonly usage: AgentUsage }, WriteResult>;
   getAgentUsage: Operation<AgentInput, AgentUsage | null>;
+  /** The helper's answer to one owner-requested usage refresh. */
+  answerUsageRefresh: Operation<
+    AgentInput & { readonly requestId: string; readonly outcome: UsageRefreshOutcome },
+    void
+  >;
   postAgentCommands: Operation<PostAgentCommandsInput, WriteResult>;
   postAgentModelCatalog: Operation<PostAgentModelCatalogInput, WriteResult>;
   postAgentMachineReport: Operation<

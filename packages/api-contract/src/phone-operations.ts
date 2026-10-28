@@ -5,6 +5,7 @@ import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
 import type { CompleteAgentSignInInput, CompleteAgentSignInResult } from './agent-sign-in.js';
+import type { UsageRefreshOutcome } from './agent-usage.js';
 import type {
   WorkflowReadContract,
   WorkflowContract,
@@ -183,7 +184,8 @@ export type PhoneOperationMap = {
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
   updateAgentSoul: { input: UpdateAgentSoulInput; output: AgentDetailView };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: AgentDetailView };
-  refreshAgentUsage: { input: WorkspaceAgentInput; output: void };
+  /** Owner-only: read the agent's plan usage now; answers what the read found. */
+  refreshAgentUsage: { input: WorkspaceAgentInput; output: UsageRefreshOutcome };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   /** Owner-only: relay the code pasted into an `@agent /login` card to the agent's machine. */
   completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };

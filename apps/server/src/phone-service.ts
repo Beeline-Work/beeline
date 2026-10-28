@@ -12,7 +12,7 @@ import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { modelChoiceLabel, readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
 import { CommandRefusalError } from './command-refusal.js';
-import { agentUsageColumns, projectAgentUsage, type AgentUsageRow } from './agent-usage.js';
+import { agentUsageColumns, projectAgentUsage, requestUsageRefresh, type AgentUsageRow } from './agent-usage.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
@@ -4511,11 +4511,7 @@ export class PhoneService {
       case 'refreshAgentUsage': {
         const request = input as Input<'refreshAgentUsage'>;
         await this.requireWorkspaceAgent(request.workspaceId, request.agentId, viewerId);
-        await this.database.query(`SELECT pg_notify($1, $2)`, [
-          POSTGRES_LIVE_CHANNEL,
-          JSON.stringify({ table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: request.agentId }),
-        ]);
-        return;
+        return (await requestUsageRefresh(this.database, this.live, request.agentId)) as Output<Name>;
       }
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);

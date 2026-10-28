@@ -232,7 +232,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 41;
+export const REQUIRED_SCHEMA_VERSION = 42;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -948,6 +948,19 @@ CREATE TABLE IF NOT EXISTS agents (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_snapshot jsonb;
+-- One plan reading per owner, provider and account, shared by every agent on
+-- it (agent-usage.ts). account_key is a hash; it never names the account.
+CREATE TABLE IF NOT EXISTS usage_accounts (
+  id bigserial PRIMARY KEY,
+  owner_id text NOT NULL,
+  provider text NOT NULL,
+  account_key text NOT NULL,
+  usage jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (owner_id, provider, account_key)
+);
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_account_id bigint REFERENCES usage_accounts(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS agents_usage_account ON agents(usage_account_id) WHERE usage_account_id IS NOT NULL;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;

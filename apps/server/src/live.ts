@@ -1,4 +1,4 @@
-import type { AgentSignInLink } from '@beeline/api-contract/daemon';
+import type { AgentSignInLink, UsageRefreshOutcome } from '@beeline/api-contract/daemon';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
@@ -124,7 +124,10 @@ export type LiveEvent =
     }
   /** A server instance accepted a newer connection for this agent. Never sent
    *  to a socket; every instance drops its own older connection for the agent. */
-  | { type: 'usage-refresh'; roomId: ''; agentId: string }
+  /** An owner asked the agent's helper for a usage read (`agent-usage.ts`). */
+  | { type: 'usage-refresh'; roomId: ''; agentId: string; requestId?: string }
+  /** The helper's answer, for the waiting phone request only; never sent to a socket. */
+  | { type: 'usage-refresh-result'; roomId: ''; agentId: string; requestId?: string; outcome: UsageRefreshOutcome }
   | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number }
   /** Machine-wide committed helper bundle; never addressed to a Room or agent. */
   | { type: 'helper-release'; roomId?: undefined; agentId?: undefined; version: string; sha: string }

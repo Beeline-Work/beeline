@@ -19,7 +19,33 @@ export type UsageSpend = {
   /** The key limit is used up, so OpenRouter refuses this agent's calls. */
   rejected?: boolean;
 };
+/**
+ * How the latest plan read went: `fresh` numbers, or why the numbers shown are
+ * older. `at` is when that read was tried, in Unix seconds.
+ */
+export type UsageReadStatus = 'fresh' | 'stale' | 'signed_out' | 'rate_limited' | 'failed';
+export type UsageRead = {
+  status: UsageReadStatus;
+  at: number;
+  /** A short provider reason, for `stale` and `failed`. */
+  reason?: string;
+  /** When the provider allows the next read, for `rate_limited`. */
+  retryAfter?: number;
+};
+/**
+ * The plan account a helper read, sent only from helper to server. `key` is a
+ * one-way hash of the vendor's verified account id (`id:`) or of the machine
+ * and credential file the read used (`local:`); it never names the account.
+ */
+export type UsageAccount = { provider: string; key: string };
+/** What a requested refresh found; `offline` and `no_answer` come from the server. */
+export type UsageRefreshOutcome = {
+  status: UsageReadStatus | 'offline' | 'no_answer';
+  reason?: string;
+  retryAfter?: number;
+};
 export type AgentUsage = {
+  /** When the numbers shown were read: the oldest window's read time. */
   updatedAt: number;
   windows: readonly UsageWindow[];
   context?: { used: number; size: number };
@@ -30,12 +56,21 @@ export type AgentUsage = {
   plan?: string;
   /** Prepaid credits left on the plan (Codex). */
   credits?: { remaining: number };
+  /** The latest plan read, when it came from quota-axi. */
+  read?: UsageRead;
+  /** Helper to server only: the plan account this read belongs to. */
+  account?: UsageAccount;
+  /** Owner view: the owner's other agents on the same plan account. */
+  sharedWith?: readonly string[];
+  /** Owner view: the agent's machine, which reads its usage. */
+  machine?: string;
 };
 
-/** A provider snapshot this old means the agent has been idle since. */
+/** Plan numbers this old, or from a read that did not come back fresh, are not current. */
 export const USAGE_OLD_SECONDS = 30 * 60;
 export function usageIsOld(usage: AgentUsage, now = Date.now() / 1000): boolean {
-  return !usage.free && now - usage.updatedAt >= USAGE_OLD_SECONDS;
+  if (usage.free) return false;
+  return (usage.read !== undefined && usage.read.status !== 'fresh') || now - usage.updatedAt >= USAGE_OLD_SECONDS;
 }
 
 export function readUsageWindow(value: unknown, updatedAt: number): UsageWindow | undefined {
@@ -66,6 +101,45 @@ export function readUsageWindow(value: unknown, updatedAt: number): UsageWindow 
 
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+const READ_STATUSES: readonly UsageReadStatus[] = ['fresh', 'stale', 'signed_out', 'rate_limited', 'failed'];
+/** Provider error text cut to one short line. */
+export function usageReason(value: unknown): string | undefined {
+  if (typeof value !== 'string') return;
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text ? (text.length > 60 ? `${text.slice(0, 59)}…` : text) : undefined;
+}
+function readUsageRead(value: unknown): UsageRead | undefined | null {
+  if (value === undefined) return undefined;
+  const r = value as Record<string, unknown> | null;
+  if (!r || typeof r !== 'object' || !READ_STATUSES.includes(r.status as UsageReadStatus) || !finite(r.at)) return null;
+  if (r.retryAfter !== undefined && !finite(r.retryAfter)) return null;
+  const reason = usageReason(r.reason);
+  return {
+    status: r.status as UsageReadStatus,
+    at: r.at,
+    ...(reason ? { reason } : {}),
+    ...(r.retryAfter !== undefined ? { retryAfter: r.retryAfter as number } : {}),
+  };
+}
+function readUsageAccount(value: unknown): UsageAccount | undefined | null {
+  if (value === undefined) return undefined;
+  const a = value as Record<string, unknown> | null;
+  return a && typeof a === 'object' && typeof a.provider === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(a.provider) &&
+    typeof a.key === 'string' && /^(id|local):[0-9a-f]{32}$/.test(a.key)
+    ? { provider: a.provider, key: a.key }
+    : null;
+}
+export function readUsageRefreshOutcome(value: unknown): UsageRefreshOutcome | undefined {
+  const o = value as Record<string, unknown> | null;
+  if (!o || typeof o !== 'object') return;
+  if (![...READ_STATUSES, 'offline', 'no_answer'].includes(o.status as string)) return;
+  const reason = usageReason(o.reason);
+  return {
+    status: o.status as UsageRefreshOutcome['status'],
+    ...(reason ? { reason } : {}),
+    ...(finite(o.retryAfter) ? { retryAfter: o.retryAfter } : {}),
+  };
+}
 /** A short provider-supplied name, or undefined. */
 function usageText(value: unknown): string | undefined {
   if (typeof value !== 'string') return;
@@ -121,6 +195,13 @@ export function readAgentUsage(value: unknown): AgentUsage | undefined {
   const credits = v.credits as Record<string, unknown> | undefined;
   if (credits !== undefined && (!credits || !finite(credits.remaining))) return;
   const plan = usageText(v.plan);
+  const read = readUsageRead(v.read);
+  const account = readUsageAccount(v.account);
+  if (read === null || account === null) return;
+  const sharedWith = Array.isArray(v.sharedWith)
+    ? v.sharedWith.slice(0, 20).map((name) => usageReason(name)).filter((name): name is string => !!name)
+    : [];
+  const machine = usageText(v.machine);
   return {
     updatedAt: v.updatedAt,
     windows,
@@ -138,6 +219,10 @@ export function readAgentUsage(value: unknown): AgentUsage | undefined {
     ...(spend ? { spend } : {}),
     ...(plan ? { plan } : {}),
     ...(credits ? { credits: { remaining: credits.remaining as number } } : {}),
+    ...(read ? { read } : {}),
+    ...(account ? { account } : {}),
+    ...(sharedWith.length ? { sharedWith } : {}),
+    ...(machine ? { machine } : {}),
   };
 }
 
@@ -167,6 +252,37 @@ export function usageDollars(n: number): string {
   return Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
 }
 
+/** "Jellybean", "Jellybean and Nerd", "Jellybean, Nerd and Ruby". */
+export function usageNames(names: readonly string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? '');
+}
+
+/**
+ * Why plan numbers are older than they should be, in the Usage line's words;
+ * undefined for a fresh read.
+ */
+export function usageWhy(
+  state: Pick<UsageRefreshOutcome, 'status' | 'reason' | 'retryAfter'>,
+  machine: string | undefined,
+  time: (seconds: number) => string,
+): string | undefined {
+  const host = machine ?? 'its machine';
+  switch (state.status) {
+    case 'fresh':
+      return;
+    case 'rate_limited':
+      return state.retryAfter ? `rate-limited, retrying ${time(state.retryAfter)}` : 'rate-limited';
+    case 'signed_out':
+      return 'sign-in expired till next turn';
+    case 'offline':
+      return `${host} is offline`;
+    case 'no_answer':
+      return `couldn't read: ${host} didn't answer`;
+    default:
+      return state.reason ? `couldn't read: ${state.reason}` : "couldn't read";
+  }
+}
+
 /**
  * One plain sentence for an agent to relay when its user asks about usage.
  * Free-agent sentences never carry money.
@@ -179,10 +295,14 @@ export function usageSummary(usage?: AgentUsage, now = Date.now() / 1000): strin
   const context = usage?.context
     ? `context ${usageTokens(usage.context.used)} of ${usageTokens(usage.context.size)} tokens`
     : undefined;
-  const asOf = (u: AgentUsage) =>
-    usageIsOld(u, now)
-      ? `as of ${time(u.updatedAt)} (old: the agent has been idle since)`
-      : `as of ${time(u.updatedAt)}`;
+  const asOf = (u: AgentUsage) => {
+    const why = u.read ? usageWhy(u.read, u.machine, time) : undefined;
+    return why
+      ? `as of ${time(u.updatedAt)} (${why})`
+      : usageIsOld(u, now)
+        ? `as of ${time(u.updatedAt)} (old)`
+        : `as of ${time(u.updatedAt)}`;
+  };
   if (usage?.free) {
     const f = usage.free;
     return f.paused
@@ -204,7 +324,7 @@ export function usageSummary(usage?: AgentUsage, now = Date.now() / 1000): strin
         : undefined;
     return `Usage: ${[`${parts.length ? `${parts.join(', ')} on` : 'on'} the shared OpenRouter key`, ...(limit ? [limit] : []), ...(context ? [context] : [])].join(', ')}, ${asOf(usage)}.`;
   }
-  if (usage?.windows.length) {
+  if (usage?.windows.length || usage?.credits) {
     const windows = usage.windows.map((w) => {
       const label = usageWindowLabel(w.rateLimitType, w.label).toLowerCase();
       if (w.status === 'rejected')
@@ -212,7 +332,8 @@ export function usageSummary(usage?: AgentUsage, now = Date.now() / 1000): strin
       return `${label} ${Math.round((w.utilization ?? 0) * 100)}%${w.resetsAt ? ` (resets ${reset(w.resetsAt)})` : ''}`;
     });
     const credits = usage.credits ? `${Math.floor(usage.credits.remaining).toLocaleString('en-US')} credits left` : undefined;
-    return `Usage: ${usage.plan ? `${usage.plan} plan ` : ''}${[...windows, ...(credits ? [credits] : []), ...(context ? [context] : [])].join(', ')}, ${asOf(usage)}.`;
+    const shared = usage.sharedWith?.length ? `plan shared with ${usageNames(usage.sharedWith)}` : undefined;
+    return `Usage: ${usage.plan ? `${usage.plan} plan ` : ''}${[...windows, ...(credits ? [credits] : []), ...(context ? [context] : []), ...(shared ? [shared] : [])].join(', ')}, ${asOf(usage)}.`;
   }
   return `Usage: unknown (harness reports none).${context ? ` Current ${context}.` : ''}`;
 }

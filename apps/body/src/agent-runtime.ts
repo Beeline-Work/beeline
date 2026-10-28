@@ -240,7 +240,9 @@ export async function runAgentRuntime(
   });
   const refreshUsage = createUsageRefresh({ api: daemonApi, agentId,
     kind: config.agentKind, env: config.agentEnv, free: host.freeAgent });
-  daemonApi.setUsageRefreshListener(() => { void refreshUsage(); });
+  daemonApi.setUsageRefreshListener((requestId) => { void refreshUsage(requestId); });
+  // Join this agent to its plan account now, so it shows its siblings' reads while idle.
+  void refreshUsage.attach();
   let connectorLoop: ConnectorAssignmentLoop | undefined;
   let agentSignIn: AgentSignIn | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;

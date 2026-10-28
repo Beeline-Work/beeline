@@ -1,7 +1,37 @@
 import { afterEach, expect, it, vi } from 'vitest';
-const sdk = vi.hoisted(() => ({ init: vi.fn(), captureException: vi.fn() }));
+const sdk = vi.hoisted(() => ({ init: vi.fn(), captureException: vi.fn(), setTag: vi.fn() }));
 vi.mock('@sentry/react-native', () => sdk);
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); vi.resetModules(); });
+
+it('R-SENTRY-ROUTE: phone and web events retain an allowlisted screen pattern without parameter values', async () => {
+  vi.stubGlobal('__DEV__', false); vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');
+  const { setMobileErrorRoute } = await import('./sentry');
+  const { beforeSend } = sdk.init.mock.calls[0]![0];
+  for (const [segments, route] of [
+    [['(app)', 'beeline', 'chat', '[channelId]'], 'beeline/chat/[channelId]'],
+    [['(app)', 'beeline', 'corners', '[roomId]'], 'beeline/corners/[roomId]'],
+    [['(app)', 'review', '[secret]'], 'review/[secret]'],
+    [['(app)', 'beeline', 'settings', 'index'], 'beeline/settings'],
+  ] as const) {
+    setMobileErrorRoute(segments);
+    expect(sdk.setTag).toHaveBeenLastCalledWith('route_pattern', route);
+    const event = beforeSend({ message: `crash on ${route}`, tags: {
+      surface: 'mobile', route_pattern: route, room_id: 'private-room',
+    }, request: { url: 'https://web.usebeeline.app/beeline/chat/private-room?name=private' } });
+    expect(event.tags).toEqual({ surface: 'mobile', route_pattern: route });
+    expect(event.request).toBeUndefined();
+  }
+  // A navigation change must not keep the previous screen when unrecognized.
+  setMobileErrorRoute(['beeline', 'chat', 'private-room']);
+  expect(sdk.setTag).toHaveBeenLastCalledWith('route_pattern', undefined);
+  expect(beforeSend({ message: 'anonymous fill crash', tags: { route_pattern: 'beeline/chat/private-room' } }).tags).toEqual({});
+});
+
+it('keeps route-tag SDK failures out of navigation', async () => {
+  const { setMobileErrorRoute } = await import('./sentry');
+  sdk.setTag.mockImplementationOnce(() => { throw new Error('SDK unavailable'); });
+  expect(() => setMobileErrorRoute(['beeline', 'onboarding'])).not.toThrow();
+});
 
 it('initializes production capture in JS-only mode and filters SDK event enrichment', async () => {
   vi.stubGlobal('__DEV__', false); vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');

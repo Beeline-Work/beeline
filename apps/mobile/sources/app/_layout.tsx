@@ -11,7 +11,8 @@ import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FontAwesome } from '@expo/vector-icons';
-import { useNavigationContainerRef, usePathname } from 'expo-router';
+import { useNavigationContainerRef, usePathname, useSegments } from 'expo-router';
+import { setMobileErrorRoute } from '@/buzz/sentry';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import {
@@ -277,6 +278,8 @@ async function loadFonts() {
 }
 
 export default function RootLayout() {
+  const routeSegments = useSegments();
+  React.useLayoutEffect(() => { setMobileErrorRoute(routeSegments); }, [routeSegments]);
   React.useEffect(() => {
     let disposed = false;
     let stop = () => {};

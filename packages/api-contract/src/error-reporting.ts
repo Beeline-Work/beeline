@@ -1,3 +1,5 @@
+import { FUNNEL_SCREENS } from './signin-funnel.js';
+
 /** Shared privacy boundary for external error reporting. Never ship request or Room content. */
 export function redactDiagnostic(value: string): string {
   return value
@@ -46,6 +48,10 @@ export function privateErrorEvent<T>(input: T): T {
   output.tags = Object.fromEntries(['surface', 'error_scope', 'background_job'].filter(key =>
     typeof tags[key] === 'string' && /^[a-z0-9_-]{1,64}$/i.test(tags[key] as string),
   ).map(key => [key, tags[key]]));
+  // Reuse the finite screen allowlist. Filled paths and arbitrary route names
+  // must not bypass the privacy boundary, even if supplied by an SDK scope.
+  if (typeof tags.route_pattern === 'string' && FUNNEL_SCREENS.includes(tags.route_pattern as never))
+    (output.tags as Record<string, unknown>).route_pattern = tags.route_pattern;
   // No user, IP, device identity, request, breadcrumbs, extra, source lines,
   // locals, attachments, arbitrary contexts/tags, session replay, or log payloads.
   return output as T;

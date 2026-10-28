@@ -82,14 +82,21 @@ try {
     return response;
   };
   let info, tokens, verifier, authorizeUrl;
+  const registrationMethod = process.argv.includes('--secret-post') ? 'client_secret_post' : process.argv.includes('--secret-basic') ? 'client_secret_basic' : 'none';
+  const redirectUrl = process.argv.includes('--native') ? 'cursor://anysphere.cursor-mcp/oauth/callback' : registrationMethod === 'none' ? 'http://127.0.0.1:9876/callback' : 'https://example.com/cb';
   const provider = {
-    redirectUrl: 'http://127.0.0.1:9876/callback',
-    clientMetadata: { client_name: 'Grok', redirect_uris: ['http://127.0.0.1:9876/callback'], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: 'rooms:read rooms:write' },
+    redirectUrl,
+    clientMetadata: { client_name: 'Grok', redirect_uris: [redirectUrl], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: registrationMethod, scope: 'rooms:read rooms:write' },
     state: () => 'local-proof-state', clientInformation: () => info, saveClientInformation: value => { info = value; },
     tokens: () => tokens, saveTokens: value => { tokens = value; },
     codeVerifier: () => verifier, saveCodeVerifier: value => { verifier = value; }, redirectToAuthorization: value => { authorizeUrl = value; },
   };
   assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', scope: 'rooms:read rooms:write', resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'REDIRECT');
+  assert.equal(info.token_endpoint_auth_method, registrationMethod);
+  const registration = (await db.query('SELECT secret_hash,auth_method FROM rooms_mcp_clients WHERE id=$1', [info.client_id])).rows[0];
+  assert.equal(registration.auth_method, registrationMethod);
+  assert.equal(registration.secret_hash, info.client_secret ? tokenHash(info.client_secret) : null);
+  transcript(`R1: registered ${redirectUrl} with ${registrationMethod}; persisted only the secret hash when applicable.`);
   transcript('SDK discovered metadata, dynamically registered, generated S256 PKCE and requested both scopes.');
   let response = await browser(authorizeUrl); assert.equal(response.status, 302);
   const consentUrl = response.headers.get('location');
@@ -101,6 +108,8 @@ try {
   response = await browser(`/auth/github/callback?state=${upstream.searchParams.get('state')}&code=synthetic-provider-code`); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location')); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location'));
+  const target = new URL(redirectUrl);
+  assert.ok(response.headers.get('content-security-policy').includes(`form-action 'self' ${target.origin === 'null' ? target.protocol : target.origin};`));
   const html = await response.text(); assert.match(html, /JOINS AS/); assert.match(html, /Read Rooms you add it to/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
   transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the joining member, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
   response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow' }) });
@@ -108,6 +117,7 @@ try {
   const callback = new URL(response.headers.get('location'));
   assert.equal(callback.searchParams.get('state'), 'local-proof-state'); assert.equal(callback.searchParams.get('iss'), origin);
   assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', authorizationCode: callback.searchParams.get('code'), resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'AUTHORIZED');
+  transcript(`R1 PASS: sign-in, Allow, exact redirect and SDK token exchange succeeded for ${registrationMethod} / ${target.protocol}.`);
   transcript('SDK exchanged the code with PKCE and the resource audience. No credentials are printed or saved.');
   // The connection is a member owned by the reviewer; a person adds it to a Room to read and post there.
   const member = (await db.query(`SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1`, [person])).rows[0].member_id;

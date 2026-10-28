@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_clients (
 );
 ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS logo text;
 ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS callback_url text;
+ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS secret_hash text;
+ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS auth_method text NOT NULL DEFAULT 'none';
 CREATE INDEX IF NOT EXISTS rooms_mcp_clients_created ON rooms_mcp_clients(created_at);
 CREATE TABLE IF NOT EXISTS rooms_mcp_connections (
   client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,

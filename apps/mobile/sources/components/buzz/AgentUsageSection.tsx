@@ -1,19 +1,27 @@
-import { usageHarness, usageTime } from '@/buzz/agent-usage';
+import { usageHarness, usageProvider, usageTime } from '@/buzz/agent-usage';
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from './Button';
 import { InlineRow } from './IndexRow';
-import { Text, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
   type AgentUsage,
+  type UsageRefreshOutcome,
+  readUsageRefreshOutcome,
   usageDollars,
-  usageIsOld,
+  usageNames,
   usageTokens,
+  usageWhy,
   usageWindowLabel,
 } from '@beeline/api-contract/phone';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 import { Typography } from '@/constants/Typography';
+
+/** Longer than the server's 20 s wait for the helper, so its answer always arrives first. */
+export const USAGE_REFRESH_CLIENT_TIMEOUT_MS = 25_000;
+/** Opening a Profile whose numbers are older than this reads them again once. */
+export const USAGE_AUTO_REFRESH_SECONDS = 2 * 60;
 
 type Tone = 'warning' | 'danger' | undefined;
 /** One column of the Usage cell: a window, an allowance, or a spend figure. */
@@ -26,19 +34,28 @@ export type UsageColumn = {
   tone?: Tone;
 };
 
-/** The Usage cell's columns and bottom line for one snapshot (approved gallery). */
+/**
+ * The Usage cell's columns and bottom lines for one snapshot (approved mock).
+ * `outcome` is a refresh answer that is not fresh; with it, or with a stored
+ * read that was not fresh, the numbers are `muted` and the stamp says why.
+ */
 export function usageCell(
   usage: AgentUsage,
   harness?: string,
   now = Date.now() / 1000,
-): { columns: UsageColumn[]; note: string; stamp?: string; refreshable?: boolean; old: boolean } {
-  const old = usageIsOld(usage, now);
+  outcome?: UsageRefreshOutcome,
+): { columns: UsageColumn[]; note: string; shared?: string; stamp?: string; refreshable?: boolean; muted: boolean } {
   const context = usage.context
     ? `Context ${usageTokens(usage.context.used)} of ${usageTokens(usage.context.size)}`
     : undefined;
-  const stamp = old
-    ? `updated ${usageTime(usage.updatedAt)} · agent idle since then`
-    : `updated ${usageTime(usage.updatedAt)}`;
+  const why = outcome
+    ? usageWhy(outcome, usage.machine, usageTime)
+    : usage.read
+      ? usageWhy(usage.read, usage.machine, usageTime)
+      : undefined;
+  const muted = Boolean(why);
+  const stamp = `updated ${usageTime(usage.updatedAt)}${why ? ` · ${why}` : ''}`;
+  const shared = usage.sharedWith?.length ? `Shared with ${usageNames(usage.sharedWith)}` : undefined;
   if (usage.free) {
     const f = usage.free;
     const fraction = f.used / f.limit;
@@ -55,7 +72,7 @@ export function usageCell(
             },
       ],
       note: 'Shared by your free agents · counted by Beeline',
-      old: false,
+      muted: false,
     };
   }
   if (usage.spend) {
@@ -86,7 +103,7 @@ export function usageCell(
       columns,
       note: [context, 'OpenRouter key, shared'].filter(Boolean).join(' · '),
       stamp, refreshable: true,
-      old,
+      muted,
     };
   }
   if (usage.windows.length || usage.credits) {
@@ -120,56 +137,79 @@ export function usageCell(
           value: `${Math.round(fraction * 100)}%`,
           fill: fraction,
           ...(w.resetsAt && w.resetsAt !== sharedReset ? { foot: `resets ${usageTime(w.resetsAt)}` } : {}),
-          tone: fraction >= 0.8 ? 'warning' : undefined,
+          // Brass marks a number near its limit; an untrusted number is not marked.
+          tone: fraction >= 0.8 && !muted ? 'warning' : undefined,
         };
       }), ...credits],
       note: [context, usageHarness(harness), plan].filter(Boolean).join(' · '),
-      stamp: [!old && sharedReset ? `resets ${usageTime(sharedReset)}` : undefined, stamp].filter(Boolean).join(' · '),
+      ...(shared ? { shared } : {}),
+      stamp: [!muted && sharedReset ? `resets ${usageTime(sharedReset)}` : undefined, stamp].filter(Boolean).join(' · '),
       refreshable: true,
-      old,
+      muted,
     };
   }
   return {
     columns: [],
     note: [`${usageHarness(harness)} doesn't report usage to Beeline`, context].filter(Boolean).join(' · '),
-    old: false,
+    muted: false,
   };
 }
 
 /**
- * Owner-only USAGE section: one cell, one column per window (approved gallery). A
+ * Owner-only USAGE section: one cell, one column per window (approved mock). A
  * harness that never reported anything still gets the section and its note.
+ * A refresh shows a spinner and what it is reading, then the new numbers or
+ * why there are none; a Profile whose numbers are over 2 min old reads once.
  */
 export function AgentUsageSection({ usage, harness, onRefresh }: {
   usage?: AgentUsage; harness?: string; onRefresh?: () => Promise<unknown>;
 }) {
   const [refreshing, setRefreshing] = React.useState(false);
-  const [failed, setFailed] = React.useState(false);
-  const pending = React.useRef<{ updatedAt: number | undefined; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
-  const clear = React.useCallback(() => {
-    if (pending.current) clearTimeout(pending.current.timer);
-    pending.current = undefined;
-  }, []);
-  React.useEffect(() => () => clear(), [clear]);
-  React.useEffect(() => {
-    if (pending.current && usage?.updatedAt !== pending.current.updatedAt) {
-      clear(); setRefreshing(false); setFailed(false);
-    }
-  }, [usage?.updatedAt, clear]);
-  const refresh = () => {
-    if (!onRefresh || pending.current) return;
-    setFailed(false); setRefreshing(true);
-    const attempt = {
-      updatedAt: usage?.updatedAt,
-      timer: setTimeout(() => { clear(); setRefreshing(false); setFailed(true); }, 15_000),
+  // A refresh answer that was not fresh, held while the numbers it is about are shown.
+  const [answer, setAnswer] = React.useState<{ outcome: UsageRefreshOutcome; about?: number }>();
+  const attempt = React.useRef(0);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const updatedAt = React.useRef(usage?.updatedAt);
+  updatedAt.current = usage?.updatedAt;
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  const { columns, note, shared, stamp, refreshable, muted } = usageCell(
+    usage ?? { updatedAt: 0, windows: [] },
+    harness,
+    undefined,
+    answer && answer.about === usage?.updatedAt ? answer.outcome : undefined,
+  );
+  const canRefresh = Boolean(refreshable && onRefresh);
+  const refresh = React.useCallback(() => {
+    if (!onRefresh || timer.current !== undefined) return;
+    const current = ++attempt.current;
+    setRefreshing(true);
+    AccessibilityInfo.announceForAccessibility?.('Refreshing usage');
+    const settle = (outcome: UsageRefreshOutcome) => {
+      if (current !== attempt.current) return;
+      clearTimeout(timer.current);
+      timer.current = undefined;
+      setRefreshing(false);
+      // Success clears any earlier failure; anything else stays beside the numbers it is about.
+      setAnswer(outcome.status === 'fresh' ? undefined : { outcome, about: updatedAt.current });
     };
-    pending.current = attempt;
-    void Promise.resolve().then(onRefresh).catch(() => {
-      if (pending.current !== attempt) return;
-      clear(); setRefreshing(false); setFailed(true);
-    });
-  };
-  const { columns, note, stamp, refreshable, old } = usageCell(usage ?? { updatedAt: 0, windows: [] }, harness);
+    // A late answer still settles this attempt and replaces the timeout's line.
+    timer.current = setTimeout(() => settle({ status: 'no_answer' }), USAGE_REFRESH_CLIENT_TIMEOUT_MS);
+    void Promise.resolve()
+      .then(onRefresh)
+      .then(
+        (value) => settle(readUsageRefreshOutcome(value) ?? { status: 'fresh' }),
+        () => { if (timer.current !== undefined) settle({ status: 'failed', reason: "Beeline didn't answer" }); },
+      );
+  }, [onRefresh]);
+  const hasUsage = usage !== undefined;
+  React.useEffect(() => {
+    if (!hasUsage || !canRefresh) return;
+    if (Date.now() / 1000 - (updatedAt.current ?? 0) > USAGE_AUTO_REFRESH_SECONDS) refresh();
+    // Once per Profile: the section is keyed by agent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasUsage, canRefresh]);
+  const machine = usage?.machine;
+  const reading = `Refreshing · reading ${usageProvider(harness, Boolean(usage?.spend))}${machine ? ` on ${machine}` : ''}`;
   return (
     <View style={styles.section} testID="agent-usage">
       <RoomListSectionHeader title="Usage" inset="row" spacing="flush" />
@@ -190,7 +230,7 @@ export function AgentUsageSection({ usage, harness, onRefresh }: {
                   : { accessible: true, accessibilityLabel: `${c.label}: ${c.value}` })}
               >
                 <Text numberOfLines={1} style={styles.label}>{c.label}</Text>
-                <Text numberOfLines={1} style={[styles.value, c.tone && styles[c.tone]]}>
+                <Text numberOfLines={1} style={[styles.value, muted && styles.mutedValue, c.tone && styles[c.tone]]}>
                   {c.value}
                 </Text>
                 {c.fill !== undefined ? (
@@ -199,6 +239,7 @@ export function AgentUsageSection({ usage, harness, onRefresh }: {
                       style={[
                         styles.fill,
                         { width: `${Math.min(100, Math.max(0, Math.round(c.fill * 100)))}%` },
+                        muted && styles.fillMuted,
                         c.tone === 'warning' && styles.fillWarning,
                         c.tone === 'danger' && styles.fillDanger,
                       ]}
@@ -217,13 +258,28 @@ export function AgentUsageSection({ usage, harness, onRefresh }: {
         <InlineRow style={styles.footer}>
           <View style={styles.footerText}>
             <Text style={styles.note} testID="agent-usage-note">{note}</Text>
-            {stamp ? <Text style={[styles.note, old && styles.warning]} testID="agent-usage-stamp">{stamp}</Text> : null}
-            {failed ? <Text style={[styles.note, styles.danger]} accessibilityRole="alert">Couldn't refresh</Text> : null}
+            {shared ? <Text style={styles.note} testID="agent-usage-shared">{shared}</Text> : null}
+            {refreshing ? (
+              <Text style={styles.note} testID="agent-usage-stamp">{reading}</Text>
+            ) : stamp ? (
+              <Text
+                style={[styles.note, muted && styles.warning]}
+                testID="agent-usage-stamp"
+                {...(muted ? { accessibilityRole: 'alert' as const } : {})}
+              >
+                {stamp}
+              </Text>
+            ) : null}
           </View>
-          {refreshable && onRefresh ? (
-            <Button label="" iconOnly variant="quiet" accessibilityLabel="Refresh usage"
-              disabled={refreshing} onPress={refresh} style={refreshing ? styles.dimmed : undefined}
-              icon={<Ionicons name="refresh-outline" size={20} color={styles.refreshGlyph.color} />} />
+          {canRefresh ? (
+            refreshing ? (
+              <View style={styles.refreshTarget} testID="agent-usage-refreshing">
+                <ActivityIndicator size="small" color={styles.refreshGlyph.color} accessibilityLabel="Refreshing usage" />
+              </View>
+            ) : (
+              <Button label="" iconOnly variant="quiet" accessibilityLabel="Refresh usage" onPress={refresh}
+                icon={<Ionicons name="refresh-outline" size={20} color={styles.refreshGlyph.color} />} />
+            )
           ) : null}
         </InlineRow>
       </View>
@@ -235,7 +291,7 @@ const styles = StyleSheet.create((theme) => ({
   footer: { alignItems: 'center', gap: theme.buzz.space.xs },
   footerText: { flex: 1, gap: theme.buzz.space.xs },
   refreshGlyph: { color: theme.buzz.textSecondary },
-  dimmed: { opacity: 0.4 },
+  refreshTarget: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.xs },
   cell: {
     paddingHorizontal: theme.buzz.space.sm,
@@ -250,6 +306,8 @@ const styles = StyleSheet.create((theme) => ({
   halfColumn: { flexBasis: '40%', maxWidth: '48%' },
   label: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   value: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textPrimary },
+  // Numbers from a read that did not come back fresh: still readable, not current.
+  mutedValue: { color: theme.buzz.ledgerQuiet },
   track: {
     height: 3,
     borderRadius: theme.buzz.radius,
@@ -257,6 +315,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: 'hidden',
   },
   fill: { height: 3, backgroundColor: theme.buzz.textSecondary },
+  fillMuted: { backgroundColor: theme.buzz.textMuted },
   fillWarning: { backgroundColor: theme.buzz.accent },
   fillDanger: { backgroundColor: theme.buzz.dialogDanger },
   note: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },

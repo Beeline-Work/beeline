@@ -29,6 +29,7 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
       ],
       plan: 'pro',
       credits: { remaining: 62174.920478 },
+      read: { status: 'fresh', at: now },
     });
   });
 
@@ -45,7 +46,10 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
   });
 
   it('ignores unknown fields, unusable windows and unavailable providers', () => {
-    expect(quotaAxiUsage({ providers: [{ provider: 'grok', state: { status: 'unavailable' }, windows: [] }] }, 'grok', now)).toBeUndefined();
+    expect(quotaAxiUsage({ providers: [{ provider: 'grok', state: { status: 'unavailable' }, windows: [] }] }, 'grok', now)).toEqual({
+      updatedAt: now, windows: [], read: { status: 'failed', at: now, reason: 'unavailable' },
+    });
+    expect(quotaAxiUsage({ providers: [{ provider: 'grok', state: { status: 'fresh' }, windows: [] }] }, 'grok', now)).toBeUndefined();
     expect(quotaAxiUsage({ providers: 'x' }, 'codex', now)).toBeUndefined();
     const usage = quotaAxiUsage({
       providers: [{
@@ -76,7 +80,7 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
   });
 
   it('never opts quota-axi into a credential refresh, keychain prompt or Claude inference', () => {
-    expect(quotaAxiArgs('claude')).toEqual(['--provider', 'claude', '--json', '--no-credential-refresh']);
+    expect(quotaAxiArgs('claude')).toEqual(['--provider', 'claude', '--json', '--full', '--no-credential-refresh']);
   });
 
   it('asks quota-axi for every harness it covers and not for OpenRouter keys', () => {
@@ -107,16 +111,16 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
     await reader.publish('codex', env);
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(
-      { command: 'node', args: ['q.mjs', '--provider', 'codex', '--json', '--no-credential-refresh'] },
+      { command: 'node', args: ['q.mjs', '--provider', 'codex', '--json', '--full', '--no-credential-refresh'] },
       env,
     );
     expect(post).toHaveBeenCalledWith(expect.objectContaining({ plan: 'pro' }));
     clock += 5 * 60_000;
     run.mockRejectedValueOnce(new Error('timeout'));
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await expect(reader.publish('codex', env)).resolves.toBeUndefined();
+    await expect(reader.publish('codex', env)).resolves.toEqual({ status: 'failed', reason: "usage reader didn't run" });
     expect(run).toHaveBeenCalledTimes(2);
-    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ windows: [], read: expect.objectContaining({ status: 'failed' }) }));
     error.mockRestore();
     await reader.publish(undefined, env);
     expect(run).toHaveBeenCalledTimes(2);
@@ -138,8 +142,10 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
     clock += 60_000;
     await corner.publish('codex', env);
     expect(run).toHaveBeenCalledTimes(1);
-    // Another agent keeps its own budget.
+    // Another agent on the same login shares the read; another login keeps its own budget.
     await reader('agent-b').publish('codex', env);
+    expect(run).toHaveBeenCalledTimes(1);
+    await reader('agent-c').publish('codex', { CODEX_HOME: '/other/codex' });
     expect(run).toHaveBeenCalledTimes(2);
     clock += 5 * 60_000;
     await corner.publish('codex', env);
@@ -149,12 +155,17 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
 
 
 it('an explicit refresh bypasses the automatic interval and posts a new snapshot', async () => {
+  let clock = 0;
   const run = vi.fn(async () => JSON.stringify(QUOTA_AXI_CODEX_CURSOR_REPORT));
   const post = vi.fn(async () => undefined);
-  const reader = new HarnessQuotaReader({ agentId: 'manual', slots: new Map(), run, post, launch: () => ({ command: 'node', args: [] }) });
+  const reader = new HarnessQuotaReader({ agentId: 'manual', slots: new Map(), run, post, now: () => clock, launch: () => ({ command: 'node', args: [] }) });
   const env = { CODEX_HOME: '/agent/codex' };
   await reader.publish('codex', env);
   await reader.publish('codex', env);
+  // A refresh straight after a read shares it rather than asking the vendor again.
+  await expect(reader.publish('codex', env, true)).resolves.toEqual({ status: 'fresh' });
+  expect(run).toHaveBeenCalledTimes(1);
+  clock += 30_000;
   await reader.publish('codex', env, true);
   expect(run).toHaveBeenCalledTimes(2);
   expect(post).toHaveBeenCalledTimes(2);

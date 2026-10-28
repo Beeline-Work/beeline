@@ -3,7 +3,11 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 vi.mock('./IndexRow', () => ({ InlineRow: 'InlineRow' }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-vi.mock('react-native', () => ({ Text: 'Text', View: 'View' }));
+const announce = vi.hoisted(() => vi.fn());
+vi.mock('react-native', () => ({
+  Text: 'Text', View: 'View', ActivityIndicator: 'ActivityIndicator',
+  AccessibilityInfo: { announceForAccessibility: announce },
+}));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: { create: (factory: any) => factory({ buzz: { space: {}, type: {} } }), hairlineWidth: 1 },
 }));
@@ -13,7 +17,7 @@ vi.mock('./RoomListSectionHeader', () => ({ RoomListSectionHeader: 'RoomListSect
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { AgentUsageSection, usageCell } from './AgentUsageSection';
+import { AgentUsageSection, USAGE_REFRESH_CLIENT_TIMEOUT_MS, usageCell } from './AgentUsageSection';
 
 const now = Date.now() / 1000;
 const win = (t: string, u: number, status: 'allowed' | 'rejected' = 'allowed') => ({
@@ -35,7 +39,7 @@ describe('Usage cell (mock r7)', () => {
     expect(cell.columns.every((c) => !c.foot)).toBe(true);
     expect(cell.stamp).toMatch(/^resets .* · updated /);
     expect(cell.note).toMatch(/^Context 612K of 1M · Claude Code$/);
-    expect(cell.old).toBe(false);
+    expect(cell.muted).toBe(false);
   });
 
   it('turns brass at exactly 80% and red when the provider stops the agent', () => {
@@ -46,20 +50,41 @@ describe('Usage cell (mock r7)', () => {
     expect(stopped.foot).toMatch(/^back /);
   });
 
-  it('marks data older than 30 minutes and keeps the numbers', () => {
-    const fresh = usageCell({ updatedAt: now - 1799, windows: [win('five_hour', 0.42)] }, 'claude', now);
-    const old = usageCell({ updatedAt: now - 1800, windows: [win('five_hour', 0.42)] }, 'claude', now);
-    expect(fresh.old).toBe(false);
-    expect(old.old).toBe(true);
-    expect(old.stamp).toMatch(/^updated .* · agent idle since then$/);
-    expect(old.columns[0]!.value).toBe('42%');
+  it('labels old numbers with when they were really read and why, never agent idle', () => {
+    const at = now - 3 * 3600;
+    const old = usageCell({ updatedAt: at, windows: [{ ...win('five_hour', 0.85), updatedAt: at }] }, 'claude', now);
+    expect(old.muted).toBe(false);
+    expect(old.stamp).not.toContain('idle');
+    const reasons: Array<[Record<string, unknown>, RegExp]> = [
+      [{ status: 'rate_limited', at: now, retryAfter: now + 600 }, /^updated .* · rate-limited, retrying .+$/],
+      [{ status: 'signed_out', at: now }, /^updated .* · sign-in expired till next turn$/],
+      [{ status: 'stale', at: now, reason: 'fetch failed' }, /^updated .* · couldn't read: fetch failed$/],
+      [{ status: 'failed', at: now, reason: 'unavailable' }, /^updated .* · couldn't read: unavailable$/],
+    ];
+    for (const [read, line] of reasons) {
+      const cell = usageCell({ updatedAt: at, windows: [{ ...win('five_hour', 0.85), updatedAt: at }], read: read as any }, 'claude', now);
+      expect(cell.muted).toBe(true);
+      expect(cell.stamp).toMatch(line);
+      // Muted numbers keep their value and bar but lose the brass near-limit mark.
+      expect(cell.columns[0]).toMatchObject({ value: '85%', fill: 0.85, tone: undefined });
+    }
+    const offline = usageCell({ updatedAt: at, windows: [win('five_hour', 1, 'rejected')], machine: 'squire' }, 'claude', now, { status: 'offline' });
+    expect(offline.stamp).toMatch(/^updated .* · squire is offline$/);
+    // Red stays for a limit that is actually reached.
+    expect(offline.columns[0]!.tone).toBe('danger');
+  });
+
+  it('names the other agents that share the plan account', () => {
+    const cell = usageCell({ updatedAt: now, windows: [win('five_hour', 0.14)], plan: 'max', sharedWith: ['Jellybean', 'Nerd'] }, 'claude', now);
+    expect(cell.note).toBe('Claude Code · max plan');
+    expect(cell.shared).toBe('Shared with Jellybean and Nerd');
   });
 
   it('shows the free allowance in tokens only, shared, with a paused state', () => {
     const free = usageCell({ updatedAt: 0, windows: [], free: { used: 840_000, limit: 1_000_000, resetsAt: now + 3600 } }, 'pi', now);
     expect(free.columns).toEqual([expect.objectContaining({ label: 'Today', value: '840K of 1M', tone: 'warning' })]);
     expect(free.note).toBe('Shared by your free agents · counted by Beeline');
-    expect(free.old).toBe(false);
+    expect(free.muted).toBe(false);
     const paused = usageCell({ updatedAt: now, windows: [], free: { used: 1, limit: 1_000_000, resetsAt: now + 3600, paused: true } }, 'pi', now);
     expect(paused.columns[0]).toMatchObject({ value: 'Paused', tone: 'danger' });
     expect(JSON.stringify([free, paused])).not.toContain('$');
@@ -85,7 +110,7 @@ describe('Usage cell (mock r7)', () => {
     expect(usageCell({ updatedAt: now, windows: [], context: { used: 88_000, size: 200_000 } }, 'pi', now)).toEqual({
       columns: [],
       note: "Pi doesn't report usage to Beeline · Context 88K of 200K",
-      old: false,
+      muted: false,
     });
   });
 
@@ -146,37 +171,73 @@ describe('approved Usage gallery and refresh', () => {
     expect(cell.stamp).toMatch(/^updated /);
     expect(cell.stamp).not.toContain('resets');
   });
-  it('sends once, disables until a committed timestamp changes, and ignores a late failure', async () => {
+  it('shows a native spinner and what it reads, announces it, and sends once', async () => {
+    let resolve!: (value: unknown) => void;
+    const onRefresh = vi.fn(() => new Promise((done) => { resolve = done; }));
+    let renderer: any;
+    const usage = { updatedAt: now, windows: [win('five_hour', .14)], machine: 'squire' };
+    act(() => { renderer = create(<AgentUsageSection usage={usage} harness="claude" onRefresh={onRefresh} />); });
+    await act(async () => { renderer.root.findByType('Button').props.onPress(); });
+    expect(renderer.root.findAllByType('Button')).toHaveLength(0);
+    expect(renderer.root.findByType('ActivityIndicator').props.accessibilityLabel).toBe('Refreshing usage');
+    expect(renderer.root.findByProps({ testID: 'agent-usage-refreshing' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'agent-usage-stamp' }).props.children).toBe('Refreshing · reading Claude on squire');
+    expect(announce).toHaveBeenCalledWith('Refreshing usage');
+    await act(async () => resolve({ status: 'fresh' }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({ testID: 'agent-usage-stamp' }).props.children).toMatch(/^updated /);
+    act(() => renderer.unmount());
+  });
+  it('R-USAGE-5: shows an offline machine at once, then clears it on a later success', async () => {
+    const onRefresh = vi.fn().mockResolvedValueOnce({ status: 'offline' }).mockResolvedValue({ status: 'fresh' });
+    let renderer: any;
+    const usage = { updatedAt: now, windows: [win('five_hour', .14)], machine: 'squire' };
+    act(() => { renderer = create(<AgentUsageSection usage={usage} harness="claude" onRefresh={onRefresh} />); });
+    await act(async () => renderer.root.findByType('Button').props.onPress());
+    const stamp = () => renderer.root.findByProps({ testID: 'agent-usage-stamp' });
+    expect(stamp().props.children).toMatch(/^updated .* · squire is offline$/);
+    expect(stamp().props.accessibilityRole).toBe('alert');
+    await act(async () => renderer.root.findByType('Button').props.onPress());
+    expect(stamp().props.children).toMatch(/^updated [^·]*$/);
+    expect(stamp().props.accessibilityRole).toBeUndefined();
+    act(() => renderer.unmount());
+  });
+  it('gives up after its own deadline, and a late success still clears the line', async () => {
     vi.useFakeTimers();
-    let reject!: (error: Error) => void;
-    const onRefresh = vi.fn(() => new Promise((_, fail) => { reject = fail; }));
+    let resolve!: (value: unknown) => void;
+    const onRefresh = vi.fn(() => new Promise((done) => { resolve = done; }));
+    let renderer: any;
+    const usage = { updatedAt: now, windows: [win('weekly', .1)], machine: 'squire' };
+    act(() => { renderer = create(<AgentUsageSection usage={usage} harness="codex" onRefresh={onRefresh} />); });
+    await act(async () => renderer.root.findByType('Button').props.onPress());
+    act(() => vi.advanceTimersByTime(USAGE_REFRESH_CLIENT_TIMEOUT_MS));
+    const stamp = () => renderer.root.findByProps({ testID: 'agent-usage-stamp' }).props.children;
+    expect(stamp()).toMatch(/· couldn't read: squire didn't answer$/);
+    await act(async () => resolve({ status: 'fresh' }));
+    expect(stamp()).toMatch(/^updated [^·]*$/);
+    act(() => renderer.unmount());
+  });
+  it('a failure stops showing once newer numbers arrive', async () => {
+    const onRefresh = vi.fn().mockRejectedValue(new Error('network'));
     let renderer: any;
     const usage = { updatedAt: now, windows: [win('weekly', .1)] };
     act(() => { renderer = create(<AgentUsageSection usage={usage} onRefresh={onRefresh} />); });
-    const button = () => renderer.root.findByType('Button');
-    await act(async () => { button().props.onPress(); button().props.onPress(); });
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(button().props.disabled).toBe(true);
+    await act(async () => renderer.root.findByType('Button').props.onPress());
+    const stamp = () => renderer.root.findByProps({ testID: 'agent-usage-stamp' }).props.children;
+    expect(stamp()).toMatch(/· couldn't read: Beeline didn't answer$/);
     act(() => renderer.update(<AgentUsageSection usage={{ ...usage, updatedAt: now + 1 }} onRefresh={onRefresh} />));
-    expect(button().props.disabled).toBe(false);
-    await act(async () => reject(new Error('late')));
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
+    expect(stamp()).toMatch(/^updated [^·]*$/);
     act(() => renderer.unmount());
   });
-  it('shows failure on request rejection or timeout and permits retry', async () => {
-    vi.useFakeTimers();
-    const onRefresh = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
+  it('reads once on open when the numbers are over 2 minutes old', async () => {
+    const onRefresh = vi.fn(async () => ({ status: 'fresh' }));
     let renderer: any;
-    act(() => { renderer = create(<AgentUsageSection usage={{ updatedAt: now, windows: [win('weekly', .1)] }} onRefresh={onRefresh} />); });
-    const button = () => renderer.root.findByType('Button');
-    await act(async () => button().props.onPress());
-    expect(renderer.root.findByProps({ accessibilityRole: 'alert' }).props.children).toBe("Couldn't refresh");
-    await act(async () => button().props.onPress());
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
-    act(() => vi.advanceTimersByTime(15_000));
-    expect(button().props.disabled).toBe(false);
-    expect(renderer.root.findByProps({ accessibilityRole: 'alert' }).props.children).toBe("Couldn't refresh");
-    expect(onRefresh).toHaveBeenCalledTimes(2);
+    await act(async () => { renderer = create(<AgentUsageSection usage={{ updatedAt: now - 30, windows: [win('weekly', .1)] }} onRefresh={onRefresh} />); });
+    expect(onRefresh).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+    await act(async () => { renderer = create(<AgentUsageSection usage={{ updatedAt: now - 121, windows: [win('weekly', .1)] }} onRefresh={onRefresh} />); });
+    await act(async () => renderer.update(<AgentUsageSection usage={{ updatedAt: now - 125, windows: [win('weekly', .2)] }} onRefresh={onRefresh} />));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
     act(() => renderer.unmount());
   });
   it('omits refresh for live free allowance and absent usage', () => {

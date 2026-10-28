@@ -183,7 +183,7 @@ export class DaemonApiClient {
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
-  private usageRefreshListener?: () => void;
+  private usageRefreshListener?: (requestId?: string) => void;
   private agentSignInListener?: (frame: AgentSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
@@ -346,7 +346,7 @@ export class DaemonApiClient {
   }
 
   /** One `@agent /login` step the agent's owner started in a Room. */
-  setUsageRefreshListener(listener: () => void): void {
+  setUsageRefreshListener(listener: (requestId?: string) => void): void {
     this.usageRefreshListener = listener;
   }
 
@@ -492,7 +492,9 @@ export class DaemonApiClient {
       return;
     }
     if (event.type === 'usage-refresh') {
-      this.usageRefreshListener?.();
+      this.usageRefreshListener?.(
+        typeof event.requestId === 'string' && /^[0-9a-f-]{36}$/.test(event.requestId) ? event.requestId : undefined,
+      );
       return;
     }
     if (event.type === 'agent-sign-in') {

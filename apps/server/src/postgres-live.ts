@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
+import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
@@ -642,7 +643,15 @@ export class PostgresLiveListener {
       this.pushWake?.();
     if (pushOnly) return;
     if (payload.table === 'agent_usage_refresh' && payload.agentId) {
-      this.live.publish({ type: 'usage-refresh', roomId: '', agentId: payload.agentId });
+      this.live.publish({
+        type: 'usage-refresh', roomId: '', agentId: payload.agentId,
+        ...(payload.requestId ? { requestId: payload.requestId } : {}),
+      });
+      return;
+    }
+    if (payload.table === USAGE_REFRESH_RESULT_TABLE) {
+      const event = decodeUsageRefreshResult(raw);
+      if (event) this.live.publish(event);
       return;
     }
     if (payload.table === AGENT_SIGN_IN_TABLE) {

@@ -32,6 +32,8 @@
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
+        // Usage truth live proof: two agents on one real login, run by path.
+        "scripts/prove-usage-accounts.mjs",
         // The background latency runbook invokes these isolated database proofs by path.
         "scripts/prove-background-waste.mjs",
         "scripts/prove-webhook-burst.mjs",
@@ -284,6 +286,7 @@
         "scripts/new-room-nav-gap-proof.tsx",
         "scripts/agent-profile-usage-native-proof.tsx",
         "scripts/agent-usage-refresh-native-proof.tsx",
+        "scripts/usage-truth-native-proof.tsx",
         // Invoked by path or selected as Metro aliases for the Android screenshot proof.
         "scripts/search-cell-proof/*.{cjs,ts,tsx}",
       ],

@@ -298,9 +298,14 @@ it('requests usage from only the owned agent without clearing its snapshot or st
     const service = new PhoneService(recorder, 'http://local.test');
     await expect(service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OTHER)).rejects.toThrow();
     expect(recorder.notifies).toHaveLength(0);
+    // A machine without a live helper connection answers at once and asks nothing.
+    await expect(service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER))
+      .resolves.toEqual({ status: 'offline' });
+    expect(recorder.notifies).toHaveLength(0);
+    await database.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id) VALUES($1,1,'c','i')`, [AGENT]);
     await service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
     expect(recorder.notifies).toEqual([{ channel: POSTGRES_LIVE_CHANNEL, payload: {
-      table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: AGENT,
+      table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: AGENT, requestId: expect.any(String),
     } }]);
     expect((await database.query('SELECT id FROM agent_commands')).rows).toHaveLength(0);
   } finally { await database.close(); }

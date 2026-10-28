@@ -3,7 +3,7 @@ import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
 import { visibleMessageSql } from './read-cursor.js';
-import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
+import { readUsageRefreshOutcome, sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
 import { postStarterInviteOffer } from './starter-invite.js';
 import { modelChoiceLabel, squireApprovalAction } from '@beeline/api-contract/phone';
@@ -18,7 +18,7 @@ import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
 import { FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_TURN_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
-import { agentUsage, saveAgentUsage } from './agent-usage.js';
+import { agentUsage, notifyUsageRefreshResult, postedRefreshOutcome, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
@@ -1697,9 +1697,20 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getAgentUsage':
         return ((await agentUsage(this.database, authenticatedAgentId)) ?? null) as Output<Name>;
-      case 'postAgentUsage':
-        await saveAgentUsage(this.database, authenticatedAgentId, (input as Input<'postAgentUsage'>).usage);
+      case 'postAgentUsage': {
+        const { usage } = input as Input<'postAgentUsage'>;
+        await saveAgentUsage(this.database, authenticatedAgentId, usage);
+        const outcome = postedRefreshOutcome(usage);
+        if (outcome) await notifyUsageRefreshResult(this.database, authenticatedAgentId, outcome);
         return this.writeResult() as Output<Name>;
+      }
+      case 'answerUsageRefresh': {
+        const answer = input as Input<'answerUsageRefresh'>;
+        const outcome = readUsageRefreshOutcome(answer.outcome);
+        if (!outcome || typeof answer.requestId !== 'string') throw new Error('invalid usage refresh answer');
+        await notifyUsageRefreshResult(this.database, authenticatedAgentId, outcome, answer.requestId);
+        return undefined as Output<Name>;
+      }
       case 'postAgentCommands':
         return (await this.commands(
           input as Input<'postAgentCommands'>,
@@ -9205,6 +9216,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentAvatar: true,
   postAgentUsage: true,
   getAgentUsage: true,
+  answerUsageRefresh: true,
   postAgentCommands: true,
   postAgentModelCatalog: true,
   postAgentMachineReport: true,

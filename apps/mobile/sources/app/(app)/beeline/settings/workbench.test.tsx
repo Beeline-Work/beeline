@@ -288,7 +288,7 @@ describe('one tap from a Connectors row', () => {
     await act(async () => suggestion.props.onPress());
     expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'tailscale' } }]]);
   });
-  it('errored sign-in: opens the provider sign-in directly, with no page first', async () => {
+  it('errored sign-in: opens management so the attempt can be removed', async () => {
     const source = serve({ ...companyWorkbench([{ ...companyRow('linear', 'Linear', 'attention'), state: 'connect', attention: '1 connection needs attention',
       items: [{ id: 'linear', title: 'Linear', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'linear' }, state: 'connect', attention: true }] }]),
       apps: [app('linear', 'composio')] });
@@ -297,9 +297,8 @@ describe('one tap from a Connectors row', () => {
     expect(row(renderer, 'linear').props.action).toBe('Connect');
     expect(row(renderer, 'linear').props.value).toBeUndefined();
     await act(async () => { await row(renderer, 'linear').props.onPress(); });
-    expect(begin).toHaveBeenCalledWith({ appId: 'linear' });
-    expect(appSignIn.open).toHaveBeenCalledWith('https://linear.app/oauth/authorize', { ...scope, appId: 'linear' });
-    expect(navigation.push).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'linear' } });
   });
   it('errored on a computer: opens the info page that shows the computer and its Connect', async () => {
     serve({ ...companyWorkbench([{ ...companyRow('notion', 'Notion', 'attention'), state: 'connect', attention: '1 connection needs attention',

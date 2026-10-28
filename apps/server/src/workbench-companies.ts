@@ -250,17 +250,22 @@ export function companySearchResults(view: WorkbenchView, candidates: WorkbenchA
     || r.items.some(i => i.title.toLowerCase().includes(q) || i.title.toLowerCase().includes(humanize(query).toLowerCase())) || r.alsoAvailable.some(a => a.appName.toLowerCase().includes(q)))
     .map(r => ({ appKey: r.id, name: r.name, domain: r.domain, companyId: r.id, mark: r.logo, description: r.subtitle }));
   const catalog = COMPANY_APPS.filter(a => a.name.toLowerCase().includes(q) || a.domain.includes(q));
+  const offered = new Set<string>();
   const results = [...candidates, ...catalog].flatMap(app => {
     const provider = resolveCompany({ domain: app.domain, appKey: app.appKey });
-    if (provider.id === 'other' || seen.has(provider.id)) return [];
-    seen.add(provider.id);
+    if (provider.id === 'other' || offered.has(provider.id)) return [];
+    if (seen.has(provider.id) && !('registryServerName' in app && app.registryServerName)) return [];
+    seen.add(provider.id); offered.add(provider.id);
     const option: CompanySuggestion = { appKey: app.appKey, appName: app.name, name: provider.name,
       purpose: 'description' in app && typeof app.description === 'string' ? app.description : 'purpose' in app ? app.purpose : `Connect to ${provider.name}`,
       providerId: provider.id, providerName: provider.name, domain: provider.domain, logo: companyLogo(provider, origin),
       alternativeRoutes: ['squire-api', ...('registryServerName' in app && app.registryServerName && candidates.some(c => !c.registryServerName && c.appKey === app.appKey) ? ['composio' as const] : [])],
       ...('registryServerName' in app && app.registryServerName ? { registryServerName: app.registryServerName, registryVersion: app.registryVersion } : {}),
       flow: app.appKey === 'trusty-squire' ? 'squire' : app.appKey === 'tailscale' ? 'tailscale' : app.appKey === 'wallet' ? 'wallet' : app.appKey === 'link' ? 'link' : 'app' };
-    return [{ ...app, name: provider.name, mark: option.logo, company: option }];
+    const result = { ...app, name: provider.name, mark: option.logo, company: option };
+    const index = existing.findIndex(row => row.companyId === provider.id);
+    if (index >= 0) { existing[index] = result; return []; }
+    return [result];
   });
   return [...existing, ...results];
 }

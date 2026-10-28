@@ -1931,7 +1931,7 @@ describe('connect_app', () => {
     expect(before.companies?.rows.find(row => row.id === 'fly')).toMatchObject({ subtitle: '6 keys',
       mcp: { appName: 'Fly.io', registryServerName: 'io.fly/company-mcp' } });
     const results = await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER);
-    expect(results).toEqual([expect.objectContaining({ name: 'Fly.io', companyId: 'fly', description: '6 keys' })]);
+    expect(results).toEqual([expect.objectContaining({ name: 'Fly.io', company: expect.objectContaining({ registryServerName: 'io.fly/company-mcp' }) })]);
     const automatic = await daemon.execute('connectApp', { ...turn, app: 'fly', reason: 'Use Fly again' }, HELPER);
     expect(automatic).toMatchObject({ appId: original.appId, transport: 'squire-api', connectionReference: 'vault:fly-0' });
     const manifest = (await discovery.discover('fly'))!;
@@ -2014,7 +2014,7 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client);
     await vi.waitFor(async () => expect((await other.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER))
       .companies?.rows.find(row => row.id === 'fly')?.mcp?.registryServerName).toBe('io.fly/company-mcp'));
-    expect(await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER)).toEqual(first);
+    expect(await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER)).toEqual([expect.objectContaining({ company: expect.objectContaining({ registryServerName: 'io.fly/company-mcp' }) })]);
   });
 
   it.each([true, false])('MCP-DISCOVERY-1: hides insightfulpipe Notion when the official Notion server exists (%s)', async official => {

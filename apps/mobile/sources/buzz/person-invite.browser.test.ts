@@ -23,5 +23,5 @@ for (const appearance of ['bone', 'obsidian']) for (const [file, marker, end] of
  expect(proof.status,proof.stderr).toBe(0);
  const { footerGap, ...result } = JSON.parse(proof.result);
  expect(footerGap).toBeGreaterThanOrEqual(24);
- expect(result).toEqual({link:'https://example.test/join/existing',copy:true,email:true});
+ expect(result).toEqual({link:'https://example.test/join/existing',copy:true,email:false});
 },120000);

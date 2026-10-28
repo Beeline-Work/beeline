@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Linking, Platform, Share, View } from 'react-native';
+import { Platform, Share, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
 import { ErrorBanner } from './ErrorBanner';
@@ -10,7 +10,6 @@ import { HullDialogInput } from './HullDialog';
 import { Button } from './Button';
 
 export function PersonInviteSheet({ url, onClose }: { url: string; onClose: () => void }) {
-  const [email, setEmail] = useState('');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -24,10 +23,6 @@ export function PersonInviteSheet({ url, onClose }: { url: string; onClose: () =
           setCopied(true);
           setError(null);
         } catch { setError('Could not copy. Select and copy the invite link.'); }
-      }} />
-      <HullDialogInput accessibilityLabel="Email address" placeholder="Email address" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
-      <Button size="inline" label="Email invite" disabled={!email.trim()} onPress={() => {
-        void Linking.openURL(`mailto:${encodeURIComponent(email.trim())}?subject=Beeline%20invite&body=${encodeURIComponent(url)}`).catch(() => setError('Could not open email. Copy the invite link instead.'));
       }} />
       </View>
     </HullActionSheet>

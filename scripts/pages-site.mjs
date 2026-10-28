@@ -15,6 +15,7 @@ const REQUIRED_STATIC_PATHS = [
   'terms/index.html',
   'delete-account/index.html',
   'brand/index.html',
+  'connect/index.html',
   'review/index.html',
   'join/index.html',
   'join/invite.js',

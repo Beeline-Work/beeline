@@ -2,7 +2,8 @@ import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
 import { NEXT_DAY_CHECKIN_SCHEMA } from './next-day-checkin.js';
 import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
-import { backfillMcpMembers } from './rooms-mcp-members.js';
+import { backfillMcpMemberRoomsAndAvatars, backfillMcpMembers } from './rooms-mcp-members.js';
+import { seedPreregisteredMcpClients } from './rooms-mcp-preregistered.js';
 import { backfillCornerHoldMessages } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
@@ -3605,8 +3606,11 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('corner person state migration', () => migrateCornerPersonState(database));
+  await dataStep('rooms MCP preregistered clients', () => seedPreregisteredMcpClients(database));
   const mcpMembers = await dataStep('rooms MCP members', () => backfillMcpMembers(database));
-  if (mcpMembers) console.log(`backfillMcpMembers: created ${mcpMembers} member(s) with no Rooms`);
+  if (mcpMembers) console.log(`backfillMcpMembers: created ${mcpMembers} member(s)`);
+  await dataStep('rooms MCP member public Rooms and logos', () =>
+    workflowBackfillOnce(database, 'rooms-mcp-member-public-rooms-v1', backfillMcpMemberRoomsAndAvatars));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>

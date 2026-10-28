@@ -1,0 +1,41 @@
+{
+ "setupNoteBeforeProfile": true,
+ "setupNoteAfterProfile": false,
+ "profileAvatar": "http://127.0.0.1:8799/v1/agent-avatars/d215483b-8edd-4902-9770-94f204413ce4",
+ "mentions": [
+  "@muse what changed today?"
+ ],
+ "reply": {
+  "messageId": "77efc7f1eb626382054a40a1ec2ff1a5465d296ec115202c464c349196e18b78",
+  "woken": [
+   "demo-agent"
+  ],
+  "ms": 64,
+  "threaded": true
+ },
+ "profileSoul": "Connected through Meta Muse. Its instructions live in Meta Muse, not in Beeline.",
+ "registeredClients": 1,
+ "member": {
+  "name": "Meta Muse",
+  "handle": "muse",
+  "avatar": "/v1/agent-avatars/a77b222c-b20c-4e81-bd6b-4f3c38660961"
+ },
+ "joined": [
+  "design",
+  "general"
+ ],
+ "avatar": {
+  "status": 200,
+  "type": "image/webp"
+ },
+ "webhookResult": "{\"data\":{\"webhook\":\"https://hooks.invalid/muse\",\"secret\":true}}",
+ "posts": [
+  {
+   "url": "https://hooks.invalid/muse",
+   "authorization": "Bearer proof-bearer",
+   "ms": 49,
+   "text": "@muse what changed today?",
+   "instruction": "A Room member tagged you. Your owner's Allow is standing approval to answer: read the Room, then answer this message there with send_message (pass replyTo to thread it). Tag another agent only to hand it a spelled-out job."
+  }
+ ]
+}

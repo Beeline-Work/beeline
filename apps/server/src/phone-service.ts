@@ -3416,7 +3416,11 @@ export class PhoneService {
       owner_id: string | null; owner_name: string | null; owner_handle: string | null;
       recent_work: Array<{ title: string; url: string; merged_at: string }>;
       grants: AgentGrantRow[];
-    } & AgentUsageRow>(`SELECT agent_identity.id member_id,agent_identity.name member_name,
+      mcp_client_name: string | null;
+    } & AgentUsageRow>(`SELECT agent_identity.id member_id,
+        (SELECT client.name FROM rooms_mcp_members mcp_member
+          JOIN rooms_mcp_clients client ON client.id=mcp_member.client_id
+          WHERE mcp_member.member_id=a.agent_id) mcp_client_name,agent_identity.name member_name,
         agent_identity.handle member_handle,agent_identity.avatar member_avatar,
         agent_identity.face_id member_face,agent_membership.role member_role,
         a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,
@@ -3482,6 +3486,9 @@ export class PhoneService {
         FROM live_outputs live WHERE live.agent_id=$1 AND live.kind='presence'
         ORDER BY live.updated_at DESC LIMIT 1`, [agentId]));
     const presenceRow = presence?.rows[0];
+    // An AI-client member's instructions live in its own app, so its profile
+    // names that app instead of a made-up animal soul.
+    const mcpClient = config.mcp_client_name;
     const member = this.projectMembers([{
       id: config.member_id,kind: 'agent',name: config.member_name,
       handle: config.member_handle,avatar: config.member_avatar,
@@ -3517,7 +3524,9 @@ export class PhoneService {
         : {}),
       // The soul this agent's animal carries: what an edited soul restores to.
       // Derived from the face it wears, so name, avatar and soul stay one animal.
-      seededSoul: FACE_SOULS[resolveFace(member.identity.face, agentId)],
+      seededSoul: mcpClient
+        ? `Connected through ${mcpClient}. Its instructions live in ${mcpClient}, not in Beeline.`
+        : FACE_SOULS[resolveFace(member.identity.face, agentId)],
       ...(config?.owner_id && config.owner_name
         ? {
             owner: {
@@ -4253,7 +4262,7 @@ export class PhoneService {
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
-        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId);
+        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
         await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
         return sent as Output<Name>;
@@ -5072,6 +5081,10 @@ export class PhoneService {
            WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
              (room_read_marks.message_created_at,room_read_marks.message_id)
            RETURNING 1
+         ), pending_route AS (
+           INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
+           SELECT id,room_id,$3 FROM inserted WHERE $7::jsonb IS NOT NULL
+           ON CONFLICT(message_id) DO NOTHING RETURNING 1
          )
          SELECT EXISTS(SELECT 1 FROM inserted) inserted,
            EXISTS(SELECT 1 FROM messages message
@@ -5193,6 +5206,7 @@ export class PhoneService {
   private async sendReply(
     input: Input<'sendRoomReply'>,
     author: string,
+    sourceClient?: { id: string; name: string },
   ): Promise<Output<'sendRoomReply'>> {
     if (!this.routingTransaction)
       return this.database.transaction((db) =>
@@ -5203,7 +5217,7 @@ export class PhoneService {
           this.sendPushTest,
           this.live,
           true,
-        ).sendReply(input, author),
+        ).sendReply(input, author, sourceClient),
       );
     const parent = await this.database.query<{
       root_message_id: string | null;
@@ -5239,9 +5253,16 @@ export class PhoneService {
     ];
     return this.database.transaction(async (database) => {
       const inserted = await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) ON CONFLICT(id) DO NOTHING`,
-        values,
+        `WITH inserted AS (
+         INSERT INTO messages(id,room_id,author_id,text,attachments,reply_to_message_id,root_message_id,source_client)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) ON CONFLICT(id) DO NOTHING
+         RETURNING id,room_id
+       ), pending_route AS (
+         INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id)
+         SELECT id,room_id,$3 FROM inserted WHERE $8::jsonb IS NOT NULL
+         ON CONFLICT(message_id) DO NOTHING RETURNING 1
+       ) SELECT id FROM inserted`,
+        [...values, sourceClient ? JSON.stringify(sourceClient) : null],
       );
       if (!inserted.rowCount) {
         const retry = await database.query(

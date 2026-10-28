@@ -1,6 +1,6 @@
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
-import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
+import { deliverMcpMemberWebhooks, retryMcpMemberRoutes } from './rooms-mcp-members.js';
 import { DatabaseTransactionStartError, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -965,6 +965,7 @@ export class MediaExpiryLoop {
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await cleanupUnfinishedAppSignIns(database, true);
   // Outgoing MCP member webhooks leave the wake transaction here.
+  try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
   try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
   const expired = [
@@ -978,8 +979,9 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
     ['rooms_mcp_families', "revoked_at<now()-interval '30 days'"],
     ['rooms_mcp_connections', "revoked_at<now()-interval '30 days'"],
     ['rooms_mcp_audit', "created_at<now()-interval '30 days'"],
+    ['rooms_mcp_pending_routes', "created_at<now()-interval '7 days'"],
     ['rooms_mcp_admission', "window_at<now()-interval '1 day'"],
-    ['rooms_mcp_clients', "created_at<now()-interval '30 days' AND NOT EXISTS(SELECT 1 FROM rooms_mcp_connections WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_tokens WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_flows WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_codes WHERE client_id=rooms_mcp_clients.id)"],
+    ['rooms_mcp_clients', "created_at<now()-interval '30 days' AND NOT preregistered AND NOT EXISTS(SELECT 1 FROM rooms_mcp_connections WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_tokens WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_flows WHERE client_id=rooms_mcp_clients.id) AND NOT EXISTS(SELECT 1 FROM rooms_mcp_codes WHERE client_id=rooms_mcp_clients.id)"],
     ['live_outputs', "updated_at<now()-interval '2 hours' AND kind<>'presence'"],
     ['github_auth_flows', "expires_at<now()-interval '1 day'"],
     ['daemon_token_exchanges', "expires_at<now()-interval '1 day'"],

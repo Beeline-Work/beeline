@@ -9,6 +9,8 @@ ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS logo text;
 ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS callback_url text;
 ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS secret_hash text;
 ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS auth_method text NOT NULL DEFAULT 'none';
+-- A published client id for an app that cannot register itself; never expires unused.
+ALTER TABLE rooms_mcp_clients ADD COLUMN IF NOT EXISTS preregistered boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS rooms_mcp_clients_created ON rooms_mcp_clients(created_at);
 CREATE TABLE IF NOT EXISTS rooms_mcp_connections (
   client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
@@ -28,6 +30,36 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_members (
   PRIMARY KEY (client_id, owner_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_members_member ON rooms_mcp_members(member_id);
+-- Each member sets its own inbound webhook, so a shared published client id
+-- never routes one person's Room text to another person's receiver.
+-- NULL inherits the registration callback; an empty string explicitly disables delivery.
+ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_url text;
+-- AES-GCM sealed bearer secret sent on each webhook POST; never returned.
+ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_secret text;
+-- Until the member names itself, read results repeat the setup rules, because
+-- many hosts never show the model the server instructions.
+ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS profile_set boolean NOT NULL DEFAULT false;
+-- Each tag or direct message addressed to an AI-client member, in order: the
+-- list_mentions catch-up read and send_message's wake provenance.
+CREATE TABLE IF NOT EXISTS rooms_mcp_mentions (
+  seq bigserial PRIMARY KEY,
+  member_id text NOT NULL,
+  room_id uuid NOT NULL,
+  message_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (member_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_mentions_member_room ON rooms_mcp_mentions(member_id, room_id, seq);
+-- A member's post whose agent wakes have not been routed yet. send_message
+-- deletes it once routing commits; maintenance retries any that failed.
+CREATE TABLE IF NOT EXISTS rooms_mcp_pending_routes (
+  message_id text PRIMARY KEY,
+  room_id uuid NOT NULL,
+  member_id text NOT NULL,
+  attempts integer NOT NULL DEFAULT 0,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 -- A client-supplied idempotency key returns the first message it already posted.
 CREATE TABLE IF NOT EXISTS rooms_mcp_idempotency (
   member_id text NOT NULL,

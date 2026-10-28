@@ -1,3 +1,4 @@
+// MCP send_message threaded-reply wrapper approved by lunchboxfortwo, Room request 7fd0f8d926c4f91c53dac705cb0735248ae1a6ea2630fb053e4c5e78c2810888 (brief revision 5, criterion 10); client-authored text, no System wording changes.
 // Transport-only System input projection, approved in corner brief revision 1; producer source and visible wording unchanged.
 // Model alias notice names approved by lunchboxfortwo in label-sweep brief revision 1, message 5d58f1b802665fcc725b5aa594c35df1188610f49b13995a49dab6f22cb5b9b3; modelCatalog fallback notice snapshot only.
 // Job title and visual clip preview approved by Ruby, commander order ad993fe2b9b6053bc4a2bd2763f07a0e559c9b0bdac73c570686e29fdf0a6f95, brief revision 3; inherited mock v4 approval by lunchboxfortwo.
@@ -9231,6 +9232,35 @@
       ".update()",
       "FirstLiteralToken:100",
       "FirstLiteralToken:16000",
+      "NullKeyword",
+      "[\"rooms-mcp-message:\",\":\",\"\"]",
+      "binary:===",
+      "conditional:?:",
+      "createHash()",
+      "end:expression",
+      "textArg()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp.ts:RoomsMcp.call:wrapper:6a3f41402452a682",
+    "file": "apps/server/src/rooms-mcp.ts",
+    "kind": "wrapper",
+    "template": "$databaseResult",
+    "literals": [
+      "\"hex\"",
+      "\"sha256\"",
+      ".digest",
+      ".digest()",
+      ".idempotencyKey",
+      ".member_id",
+      ".replyTo",
+      ".text",
+      ".update",
+      ".update()",
+      "FirstLiteralToken:100",
+      "FirstLiteralToken:16000",
+      "FirstLiteralToken:64",
       "NullKeyword",
       "[\"rooms-mcp-message:\",\":\",\"\"]",
       "binary:===",

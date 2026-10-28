@@ -14,6 +14,11 @@ import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
+import { runMaintenance } from './background.js';
+import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
+import { readFileSync } from 'node:fs';
+import sharp from 'sharp';
+import { FACE_SOULS } from '@beeline/api-contract/phone';
 
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -30,7 +35,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Demo','demo'),($2,'human','Other','other'),($3,'agent','Demo Agent','demo-agent')`, [USER, OTHER, AGENT]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [AGENT, USER]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'MCP Demo')`, [WORKSPACE]);
-    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Demo'),($2,$3,'Private')`, [ROOM, PRIVATE, WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$3,'Demo','public'),($2,$3,'Private','invite-only')`, [ROOM, PRIVATE, WORKSPACE]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Private corner',$3)`, [CORNER, WORKSPACE, PRIVATE]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Demo corner',$3)`, [PUBLIC_CORNER, WORKSPACE, ROOM]);
     await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [PUBLIC_CORNER, AGENT]);
@@ -82,7 +87,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page.headers.get('referrer-policy')).toBe('same-origin');
     const redirect = new URL(redirectUri);
     expect(page.headers.get('content-security-policy')).toContain(`form-action 'self' ${redirect.origin === 'null' ? redirect.protocol : redirect.origin};`);
-    expect(await page.text()).toContain(clientId ? 'to join your Beeline team?' : 'Local MCP reviewer');
+    expect(await page.text()).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
     const result = await post('/mcp/oauth/consent', { flow, decision }, { cookie, origin });
     expect(result.status).toBe(302);
     const target = new URL(result.headers.get('location')!);
@@ -309,8 +314,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
-    expect(page).toContain('JOINS AS'); expect(page).toContain('Grok Bot');
-    expect(page).toContain('Read Rooms you add it to'); expect(page).toContain('Post as Grok Bot');
+    expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
+    expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
+    // The real Beeline icon, never a letter stand-in.
+    expect(page).toContain('<img class="mark" src="data:image/svg+xml;base64,'); expect(page).not.toContain('>b</span>');
     const editPage = await fetch(`${origin}/mcp/oauth/consent?flow=${flow}&edit=1`, { headers: { cookie } });
     expect(editPage.headers.get('referrer-policy')).toBe('same-origin');
     expect(editPage.headers.get('content-security-policy')).toContain("form-action 'self';");
@@ -334,7 +341,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
-    const tools = await client.listTools(); expect(tools.tools).toHaveLength(7);
+    const tools = await client.listTools(); expect(tools.tools).toHaveLength(9);
     const rooms = await client.callTool({ name: 'list_rooms', arguments: {} });
     expect(JSON.stringify(rooms)).toContain(ROOM); expect(JSON.stringify(rooms)).not.toContain(PRIVATE);
     const posted = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent report the nebula test' } });
@@ -595,7 +602,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await db.query('UPDATE rooms_mcp_tokens SET calls=60,window_at=now() WHERE hash=$1', [tokenHash(token)]);
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(429);
     const other = await connected('rooms:read');
-    expect((await other.client.listTools()).tools.length).toBe(7);
+    expect((await other.client.listTools()).tools.length).toBe(9);
   });
   it('rejects expired grants and never accepts an MCP grant as a phone session', async () => {
     const { token } = await connected();
@@ -626,5 +633,349 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
     expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).toBe(true);
     expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(ROOM);
+  });
+  it('joins every public top-level Room on Allow, and other Rooms through Members', async () => {
+    const { member, client } = await connected();
+    const rooms = async () => (await db.query<{ room_id: string }>(
+      'SELECT room_id FROM memberships WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL ORDER BY room_id', [member])).rows.map(row => row.room_id);
+    // Every public top-level Room, never an invite-only Room or a corner.
+    expect(await rooms()).toEqual([ROOM]);
+    expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).toContain(ROOM);
+    // A public Room made later includes it, like any agent.
+    const later = (await phone.execute('createRoom', { workspaceId: WORKSPACE, name: `later-${member.slice(0, 6)}` }, USER)).id;
+    expect(await rooms()).toContain(later);
+    // An invite-only Room takes it through the normal Members path.
+    const closed = (await phone.execute('createRoom', { workspaceId: WORKSPACE, name: `closed-${member.slice(0, 6)}`, visibility: 'invite-only' }, USER)).id;
+    expect(await rooms()).not.toContain(closed);
+    await phone.execute('addRoomMember', { roomId: closed, memberId: member }, USER);
+    expect(await rooms()).toContain(closed);
+    await phone.execute('removeRoomMember', { roomId: later, memberId: member }, USER);
+    expect(await rooms()).not.toContain(later);
+  });
+  it('signs Meta Muse in with its published client id, which maintenance never deletes', async () => {
+    const muse = PREREGISTERED_MCP_CLIENTS[0];
+    expect(muse.id).toBe('6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o');
+    const row = (await db.query<{ name: string; redirects: string[]; preregistered: boolean; auth_method: string; logo: string | null }>(
+      'SELECT name,redirects,preregistered,auth_method,logo FROM rooms_mcp_clients WHERE id=$1', [muse.id])).rows[0]!;
+    expect(row).toMatchObject({ name: 'Meta Muse', redirects: ['https://agent.meta.ai/api/hatch/oauth/callback'], preregistered: true, auth_method: 'none' });
+    expect(row.logo).toMatch(/^data:image\/png;base64,/);
+    // Nobody registers anything: the published id signs in at once.
+    const grant = await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
+    expect(grant.code).toBeTruthy();
+    expect((await exchange(grant, { redirect_uri: muse.redirects[0] })).status).toBe(200);
+    // Unused for 30 days: an ordinary registration expires, the published one stays.
+    const unused = await (await post('/mcp/oauth/register', { client_name: 'Unused', redirect_uris: ['https://example.com/cb'] })).json() as { client_id: string };
+    await db.query(`UPDATE rooms_mcp_connections SET revoked_at=now()-interval '40 days' WHERE client_id=$1`, [muse.id]);
+    await db.query(`DELETE FROM rooms_mcp_tokens WHERE client_id=$1`, [muse.id]);
+    await db.query(`UPDATE rooms_mcp_clients SET created_at=now()-interval '40 days' WHERE id=ANY($1)`, [[muse.id, unused.client_id]]);
+    await runMaintenance(db);
+    await db.query(`DELETE FROM rooms_mcp_connections WHERE client_id=$1`, [muse.id]);
+    await runMaintenance(db);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1', [unused.client_id])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1 AND preregistered', [muse.id])).rowCount).toBe(1);
+  });
+  it('shows the client logo as the member picture until the member sets its own', async () => {
+    const muse = PREREGISTERED_MCP_CLIENTS[0];
+    const grant = await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
+    const tokens = await (await exchange(grant, { redirect_uri: muse.redirects[0] })).json() as { access_token: string };
+    const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2', [muse.id, USER])).rows[0]!.member_id;
+    const avatar = async () => (await db.query<{ avatar: string | null }>('SELECT avatar FROM identities WHERE id=$1', [member])).rows[0]!.avatar;
+    const logo = await avatar();
+    expect(logo).toMatch(/^\/v1\/agent-avatars\/[0-9a-f-]{36}$/);
+    const served = await fetch(origin + logo);
+    expect(served.status).toBe(200); expect(served.headers.get('content-type')).toBe('image/webp');
+    expect((await sharp(Buffer.from(await served.arrayBuffer())).metadata()).width).toBe(256);
+    const client = new Client({ name: 'muse-proof', version: '1.0.0' }); clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
+    const own = await sharp({ create: { width: 64, height: 64, channels: 3, background: 'blue' } }).png().toBuffer();
+    const set = await client.callTool({ name: 'set_profile', arguments: { avatar: `data:image/png;base64,${own.toString('base64')}` } });
+    expect(set.isError).not.toBe(true);
+    const chosen = await avatar();
+    expect(chosen).toMatch(/^\/v1\/agent-avatars\/[0-9a-f-]{36}$/); expect(chosen).not.toBe(logo);
+    // Reconnecting never puts the logo back over the member's own picture.
+    await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
+    expect(await avatar()).toBe(chosen);
+  });
+  it('pushes one POST per tag to the webhook a member set, with its sealed bearer secret', async () => {
+    await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
+    const { client, member } = await connected();
+    const previous = process.env.BEELINE_MCP_WEBHOOK_KEY;
+    delete process.env.BEELINE_MCP_WEBHOOK_KEY;
+    try {
+      // Without a sealing key no secret can be stored.
+      expect((await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/muse', secret: 'tag-secret' } })).isError).toBe(true);
+      process.env.BEELINE_MCP_WEBHOOK_KEY = 'test-key';
+      expect((await client.callTool({ name: 'set_webhook', arguments: { url: 'http://hooks.example/muse' } })).isError).toBe(true);
+      const set = await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/muse', secret: 'tag-secret' } });
+      expect(set.isError).not.toBe(true);
+      expect(JSON.stringify(set)).not.toContain('tag-secret');
+      const stored = (await db.query<{ callback_url: string; callback_secret: string }>('SELECT callback_url,callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
+      expect(stored.callback_url).toBe('https://hooks.example/muse'); expect(stored.callback_secret).not.toContain('tag-secret');
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, USER);
+      await routeHumanMessage(db, sent.messageId);
+      const posts: { url: string; authorization: string | null; body: Record<string, unknown> }[] = [];
+      await deliverMcpMemberWebhooks(db, async (url, init) => {
+        posts.push({ url: String(url), authorization: new Headers(init?.headers).get('authorization'), body: JSON.parse(String(init?.body)) });
+        return new Response('', { status: 200 });
+      });
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toMatchObject({ url: 'https://hooks.example/muse', authorization: 'Bearer tag-secret',
+        body: { memberId: member, roomId: ROOM, messageId: sent.messageId, text: `@${handle} please answer` } });
+      expect(String(posts[0]!.body.instruction)).toContain('send_message');
+      // Removing the webhook stops the push.
+      await client.callTool({ name: 'set_webhook', arguments: { url: '' } });
+      const quiet = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} again` }, USER);
+      await routeHumanMessage(db, quiet.messageId);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, quiet.messageId])).rowCount).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY; else process.env.BEELINE_MCP_WEBHOOK_KEY = previous;
+    }
+  });
+  it('WEBHOOK-CLEAR-1: clearing a member webhook disables fallback and cancels queued tags', async () => {
+    const { client, member, grant } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await db.query("UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/registration' WHERE id=$1", [grant.clientId]);
+    const posts: string[] = [];
+    const deliver = () => deliverMcpMemberWebhooks(db, async url => { posts.push(url); return new Response('', { status: 200 }); });
+    // A never-configured member keeps the registration fallback.
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} initial fallback` }, USER);
+    expect(await deliver()).toBe(1);
+    expect(posts).toEqual(['https://hooks.example/registration']);
+    expect(data(await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/member' } })).webhook).toBe('https://hooks.example/member');
+    const queued = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} queued before clearing` }, USER);
+    expect(data(await client.callTool({ name: 'set_webhook', arguments: { url: '' } })).webhook).toBeNull();
+    expect(await deliver()).toBe(0);
+    const human = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} after clearing` }, USER);
+    const agent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer after clearing` }, AGENT);
+    await routeAgentResult(db, undefined, agent.messageId, { roomId: ROOM, agentId: AGENT });
+    const dm = await phone.execute('resolveDirectMessage', { workspaceId: WORKSPACE, participantId: member }, USER);
+    await phone.execute('sendRoomMessage', { roomId: dm.id, text: 'after clearing in a DM' }, USER);
+    expect(await deliver()).toBe(0);
+    expect(posts).toHaveLength(1);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, human.messageId])).rowCount).toBe(0);
+    expect((await db.query('SELECT outcome FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, queued.messageId])).rows[0]!.outcome).toBe('skipped');
+    // Explicitly enabling a new receiver must not replay the cancelled queue.
+    await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/new' } });
+    expect(await deliver()).toBe(0);
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} freshly enabled` }, USER);
+    expect(await deliver()).toBe(1);
+    expect(posts).toEqual(['https://hooks.example/registration', 'https://hooks.example/new']);
+  });
+  it('publishes every preregistered client id on the public connect page', () => {
+    const page = readFileSync(new URL('../../../web/connect/index.html', import.meta.url), 'utf8');
+    for (const client of PREREGISTERED_MCP_CLIENTS) {
+      expect(page).toContain(client.id);
+      expect(page).toContain(client.name);
+    }
+    expect(page).toContain('https://server.usebeeline.app/mcp');
+    expect(readFileSync(new URL('../../../web/sitemap.xml', import.meta.url), 'utf8')).toContain('<loc>https://usebeeline.app/connect/</loc>');
+  });
+  const data = (result: unknown) => JSON.parse(((result as { content: { text: string }[] }).content)[0]!.text).data;
+  it('repeats the setup rule in read results until the member calls set_profile', async () => {
+    const { client } = await connected();
+    expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toContain('set_profile');
+    expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toContain('tags your @handle');
+    const tools = (await client.listTools()).tools;
+    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('call it first');
+    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^Call this first/);
+    await client.callTool({ name: 'set_profile', arguments: { name: 'Named', handle: `named_${randomBytes(3).toString('hex')}` } });
+    expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toBeUndefined();
+    expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toBeUndefined();
+  });
+  it('tells a member in no Rooms how its owner adds it', async () => {
+    const { client, member } = await connected();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NOT NULL', [member]);
+    const listed = data(await client.callTool({ name: 'list_rooms', arguments: {} }));
+    expect(listed.rooms).toEqual([]); expect(listed.note).toContain('under Members in the Beeline app');
+  });
+  it('lists the tags owed a reply across Rooms, oldest first, after a cursor', async () => {
+    const { client, member } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const second = (await phone.execute('createRoom', { workspaceId: WORKSPACE, name: `mentions-${member.slice(0, 6)}` }, USER)).id;
+    const first = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} first question` }, USER);
+    const next = await phone.execute('sendRoomMessage', { roomId: second, text: `@${handle} second question` }, USER);
+    await phone.execute('sendRoomMessage', { roomId: second, text: 'no tag here' }, USER);
+    const page = data(await client.callTool({ name: 'list_mentions', arguments: {} }));
+    expect(page.mentions.map((m: { id: string }) => m.id)).toEqual([first.messageId, next.messageId]);
+    expect(page.mentions[0]).toMatchObject({ room_id: ROOM, author_id: USER, text: `@${handle} first question` });
+    expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions).toEqual([]);
+    const third = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} third` }, USER);
+    expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions.map((m: { id: string }) => m.id)).toEqual([third.messageId]);
+  });
+  it('threads a reply under a message in the same Room and refuses a foreign one', async () => {
+    const { client, member } = await connected();
+    const parent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'thread parent' }, USER);
+    const reply = data(await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'threaded answer', replyTo: parent.messageId } }));
+    const row = (await db.query<{ reply_to_message_id: string; root_message_id: string; author_id: string; source_client: unknown }>(
+      'SELECT reply_to_message_id,root_message_id,author_id,source_client FROM messages WHERE id=$1', [reply.messageId])).rows[0]!;
+    expect(row).toMatchObject({ reply_to_message_id: parent.messageId, root_message_id: parent.messageId, author_id: member });
+    expect(row.source_client).toBeTruthy();
+    const foreign = (await db.query<{ id: string }>('SELECT id FROM messages WHERE room_id=$1 LIMIT 1', [PRIVATE])).rows[0]!.id;
+    expect((await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'nope', replyTo: foreign } })).isError).toBe(true);
+  });
+  it('stores a set_profile JPEG as a served portrait, refuses non-images, and keeps the old picture', async () => {
+    const { client, member } = await connected();
+    const jpeg = await sharp({ create: { width: 96, height: 96, channels: 3, background: 'orange' } }).jpeg().toBuffer();
+    const set = await client.callTool({ name: 'set_profile', arguments: { avatar: `data:image/jpeg;base64,${jpeg.toString('base64')}` } });
+    expect(set.isError).not.toBe(true);
+    const avatar = (await db.query<{ avatar: string }>('SELECT avatar FROM identities WHERE id=$1', [member])).rows[0]!.avatar;
+    // The app renders an agent picture only for this path (isGeneratedAgentAvatarUrl).
+    expect(avatar).toMatch(/\/v1\/agent-avatars\/[0-9a-f-]{36}$/);
+    expect(data(set).avatar).toBe(origin + avatar);
+    const served = await fetch(origin + avatar);
+    expect(served.headers.get('content-type')).toBe('image/webp');
+    expect((await sharp(Buffer.from(await served.arrayBuffer())).metadata()).width).toBe(256);
+    for (const bad of ['javascript:alert(1)', 'data:text/html;base64,PGh0bWw+', `data:image/png;base64,${Buffer.from('not an image').toString('base64')}`, 'http://example.com/a.png']) {
+      const refused = await client.callTool({ name: 'set_profile', arguments: { avatar: bad } });
+      expect(refused.isError).toBe(true);
+      expect((refused.content as { text: string }[])[0]!.text).toMatch(/^Request refused: avatar/);
+      expect((await db.query<{ avatar: string }>('SELECT avatar FROM identities WHERE id=$1', [member])).rows[0]!.avatar).toBe(avatar);
+    }
+  });
+  it('names the client on an AI-client member profile instead of an animal soul', async () => {
+    const { member } = await connected();
+    const profile = (await phone.readAgent(WORKSPACE, member, USER))!;
+    expect(profile.soul).toBeUndefined();
+    expect(profile.seededSoul).toContain('Local MCP reviewer');
+    expect(Object.values(FACE_SOULS)).not.toContain(profile.seededSoul);
+  });
+  it.each([false, true])('commits the post and routing record atomically (reply=%s)', async reply => {
+    const { client, member } = await connected();
+    const parent = reply ? await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'atomic reply parent' }, USER) : undefined;
+    const args = { room: ROOM, text: '@demo-agent please handle this atomic post', idempotencyKey: `atomic-${reply}`,
+      ...(parent ? { replyTo: parent.messageId } : {}) };
+    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
+    await db.query(`CREATE FUNCTION reject_mcp_route_proof() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'proof: pending route storage unavailable'; END $$;
+      CREATE TRIGGER reject_mcp_route_proof BEFORE INSERT ON rooms_mcp_pending_routes
+      FOR EACH ROW EXECUTE FUNCTION reject_mcp_route_proof()`);
+    try {
+      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
+      expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(0);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
+    } finally {
+      await db.query('DROP TRIGGER reject_mcp_route_proof ON rooms_mcp_pending_routes; DROP FUNCTION reject_mcp_route_proof()');
+    }
+    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
+  });
+  it('resumes a saved post after interruption before routing, without posting twice', async () => {
+    const { client, member } = await connected();
+    const args = { room: ROOM, text: '@demo-agent please resume this saved post', idempotencyKey: 'saved-post' };
+    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
+    const execute = phone.execute.bind(phone);
+    const fault = vi.spyOn(phone, 'execute').mockImplementation(async (...args) => {
+      await execute(...args);
+      throw new Error('proof: request interrupted after message commit');
+    });
+    try {
+      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
+    } finally { fault.mockRestore(); }
+    expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(1);
+    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
+    expect(data(await client.callTool({ name: 'send_message', arguments: args }))).toEqual(retry);
+  });
+  it('retries a cached routing failure instead of returning it forever', async () => {
+    const { client } = await connected();
+    const args = { room: ROOM, text: '@demo-agent please retry this failed wake', idempotencyKey: 'cached-failed-wake' };
+    const query = db.query.bind(db);
+    let injected = false;
+    const fault = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+      if (!injected && sql.includes('SELECT text,room_id FROM messages')) {
+        injected = true;
+        throw new Error('proof: transient wake routing failure');
+      }
+      return query(sql, values);
+    });
+    let first: ReturnType<typeof data>;
+    try {
+      first = data(await client.callTool({ name: 'send_message', arguments: args }));
+      expect(first.routing).toBe('retrying');
+    } finally { fault.mockRestore(); }
+    expect(injected).toBe(true);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.messageId).toBe(first!.messageId);
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect(retry.routing).toBeUndefined();
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [retry.messageId, AGENT])).rowCount).toBe(1);
+  });
+  it('review proof: an interrupted routing record cannot lose a tagged wake on retry', async () => {
+    const { client, member } = await connected();
+    const args = { room: ROOM, text: '@demo-agent please handle this interrupted post', idempotencyKey: 'interrupted-route' };
+    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
+    const query = db.query.bind(db);
+    let injected = false;
+    const fault = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+      if (!injected && sql.includes('INSERT INTO rooms_mcp_pending_routes')) {
+        injected = true;
+        throw new Error('review proof: interrupted routing insert');
+      }
+      return query(sql, values);
+    });
+    try {
+      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
+    } finally { fault.mockRestore(); }
+    expect(injected).toBe(true);
+    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.messageId).toBe(id);
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
+  });
+  describe('in a Room of 20,000 messages', () => {
+    const BIG = '66666666-6666-4666-8666-666666666666';
+    beforeAll(async () => {
+      await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'big','public')`, [BIG, WORKSPACE]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, BIG, USER, AGENT]);
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+        SELECT encode(sha256(('big'||g)::bytea),'hex'),$1,CASE WHEN g%3=0 THEN $3 ELSE $2 END,
+          'message '||g||' about @demo-agent and the release plan, with body text long enough to look real',
+          now()-((20001-g)||' seconds')::interval FROM generate_series(1,20000) g`, [BIG, USER, AGENT]);
+      // The long seed outlives the server's keep-alive; drop the stale pooled socket.
+      await fetch(origin + '/.well-known/oauth-authorization-server').catch(() => undefined);
+    }, 120_000);
+    const commands = async (messageId: string) => (await db.query(
+      'SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [messageId, AGENT])).rowCount;
+    it('answers send_message in under 3 s and wakes the tagged agent once', async () => {
+      const { client } = await connected();
+      const started = Date.now();
+      const sent = data(await client.callTool({ name: 'send_message', arguments: { room: BIG, text: '@demo-agent please review the plan' } }));
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect(sent.woken).toEqual(['demo-agent']);
+      expect(await commands(sent.messageId)).toBe(1);
+    }, 60_000);
+    it('returns one message to a retry sent while the first call is in flight, and wakes once', async () => {
+      const { client } = await connected();
+      const args = { room: BIG, text: '@demo-agent retried handoff', idempotencyKey: 'in-flight' };
+      const [a, b] = await Promise.all([client.callTool({ name: 'send_message', arguments: args }), client.callTool({ name: 'send_message', arguments: args })]);
+      expect(data(a).messageId).toBe(data(b).messageId);
+      expect((await db.query('SELECT 1 FROM messages WHERE room_id=$1 AND text=$2', [BIG, args.text])).rowCount).toBe(1);
+      expect(await commands(data(a).messageId)).toBe(1);
+      expect(data(await client.callTool({ name: 'send_message', arguments: args })).messageId).toBe(data(a).messageId);
+      expect(await commands(data(a).messageId)).toBe(1);
+    }, 60_000);
+    it('still wakes the tagged agent when the provenance read fails', async () => {
+      const { client } = await connected();
+      await db.query('ALTER TABLE rooms_mcp_mentions RENAME TO rooms_mcp_mentions_off');
+      try {
+        const sent = data(await client.callTool({ name: 'send_message', arguments: { room: BIG, text: '@demo-agent wake without provenance' } }));
+        expect(sent.woken).toEqual(['demo-agent']);
+        expect(await commands(sent.messageId)).toBe(1);
+        const command = (await db.query<{ agent_depth: number }>('SELECT agent_depth FROM agent_commands WHERE source_message_id=$1', [sent.messageId])).rows[0]!;
+        expect(command.agent_depth).toBe(1);
+        expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [sent.messageId])).rowCount).toBe(0);
+      } finally {
+        await db.query('ALTER TABLE rooms_mcp_mentions_off RENAME TO rooms_mcp_mentions');
+      }
+    }, 60_000);
   });
 });

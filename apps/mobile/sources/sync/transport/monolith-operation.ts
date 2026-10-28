@@ -135,7 +135,7 @@ async function performPhoneOperation<Name extends keyof PhoneOperationMap>(
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(name === 'createWorkspace' ? { ...input, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : input),
       signal,
     },
     request,

@@ -1,0 +1,154 @@
+{
+  "videoId": "tSeP7dxCqqI",
+  "expectedFileSize": 7168,
+  "verification": {
+    "status": "executed",
+    "data": {
+      "etag": "J7vJlkXgXZT2aKd3srztlJYtM8Y",
+      "found_count": 1,
+      "items": [
+        {
+          "contentDetails": {
+            "caption": "false",
+            "contentRating": {},
+            "definition": "sd",
+            "dimension": "2d",
+            "duration": "PT3S",
+            "hasCustomThumbnail": false,
+            "licensedContent": false,
+            "projection": "rectangular"
+          },
+          "etag": "ml5EH5ly-HbDYZ9oSVhEpzfsfn8",
+          "fileDetails": {
+            "bitrateBps": "25325",
+            "container": "mov",
+            "durationMs": "3000",
+            "fileName": "onboarding-test.mp4",
+            "fileSize": "7168",
+            "fileType": "video",
+            "videoStreams": [
+              {
+                "aspectRatio": 0.5625,
+                "bitrateBps": "25325",
+                "codec": "h264",
+                "frameRateFps": 25,
+                "heightPixels": 640,
+                "widthPixels": 360
+              }
+            ]
+          },
+          "id": "tSeP7dxCqqI",
+          "kind": "youtube#video",
+          "processingDetails": {
+            "editorSuggestionsAvailability": "inProgress",
+            "fileDetailsAvailability": "available",
+            "processingIssuesAvailability": "available",
+            "processingStatus": "succeeded",
+            "tagSuggestionsAvailability": "inProgress",
+            "thumbnailsAvailability": "inProgress"
+          },
+          "snippet": {
+            "categoryId": "22",
+            "channelId": "UC_x-vzhIfDbP7mPJEcnbK2g",
+            "channelTitle": "Beeline",
+            "defaultLanguage": "en",
+            "description": "Temporary unlisted multipart acceptance clip. Deleted after file-size and processing verification.",
+            "liveBroadcastContent": "none",
+            "localized": {
+              "description": "Temporary unlisted multipart acceptance clip. Deleted after file-size and processing verification.",
+              "title": "Beeline onboarding acceptance — temporary unlisted test"
+            },
+            "publishedAt": "2026-10-28T02:46:16Z",
+            "thumbnails": {
+              "default": {
+                "height": 90,
+                "url": "https://i.ytimg.com/vi/tSeP7dxCqqI/default.jpg",
+                "width": 120
+              },
+              "high": {
+                "height": 360,
+                "url": "https://i.ytimg.com/vi/tSeP7dxCqqI/hqdefault.jpg",
+                "width": 480
+              },
+              "medium": {
+                "height": 180,
+                "url": "https://i.ytimg.com/vi/tSeP7dxCqqI/mqdefault.jpg",
+                "width": 320
+              }
+            },
+            "title": "Beeline onboarding acceptance — temporary unlisted test"
+          },
+          "status": {
+            "embeddable": true,
+            "license": "youtube",
+            "madeForKids": false,
+            "privacyStatus": "unlisted",
+            "publicStatsViewable": true,
+            "uploadStatus": "processed"
+          }
+        }
+      ],
+      "kind": "youtube#videoListResponse",
+      "not_found_count": 0,
+      "not_found_video_ids": [],
+      "pageInfo": {
+        "resultsPerPage": 1,
+        "totalResults": 1
+      },
+      "partial_failure": false,
+      "requested_count": 1,
+      "requested_video_ids": [
+        "tSeP7dxCqqI"
+      ]
+    }
+  },
+  "deletion": {
+    "status": "executed",
+    "data": {
+      "deleted": false,
+      "error": {
+        "code": 403,
+        "errors": [
+          {
+            "domain": "global",
+            "location": null,
+            "location_type": null,
+            "message": "Insufficient Permission",
+            "reason": "insufficientPermissions"
+          }
+        ],
+        "message": "Request had insufficient authentication scopes."
+      },
+      "http_status": 403,
+      "video_id": "tSeP7dxCqqI"
+    }
+  },
+  "browserDeletion": {
+    "result": "Deleted through the owner's signed-in YouTube Studio after connector deletion was denied for insufficient OAuth scope.",
+    "confirmationUrl": "https://studio.youtube.com/channel/UC_x-vzhIfDbP7mPJEcnbK2g/videos/upload?filter=%5B%5D&sort=%7B%22columnType%22%3A%22date%22%2C%22sortOrder%22%3A%22DESCENDING%22%7D"
+  },
+  "afterDeletion": {
+    "data": {
+      "kind": "youtube#videoListResponse",
+      "etag": "YIUPVpqNjppyCWOZfL-19bLb7uk",
+      "items": [],
+      "pageInfo": {
+        "totalResults": 0,
+        "resultsPerPage": 0
+      }
+    },
+    "status": 200,
+    "headers": {
+      "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+      "content-encoding": "gzip",
+      "content-type": "application/json; charset=UTF-8",
+      "date": "Wed, 28 Oct 2026 02:49:30 GMT",
+      "server": "scaffolding on HTTPServer2",
+      "transfer-encoding": "chunked",
+      "vary": "Origin, X-Origin, Referer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "SAMEORIGIN",
+      "x-xss-protection": "0"
+    }
+  }
+}

@@ -1,6 +1,7 @@
+import { consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
+import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
-import { postStarterWelcome } from './starter-onboarding.js';
 import { visibleMessageSql } from './read-cursor.js';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
@@ -396,6 +397,9 @@ class AccessDeniedError extends Error {
 }
 
 export class DaemonService {
+  private starterOnboarding?: StarterOnboardingService;
+  setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
+
   constructor(
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
@@ -577,6 +581,7 @@ export class DaemonService {
       'postRepositoryOnboarding',
       'postRoomInvite',
       'postStarterWelcome',
+      'postStarterVideoPreview',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -852,6 +857,7 @@ export class DaemonService {
           this.refreshMergeability,
           this.landCorner, this.closePullRequest, this.readPullRequest, this.subscriptionReceiverUrl, this.github,
         );
+        scoped.starterOnboarding = this.starterOnboarding;
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
           committedTasks.push(task);
@@ -1859,6 +1865,13 @@ export class DaemonService {
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postStarterVideoPreview': {
+        const request = input as Input<'postStarterVideoPreview'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const result = await postStarterVideoPreview(this.database, this.objects, { ...request, agentId: authenticatedAgentId });
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message' });
+        return result as Output<Name>;
+      }
       case 'postStarterWelcome': {
         const request = input as Input<'postStarterWelcome'>;
         await this.access(request.roomId, authenticatedAgentId);
@@ -1866,9 +1879,14 @@ export class DaemonService {
         const personId = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
           `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
         if (!personId) throw new Error('Onboarding requester unavailable');
-        const result = await this.database.transaction(db => postStarterWelcome(db, {
-          roomId: request.roomId, agentId: authenticatedAgentId, manualUserId: personId,
-        }));
+        if (!this.starterOnboarding) throw new Error('Onboarding service unavailable');
+        await this.starterOnboarding.queueRerun(this.database, request.roomId, personId, authenticatedAgentId);
+        const service = this.starterOnboarding;
+        this.afterCommit?.(() => {
+          void service.prepare(request.roomId).then(() => service.open(request.roomId, personId))
+            .catch(error => console.error('[onboarding] rerun failed', error));
+        });
+        const result = { status: 'started' as const };
         this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message' });
         return result as Output<Name>;
       }
@@ -7925,6 +7943,8 @@ export class DaemonService {
     if (!args || typeof args !== 'object' || Array.isArray(args) ||
       JSON.stringify(args).length > 65_536)
       throw new Error('App tool arguments are invalid');
+    if (input.tool === 'YOUTUBE_MULTIPART_UPLOAD_VIDEO')
+      await this.database.transaction(db => consumeStarterVideoPost(db, input.roomId, agentId, args));
     const data = await this.composio.execute({ accountId: row.composio_account_id,
       userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
       tool: input.tool, arguments: args, files });
@@ -9215,6 +9235,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postRepositoryOnboarding: true,
   postRoomInvite: true,
   postStarterWelcome: true,
+  postStarterVideoPreview: true,
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,

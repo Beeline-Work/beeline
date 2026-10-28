@@ -1,6 +1,10 @@
-import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { Pool } from 'pg';
 import { createHash } from 'node:crypto';
-import { migrate } from './database.js';
+import { migrate, PostgresDatabase } from './database.js';
+import { BackgroundJobRunner } from './background.js';
+import * as sentry from './sentry.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -44,6 +48,41 @@ async function send(recipients: string | string[], text = 'Your issue has been f
 async function drain() { while (await flushOperatorSystemDms(db)) { /* Drain bounded batches in this isolated fixture. */ } }
 
 describe('owner-command operator System DMs', () => {
+  it('R-SENTRY-CONNECT: a deferred checkout preserves the notice and delivers it once on the next loop', async () => {
+    const text = 'Your notice is ready.';
+    const sent = await send('@recipient', text);
+    const client = Object.assign(new EventEmitter(), {
+      query: (sql: string, values?: unknown[]) => db.query(sql, values),
+      release: vi.fn(),
+    });
+    const connect = vi.fn().mockResolvedValue(client);
+    for (let i = 0; i < 4; i++) connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
+    const database = new PostgresDatabase('', 1, {
+      pool: { connect, on: vi.fn(), end: vi.fn() } as unknown as Pool, pause: async () => {},
+    });
+    const capture = vi.spyOn(sentry, 'captureServerError').mockImplementation(() => {});
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const runner = new BackgroundJobRunner();
+      const run = () => runner.run('operator-system-dms', () => flushOperatorSystemDms(database));
+      expect(await run()).toEqual({ ok: false });
+      expect((await db.query('SELECT state FROM operator_system_dm_deliveries WHERE send_id=$1', [sent.sendId])).rows)
+        .toEqual([{ state: 'pending' }]);
+      expect(capture).not.toHaveBeenCalled();
+      expect(await run()).toEqual({ ok: true, value: 1 });
+      expect(await run()).toEqual({ ok: true, value: 0 });
+      expect((await db.query('SELECT state FROM operator_system_dm_deliveries WHERE send_id=$1', [sent.sendId])).rows)
+        .toEqual([{ state: 'delivered' }]);
+      const messages = (await db.query<{ room_id: string }>('SELECT room_id FROM messages WHERE author_id=$1 AND text=$2',
+        [SYSTEM_IDENTITY_ID, text])).rows;
+      expect(messages).toHaveLength(1);
+      const view = await new PhoneService(db, new LiveHub()).readRoom(messages[0]!.room_id, PERSON);
+      expect(view!.messages.some(message => message.text === text)).toBe(true);
+    } finally {
+      capture.mockRestore();
+      warning.mockRestore();
+    }
+  });
   it('refuses a missing command, non-owner root, wrong agent owner, and stale generation', async () => {
     await expect(daemon.execute('sendOperatorSystemDm', { agentId: AGENT, roomId: ROOM, requestId: 'absent', recipients: PERSON, text: 'hello' }, AGENT)).rejects.toThrow();
     await expect(daemon.execute('sendOperatorSystemDm', { ...await turn(OTHER), recipients: PERSON, text: 'hello' }, AGENT)).rejects.toThrow(/operator owner/);

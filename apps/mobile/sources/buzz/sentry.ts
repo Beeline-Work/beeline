@@ -1,6 +1,7 @@
 import { installWebChunkRecovery, recoverWebChunk } from './web-chunk-recovery';
 import * as Sentry from '@sentry/react-native';
 import { createErrorEventFilter } from '@beeline/api-contract/error-reporting';
+import { funnelScreenFromSegments } from '@beeline/api-contract/signin-funnel';
 
 const filterErrorEvent = createErrorEventFilter();
 
@@ -35,6 +36,12 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN && !__DEV__) {
     },
     initialScope: { tags: { surface: 'mobile' } },
   }); } catch { /* Diagnostics must never prevent the app from rendering. */ }
+}
+
+/** Expo Router segments retain [parameter] placeholders; never pass a pathname. */
+export function setMobileErrorRoute(segments: readonly string[]): void {
+  try { Sentry.setTag('route_pattern', funnelScreenFromSegments(segments) ?? undefined); }
+  catch { /* Diagnostics must never interrupt navigation. */ }
 }
 
 /** Called alongside the existing authenticated diagnostics; recovery never waits on Sentry. */

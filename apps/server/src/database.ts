@@ -156,6 +156,18 @@ export function isTransientDatabaseConnectionError(error: unknown): boolean {
 
 type Pause = (milliseconds: number) => Promise<void>;
 
+/** The transaction callback never ran; durable background work can try again. */
+export class DatabaseTransactionStartError extends Error {
+  readonly code?: string;
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'database transaction could not start', { cause });
+    this.name = 'DatabaseTransactionStartError';
+    if (cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string')
+      this.code = cause.code;
+  }
+}
+
 const pause: Pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export interface PostgresDatabaseOptions {
@@ -472,7 +484,16 @@ export class PostgresDatabase implements ClosableDatabase {
   }
 
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    const { client, release } = await this.#beginTransaction();
+    // Capture the caller now. Creating this inside the timer loses the user/job
+    // path and leaves Sentry with only processTimers when the deadline fires.
+    const deadlineError = Object.assign(new Error('database transaction deadline exceeded'), {
+      code: '57014',
+    });
+    Error.captureStackTrace(deadlineError, this.transaction);
+    const { client, release } = await this.#beginTransaction().catch((error: unknown) => {
+      if (isTransientDatabaseConnectionError(error)) throw new DatabaseTransactionStartError(error);
+      throw error;
+    });
     const ticket = this.#nextTicket++;
     this.#transactions.set(ticket, Date.now());
     let expired = false;
@@ -481,11 +502,8 @@ export class PostgresDatabase implements ClosableDatabase {
       timer = setTimeout(() => {
         expired = true;
         this.#transactionDeadlines++;
-        const error = Object.assign(new Error('database transaction deadline exceeded'), {
-          code: '57014',
-        });
-        release(error);
-        reject(error);
+        release(deadlineError);
+        reject(deadlineError);
       }, this.#transactionDeadlineMs);
     });
     let releaseError: Error | undefined;
@@ -495,7 +513,7 @@ export class PostgresDatabase implements ClosableDatabase {
           sql: string,
           values: unknown[] = [],
         ) => {
-          if (expired) throw new Error('database transaction deadline exceeded');
+          if (expired) throw deadlineError;
           const raw = await this.#timed(sql, () => Promise.race([
             values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
             deadline,

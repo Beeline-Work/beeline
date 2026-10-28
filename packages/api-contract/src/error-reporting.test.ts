@@ -1,6 +1,15 @@
 import { expect, it } from 'vitest';
 import { privateErrorEvent } from './error-reporting.js';
 
+it('R-SENTRY-ROUTE: admits only known route patterns, never ids, names, query values or unknown screens', () => {
+  expect(privateErrorEvent({ tags: { route_pattern: 'beeline/chat/[channelId]' } }).tags)
+    .toEqual({ route_pattern: 'beeline/chat/[channelId]' });
+  for (const route_pattern of ['beeline/chat/private-room', 'beeline/chat/12345',
+    'beeline/chat/[channelId]?name=Alice', 'Alice', '/beeline/chat/[channelId]', 'unknown-screen']) {
+    expect(privateErrorEvent({ tags: { route_pattern } }).tags).toEqual({});
+  }
+});
+
 it('keeps actionable exception frames and removes user/request/content/credential data', () => {
   const event = privateErrorEvent({
     event_id: 'id', release: 'sha', platform: 'node',

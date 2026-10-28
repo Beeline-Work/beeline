@@ -1,6 +1,8 @@
 /** Local compiled-service acceptance: owner command -> tool operation -> System thread -> recipient read. */
 import assert from 'node:assert/strict';
-import { migrate } from '../apps/server/dist/database.js';
+import { EventEmitter } from 'node:events';
+import { migrate, PostgresDatabase } from '../apps/server/dist/database.js';
+import { BackgroundJobRunner } from '../apps/server/dist/background.js';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
 import { PhoneService } from '../apps/server/dist/phone-service.js';
@@ -33,11 +35,30 @@ try {
   const text = 'Your issue has been fixed. You can use Beeline again.';
   const send = await daemon.execute('sendOperatorSystemDm', { ...authority, recipients: '@proof-recipient', text }, agent);
   assert.equal(send.recipients, 1);
-  while (await flushOperatorSystemDms(db)) { /* Drain isolated queue. */ }
+  // R-SENTRY-CONNECT: the real job exhausts checkout retries, then a later
+  // leader pass delivers the same durable notice exactly once.
+  let failures = 4;
+  const client = Object.assign(new EventEmitter(), {
+    query: (sql, values) => db.query(sql, values), release() {},
+  });
+  const jobsDb = new PostgresDatabase('', 1, {
+    pool: { on() {}, async connect() {
+      if (failures-- > 0) throw new Error('timeout exceeded when trying to connect');
+      return client;
+    }, async end() {} }, pause: async () => {},
+  });
+  const runner = new BackgroundJobRunner();
+  const run = () => runner.run('operator-system-dms', () => flushOperatorSystemDms(jobsDb));
+  assert.deepEqual(await run(), { ok: false });
+  assert.equal((await db.query('SELECT state FROM operator_system_dm_deliveries WHERE send_id=$1', [send.sendId])).rows[0].state, 'pending');
+  assert.deepEqual(await run(), { ok: true, value: 1 });
+  assert.deepEqual(await run(), { ok: true, value: 0 });
+  assert.equal(runner.snapshot()['operator-system-dms'].consecutiveFailures, 0);
   const status = await daemon.execute('readOperatorSystemDm', { ...authority, sendId: send.sendId }, agent);
   assert.deepEqual({ delivered: status.delivered, failed: status.failed, pending: status.pending }, { delivered: 1, failed: 0, pending: 0 });
   const message = (await db.query(`SELECT room_id FROM messages WHERE author_id=$1 AND text=$2`, [SYSTEM_IDENTITY_ID, text])).rows[0];
   const view = await new PhoneService(db, new LiveHub()).readRoom(message.room_id, recipient);
   assert(view.messages.some(item => item.text === text && item.author.pubkey === SYSTEM_IDENTITY_ID));
-  console.log('PASS: compiled DaemonService accepted owner command; background delivery committed; recipient PhoneService read shows exact text under System; counts delivered=1 failed=0 pending=0.');
+  assert.equal((await db.query('SELECT id FROM messages WHERE author_id=$1 AND text=$2', [SYSTEM_IDENTITY_ID, text])).rows.length, 1);
+  console.log('PASS R-SENTRY-CONNECT: compiled owner tool → failed checkout → durable pending notice → next loop → recipient PhoneService reads one System notice.');
 } finally { await db.close(); }

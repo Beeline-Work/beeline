@@ -76,6 +76,15 @@ redacts common credential/URL/email/home-path patterns, strips request/user/
 context/extra data, and removes stack locals and source lines. Error messages
 still need care at their source: never throw conversation text or credentials.
 
+Phone and web event tags include `route_pattern` after the root layout commits
+the current Expo Router screen. This uses `useSegments`, never the filled
+pathname or search params, and reuses the finite `FUNNEL_SCREENS` allowlist at
+both capture and privacy filtering. Dynamic ids remain `[parameter]` placeholders;
+unknown screens clear the tag. Coverage: `R-SENTRY-ROUTE` in mobile `sentry.test.ts`
+and shared `error-reporting.test.ts`. The tag identifies the host screen, not an
+artifact's contents. See [October 28 investigation](sentry-oct28-investigation.md)
+for the open phone/web crashes and transaction caller-stack diagnostics.
+
 The forwarder accepts legacy `event` and modern `data.event`/`data.issue` payloads.
 It posts `🔴 Beeline <level>: <title> <Sentry link>` as plain text, limits title
 size, restricts links to this organization, and bounds Telegram requests to five

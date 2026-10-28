@@ -1,7 +1,7 @@
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
-import type { SqlDatabase } from './database.js';
+import { DatabaseTransactionStartError, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   cutCornerTitle,
@@ -1122,6 +1122,13 @@ export class BackgroundJobRunner {
     } catch (error) {
       health.lastErrorAt = this.now();
       health.consecutiveFailures++;
+      // Operator deliveries stay pending when BEGIN/checkout fails. The next
+      // leader loop retries them; keep a continuing outage at error level.
+      if (name === 'operator-system-dms' && error instanceof DatabaseTransactionStartError &&
+          health.consecutiveFailures === 1) {
+        console.warn(`[background] ${name} deferred until next loop`, error);
+        return { ok: false };
+      }
       captureServerError(error, { background_job: name });
       console.error(`[background] ${name} failed`, error);
       return { ok: false };

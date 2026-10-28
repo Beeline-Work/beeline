@@ -119,9 +119,9 @@ async function record(env: NodeJS.ProcessEnv, cornerId: string): Promise<KeptCor
 }
 
 describe('corner emulator lifetime', () => {
-  it('returns the emulator KVM failure through the supervisor socket before cleaning up', async () => {
+  it.each(['', 'sleep 0.2\n'])('returns the emulator KVM failure through the supervisor socket before cleaning up (delay: %j)', async (delay) => {
     const { socketPath, host } = await layout('diagnostic');
-    await writeFile(host.emulatorBinary, '#!/bin/sh\necho "/dev/kvm permission denied for this sandbox user" >&2\nexit 1\n', {mode:0o755});
+    await writeFile(host.emulatorBinary, `#!/bin/sh\n${delay}echo "/dev/kvm permission denied for this sandbox user" >&2\nexit 1\n`, {mode:0o755});
     const adb = join(host.androidHome, 'platform-tools', 'adb');
     await mkdir(join(host.androidHome, 'platform-tools'), {recursive:true});
     await writeFile(adb, '#!/bin/sh\nif [ \"$1\" = start-server ]; then exit 0; fi\nexit 1\n', {mode:0o755});

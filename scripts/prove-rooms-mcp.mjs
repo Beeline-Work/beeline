@@ -123,6 +123,29 @@ try {
   const rooms = await client.callTool({ name: 'list_rooms', arguments: {} }); assert.match(JSON.stringify(rooms), /connector-demo/);
   const read = await client.callTool({ name: 'read_messages', arguments: { room, limit: 10 } }); assert.match(JSON.stringify(read), /synthetic demo content/);
   transcript('Streamable HTTP client initialized, discovered all tools, listed its seeded Room and read synthetic agent activity.');
+  // MCP-WAKE-1 repeats the live tag/DM -> webhook -> MCP reply -> notice sweep path.
+  // Only the outside webhook receiver is a transport double; the built service,
+  // OAuth, MCP HTTP transport, routing, outbox and phone projection run unchanged.
+  await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.invalid/proof' WHERE id=$1`, [info.client_id]);
+  const wakeHandle = (await db.query('SELECT handle FROM identities WHERE id=$1', [member])).rows[0].handle;
+  const dm = (await options.phone.execute('resolveDirectMessage', { workspaceId: workspace, participantId: member }, person)).id;
+  for (const [wakeRoom, text] of [[room, `@${wakeHandle} reply pong please`], [dm, 'reply pong please']]) {
+    const wake = await options.phone.execute('sendRoomMessage', { roomId: wakeRoom, text }, person);
+    const reply = await client.callTool({ name: 'send_message', arguments: { room: wakeRoom, text: 'pong' } });
+    assert.notEqual(reply.isError, true);
+    let posts = 0;
+    assert.equal(await deliverMcpMemberWebhooks(db, async () => { posts++; return new Response('', { status: 200 }); }), 1);
+    assert.equal(posts, 1);
+    assert.equal(await deliverMcpMemberWebhooks(db, async () => { posts++; return new Response('', { status: 200 }); }), 0);
+    await options.phone.flushPendingMentionNotices(Date.now() + 120_000);
+    const view = await options.phone.readRoom(wakeRoom, person);
+    const commands = (await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1 AND source_message_id=$2', [member, wake.messageId])).rowCount;
+    const offline = JSON.stringify(view).includes('helper is offline');
+    const working = view.pendingAgentCommands.some(command => command.agentPubkey === member);
+    transcript(`MCP-WAKE-1 ${wakeRoom === dm ? 'DM' : 'human tag'}: webhook POSTs=${posts}; phantom commands=${commands}; offline line=${offline}; pending working=${working}; pong visible=${JSON.stringify(view).includes('pong')}.`);
+    assert.equal(commands, 0); assert.equal(offline, false); assert.equal(working, false);
+    assert.match(JSON.stringify(view), /pong/);
+  }
   const sent = await client.callTool({ name: 'send_message', arguments: { room, text: '@demo-agent acknowledge the connector review' } }); assert.notEqual(sent.isError, true);
   const row = (await db.query(`SELECT m.id,m.author_id,c.id command_id FROM messages m JOIN agent_commands c ON c.source_message_id=m.id WHERE m.text=$1 AND m.room_id=$2`, ['@demo-agent acknowledge the connector review', room])).rows[0];
   assert.equal(row.author_id, member);

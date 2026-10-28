@@ -77,3 +77,7 @@ it('maps route segments to a pattern without groups or index', () => {
   expect(funnelScreenFromSegments(['(app)', 'beeline', 'chat', '[channelId]'])).toBe('beeline/chat/[channelId]');
   expect(funnelScreenFromSegments(['(app)', 'beeline', 'chat', 'abc123'])).toBeNull();
 });
+it.each(['banter_shown', 'repo_job_chosen', 'youtube_job_chosen', 'other_job_chosen'])('records the starter milestone %s without personal fields', event => {
+  expect(parseSigninFunnelEvent({ ...valid, event })).not.toBeNull();
+  expect(parseSigninFunnelEvent({ ...valid, event, name: 'private' })).toBeNull();
+});

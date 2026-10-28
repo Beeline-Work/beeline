@@ -9,7 +9,7 @@ import { joinRooms } from './membership-join.js';
 import { captureServerError } from './sentry.js';
 import { systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { postStarterWelcome } from './starter-onboarding.js';
+import { createStarterOnboardingRun } from './starter-onboarding-run.js';
 
 /**
  * Free starter agents: every new Workspace gets one agent, owned by its
@@ -234,6 +234,8 @@ export const FREE_AGENT_REPOSITORY_GUIDE = `Post the repository card only when t
 
 export const FREE_AGENT_TURN_GUIDE = `Before long work, call read(facet:"usage") to check your remaining allowance. If the job will not fit, deliver a smaller useful version or explain the limit up front. End every turn with the deliverable or a clear status explaining what is finished, what stopped, and the next step. Never end on a promise of more work: once your turn ends, no work continues until another message wakes you.`;
 
+const FREE_AGENT_YOUTUBE_GUIDE = `When the person picks "Post a video to your YouTube", help make a YouTube Short. Ask them to connect YouTube using connect and send a video clip. Wait for both. Check that the clip is square or vertical and within YouTube Shorts duration limits. Draft a title and description, ask Luna for one second opinion, and name Luna's concrete catch. Extract a frame from the clip and post it as an image artifact in this Room. Then call app_tool(app:"beeline:onboarding",tool:"video_preview",args:{videoObjectId,frameObjectId,title,description,visibility:"public"}) to show the frame with the exact metadata above Post/Cancel. Honor a person's explicit visibility choice; use unlisted for an unlisted test. Do not upload or schedule anything until the person taps Post on that preview. Discover the connected app's current tools. Upload with YOUTUBE_MULTIPART_UPLOAD_VIDEO, never YOUTUBE_UPLOAD_VIDEO. Confirm YouTube's fileDetails.fileSize matches the clip bytes and processingDetails.processingStatus is succeeded before calling it posted; an id alone is not success. Verify public visibility and share the Short URL. If processing is pending, report that state and the concrete next step. Never claim a video was posted when it was not.`;
+
 const FREE_AGENT_TEAM_GUIDE = `You are on a team with another free starter agent. If you are Beebee, for the person's first three substantive questions in this Room, ask another agent in the Room for one second opinion before your final answer, if another agent is present. After those first three questions, ask only when in doubt. Say in your final answer what changed and who caught it. Count substantive questions from the conversation, excluding greetings, game moves and onboarding choices. One review round per answer. If another agent asks you for a second opinion, reply once, tagging the requesting agent once to deliver your opinion, and never ask back or request another review. Use the other agent's exact current handle from the Room roster. Credit them by plain name in the final answer; do not tag them again. After the first helpful answer, offer to invite a friend. When the person wants an invite to their own Room, call app_tool(app:"beeline:onboarding",tool:"invite",args:{}); it prints the invite link in this chat. Never open a share sheet.`;
 
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
@@ -312,7 +314,7 @@ export async function createFreeAgentInWorkspace(
       input.creatorId,
       JSON.stringify({
         name,
-        instructions: freeAgentInstructions(seeded.soul, name, config) + (input.team ? `\n\n${FREE_AGENT_TEAM_GUIDE}` : ''),
+        instructions: freeAgentInstructions(seeded.soul, name, config) + (input.team ? `\n\n${FREE_AGENT_TEAM_GUIDE}\n\n${FREE_AGENT_YOUTUBE_GUIDE}` : ''),
         avatarSeed: agent.publicKey,
       }),
       freeAgentHarnessModel(config),
@@ -568,7 +570,7 @@ export class FreeAgentService {
 
   async createInWorkspace(
     database: SqlDatabase,
-    input: { workspaceId: string; creatorId: string; roomId: string; team?: boolean },
+    input: { workspaceId: string; creatorId: string; roomId: string; team?: boolean; timeZone?: string },
   ): Promise<string | undefined> {
     // Serialize owner creation so simultaneous Workspaces cannot exceed the cap.
     await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-create:${input.creatorId}`]);
@@ -585,12 +587,7 @@ export class FreeAgentService {
     await database.query(`UPDATE memberships SET event_subscriptions=$3::jsonb
       WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`,
       [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
-    const owner = (await database.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [input.creatorId])).rows[0]!;
-    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,clock_timestamp())`, [
-      createHash('sha256').update(`starter-team-hello:${beebee}`).digest('hex'), input.roomId, beebee,
-      `Hi ${owner.name}, I'm Beebee. Luna is on your team too. We run on different AI models. What should we do first?`,
-    ]);
-    await postStarterWelcome(database, { roomId: input.roomId, agentId: beebee });
+    await createStarterOnboardingRun(database, { roomId: input.roomId, userId: input.creatorId, beebeeId: beebee, lunaId: luna, timeZone: input.timeZone });
     return beebee;
   }
 

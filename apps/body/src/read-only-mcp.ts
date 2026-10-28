@@ -3976,6 +3976,8 @@ async function executeAgentOperation(
     }
     case 'offer_connector':
       return offerConnector(args);
+    case 'post_starter_video_preview':
+      return JSON.stringify(await daemonExecute('postStarterVideoPreview', { ...await activeCommandContext(), videoObjectId: args.videoObjectId, frameObjectId: args.frameObjectId, title: args.title, description: args.description, visibility: args.visibility }));
     case 'post_starter_welcome':
       return JSON.stringify(await daemonExecute('postStarterWelcome', { ...await activeCommandContext() }));
     case 'post_room_invite':

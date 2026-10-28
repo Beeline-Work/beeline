@@ -498,7 +498,7 @@ function beelineOnboardingSkillMarkdown(releaseId: string): string {
     `# Run onboarding
 
 Discover the existing onboarding app with app_tool(app:"beeline:onboarding"). Call its welcome action with app_tool(app:"beeline:onboarding", tool:"welcome", args:{}).
-The action posts your greeting and the same welcome choices as signup in your current chat. After the card posts, end the turn with no reply: call no_reply_needed and write no text. Let the person choose on the card; its choices run the task, game, invite or explanation flow. Manual runs stay out of signup funnel counts.
+The action queues the same Beebee/Luna banter, fixed greeting and three job choices as signup in your current chat. When it returns started, end the turn with no reply: call no_reply_needed and write no text. The server plays the welcome without another agent turn. Let the person choose Write code in your repo, Post a video to your YouTube, or Something else. Manual runs stay out of signup funnel counts.
 Do not recreate the greeting or choices in prose. If the app refuses, follow its returned reason and report the concrete next step.
 `);
 }

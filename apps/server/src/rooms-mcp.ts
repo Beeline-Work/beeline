@@ -8,6 +8,7 @@ import type { PhoneService } from './phone-service.js';
 import type { LiveHub } from './live.js';
 import { visibleChatMessageSql } from './read-cursor.js';
 import { routeAgentResult, type CommandRow } from './agent-command.js';
+import { taggedIdentityIdsSql } from './message-mentions.js';
 import { setMcpMemberProfile } from './rooms-mcp-members.js';
 import { RoomsMcpOAuth, MCP_READ, MCP_WRITE, mcpBody, mcpJson, type McpPrincipal } from './rooms-mcp-oauth.js';
 
@@ -194,17 +195,28 @@ export class RoomsMcp {
       const stored = await this.phone.execute('sendRoomMessage',
         { roomId, text, ...(messageId ? { messageId } : {}) }, member, { id: principal.client_id, name: source.name });
       // An agent's own tags follow the agent-to-agent path, one wake per tagged agent.
-      // This member's reply extends the chain of the command a tag already opened for it,
-      // so a member<->agent tag loop still stops at the same depth limit as any agents.
+      // Recover the latest addressed message's helper provenance, counting the
+      // external member as one hop without ever creating a command for it.
       let woken: string[] = [];
       if (!preexisting) {
         try {
-          const parent = (await db.query<CommandRow>(
-            `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-             ORDER BY created_at DESC,id DESC LIMIT 1`,
+          const incoming = (await db.query<{ command: CommandRow | null }>(
+            `SELECT to_jsonb(command) command FROM messages m
+             JOIN rooms room ON room.id=m.room_id
+             LEFT JOIN LATERAL (SELECT c.* FROM agent_commands c
+               WHERE c.room_id=m.room_id AND c.agent_id=m.author_id AND c.turn_request_id=m.request_id
+               ORDER BY c.created_at DESC,c.id DESC LIMIT 1) command ON true
+             WHERE m.room_id=$1 AND m.author_id<>$2 AND m.deleted_at IS NULL
+               AND m.presentation='message' AND m.system_event IS NULL
+               AND ($2=ANY(${taggedIdentityIdsSql('m')})
+                 OR (room.direct_participants @> to_jsonb($2::text) AND
+                   EXISTS(SELECT 1 FROM identities WHERE id=m.author_id AND kind='human')))
+             ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
             [roomId, member],
           )).rows[0];
-          const delivery = await routeAgentResult(db, parent, stored.messageId, { roomId, agentId: member });
+          const parent = incoming?.command
+            ? { ...incoming.command, agent_depth: incoming.command.agent_depth + 1 } : undefined;
+          const delivery = await routeAgentResult(db, parent, stored.messageId, { roomId, agentId: member, initialAgentDepth: incoming ? 1 : undefined });
           woken = delivery.woken;
         } catch (error) {
           console.error('[rooms-mcp] wake routing failed', error);

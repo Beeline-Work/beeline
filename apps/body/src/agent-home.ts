@@ -596,6 +596,26 @@ export function watchRoomClaudeLogin(input: {
 }
 
 /**
+ * Point Claude Code's login store at the operator's own `~/.claude`.
+ *
+ * Claude Code keeps one refresh lock per login store and re-reads the store
+ * under that lock, so processes that share a store never spend the same
+ * single-use refresh token twice. Each Room has its own `CLAUDE_CONFIG_DIR`,
+ * which by default gives each Room its own lock and a linked file that the
+ * first refresh replaces. Rooms then refresh in parallel with one token; the
+ * provider rejects the reuse and the login is lost, most often when a restart
+ * starts many Rooms at once. `CLAUDE_SECURESTORAGE_CONFIG_DIR` moves only the
+ * login store and its lock, so every Room and the operator's terminal share
+ * one store and one lock. Set only when the operator signed in to the
+ * plaintext store; the linked file stays for Claude Code builds without it.
+ */
+export function sharedClaudeLoginEnv(operatorHome: string): Record<string, string> {
+  const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
+  const source = resolve(operatorHome, claude.source);
+  return existsSync(source) ? { CLAUDE_SECURESTORAGE_CONFIG_DIR: dirname(source) } : {};
+}
+
+/**
  * Create the room-instance's harness state directories, share the operator's
  * harness login into them, and return the env overlay that points the harness at
  * them. Normally an unwritable or already-populated path degrades to the
@@ -684,6 +704,7 @@ export async function prepareRoomAgentHome(
     : { ...roomAgentHomeEnv(root), TMPDIR: resolve(root, 'tmp') };
   return {
     ...env,
+    ...(input.agentKind === 'claude' ? sharedClaudeLoginEnv(operatorHome) : {}),
     ...androidAgentEnv({
       root,
       operatorHome,
@@ -1806,6 +1827,9 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
  */
 export const HARNESS_STATE_ENV_VARS = [
   'CLAUDE_CONFIG_DIR',
+  // The operator's shared Claude login store; Claude writes its login and
+  // refresh lock there (`sharedClaudeLoginEnv`).
+  'CLAUDE_SECURESTORAGE_CONFIG_DIR',
   'CODEX_HOME',
   'GOOSE_PATH_ROOT',
   'GROK_HOME',

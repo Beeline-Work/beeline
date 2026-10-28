@@ -8,7 +8,8 @@ describe('DESKTOP-WALLET-1: real Wallet page width across states', () => {
   for (const width of [500, 1280, 1440, 1920]) {
     it.each(['populated', 'loading', 'error'])(`centres %s at ${width}px`, async state => {
       const mobile = process.cwd();
-      const directory = await mkdtemp(path.join(mobile, 'sources/test/wallet-width-'));
+      // Source audits run concurrently; keep disposable fixtures outside their tree.
+      const directory = await mkdtemp(path.join(mobile, '.wallet-width-'));
       const evidence = process.env.WALLET_WIDTH_EVIDENCE;
       if (evidence) mkdirSync(evidence, { recursive: true });
       try {

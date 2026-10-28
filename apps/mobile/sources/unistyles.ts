@@ -9,6 +9,7 @@ import {
     obsidianTheme,
 } from './theme';
 import * as SystemUI from 'expo-system-ui';
+import * as NavigationBar from 'expo-navigation-bar';
 import { LAYOUT_BREAKPOINTS } from './utils/layoutClass';
 import type { LocalSettings } from './sync/localSettings';
 import { loadLocalSettings } from './sync/persistence';
@@ -68,10 +69,18 @@ StyleSheet.configure({
     themes: appThemes,
 });
 
+/** Obsidian needs light navigation buttons; bone needs dark ones. */
+export function navigationBarStyleForTheme(themeName: AppThemeName): 'light' | 'dark' {
+    return themeName.startsWith('obsidian') ? 'dark' : 'light';
+}
+
 function applyRootBackground(themeName: AppThemeName): void {
     const rootColor = appThemes[themeName].colors.groupped.background;
     UnistylesRuntime.setRootViewBackgroundColor(rootColor);
     void SystemUI.setBackgroundColorAsync(rootColor);
+    if (Platform.OS === 'android') {
+        NavigationBar.setStyle(navigationBarStyleForTheme(themeName));
+    }
 }
 
 applyRootBackground(initialThemeName);

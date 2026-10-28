@@ -107,6 +107,7 @@ export interface ResolvedMessageMention {
   readonly handle: string;
   /** An MCP member's registered outgoing webhook, resolved with the mention. */
   readonly mcpCallbackUrl?: string;
+  readonly mcpMember?: boolean;
 }
 
 /** Resolve exact typed handles against the Room's current membership. */
@@ -124,8 +125,10 @@ export async function resolveCurrentMemberMentions(
     kind: 'human' | 'agent';
     handle: string;
     mcp_callback_url: string | null;
+    mcp_member: boolean;
   }>(
-    `SELECT identity.id,identity.kind,identity.handle,client.callback_url mcp_callback_url
+    `SELECT identity.id,identity.kind,identity.handle,client.callback_url mcp_callback_url,
+       member.member_id IS NOT NULL mcp_member
      FROM memberships membership
      JOIN identities identity ON identity.id=membership.identity_id
      LEFT JOIN rooms_mcp_members member ON member.member_id=identity.id
@@ -143,6 +146,7 @@ export async function resolveCurrentMemberMentions(
       id: member.id,
       kind: member.kind,
       handle,
+      ...(member.mcp_member ? { mcpMember: true } : {}),
       ...(member.mcp_callback_url ? { mcpCallbackUrl: member.mcp_callback_url } : {}),
     });
     byHandle.set(handle, candidates);

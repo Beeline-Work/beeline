@@ -64,10 +64,11 @@
     ],
     "components/buzz/BeelineMarkSpinner.tsx": ["BeelineMarkSpinner", "MARK_CELL"],
     "components/buzz/ButtonRow.tsx": ["ButtonRow"],
-    "components/buzz/Button.tsx": ["Button", "ButtonFrame", "RecoveryButton"],
+    "components/buzz/Button.tsx": ["Button", "ButtonFrame", "DestinationMark", "RecoveryButton"],
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],
     "components/buzz/ChoicePlate.tsx": ["TranscriptCardChoicePlate", "inner"],
+    "components/buzz/CloseGlyph.tsx": ["CloseButton", "CloseGlyph"],
     "components/buzz/CodeBlock.tsx": ["CodeBlock", "PEEK_LINE_COUNT", "body"],
     "components/buzz/CodeHighlighter.tsx": ["CodeHighlighter"],
     "components/buzz/CommunityInviteEntry.tsx": ["CommunityInviteEntry"],
@@ -81,6 +82,7 @@
       "HEADER_PLATE_SEAT",
       "RailButton",
       "RailCommand",
+      "RailCommandGlyph",
       "TILE",
       "TILE_BORDER_WIDTH",
       "TILE_RADIUS",
@@ -150,6 +152,7 @@
     "components/buzz/EmptyState.tsx": ["EmptyState"],
     "components/buzz/ErrorBanner.tsx": ["ErrorBanner"],
     "components/buzz/ExitGlyph.tsx": ["ExitGlyph"],
+    "components/buzz/ExternalGlyph.tsx": ["ExternalGlyph"],
     "components/buzz/FaceGrid.tsx": ["FaceGrid"],
     "components/buzz/FacePickerSheet.tsx": ["FacePickerSheet"],
     "components/buzz/ForwardCornerSheet.tsx": ["ForwardCornerSheet"],
@@ -391,6 +394,7 @@
       "DesktopRoomInspector",
       "HeaderIconControl",
       "control",
+      "withHoverTitle",
       "node",
       "renderMessage"
     ],
@@ -438,8 +442,6 @@
     "app/(app)/beeline/chat/RoomMessageVariants.tsx": {
       "423e6b4ccfc89bb274b6": 1,
       "4371e41e959fe140451d": 1,
-      "490ffb6e0554ae7df0b5": 1,
-      "6aa979a5429e91de5ee4": 1,
       "7ea002bf7ce0904744cd": 1,
       "83ba702057de1ac9661c": 1,
       "86e2bed05b4e98965c2a": 1,
@@ -621,10 +623,8 @@
     "components/buzz/CommunityRail.tsx": {
       "05ec7deeaec614cddb85": 1,
       "152f840c40550390b9a8": 1,
-      "15deca5c67349d7385d9": 1,
       "5b93fe5e271763986f18": 1,
       "9bd7a7f3a955f126a130": 1,
-      "ab6484dd62731a517171": 1,
       "dfc8789ffc8f1fb6ecd1": 1
     },
     "components/buzz/ComputerSession.tsx": {
@@ -660,9 +660,7 @@
       "5b3e65669e23f32d0db2": 1,
       "5ce68da4df44909a4745": 1,
       "8daca9d5134758d5c378": 1,
-      "9eb9f00486d225105650": 1,
-      "b902812eb93169c3efe3": 1,
-      "d525936c08906da90107": 1
+      "b902812eb93169c3efe3": 1
     },
     "components/buzz/CornerObjectiveLine.tsx": {
       "04353acfb735120e1174": 1,
@@ -833,9 +831,6 @@
       "2bd070b726f690d197c8": 1,
       "68ebad581191f13c42ef": 1
     },
-    "components/buzz/RoomDeckComposeMenu.tsx": {
-      "eaa90ca32840ecc145c1": 1
-    },
     "components/buzz/RoomMemberPickerActions.tsx": {
       "0e2f928f558822b91865": 1,
       "35149fedb9eff31c458f": 1,
@@ -874,8 +869,6 @@
       "570f6940b8b231db211e": 1,
       "61837e79ba8e3d30dc94": 1,
       "647daa733eb59f72ff49": 1,
-      "9c64f0153bb3b2bf986a": 1,
-      "aa986723babf0607b9d2": 1,
       "f104cd1c93b153a81d96": 1
     },
     "components/buzz/TranscriptCard.tsx": {
@@ -893,7 +886,6 @@
       "e3735b6b9b84181ec0a6": 1
     },
     "components/buzz/TurnProgressLine.tsx": {
-      "56fe93ebbc43a204721a": 1,
       "87fd67731f2e3fe94174": 1
     },
     "components/buzz/VoiceBar.tsx": {
@@ -915,12 +907,10 @@
       "42408c394befb67a97a4": 1,
       "6ece2732bccd321374e6": 1,
       "6f52f0235a9002944288": 1,
-      "75f485958ef51de64424": 1,
       "a37f597560bbdb2a5561": 1,
       "bbd6f84b02feb2624c79": 1,
       "cb26179b8119ec449cdb": 1,
       "ce4564f488f16c704254": 1,
-      "cebcb8d5394e44cfb7a8": 1,
       "daf80b89e3ca32f89c98": 1,
       "f584b10a339df08f9e2e": 1
     },
@@ -971,11 +961,6 @@
       "992e8416b1f5a80439d1": 1,
       "99c100443a9343fde03b": 1,
       "ef8d91793e5661a1fb40": 1
-    },
-    "components/UpdateReadyPrompt.tsx": {
-      "7749a9d5e512818eab6e": 1,
-      "8f24d47c1aca32d83c54": 1,
-      "e6f089b91161a277e95f": 1
     },
     "components/buzz/ChoicePlate.tsx": {
       "23606cee4b7cb19f699c": 1,

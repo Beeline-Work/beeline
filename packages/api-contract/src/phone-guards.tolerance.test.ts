@@ -885,6 +885,16 @@ describe('agent profile recent work', () => {
     catalog: [],
     watchFilters: [],
   };
+  it('keeps each model choice description so an alias can name its model', () => {
+    const catalog = [{
+      id: 'model', category: 'model', currentValue: 'default',
+      options: [{ id: 'default', name: 'Default (recommended)', description: 'Opus' }, { id: 'opus', name: 'Opus 5.5', description: 7 }],
+    }];
+    expect(readAgentDetailView({ ...profile, catalog })?.catalog[0]?.options).toEqual([
+      { id: 'default', name: 'Default (recommended)', description: 'Opus' },
+      { id: 'opus', name: 'Opus 5.5' },
+    ]);
+  });
   it('preserves only boolean login verdicts and fails closed on missing or malformed values', () => {
     expect(readAgentDetailView({ ...profile, canLogin: true })?.canLogin).toBe(true);
     expect(readAgentDetailView({ ...profile, canLogin: false })?.canLogin).toBe(false);

@@ -296,7 +296,7 @@ describe('Workspace drawer', () => {
 
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     const mySettings = renderer.root
-      .findAllByType('TouchableOpacity' as any)
+      .findAllByType('Pressable' as any)
       .find((node) => node.props.testID === 'community-rail-settings');
     expect(mySettings?.props.accessibilityLabel).toBe('Settings');
     expect(
@@ -326,17 +326,19 @@ describe('Workspace drawer', () => {
         );
       });
       const command = renderer.root
-        .findAllByType('TouchableOpacity' as any)
+        .findAllByType('Pressable' as any)
         .find((node) => node.props.testID === 'community-rail-add')!;
-      const glyph = command
-        .findAllByType('Text' as any)
-        .find((node) => node.props.children === '＋')!;
+      // The plus is drawn, in a box one hero text line tall.
+      const glyph = command.findAll((node) => node.props.testID === 'rail-glyph-add')[0]!;
       const flatten = (style: any): any =>
         [style].flat(Infinity).reduce((all, entry) => ({ ...all, ...entry }), {});
       const glyphStyle = flatten(glyph.props.style);
-      const commandStyle = flatten(command.props.style);
-      expect(glyphStyle.height).toBeUndefined();
+      const commandStyle = flatten(
+        typeof command.props.style === 'function' ? command.props.style({ pressed: false }) : command.props.style,
+      );
+      expect(glyphStyle.height).toBeGreaterThanOrEqual(22);
       expect(glyphStyle.maxHeight).toBeUndefined();
+      expect(command.findAllByType('Text' as any).some((node) => node.props.children === '＋')).toBe(false);
       expect(commandStyle.height).toBeUndefined();
       expect(commandStyle.minHeight).toBeGreaterThanOrEqual(48);
       expect(commandStyle.overflow).not.toBe('hidden');

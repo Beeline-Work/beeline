@@ -1,3 +1,4 @@
+// Model alias notice names approved by lunchboxfortwo in label-sweep brief revision 1, message 5d58f1b802665fcc725b5aa594c35df1188610f49b13995a49dab6f22cb5b9b3; modelCatalog fallback notice snapshot only.
 // Job title and visual clip preview approved by Ruby, commander order ad993fe2b9b6053bc4a2bd2763f07a0e559c9b0bdac73c570686e29fdf0a6f95, brief revision 3; inherited mock v4 approval by lunchboxfortwo.
 // Starter banter, fixed hello and three job choices approved by lunchboxfortwo, message 8ab63112f3d3a70586d42f0d9b95642c14b7184f8b24268d6e69aba060c75edd (corner brief revision 2). Retire the game/explanation producers; add the approved welcome playback and Post gate metadata.
 // Startup backoff owner notice approved by lunchboxfortwo, DM e2ec4638, relayed by Ruby; this notice only.
@@ -5140,17 +5141,18 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.modelCatalog:systemLine:aade9fdc2c6a6204",
+    "id": "src/daemon-service.ts:DaemonService.modelCatalog:systemLine:e74f6613936bf2f2",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    id: createHash('sha256')\n        .update(`agent-model-fallback:v1:${agentId}:${prior.selected_model}:${input.selection.model}:${prior.updated_at.toISOString()}`)\n        .digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: prior.name },\n    verb: 'switched models',\n    consequence: `${oldModelName} is no longer offered; now using ${newModelName}.`,\n})",
     "literals": [
+      "\"The previous model\"",
       "\"model\"",
       "\"switched models\"",
+      "\"the default model\"",
       ".category",
       ".find",
       ".find()",
-      ".id",
       ".model",
       ".model_catalog",
       ".name",
@@ -5162,7 +5164,8 @@
       "[\"\",\" is no longer offered; now using \",\".\"]",
       "binary:===",
       "binary:??",
-      "end:expression"
+      "end:expression",
+      "modelChoiceLabel()"
     ],
     "occurrences": 1
   },

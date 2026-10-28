@@ -53,6 +53,7 @@ import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { displayModel } from '@/buzz/model-display';
+import { modelChoiceLabel, modelPickerChoiceLabel } from '@beeline/api-contract/phone';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -1124,7 +1125,7 @@ export default function BuzzMembers({
                         <SettingsRow
                           title={kind === 'model' ? 'Model' : 'Thinking level'}
                           value={kind === 'model'
-                            ? current ? displayModel(current) : UNSET_VALUE
+                            ? displayModel(modelChoiceLabel(axis, current) ?? '') || UNSET_VALUE
                             : working === 'model-catalog' ? 'Refreshing…' : (current ?? UNSET_VALUE)}
                           disabled={busy || (kind === 'model' && !axis)}
                           onPress={() => void toggleModelAxis(kind, open, axis)}
@@ -1168,7 +1169,7 @@ export default function BuzzMembers({
                               disabled={busy}
                               onPress={() => void setModelOption(kind, choice.id)}
                               testID={`model-option-${kind}-${choice.id}`}
-                              label={kind === 'model' ? displayModel(choice.name ?? choice.id) : (choice.name ?? choice.id)}
+                              label={kind === 'model' && axis ? modelPickerChoiceLabel(axis, choice) : (choice.name ?? choice.id)}
                               selected={choice.id === current}
                             />
                           ))}

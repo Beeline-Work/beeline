@@ -72,6 +72,8 @@ vi.mock('expo-haptics', () => ({
 }));
 
 import { Button, type ButtonVariant } from './Button';
+import { ChevronGlyph } from './ChevronGlyph';
+import { ExternalGlyph } from './ExternalGlyph';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -301,5 +303,43 @@ describe('inline actions', () => {
     expect((await render({ size: 'inline', variant: 'quiet' })).text.color).toBe(beelineThemes.obsidian.textSecondary);
     expect((await render({ size: 'inline', variant: 'destructive' })).text.color).toBe(beelineThemes.obsidian.dialogDanger);
     expect((await render({ size: 'inline', loading: true })).pressable.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+  });
+});
+
+describe('destination marks', () => {
+  it.each(['bone', 'obsidian'] as const)('draws where the press goes after the label, in its colour, in %s', async (name) => {
+    active.theme = name;
+    const external = await render({ size: 'inline', variant: 'secondary', label: 'Open in browser', destination: 'external' });
+    const leaves = external.tree.root.findByType(ExternalGlyph);
+    expect(leaves.props.color).toBe(beelineThemes[name].accent);
+    expect(external.tree.root.findAllByType(ChevronGlyph)).toHaveLength(0);
+    const children = [external.pressable.props.children].flat();
+    const labelAt = children.findIndex((child: any) => child?.props?.children === 'Open in browser');
+    const markAt = children.findIndex((child: any) => child?.props?.destination === 'external');
+    expect(labelAt).toBeGreaterThanOrEqual(0);
+    expect(markAt).toBeGreaterThan(labelAt);
+
+    const screen = await render({
+      variant: 'quiet', label: 'Open', destination: 'screen',
+      appearance: { control: undefined, label: { color: beelineThemes[name].accent } },
+    });
+    expect(screen.tree.root.findByType(ChevronGlyph).props.color).toBe(beelineThemes[name].accent);
+    expect(screen.tree.root.findAllByType(ExternalGlyph)).toHaveLength(0);
+  });
+
+  it('draws no mark without a destination', async () => {
+    const { tree } = await render({ label: 'Share' });
+    expect(tree.root.findAllByType(ExternalGlyph)).toHaveLength(0);
+    expect(tree.root.findAllByType(ChevronGlyph)).toHaveLength(0);
+  });
+
+  it('keeps a migrated label and its mark on one row', async () => {
+    const { frame } = await render({
+      variant: 'quiet', label: 'Open in browser', destination: 'external',
+      appearance: { control: undefined, label: { color: '#000' } },
+    });
+    expect(frame()).toMatchObject({ flexDirection: 'row', alignItems: 'center' });
+    const plain = await render({ variant: 'quiet', label: 'Open', appearance: { control: undefined, label: {} } });
+    expect(plain.frame().flexDirection).toBeUndefined();
   });
 });

@@ -340,8 +340,8 @@ async function renderTray(): Promise<ReactTestRenderer> {
 
 describe.each([
   { surface: 'desktop', os: 'web', width: 1200, action: 'REMOVE' },
-  { surface: 'mobile', os: 'ios', width: 390, action: 'OPEN →' },
-  { surface: 'R12a compact web', os: 'web', width: 760, action: 'OPEN →' },
+  { surface: 'mobile', os: 'ios', width: 390, action: 'OPEN' },
+  { surface: 'R12a compact web', os: 'web', width: 760, action: 'OPEN' },
 ])('Bookmarks $surface rows', ({ os, width, action }) => {
   it('shows each save age once at the right and no footer time', async () => {
     layout.os = os;
@@ -1682,7 +1682,7 @@ describe('Tray section CLEAR', () => {
   });
 });
 
-it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at 760px paints OPEN → in a compact Tray (crossSecond=%s)', async (crossSecond) => {
+it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at 760px paints OPEN with a drawn chevron in a compact Tray (crossSecond=%s)', async (crossSecond) => {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width: 760, query: '?surface=phone&mode=row',
@@ -1717,7 +1717,7 @@ it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at
   });
   expect(status, stderr).toBe(0);
   expect(result).toContain('PASS');
-  expect(result).toContain('OPEN →');
+  expect(result).toContain('OPEN + drawn chevron');
   console.log('R12a Demonstrated, Chrome 760px:', result);
 }, 90_000);
 

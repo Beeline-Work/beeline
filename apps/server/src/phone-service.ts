@@ -9,7 +9,7 @@ import { companyForMcp } from './company-mcp-discovery.js';
 import { COMPANY_REGISTRY } from './company-registry.js';
 import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
-import { readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
+import { modelChoiceLabel, readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
 import { CommandRefusalError } from './command-refusal.js';
 import { agentUsageColumns, projectAgentUsage, type AgentUsageRow } from './agent-usage.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
@@ -655,9 +655,7 @@ function selectedModelLabel(
   catalog: AgentDetailView['catalog'],
 ): string | undefined {
   const axis = catalog.find((candidate) => candidate.category === 'model');
-  const value = selected ?? axis?.currentValue;
-  if (!value) return undefined;
-  return axis?.options?.find((option) => option.id === value)?.name ?? value;
+  return modelChoiceLabel(axis, selected ?? axis?.currentValue);
 }
 /**
  * The catalog's effort axis: a known effort category first; otherwise the

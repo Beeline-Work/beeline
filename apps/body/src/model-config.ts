@@ -187,6 +187,9 @@ export function parseAdvertisedConfigOptions(
       choices.push({
         id: choiceId,
         ...(typeof choice.name === 'string' ? { name: choice.name } : {}),
+        ...(typeof choice.description === 'string' && choice.description.trim()
+          ? { description: choice.description }
+          : {}),
       });
     }
     result.push({
@@ -211,6 +214,9 @@ export function parseAdvertisedConfigOptions(
     modelChoices.push({
       id: model.modelId,
       ...(typeof model.name === 'string' ? { name: model.name } : {}),
+      ...(typeof model.description === 'string' && model.description.trim()
+        ? { description: model.description }
+        : {}),
     });
   }
   const currentModelId =

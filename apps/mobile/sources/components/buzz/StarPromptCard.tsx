@@ -106,7 +106,7 @@ export const StarPromptCard = memo(function StarPromptCard({
           testID: 'star-prompt-later',
         },
         {
-          label: `★ ${STAR_PROMPT_STAR_LABEL}`,
+          label: STAR_PROMPT_STAR_LABEL,
           primary: true,
           onPress: () => onAnswer('star'),
           disabled: busy !== null,

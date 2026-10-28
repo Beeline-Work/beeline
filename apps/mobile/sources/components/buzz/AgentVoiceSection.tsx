@@ -174,7 +174,7 @@ export function AgentVoiceSection({
                 disabled={saving}
                 onPress={() => setDraft(voice.id)}
                 testID={`voice-option-${voice.id}`}
-                value={playing === voice.id ? 'Stop' : '▶ Play'}
+                value={playing === voice.id ? 'Stop' : 'Play'}
                 valueTone={draft === voice.id ? 'accent' : undefined}
                 trailingPress={{
                   disabled: saving,

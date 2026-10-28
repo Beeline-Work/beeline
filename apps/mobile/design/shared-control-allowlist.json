@@ -10,15 +10,6 @@
   },
   {
     "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
-    "line": 755,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "895673884d0c695a52f5",
-    "control": "<Pressable accessibilityLabel={`Open attachment ${attachment.name}`} accessibilityRole={attachment.mimeType.startsWith('image/') ? 'button' : 'link'} delayLongPress={450} onLongPress={ attachment.mimeType.startsWith('image/') ? (event) => { event.stopPropagation(); showPictureActions(attachment); } : undefined } onPress={open} style={styles.attachmentCard} testID={`chat-attachment-${attachment.nam",
-    "reason": "Message content navigation or emoji reaction, not a standalone text button."
-  },
-  {
-    "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
     "line": 930,
     "rule": "6a",
     "detail": "raw text target",
@@ -136,10 +127,10 @@
   },
   {
     "file": "components/buzz/Button.tsx",
-    "line": 161,
+    "line": 201,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "053b4a505a16af0f08f8",
+    "id": "c21a51d691ea1a9d7aee",
     "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true, }} disabled={isDisabled} hitSlop={ inline ? (props.hitSlop ?? { top: 13, bottom: 13, left: 22, right: 22 }) : props.hitSlop } onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(",
     "reason": "Shared Button implementation, including provider-free recovery path."
   },
@@ -153,15 +144,6 @@
     "reason": "Code preview disclosure opens the full machine-text reader."
   },
   {
-    "file": "components/buzz/CommunityRail.tsx",
-    "line": 155,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "046ba8eaf3a2e17b3ab1",
-    "control": "<TouchableOpacity accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} onPress={onPress} style={[styles.railCommand, column && styles.columnCommand]} testID={testID} > {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children} <Text style={styles.railCommandLabel}>{label}</Text> </TouchableOpacity>",
-    "reason": "Shared workspace navigation chrome; command tile and workspace switcher keep composite identity layout."
-  },
-  {
     "file": "components/buzz/ComputerSession.tsx",
     "line": 146,
     "rule": "6a",
@@ -172,28 +154,28 @@
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 373,
+    "line": 374,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "13a0ae7969b48be4fb27",
+    "id": "2526cacfb9829172f114",
     "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 380,
+    "line": 381,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "2ef4fb0303298020e0df",
+    "id": "8937d351745e3e77c31c",
     "control": "<View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numberOfLines={1} style={styles.replyLabel}> <Text style={styles.replyGlyph}>↩</Text> Replying to{' '} <Text style={styles.replyHandle}>@{reply.handle}</Text> </Text> <Text numberOfLines={1} ellipsizeMode=\"tail\" sty",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 406,
+    "line": 402,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "509b9367cf62dd582c11",
+    "id": "3f99cd59c2455f1c12c4",
     "control": "<View key={`${attachment.uri}:${index}`} style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]} testID={`pending-chat-attachment-${index}`} > <View style={styles.attachmentCopy}> <Text numberOfLines={1} ellipsizeMode=\"tail\" style={styles.attachmentName}> {attachment.name} </Text> <InlineRow style={styles.attachmentInfo}> <Text numberOfLines={1} style={styles.attachmentMeta} tes",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
@@ -214,15 +196,6 @@
     "id": "b70c7ac26be892116f36",
     "control": "<Pressable onPress={onPress} onLongPress={onPin} accessibilityRole=\"button\" accessibilityHint=\"Long press to toggle this conversation's pin\" accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`} accessibilityState={selected ? { selected: true } : undefined} accessibilityActions={[ { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin convers",
     "reason": "Shared conversation content row with long-press pin interaction."
-  },
-  {
-    "file": "components/buzz/CornerAppScreen.tsx",
-    "line": 75,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "314d85b4800bf1c0b9b0",
-    "control": "<Pressable accessibilityLabel={`Open Corner App ${title}`} accessibilityRole=\"button\" onPress={onOpen} style={({ pressed }) => [styles.appRow, pressed && styles.actionPressed]} testID=\"corner-app-row\" > <View style={styles.appRowCopy}> <Text style={styles.appRowLabel}>CORNER APP</Text> <Text numberOfLines={1} style={styles.appRowTitle}> {title} </Text> </View> <Text style={styles.actionArrow}>OPEN",
-    "reason": "Corner App preview content target; action blocks use Button."
   },
   {
     "file": "components/buzz/CornerObjectiveLine.tsx",
@@ -262,20 +235,20 @@
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",
-    "line": 45,
+    "line": 48,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "9b0fc0cba60ae354e701",
+    "id": "0821f9b25d445222becf",
     "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={inline ? styles.inline : styles.banner} testID={testID} > <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}> {inline && description ? `${title} ${description}` : title} </Text> {!inline && description ? ( <Text style={inline ? styles.inlineText : styles.description}>{description}</Text> ) : null} {on",
     "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",
-    "line": 58,
+    "line": 61,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "94192bb35ffad4b2881c",
-    "control": "<View style={inline ? styles.inlineActions : secondaryAction ? styles.actions : styles.retry} > {onRetry ? ( <Button size={inline ? 'inline' : 'default'} label={retryLabel} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button size={inline ? 'inline' : 'default'} label={secondaryAction.",
+    "id": "51ec48f7706c7dd7f1ae",
+    "control": "<View style={inline ? styles.inlineActions : secondaryAction ? styles.actions : styles.retry} > {onRetry ? ( <Button size={inline ? 'inline' : 'default'} label={retryLabel} destination={retryDestination} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button size={inline ? 'inline' : 'de",
     "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
   },
   {
@@ -400,8 +373,8 @@
     "line": 263,
     "rule": "6c",
     "detail": "dialog action row",
-    "id": "04c2961781c2d025171c",
-    "control": "<HullDialogActions style={styles.instructionActions} actions={[{ label: \"Cancel\", variant: \"quiet\", onPress: () => setPendingLinkage(null) }, { label: pendingLinkage.kind === 'owner-grant' ? 'Share install link →' : 'Continue to GitHub →', variant: \"primary\", onPress: () => { const plan = pendingLinkage; setPendingLinkage(null); if (plan.kind === 'manage') onManageInstallation?.(plan.installation)",
+    "id": "04be2b5f274b6761e3ed",
+    "control": "<HullDialogActions style={styles.instructionActions} actions={[{ label: \"Cancel\", variant: \"quiet\", onPress: () => setPendingLinkage(null) }, { label: pendingLinkage.kind === 'owner-grant' ? 'Share install link' : 'Continue to GitHub', ...(pendingLinkage.kind === 'owner-grant' ? {} : { destination: 'external' as const }), variant: \"primary\", onPress: () => { const plan = pendingLinkage; setPending",
     "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
   },
   {
@@ -523,39 +496,12 @@
   },
   {
     "file": "components/buzz/SlashVerbPicker.tsx",
-    "line": 128,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "ca319c7763574e5dadb3",
-    "control": "<TouchableOpacity accessibilityLabel={`/${app.command}. Open ${app.title}`} accessibilityRole=\"button\" accessibilityState={{ selected }} key={`app:${app.slug}`} onPress={() => onSelectApp?.(app.slug)} style={[styles.row, styles.commandRow, selected && styles.rowSelected]} testID={`slash-corner-app-${app.slug}`} > <Text numberOfLines={1} style={[styles.command, styles.agentCommand]}> /{app.command}",
-    "reason": "Structured command suggestion options retain command descriptions and selection."
-  },
-  {
-    "file": "components/buzz/SlashVerbPicker.tsx",
     "line": 158,
     "rule": "6a",
     "detail": "raw text target",
     "id": "aaff59da7ee0b21481ca",
     "control": "<TouchableOpacity accessibilityLabel={`/${verb.command}. ${verb.description}`} accessibilityRole=\"button\" accessibilityState={{ selected }} key={verb.id} onPress={() => onSelect(verb.id)} style={[styles.row, selected && styles.rowSelected]} testID={`slash-verb-${verb.id}`} > <Text numberOfLines={1} style={styles.command}> /{verb.command} </Text> <View style={styles.copy}> <Text numberOfLines={1} s",
     "reason": "Structured command suggestion options retain command descriptions and selection."
-  },
-  {
-    "file": "components/buzz/TurnProgressLine.tsx",
-    "line": 117,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "adeb9cdbe9ead871089b",
-    "control": "<Pressable accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'} accessibilityRole=\"button\" accessibilityState={{ busy: stopping, disabled: stopping }} disabled={stopping} hitSlop={STOP_HIT_SLOP} onPress={stopping ? undefined : onStop} style={({ pressed }) => [ styles.stop, pressed && !stopping && styles.stopPressed, stopping && styles.stopStopping, ]} testID={testID ? `${testID}",
-    "reason": "Thinking-line Stop retains main’s 24px visible row and existing 44px hit-slop target; replacing it with a 44px visible Button changes the expressly held row geometry."
-  },
-  {
-    "file": "components/buzz/WorkflowRunLine.tsx",
-    "line": 261,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "fbc42044a97b4e685b88",
-    "control": "<Pressable accessibilityLabel={`Open corner ${named.name}`} accessibilityRole=\"link\" onPress={() => onOpenCorner(named)} style={({ pressed }) => [styles.cornerLink, pressed && styles.pressed]} testID={`workflow-run-corner-${corner.id}`} > <CornerGlyph size={CORNER_META_SIZE} /> <Text numberOfLines={1} style={styles.cornerName}> {named.name} </Text> <Text style={styles.cornerArrow}>→</Text> </Press",
-    "reason": "Workflow step content disclosure or corner identity navigation."
   },
   {
     "file": "components/buzz/WorkflowRunLine.tsx",
@@ -601,14 +547,5 @@
     "id": "53eeaf196b24bda43973",
     "control": "<Pressable accessibilityLabel={ viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings' } accessibilityRole=\"button\" accessibilityState={{ selected: profileSettingsSelected }} onPress={() => router.push('/beeline/settings' as Href)} style={({ pressed }) => [ styles.settingsRow, (profileSettingsSelected || pressed) && styles.roomRowSelected, ]} testID=\"profile-settings-navigation\" >",
     "reason": "Workspace identity selector or account avatar navigation; composite content targets."
-  },
-  {
-    "file": "components/UpdateReadyPrompt.tsx",
-    "line": 24,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "b6ad61f322680614fddb",
-    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel=\"Update ready — tap to restart\" onPress={() => void reloadApp()} style={styles.prompt} testID=\"ota-update-restart\" > <Ionicons name=\"download-outline\" size={22} color={theme.colors.textLink} /> <View style={styles.copy}> <Text style={styles.title}>Update ready</Text> <Text style={styles.subtitle}>Tap to restart</Text> </View> <Pressable acce",
-    "reason": "Whole update-ready notification target; not a failure/retry notice."
   }
 ]

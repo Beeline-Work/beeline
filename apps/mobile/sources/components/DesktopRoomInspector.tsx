@@ -4,6 +4,7 @@ import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { resolveComposerMentions } from '@/buzz/room-participants';
 import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import * as React from 'react';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
@@ -114,6 +115,11 @@ function HeaderIconControl({
       appearance={{ control: styles.headerButton, label: undefined }}
     />
   );
+  return withHoverTitle(label, control);
+}
+
+/** A desktop browser shows the control's name on hover. */
+function withHoverTitle(label: string, control: React.ReactElement) {
   return Platform.OS === 'web'
     ? React.createElement('span', { title: label, style: { display: 'flex' } }, control)
     : control;
@@ -591,12 +597,15 @@ function CornerCockpit({
           onPress={onOpenInMain}
           testID="desktop-work-open-in-main"
         />
-        <HeaderIconControl
-          label="Close work pane"
-          glyph="×"
-          onPress={onClose}
-          testID="desktop-work-cockpit-close"
-        />
+        {withHoverTitle(
+          'Close work pane',
+          <CloseButton
+            accessibilityLabel="Close work pane"
+            onPress={onClose}
+            testID="desktop-work-cockpit-close"
+            control={styles.headerButton}
+          />,
+        )}
       </View>
       <View style={styles.pinnedObjective}>
         <Text style={styles.pinnedObjectiveCopy} testID="desktop-work-objective">

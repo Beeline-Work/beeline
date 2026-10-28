@@ -720,7 +720,7 @@ function approvalView(
       try { url = new URL(card.approvalUrl); } catch { return result; }
       if (url.protocol !== 'https:') return result;
       return { ...result, actions: [{ kind: 'external', url: url.toString(),
-        label: card.linkKind === 'passkey' ? 'Use passkey ↗' : card.linkKind === 'vouch' ? 'Vouch ↗' : 'Review ↗' }] };
+        label: card.linkKind === 'passkey' ? 'Use passkey' : card.linkKind === 'vouch' ? 'Vouch' : 'Review' }] };
     }
     default:
       return undefined;

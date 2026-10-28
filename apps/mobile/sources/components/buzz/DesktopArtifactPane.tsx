@@ -1,4 +1,5 @@
 import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -89,20 +90,15 @@ export function DesktopArtifactPane({
           accessibilityRole="link"
           onPress={() => void openArtifactInBrowserOrExplain(attachment)}
           testID="desktop-artifact-open-browser"
-          label={'Open in browser ↗'}
+          label="Open in browser"
+          destination="external"
           variant="quiet"
           appearance={{ control: styles.headerAction, label: styles.openLink }}
         />}
-          <Button
+          <CloseButton
             accessibilityLabel="Close artifact pane"
-            accessibilityRole="button"
             onPress={onClose}
             testID="desktop-artifact-close"
-            label=""
-            icon={<Text style={styles.close}>{'✕'}</Text>}
-            variant="quiet"
-            iconOnly
-            appearance={{ control: styles.headerAction, label: undefined }}
           />
       </View>
       {markdown ? (
@@ -258,7 +254,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
   },
   actionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
-  close: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   markdownBody: { width: '100%', maxWidth: 760, alignSelf: 'center', padding: theme.buzz.space.lg, paddingBottom: theme.buzz.space.xl },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   placeholder: {

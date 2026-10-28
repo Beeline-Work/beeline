@@ -63,7 +63,7 @@ async function main() {
   if (showAll !== 3) throw Error('Show all callbacks changed');
   position('room-roster-more');
   position('invite-people-action', '＋', true);
-  position('corner-app-action-Run action', '→');
+  position('corner-app-action-Run action');
   document.getElementById('result')!.textContent = 'PASS BUTTON ICON ORDER ' + JSON.stringify(measurements);
 }
 main().catch(error => { document.getElementById('result')!.textContent = 'FAIL ' + error.message; });

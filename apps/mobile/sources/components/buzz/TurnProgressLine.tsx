@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { ribbon } from '@/buzz/beeline-glyph';
 import { HullLivePulse } from './MonoHull';
+import { Button } from './Button';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
 import {
   TURN_LINE_BAR_MARGIN_BOTTOM,
@@ -114,22 +115,24 @@ export function TurnProgressLine({
           </Text>
         )}
         {onStop && (
-          <Pressable
+          <Button
             accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'}
-            accessibilityRole="button"
             accessibilityState={{ busy: stopping, disabled: stopping }}
             disabled={stopping}
             hitSlop={STOP_HIT_SLOP}
+            label="STOP"
+            variant="quiet"
             onPress={stopping ? undefined : onStop}
-            style={({ pressed }) => [
-              styles.stop,
-              pressed && !stopping && styles.stopPressed,
-              stopping && styles.stopStopping,
-            ]}
+            appearance={{
+              control: ({ pressed }) => [
+                styles.stop,
+                pressed && !stopping && styles.stopPressed,
+                stopping && styles.stopStopping,
+              ],
+              label: styles.stopLabel,
+            }}
             testID={testID ? `${testID}-stop` : undefined}
-          >
-            <Text style={styles.stopLabel}>■ STOP</Text>
-          </Pressable>
+          />
         )}
       </HullLivePulse>
     </View>

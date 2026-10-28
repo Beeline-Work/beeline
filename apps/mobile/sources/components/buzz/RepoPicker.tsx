@@ -243,8 +243,8 @@ export const RepoPicker = memo(function RepoPicker({
           <HullActionSheetRow
             label={pastedFullName}
             description={ownerInstallation?.status === 'active'
-              ? 'Add this repo to the Beeline installation →'
-              : `Connect ${pastedOwner} →`}
+              ? 'Add this repo to the Beeline installation'
+              : `Connect ${pastedOwner}`}
             onPress={() => {
               const plan = githubRepositoryLinkagePlan(pastedFullName, candidates, installations, {
                 uncoveredOwners,
@@ -261,8 +261,8 @@ export const RepoPicker = memo(function RepoPicker({
           <Text style={styles.instructionTitle}>ON GITHUB</Text>
           <Text style={styles.instructionText}>{GITHUB_REPOSITORY_SELECTION_INSTRUCTION}</Text>
           <HullDialogActions style={styles.instructionActions} actions={[{ label: "Cancel", variant: "quiet", onPress: () => setPendingLinkage(null) }, { label: pendingLinkage.kind === 'owner-grant'
-                  ? 'Share install link →'
-                  : 'Continue to GitHub →', variant: "primary", onPress: () => {
+                  ? 'Share install link'
+                  : 'Continue to GitHub', ...(pendingLinkage.kind === 'owner-grant' ? {} : { destination: 'external' as const }), variant: "primary", onPress: () => {
                 const plan = pendingLinkage;
                 setPendingLinkage(null);
                 if (plan.kind === 'manage') onManageInstallation?.(plan.installation);
@@ -274,7 +274,7 @@ export const RepoPicker = memo(function RepoPicker({
       {onCreateRepository && activeInstallations.length > 0 && (
         <View>
           <HullActionSheetRow
-            label="＋ Create repository"
+            label="Create repository"
             disabled={busy}
             onPress={() => {
               if (onStartCreateRepository) {
@@ -333,7 +333,7 @@ export const RepoPicker = memo(function RepoPicker({
       )}
       {onAddAccount && (
         <HullActionSheetRow
-          label="＋ Add repositories, accounts, or organizations"
+          label="Add repositories, accounts, or organizations"
           disabled={busy}
           onPress={() => setPendingLinkage({ kind: 'install', owner: '', fullName: '' })}
           testID={`${testIDPrefix}-add-account`}

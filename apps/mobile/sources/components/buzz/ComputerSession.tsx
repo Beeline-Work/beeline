@@ -1,4 +1,5 @@
 import { Button } from './Button';
+import { CloseButton } from './CloseGlyph';
 import React from 'react';
 import { BackHandler, Platform, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -279,7 +280,8 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
       <View style={styles.controls} testID="computer-session-controls">
         {!ended && !unavailable && session.access ? (
           <Button
-            label="Open ↗"
+            label="Open in browser"
+            destination="external"
             size="inline"
             accessibilityRole="link"
             variant="secondary"
@@ -288,10 +290,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
             testID="computer-session-open-browser"
           />
         ) : null}
-        <Button
-          label="✕"
-          iconOnly
-          variant="secondary"
+        <CloseButton
           onPress={onClose}
           accessibilityLabel="Close browser"
           testID="computer-session-close"

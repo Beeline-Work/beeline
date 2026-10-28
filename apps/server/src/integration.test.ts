@@ -10506,6 +10506,24 @@ describe('monolith integration', () => {
     expect(isAgentDetailView(view)).toBe(true);
   });
 
+  it('shows the model an alias runs in the roster, never the alias menu text', async () => {
+    const catalog = (description?: string) => [{
+      id: 'model', category: 'model', currentValue: 'default',
+      options: [
+        { id: 'default', name: 'Default (recommended)', ...(description ? { description } : {}) },
+        { id: 'opus', name: 'Opus 5.5', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+      ],
+    }];
+    const phone = new PhoneService(database, 'http://placeholder');
+    const rosterModel = async () =>
+      (await phone.readWorkspace(WORKSPACE, HUMAN))?.agents.find((agent) => agent.identity.pubkey === AGENT)?.model;
+    await database.query(`UPDATE agents SET selected_model=NULL,model_catalog=$2::jsonb WHERE agent_id=$1`, [AGENT, JSON.stringify(catalog('Opus'))]);
+    expect(await rosterModel()).toBe('Opus 5.5');
+    // A catalog stored before the helper kept descriptions shows no model.
+    await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [AGENT, JSON.stringify(catalog())]);
+    expect(await rosterModel()).toBeUndefined();
+  });
+
   it('lets any workspace member invite their own agent', async () => {
     const memberToken = await phoneToken('pairing-member');
     const memberId = createHash('sha256').update('github:pairing-member').digest('hex');

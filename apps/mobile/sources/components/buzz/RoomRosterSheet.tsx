@@ -1,4 +1,5 @@
 import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -142,14 +143,10 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
               onPress={onAddMembers}
             />
           )}
-          <Button
+          <CloseButton
             accessibilityLabel={`Close ${ROOM_LABEL} roster`}
             onPress={onClose}
-            label=""
-            icon={<Text style={styles.rosterModalCloseText}>{'×'}</Text>}
-            variant="quiet"
-            iconOnly
-            appearance={{ control: styles.rosterModalClose, label: undefined }}
+            control={styles.rosterModalClose}
           />
         </View>
 
@@ -305,7 +302,6 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    rosterModalCloseText: { ...Typography.default(), ...hull.type.hero, color: hull.steel },
     rosterContent: { paddingTop: hull.space.md, paddingBottom: hull.space.xs },
     chevron: { color: hull.textMuted },
     rosterMore: {

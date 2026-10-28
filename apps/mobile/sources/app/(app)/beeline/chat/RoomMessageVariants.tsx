@@ -59,6 +59,8 @@ import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
@@ -221,8 +223,8 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
     label: 'View request', accessibilityRole: 'link',
     onPress: () => onOpenSource(approval.sourceRoomId!, approval.sourceMessageId!), testID: 'squire-approval-source',
   });
-  if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey ↗' : approval.linkKind === 'vouch' ? 'Vouch ↗' : 'Review ↗',
-    accessibilityRole: 'link', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
+  if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey' : approval.linkKind === 'vouch' ? 'Vouch' : 'Review',
+    accessibilityRole: 'link', destination: 'external', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
   return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card" wrapTitle
     askingAgent={approval.agent} agent={agent}
     title={`@${name.replace(/^@/, '')} wants to ${approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)}`}
@@ -355,7 +357,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
       : connecting && canAccept && (offer.intent !== 'reconnect' || viewerPubkey === offer.addressee.pubkey) && offer.connectorId && onContinue
         ? [
             {
-              label: 'Continue sign-in ›',
+              label: `Continue ${offer.connectorName} sign-in`,
               primary: true,
               onPress: () => onContinue(offer.offerId, offer.connectorType, offer.connectorId!),
               testID: `connector-offer-${offer.offerId}-continue`,
@@ -758,7 +760,7 @@ function AttachmentCard({
     );
   }
   return (
-    <Pressable
+    <ContentTarget
       accessibilityLabel={`Open attachment ${attachment.name}`}
       accessibilityRole={attachment.mimeType.startsWith('image/') ? 'button' : 'link'}
       delayLongPress={450}
@@ -806,8 +808,10 @@ function AttachmentCard({
           {metadata}
         </Text>
       </View>
-      <Text style={styles.attachmentOpenGlyph}>↗</Text>
-    </Pressable>
+      <View style={styles.attachmentOpenGlyph}>
+        <ChevronGlyph color={styles.attachmentOpenGlyphInk.color} size={CHEVRON_ROW_SIZE} />
+      </View>
+    </ContentTarget>
   );
 }
 
@@ -1848,11 +1852,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textMuted,
   },
   attachmentOpenGlyph: {
-    ...theme.buzz.type.body,
     width: 22,
-    color: theme.buzz.steel,
-    textAlign: 'center',
+    alignItems: 'center',
   },
+  attachmentOpenGlyphInk: { color: theme.buzz.steel },
 
 replyDesktopLabel: {
     ...theme.buzz.type.sectionHead,

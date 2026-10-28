@@ -15,7 +15,7 @@ describe('connector-offer copy (R5)', () => {
 
   it('asks one question and offers one action with the check glyph', () => {
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');
-    expect(connectorOfferActionLabel('Trusty Squire')).toBe('✓ Add Trusty Squire');
+    expect(connectorOfferActionLabel('Trusty Squire')).toBe('Add Trusty Squire');
   });
 
   it('names what stalled for a reconnect offer, never a question', () => {
@@ -57,7 +57,7 @@ describe('connector-offer copy (R5)', () => {
     expect(connectorOfferSwitchTitle('Trusty Squire', 'google')).toBe(
       "Switch Trusty Squire's Google account?",
     );
-    expect(CONNECTOR_OFFER_SWITCH_ACTION).toBe('✓ Switch account');
+    expect(CONNECTOR_OFFER_SWITCH_ACTION).toBe('Switch account');
     expect(
       connectorOfferConnectingLine({ status: 'connecting', acceptedBy: zeke, intent: 'switch' }),
     ).toBe('switching for @zeke');

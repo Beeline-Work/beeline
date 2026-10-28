@@ -1,5 +1,6 @@
 import { ContentTarget } from '@/components/buzz/IndexRow';
-import { Button } from '@/components/buzz/Button';
+import { Button, type ButtonDestination } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import { Ionicons } from '@expo/vector-icons';
 import { InlineRow, TranscriptFactRow } from './IndexRow';
 import { LedgerDisclosure } from './LedgerDisclosure';
@@ -65,6 +66,8 @@ export type TranscriptCardAction = {
   loading?: boolean;
   testID?: string;
   accessibilityRole?: 'button' | 'link';
+  /** Where the action goes, drawn after its label (`Button.destination`). */
+  destination?: ButtonDestination;
 };
 
 /** An optional one-line text field above the choice plates (a workflow gate's note). */
@@ -422,17 +425,12 @@ export function TranscriptCard({
                 </SettlingText>
                 {stamp ? <Text style={styles.stamp}>{stamp}</Text> : null}
                 {onDismiss ? (
-                  <Button
+                  <CloseButton
                     accessibilityLabel={dismissLabel}
-                    accessibilityRole="button"
                     hitSlop={12}
                     onPress={onDismiss}
                     testID={testID ? `${testID}-dismiss` : undefined}
-                    label=""
-                    icon={<Text style={styles.dismiss}>{'✕'}</Text>}
-                    variant="quiet"
-                    iconOnly
-                    appearance={{ control: undefined, label: undefined }}
+                    control={styles.dismiss}
                   />
                 ) : null}
               </View>
@@ -533,7 +531,7 @@ export function TranscriptCard({
             <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider, balancedFooterInset && styles.balancedFooterInset]}>
               {links.map((action) => (
                 <Button key={action.testID ?? action.label} label={action.label}
-                  accessibilityRole="link" onPress={action.onPress} testID={action.testID}
+                  accessibilityRole="link" destination={action.destination} onPress={action.onPress} testID={action.testID}
                   disabled={action.disabled} loading={action.loading} size="inline" variant="secondary" />
               ))}
               {footerNote !== undefined ? (
@@ -557,6 +555,7 @@ export function TranscriptCard({
                   loading: action.loading,
                   accessibilityLabel: action.label,
                   accessibilityRole: action.accessibilityRole ?? 'button',
+                  destination: action.destination,
                   variant: action.primary ? 'primary' : action.dismiss ? 'quiet' : 'secondary',
                   busy: action.loading,
                   labelTone: action.labelTone,
@@ -788,7 +787,7 @@ const styles = StyleSheet.create((theme) => {
       color: card.ledgerQuiet,
       fontVariant: ['tabular-nums'],
     },
-    dismiss: { ...card.type.machine, color: card.ledgerQuiet },
+    dismiss: { alignItems: 'center', justifyContent: 'center' },
     subline: { ...card.type.meta, color: card.ledgerQuiet, marginTop: card.space.xs },
     body: {
       ...card.type.body,

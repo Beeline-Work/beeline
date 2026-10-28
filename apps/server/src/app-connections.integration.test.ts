@@ -1523,6 +1523,59 @@ describe('connect_app', () => {
       .toBe('disconnected');
   });
 
+  it.skipIf(!process.env.CONNECTOR_BROWSER_PROOF)('CONNECTOR-BROWSER: real service bridge', async () => {
+    const { createServer } = await import('node:http');
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const provider = fakeComposio();
+    provider.searchToolkits = vi.fn(async () => []);
+    await connectSquire();
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER },
+      Array.from({length:6}, (_,i) => ({reference:'vault:fly-'+i,service:'fly',label:'Fly key '+i,fieldNames:['token'],allowedHosts:['api.fly.io'],createdAt:1,stale:false,state:'active' as const})));
+    const registry = fakeRegistry([]);
+    const discovery = new CompanyMcpDiscovery(async () => ({status:200,body:JSON.stringify({resource:'https://mcp.fly.io',authorization_servers:['https://fly.io/mcp/oauth']})}));
+    registry.client.companies.discover = discovery.discover.bind(discovery);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    const connected = await daemonWith(fakeRegistry([]).client, provider).execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'browser removal proof' }, HELPER);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    provider.completeAuth.mockRejectedValueOnce(new Error('authorization timeout'));
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER).catch(() => {});
+    const server = createServer(async (request, response) => {
+      response.setHeader('Access-Control-Allow-Origin', '*');
+      response.setHeader('Access-Control-Allow-Headers', 'content-type');
+      if (request.method === 'OPTIONS') { response.end(); return; }
+      try {
+        let body = ''; for await (const chunk of request) body += chunk;
+        const { operation, input } = JSON.parse(body);
+        if (operation === 'resetProof') {
+          await database.query("UPDATE workspace_apps SET state='active' WHERE id=$1", [connected.appId]);
+          response.end('{}'); return;
+        }
+        if (!['readWorkbench', 'disconnectWorkbenchApp', 'searchWorkbenchApps', 'connectWorkbenchApp'].includes(operation)) throw new Error('Proof operation not allowed');
+        const pending = phone.execute(operation, input, OWNER);
+        if (operation === 'connectWorkbenchApp') await publishFlySignIn();
+        const result = await pending;
+        // Only helper presence is simulated; all connection operations execute PhoneService.
+        if (operation === 'readWorkbench') for (const helper of (result as any).helpers) helper.online = true;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify(result ?? {}));
+      } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ error: String(error) })); }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const result = await promisify(execFile)('npm', ['test', '--', 'run', 'sources/test/connector-service.browser.test.ts'], {
+        cwd: '../mobile', timeout: 240000, maxBuffer: 4000000,
+        env: { ...process.env, CONNECTOR_PROOF_ORIGIN: 'http://127.0.0.1:' + port },
+      });
+      console.log(result.stdout);
+      expect(provider.deleteAccount).toHaveBeenCalled();
+      expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps.some(app => app.appKey === 'slack')).toBe(false);
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  }, 260000);
+
   it.each(['Slack', 'Supabase', 'WhatsApp'])('Reproduction REMOVE-1: removes failed %s attempts and refuses foreign owners and late callbacks', async (app) => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockResolvedValue(true);

@@ -230,6 +230,8 @@ export const FREE_AGENT_CONNECT_GUIDE = `Offer help bringing their own agent onl
 
 When they accept, guide them one step at a time, waiting for the result of each step. Help them choose their own computer or an always-on machine they control. Install Node.js and an agent CLI (Claude Code, Codex or OpenCode), and help them sign in to that CLI. Send them to Members -> Add agent in their Workspace to copy the command. The command format is npx usebeeline connect <code>; they must run the actual command copied from Add agent on their chosen machine. Never create, retrieve, request, repeat or post a pairing code in a Room. Troubleshoot using redacted errors, never secrets. Keep helping until Members shows their new agent online, then have them tag it with a small task. Do not claim it is online without confirmation.`;
 
+export const FREE_AGENT_APP_CONNECT_GUIDE = `For Grok/xAI, Muse/Meta AI, ChatGPT, Claude or Cursor, use connect for Beeline Rooms steps: in that assistant add https://server.usebeeline.app/mcp as a custom connector, sign in to Beeline, tap Allow, then Room Members > + to add the new member. No custom-connector option means it cannot connect yet; Muse's directory listing is pending. TikTok sign-in awaits TikTok's approval of Beeline; never claim it works or offer sign-in. For apps needing Trusty Squire, call connect to offer its card once; Squire runs on your hosted machine too: have them tap the card and finish sign-in on their phone. Do not require their own computer. Follow connect's next; never loop through Settings > Connectors.`;
+
 export const FREE_AGENT_REPOSITORY_GUIDE = `Post the repository card only when the person asks for coding work on a codebase (writing, fixing or reviewing code in a repo), or asks to connect GitHub or a repository. For non-coding requests, never suggest linking a repository; do the requested research, writing, drafting or other work directly. For example, "help me write a cold email" needs no repository card; "fix the login bug in my app" needs the repository card if this Room has no repository. On those coding or connection requests, call app_tool(app:"beeline:onboarding", tool:"repository", args:{}). For other repository work, discover the repository and starters tools with app_tool(app:"beeline:onboarding"). If the card fails, explain the actual reason and the concrete next step to connect the repository. For coding work when a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path.`;
 
 export const FREE_AGENT_TURN_GUIDE = `Before long work, call read(facet:"usage") to check your remaining allowance. If the job will not fit, deliver a smaller useful version or explain the limit up front. End every turn with the deliverable or a clear status explaining what is finished, what stopped, and the next step. Never end on a promise of more work: once your turn ends, no work continues until another message wakes you.`;
@@ -262,7 +264,9 @@ You have a free daily allowance of model tokens. If it runs out, say so plainly 
 
 ${FREE_AGENT_TURN_GUIDE}
 
-${FREE_AGENT_CONNECT_GUIDE}`;
+${FREE_AGENT_CONNECT_GUIDE}
+
+${FREE_AGENT_APP_CONNECT_GUIDE}`;
 }
 
 /**

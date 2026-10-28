@@ -17,7 +17,7 @@ import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
-import { FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_TURN_GUIDE } from './free-agents.js';
+import { FREE_AGENT_APP_CONNECT_GUIDE, FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_TURN_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, notifyUsageRefreshResult, postedRefreshOutcome, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -4076,6 +4076,8 @@ export class DaemonService {
       const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
       if (freeAgent && !row.soul.instructions.includes(FREE_AGENT_TURN_GUIDE))
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_TURN_GUIDE}` };
+      if (freeAgent && !row.soul.instructions.includes(FREE_AGENT_APP_CONNECT_GUIDE))
+        row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_APP_CONNECT_GUIDE}` };
       if (owner)
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
@@ -7528,6 +7530,16 @@ export class DaemonService {
     const continuation = normalizeAppContinuation(input.continuation);
     const context = await this.offerContext(input.roomId, agentId);
     const commandId = this.authorizedCommand?.id;
+    const assistant = service.toLowerCase().replace(/[-_\s]+/g, ' ');
+    if (['grok', 'xai', 'x ai', 'grok bot', 'muse', 'meta muse', 'meta ai',
+      'chatgpt', 'openai chatgpt', 'claude', 'cursor', 'mcp', 'beeline connector'].includes(assistant))
+      return { status: 'ready', app: 'Beeline Rooms',
+        next: 'In your AI assistant, add a custom connector with URL https://server.usebeeline.app/mcp, sign in with your Beeline account, tap Allow, then add the new member to a Room via its Members sheet > +. If the assistant has no custom-connector option yet, it cannot connect yet; the Muse directory listing is still pending.' };
+    // Remove an entry when its provider approves Beeline sign-in.
+    const pendingProviderApproval = new Set(['tiktok']);
+    if (pendingProviderApproval.has(appIdentity(service)?.key ?? assistant))
+      return { status: 'unavailable', app: service,
+        next: 'TikTok sign-in is waiting on TikTok’s approval of Beeline. There is no working sign-in card yet.' };
     const postCard = async (database: SqlDatabase, card: {
       appId: string; appKey: string; name: string; connectorId?: string;
       connectKind?: string; resumeOnConnect?: boolean;
@@ -7665,6 +7677,13 @@ export class DaemonService {
       });
     }
     if (outcome.transport !== 'squire-api' && outcome.transport !== 'squire-browser') return result;
+    if ((await machineSquireReport(this.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected') {
+      const offer = await this.offerConnector({ roomId: input.roomId,
+        connectorType: 'trusty-squire', reason }, agentId, true);
+      if (commandId && !offer.joined) await this.database.query('UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
+      return { ...result, status: 'needs_approval',
+        next: 'The Trusty Squire connector card is ready. Tap it to install Squire on your agent’s machine, including its hosted machine; complete any sign-in on your phone, then this request resumes.' };
+    }
     if (!outcome.appId || !outcome.appKey || !commandId) return result;
     if (input.squireAvailable !== true)
       return { ...result, status: 'unavailable',

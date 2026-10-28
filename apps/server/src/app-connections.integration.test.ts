@@ -1523,6 +1523,30 @@ describe('connect_app', () => {
       .toBe('disconnected');
   });
 
+  it.each(['Slack', 'Supabase', 'WhatsApp'])('Reproduction REMOVE-1: removes failed %s attempts and refuses foreign owners and late callbacks', async (app) => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const connected = await daemon.execute('connectApp', { ...turn, app, reason: 'connect app' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    provider.completeAuth.mockRejectedValueOnce(new Error('authorization timeout'));
+    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture',
+      appId: connected.appId! }, OWNER)).rejects.toThrow('authorization timeout');
+    const read = () => phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect((await read()).apps).toContainEqual(expect.objectContaining({ appId: connected.appId, status: 'error' }));
+    await expect(phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE,
+      appId: connected.appId! }, 'c'.repeat(64))).rejects.toThrow();
+    expect(provider.deleteAccount).not.toHaveBeenCalled();
+    await phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE, appId: connected.appId! }, OWNER);
+    expect(provider.deleteAccount).toHaveBeenCalledWith('ca_fixture');
+    expect((await read()).apps).not.toContainEqual(expect.objectContaining({ appId: connected.appId }));
+    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture',
+      appId: connected.appId! }, OWNER)).rejects.toThrow();
+    expect((await read()).apps).not.toContainEqual(expect.objectContaining({ appId: connected.appId }));
+  });
+
   it('deletes a pending provider account when its app is disconnected', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);

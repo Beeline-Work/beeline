@@ -40,6 +40,7 @@
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:failed-review-handoff": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-failed-review-handoff.mjs",
     "prove:next-day-checkin": "npm run build -w @beeline/server && node --import tsx scripts/prove-next-day-checkin.mjs",
+    "prove:starter-video-approval": "npm run build -w @beeline/server && node --import tsx scripts/prove-starter-video-approval.mjs",
     "prove:starter-youtube": "npm run build -w @beeline/server && node --import tsx scripts/prove-starter-youtube.mjs",
     "prove:starter-banter": "npm run build -w @beeline/server && node --import tsx scripts/prove-starter-banter.mjs",
     "prove:two-agent-onboarding": "npm run build -w @beeline/server && node --import tsx scripts/prove-two-agent-onboarding.mjs",

@@ -4,7 +4,7 @@
  * iframe), and drives headless Chrome through paste, copy, zoom and centering.
  *
  *   SQUIRE_SHARE_URL=https://….trycloudflare.com/s/<token>/ OUT=/tmp/out \
- *     npx tsx apps/server/scripts/shared-browser-repro.ts
+ *     npm run repro:shared-browser --prefix apps/server
  */
 import { createServer } from 'node:http';
 import { AddressInfo } from 'node:net';

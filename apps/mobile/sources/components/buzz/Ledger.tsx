@@ -183,20 +183,83 @@ export function ledgerEntryRhythm({
 
 const TYPEWRITER_MS_PER_CHARACTER = 10;
 
-/** Split a turn into its emphasized lead sentence and regular body copy. */
+// Same inline constructs `parseMarkdownSpans` renders: bold, italic, link, code.
+const LEAD_INLINE_PATTERN =
+  /(\*\*(.*?)\*\*)|((?<!\*)\*(?!\*)(.*?)\*(?!\*))|(\[([^\]]+)\]\(([^)]+)\))|(`(.*?)`)/g;
+const LEAD_TERMINATOR = /[.!?]["')\]]*$/;
+const LEAD_ABBREVIATIONS = new Set(['e.g.', 'i.e.', 'vs.', 'cf.']);
+
+/** A first line `parseMarkdownBlock` draws as its own block, not as prose. */
+function isBlockLine(line: string, nextLine: string | undefined): boolean {
+  const trimmed = line.trim();
+  if (/^(#{1,6}\s|>|```|<options>|\d+\.\s|[-*+]\s)/.test(trimmed)) return true;
+  if (trimmed === '---' || /^!\[[^\]]*\]\([^)]+\)$/.test(trimmed)) return true;
+  const separator = nextLine?.trim() ?? '';
+  return trimmed.includes('|') && /^[|\s\-:=]*$/.test(separator) && separator.includes('-');
+}
+
+/** True when the period at `end` closes an abbreviation or a bare number, not a sentence. */
+function isFalseSentenceEnd(line: string, end: number): boolean {
+  const lead = line.slice(0, end + 1).replace(/^["'(\[*_]+/, '');
+  const word = lead
+    .split(/\s/)
+    .pop()!
+    .replace(/^["'(\[*_]+/, '')
+    .toLowerCase();
+  if (LEAD_ABBREVIATIONS.has(word)) return true;
+  // `etc.` ends a sentence unless the next word carries on in lower case.
+  if (word === 'etc.') return /^\s+[a-z]/.test(line.slice(end + 1));
+  return /^\d+\.$/.test(word) && lead === word;
+}
+
+/**
+ * Split a turn into its emphasized lead sentence and regular body copy. The
+ * two halves render as separate Markdown blocks, so the cut never lands inside
+ * an inline construct, and a first line that is itself a block (list item,
+ * heading, quote, table, image, options) is left whole.
+ */
 export function splitLeadSentence(text: string): [string, string] {
   const normalized = text.trim();
   if (!normalized) return ['', ''];
-  if (normalized.startsWith('```')) return ['', normalized];
-  const newline = normalized.indexOf('\n');
-  const firstLine = newline >= 0 ? normalized.slice(0, newline) : normalized;
-  const match = firstLine.match(/^(.+?[.!?](?:["')\]]*)?)(?:\s+|$)(.*)$/);
-  if (!match) return [firstLine, newline >= 0 ? normalized.slice(newline + 1).trim() : ''];
-  const remainder = [match[2], newline >= 0 ? normalized.slice(newline + 1) : '']
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-  return [match[1], remainder];
+  const lines = normalized.split('\n');
+  const firstLine = lines[0];
+  if (isBlockLine(firstLine, lines[1])) return ['', normalized];
+  const rest = lines.slice(1).join('\n');
+
+  const constructs: { start: number; end: number; closesSentence: boolean }[] = [];
+  for (const match of firstLine.matchAll(LEAD_INLINE_PATTERN)) {
+    const visible = match[2] ?? match[4] ?? match[6] ?? '';
+    constructs.push({
+      start: match.index!,
+      end: match.index! + match[0].length,
+      closesSentence: match[8] === undefined && LEAD_TERMINATOR.test(visible.trimEnd()),
+    });
+  }
+
+  let cut = -1;
+  let index = 0;
+  while (index < firstLine.length && cut < 0) {
+    const construct = constructs.find((c) => c.start === index);
+    if (construct) {
+      index = construct.end;
+      if (construct.closesSentence && /^(\s|$)/.test(firstLine.slice(index))) cut = index;
+      continue;
+    }
+    if (/[.!?]/.test(firstLine[index])) {
+      let end = index;
+      while (/["')\]]/.test(firstLine[end + 1] ?? '')) end++;
+      if (/^(\s|$)/.test(firstLine.slice(end + 1)) && !isFalseSentenceEnd(firstLine, index)) {
+        cut = end + 1;
+      }
+      index = end + 1;
+      continue;
+    }
+    index++;
+  }
+
+  if (cut < 0) return [firstLine, rest.trim()];
+  const remainder = [firstLine.slice(cut).trim(), rest].filter(Boolean).join('\n').trim();
+  return [firstLine.slice(0, cut), remainder];
 }
 
 function TypewriterMarkdown({

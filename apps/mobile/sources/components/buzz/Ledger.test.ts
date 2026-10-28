@@ -59,6 +59,7 @@ import {
   LedgerSteer,
   LedgerDayCaption,
   withLedgerDayCaption,
+  splitLeadSentence,
 } from './Ledger';
 import { groknight } from '@/buzz/groknight';
 import { identityPalette } from '@/buzz/identity-mark';
@@ -725,6 +726,115 @@ describe('the ledger — machine noise', () => {
     });
     expect(renderedText(renderer).join('')).toContain('failed to push');
     expect(renderer.root.findByType('Pressable').props.accessibilityState.expanded).toBe(true);
+  });
+});
+
+describe('the ledger — the lead sentence keeps Markdown whole', () => {
+  it('splits a plain first sentence from the rest', () => {
+    expect(splitLeadSentence('Found the cause. The relay closes idle sockets.')).toEqual([
+      'Found the cause.',
+      'The relay closes idle sockets.',
+    ]);
+    expect(splitLeadSentence('Done!\nMore detail here.')).toEqual(['Done!', 'More detail here.']);
+    expect(splitLeadSentence('He said "stop." Then left.')).toEqual(['He said "stop."', 'Then left.']);
+  });
+
+  it('keeps a single line without a terminator as the whole lead', () => {
+    expect(splitLeadSentence('No terminator here')).toEqual(['No terminator here', '']);
+    expect(splitLeadSentence('Heads up\nsecond line')).toEqual(['Heads up', 'second line']);
+  });
+
+  it('never splits a fenced code block', () => {
+    const fenced = '```ts\nconst a = 1. b;\n```';
+    expect(splitLeadSentence(fenced)).toEqual(['', fenced]);
+  });
+
+  it('extends the lead to the end of a bold run instead of cutting inside it', () => {
+    expect(
+      splitLeadSentence('**1. Fixes dispatched.** Items 2–9 are in 3 corners. More follows.'),
+    ).toEqual(['**1. Fixes dispatched.**', 'Items 2–9 are in 3 corners. More follows.']);
+    expect(splitLeadSentence('*Shipped. Finally.* Next up is review.')).toEqual([
+      '*Shipped. Finally.*',
+      'Next up is review.',
+    ]);
+  });
+
+  it('never cuts inside inline code or a link', () => {
+    expect(splitLeadSentence('See `a. b` for the fix. Then rerun.')).toEqual([
+      'See `a. b` for the fix.',
+      'Then rerun.',
+    ]);
+    expect(splitLeadSentence('See `foo.ts` for details. Rest.')).toEqual([
+      'See `foo.ts` for details.',
+      'Rest.',
+    ]);
+    expect(splitLeadSentence('Read [the spec. v2](https://x.dev/a) first. Then build.')).toEqual([
+      'Read [the spec. v2](https://x.dev/a) first.',
+      'Then build.',
+    ]);
+    expect(splitLeadSentence('**a. b**c, then more. Rest.')).toEqual([
+      '**a. b**c, then more.',
+      'Rest.',
+    ]);
+  });
+
+  it('leaves a body whose first line is a block construct whole', () => {
+    for (const body of [
+      '1. First step\n2. Second',
+      '- First item. Really.\n- Second',
+      '* Star item. Yes.',
+      '## Status. Good.\nBody.',
+      '> Quoted. Line.\nAfter.',
+      '| Col. A | B |\n| --- | --- |\n| 1 | 2 |',
+      '![Shot. One](https://x.dev/a.png)\nCaption.',
+      '<options>\n<option>Yes. Do it.</option>\n</options>',
+    ]) {
+      expect(splitLeadSentence(body)).toEqual(['', body]);
+    }
+  });
+
+  it('does not cut after a bare number or a short abbreviation', () => {
+    expect(splitLeadSentence('e.g. something else. Rest.')).toEqual([
+      'e.g. something else.',
+      'Rest.',
+    ]);
+    expect(splitLeadSentence('Use a flag, i.e. the quiet one. Rest.')).toEqual([
+      'Use a flag, i.e. the quiet one.',
+      'Rest.',
+    ]);
+    expect(splitLeadSentence('Postgres vs. SQLite is settled. Rest.')).toEqual([
+      'Postgres vs. SQLite is settled.',
+      'Rest.',
+    ]);
+    expect(splitLeadSentence('Logs, traces, etc. are kept. Rest.')).toEqual([
+      'Logs, traces, etc. are kept.',
+      'Rest.',
+    ]);
+    expect(splitLeadSentence('Logs, traces, etc. Then the rest.')).toEqual([
+      'Logs, traces, etc.',
+      'Then the rest.',
+    ]);
+    expect(splitLeadSentence('(1.) Ship it. Rest.')).toEqual(['(1.) Ship it.', 'Rest.']);
+    expect(splitLeadSentence('We shipped version 3. Then rested.')).toEqual([
+      'We shipped version 3.',
+      'Then rested.',
+    ]);
+  });
+
+  it('renders a bold lead with no stray asterisks', () => {
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'ruby',
+        luminous: true,
+        byline: { name: 'Ruby', role: 'agent', stamp: '16:41' },
+        bodyText: '**1. Fixes dispatched.** Items 2–9 are in 3 corners.',
+        bodyTestID: 'ruby',
+      }),
+    );
+    const text = renderedText(renderer).join('');
+    expect(text).toContain('1. Fixes dispatched.');
+    expect(text).toContain('Items 2–9 are in 3 corners.');
+    expect(text).not.toContain('*');
   });
 });
 

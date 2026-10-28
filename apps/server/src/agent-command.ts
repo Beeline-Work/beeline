@@ -585,8 +585,6 @@ export async function createAgentCommand(
     reportSource?: CommandRow;
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
-    /** MCP replies start one hop after their external member, without a helper command. */
-    initialAgentDepth?: 1;
     /** Conversation tags retain chain depth without inheriting assignment privacy. */
     inheritPrivatePayload?: boolean;
     avatarJob?: boolean;
@@ -684,7 +682,7 @@ export async function createAgentCommand(
       ? { text: `${sourceText ?? ''}${note}`.trim(), authorId: SYSTEM_IDENTITY_ID, fromRoomId: input.roomId, kind: 'lifecycle' as const }
       : undefined);
   const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
-    ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : input.initialAgentDepth ?? 0;
+    ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;
   const id = input.id ?? randomBytes(32).toString('hex');
   const minutes = member.rows[0]!.wake_batch_minutes;
@@ -1246,15 +1244,24 @@ export async function routeAgentResult(
       continue;
     }
     // Tags are conversation, never a delegation or an implementer change.
-    const dispatched = await createAgentCommand(db, {
+    const dispatch = (db: SqlDatabase) => createAgentCommand(db, {
       roomId,
       agentId: mention.id,
       sourceMessageId: sourceId,
       parent,
       reason: 'agent_tag',
-      initialAgentDepth: speaker?.initialAgentDepth,
       inheritPrivatePayload: false,
     });
+    // An external member contributes the first hop without owning a command.
+    // Commit that depth with the helper wake so a claim cannot see depth zero.
+    const dispatched = speaker?.initialAgentDepth && !parent
+      ? await db.transaction(async (tx) => {
+        const command = await dispatch(tx);
+        if (command) await tx.query('UPDATE agent_commands SET agent_depth=$2 WHERE id=$1',
+          [command.id, speaker.initialAgentDepth]);
+        return command;
+      })
+      : await dispatch(db);
     if (dispatched) woken.push(mention.handle);
     else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });

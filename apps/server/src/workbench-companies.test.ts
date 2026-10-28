@@ -54,6 +54,27 @@ describe('server-owned Connectors company projection', () => {
     const reordered = projectWorkbenchCompanies({ ...view, connections: [...view.connections].reverse(), apps: [...(view.apps ?? [])].reverse() }, origin, new Map(), 10);
     expect(reordered.rows).toEqual(result.rows);
   });
+  it.each([false, true])('TIKTOK-ROUTE-1: developer secrets keep OAuth discovery available with existing API app=%s', existing => {
+    const view = base([{ ...key('developer', 'tiktok', ['open.tiktokapis.com']), fieldNames: ['client_key', 'client_secret'] },
+      { ...key('login', 'tiktok', []), fieldNames: ['username', 'password'] }],
+      existing ? [app('tiktok', 'TikTok', 'tiktok.com', 'squire-api')] : []);
+    const companies = projectWorkbenchCompanies(view, origin);
+    const row = companies.rows.find(row => row.id === 'tiktok')!;
+    expect(row.items.filter(item => item.target.kind === 'key')).toHaveLength(2);
+    expect(row.alsoAvailable).toEqual(expect.arrayContaining([expect.objectContaining({ appKey: 'tiktok', flow: 'app' })]));
+    const results = companySearchResults({ ...view, companies }, [], 'TikTok', origin);
+    expect(results).toEqual([expect.objectContaining({ company: expect.objectContaining({ appKey: 'tiktok', flow: 'app' }) })]);
+    expect(results[0].companyId).toBeUndefined();
+  });
+  it.each([{ fieldNames: ['access_token'] }, { fieldNames: ['api_key'] }, { fieldNames: [] }])('TIKTOK-ROUTE-1: account credentials and legacy metadata keep OAuth search available (%j)', ({ fieldNames }) => {
+    const view = base([{ ...key('account', 'tiktok', ['open.tiktokapis.com']), fieldNames }],
+      [app('tiktok', 'TikTok', 'tiktok.com', 'squire-api')]);
+    const companies = projectWorkbenchCompanies(view, origin, undefined, undefined, new Set(['tiktok']));
+    expect(companies.rows.find(row => row.id === 'tiktok')?.alsoAvailable)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ appKey: 'tiktok', flow: 'app' })]));
+    expect(companySearchResults({ ...view, companies }, [], 'TikTok', origin))
+      .toEqual([expect.objectContaining({ company: expect.objectContaining({ appKey: 'tiktok', flow: 'app' }) })]);
+  });
   it('Reproduction CONNECTORS-1: places Rooms apps by name among Connected apps', () => {
     const view = { ...base([], [app('notion', 'Notion', 'notion.so')]), helpers: [], aiClients: [
       { clientId: 'muse', name: 'Meta Muse', scopes: ['rooms:read'], connectedAt: 1, lastUsedAt: null },

@@ -83,7 +83,7 @@ describe('the app route order', () => {
     };
   };
 
-  it('reuses a connected Workbench connection before probing OAuth', async () => {
+  it('reuses a connected API credential when OAuth is unsupported', async () => {
     const p = probes({
       workbench: vi.fn(
         async () => ({ transport: 'squire-api', reference: 'vault:resend' }) as const,
@@ -91,7 +91,20 @@ describe('the app route order', () => {
     });
     const decision = await resolveAppRoute({ reconnect: false, noApi: false }, p);
     expect(decision).toMatchObject({ kind: 'route', route: 'workbench', transport: 'squire-api' });
-    expect(p.composio).not.toHaveBeenCalled();
+    expect(p.composio).toHaveBeenCalledTimes(1);
+  });
+
+
+  it.each([false, true])('TIKTOK-ROUTE-1: OAuth supersedes a stored API route on reconnect=%s', async reconnect => {
+    const p = probes({ composio: vi.fn(async () => 'supported' as const) });
+    await expect(resolveAppRoute({ existing: { transport: 'squire-api', state: 'active', hasCredential: true },
+      reconnect, noApi: false }, p)).resolves.toMatchObject({ kind: 'route', transport: 'composio' });
+  });
+  it('TIKTOK-ROUTE-1: OAuth wins over a discovered vault credential', async () => {
+    const p = probes({ workbench: vi.fn(async () => ({ transport: 'squire-api', reference: 'vault:developer' }) as const),
+      composio: vi.fn(async () => 'supported' as const) });
+    await expect(resolveAppRoute({ reconnect: false, noApi: false }, p))
+      .resolves.toMatchObject({ kind: 'route', transport: 'composio' });
   });
 
   it('uses managed OAuth when supported and never probes another path', async () => {
@@ -124,15 +137,15 @@ describe('the app route order', () => {
     ).resolves.toMatchObject({ kind: 'route', route: 'squire-api', transport: 'squire-api' });
   });
 
-  it('lets a person explicitly select an alternative only for a new connection', async () => {
+  it('uses supported OAuth for both new and existing API selections', async () => {
     const p = probes({ composio: vi.fn(async () => 'supported' as const) });
     await expect(resolveAppRoute({ reconnect: false, noApi: false,
-      preferredRoute: 'squire-api' }, p)).resolves.toMatchObject({ transport: 'squire-api' });
-    expect(p.composio).not.toHaveBeenCalled();
+      preferredRoute: 'squire-api' }, p)).resolves.toMatchObject({ transport: 'composio' });
+    expect(p.composio).toHaveBeenCalledTimes(2);
     await expect(resolveAppRoute({ existing: { transport: 'squire-api', state: 'active',
       hasCredential: true }, reconnect: false, noApi: false, preferredRoute: 'composio' }, p))
-      .resolves.toEqual({ kind: 'keep', transport: 'squire-api' });
-    expect(p.composio).not.toHaveBeenCalled();
+      .resolves.toMatchObject({ kind: 'route', transport: 'composio' });
+    expect(p.composio).toHaveBeenCalledTimes(4);
   });
 
 
@@ -277,6 +290,50 @@ describe('connect_app', () => {
         `SELECT route,transport FROM workspace_app_routes ORDER BY created_at, id`,
       )
     ).rows;
+
+  it.each(['TikTok', 'Gmail'])('TIKTOK-ROUTE-1: %s vault setup keys do not hide OAuth or require manual completion', async name => {
+    await connectSquire();
+    const key = name.toLowerCase();
+    await applyVaultList(database, { owner_identity_id: OWNER, machine_id: 'machine-one', workspace_id: WORKSPACE }, [{
+      reference: `vault:${key}-developer`, service: key, label: 'App setup',
+      fieldNames: ['client_key', 'client_secret'], allowedHosts: [`api.${key}.com`], state: 'active', createdAt: 1,
+    }]);
+    const provider = fakeComposio(key);
+    provider.supportsOAuth.mockResolvedValue(true);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const started = await phone.execute('connectWorkbenchApp', { app: name, helperAgentId: HELPER }, OWNER);
+    expect(started.authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
+    expect(provider.link).toHaveBeenCalledWith(OWNER, key);
+    await phone.execute('completeAppSignIn', { appId: started.appId, sessionUri: 'session-fixture' }, OWNER);
+    expect(provider.completeAuth).toHaveBeenCalledWith('session-fixture', OWNER);
+    expect(await readOwnerApps(database, OWNER, provider)).toContainEqual(expect.objectContaining({
+      appId: started.appId, transport: 'composio', status: 'connected',
+    }));
+    expect((await database.query('SELECT reference FROM workspace_connections WHERE owner_identity_id=$1', [OWNER])).rows)
+      .toContainEqual({ reference: `vault:${key}-developer` });
+    console.info(`Reproduction TIKTOK-ROUTE-1: ${name} setup keys → phone Connect → OAuth → authenticated completion → connected; key retained`);
+  });
+
+  it('TIKTOK-ROUTE-1: Connectors search offers OAuth with an account access token', async () => {
+    await connectSquire();
+    await applyVaultList(database, { owner_identity_id: OWNER, machine_id: 'machine-one', workspace_id: WORKSPACE }, [{
+      reference: 'vault:tiktok-account', service: 'tiktok', label: 'Account', fieldNames: ['access_token'],
+      allowedHosts: ['open.tiktokapis.com'], state: 'active', createdAt: 1,
+    }]);
+    const provider = fakeComposio('tiktok');
+    provider.supportsOAuth.mockResolvedValue(true);
+    provider.searchToolkits = vi.fn(async () => []);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.companies?.rows.find(row => row.id === 'tiktok')?.alsoAvailable)
+      .toContainEqual(expect.objectContaining({ appKey: 'tiktok', flow: 'app' }));
+    const results = await phone.execute('searchWorkbenchApps', { query: 'TikTok' }, OWNER);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.company).toMatchObject({ appKey: 'tiktok', flow: 'app' });
+    expect(results[0]?.companyId).toBeUndefined();
+  });
 
   it('distinguishes automatic GitHub discovery from the owner selecting that same connection', async () => {
     await connectSquire();

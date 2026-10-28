@@ -6,7 +6,7 @@ import { recordOnboardingEvent, observeOnboardingMessage, observeOnboardingInvit
 import { waitForConnection } from './connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from './company-mcp-discovery.js';
-import { COMPANY_REGISTRY } from './company-registry.js';
+import { COMPANY_APPS, COMPANY_REGISTRY, resolveCompany } from './company-registry.js';
 import { isAppRegistryPublisher } from './mcp-registry-policy.js';
 import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -9561,7 +9561,16 @@ export class PhoneService {
             : seconds(row.created_at),
       })),
     };
-    const companies = projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database));
+    const ownedCompanies = new Set([...view.connections.map(key => resolveCompany(key).id),
+      ...(view.apps ?? []).filter(app => app.transport === 'squire-api').map(app => resolveCompany(app).id)]);
+    const oauthApps = new Set<string>();
+    if (this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
+      .map(async app => {
+        try {
+          if (await this.composio!.supportsOAuth(composioToolkitForApp(app.appKey))) oauthApps.add(app.appKey);
+        } catch { /* Keep existing routes available when provider discovery is unavailable. */ }
+      }));
+    const companies = projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database), undefined, oauthApps);
     const keys = companies.rows.flatMap(company => {
       const known = companyForMcp(company.domain ?? company.id);
       return known ? [`company:${known.id}`, `search:${known.id}`] : [];

@@ -28,14 +28,14 @@ export const OFFICIAL_REGISTRY_APPS: Readonly<Record<string, string>> = {
 /**
  * The one front door for apps (`@beeline/api-contract/app-connections`).
  *
- * Route selection keeps an existing app or key first. `connectApp` then
+ * Route selection keeps managed sign-ins and official MCP connections; OAuth
+ * takes priority over a stored API route when the app supports it. `connectApp` then
  * installs an official Registry MCP for a new Stripe/Linear connection;
  * `resolveAppRoute` handles Composio, Squire API, then Squire browser.
  * Every decision it makes is written to `workspace_app_routes` and logged.
  * Two rules keep a route from being skipped silently:
- *   - an app that already has a route keeps it — an error or a refused use is
- *     reported on THAT route, never answered by trying the next one; an
- *     explicit reconnect also keeps that route;
+ *   - an existing managed sign-in or MCP route stays selected; a stored Squire
+ *     API route can become OAuth after a successful support check;
  *   - the Squire browser is reached only from the Squire API route, on the
  *     explicit fact that the app has no API.
  * An OAuth support check that fails is `unavailable`, not "unsupported".
@@ -85,7 +85,9 @@ export async function resolveAppRoute(
   probes: AppRouteProbes,
 ): Promise<AppRouteDecision> {
   const existing = input.existing?.state === 'active' ? input.existing : undefined;
-  if (existing) {
+  // OAuth routes share the established sign-in decision below, including its wording.
+  if (existing && !(existing.transport === 'squire-api' && !input.noApi &&
+      await probes.composio?.() === 'supported')) {
     if (!input.noApi) return { kind: 'keep', transport: existing.transport };
     if (existing.transport !== 'squire-api')
       return {
@@ -110,7 +112,7 @@ export async function resolveAppRoute(
     };
   }
   const backing = await probes.workbench();
-  if (backing)
+  if (backing && !(backing.transport === 'squire-api' && await probes.composio?.() === 'supported'))
     return {
       kind: 'route',
       route: 'workbench',
@@ -121,7 +123,7 @@ export async function resolveAppRoute(
           : `already connected in Connectors through vault key ${backing.reference}`,
       backing,
     };
-  if (input.preferredRoute === 'squire-api')
+  if (input.preferredRoute === 'squire-api' && await probes.composio?.() !== 'supported')
     return { kind: 'route', route: 'squire-api', transport: 'squire-api',
       reason: 'person selected Trusty Squire for this new connection' };
   const oauth = await probes.composio?.() ?? 'unavailable';

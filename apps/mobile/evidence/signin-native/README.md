@@ -1,8 +1,10 @@
 # Sign-in investigation checkpoint
 
-Brief revision: 1. Draft implementation; native acceptance work remains.
+Brief revision: 2. Local merge proof; released Play-device proof is pending and owned by Ruby.
 
-Checks at checkpoint: root npm run typecheck passed; auth suite passed (269 tests); targeted mobile sign-in/onboarding suites passed (28 tests); git diff --check passed. Device proof has not run.
+Root typecheck, auth suites, targeted mobile sign-in/onboarding suites, dead-code and native fingerprint checks pass. Device proof has not run; Ruby's revised execution decision makes it a post-release follow-up, not a merge gate.
+
+No sign-in screen layout, copy, styling or theme behavior changed. Bone/Obsidian screenshots are not required under revision 2 because the sign-in UI is unchanged. Only Android's external native-picker/browser authentication surface changes.
 
 Native compilation now passes: after `npx expo prebuild --platform android --no-install`, run `./gradlew :google-account-picker:compileReleaseKotlin --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx3g` from apps/mobile/android. Gradle reported BUILD SUCCESSFUL. This verifies the real Credential Manager dependency/API integration compiles; it is not a Play-signed installation or picker recording.
 
@@ -15,6 +17,9 @@ Delivery validation: the bundled browser stand-in in sources/test/onboarding-goo
 - R-signin-dismiss: run Google sign-in; browser resolves dismiss immediately; completion remains pending for four seconds. Before: browser_canceled after roughly two seconds. After: same recovery ticket returned. Mobile regression observed failing before the fix and passing afterward.
 - R-signin-entry: exchange succeeds, GitHub repository discovery fails. Entry must still navigate to /beeline/channels. Also restore an already saved session before polling an obsolete consumed Google continuation. Both rendered onboarding regressions pass. These are stand-ins; the production trail alone cannot prove which interruption affected each phone.
 - R-signin-native: native picker returns a nonce-bound signed Google ID token; server validates it and issues the existing recoverable ticket. HTTP route tests pass for recovery, replay, tenant isolation, wrong nonce/issuer/audience/authorized party and wrong recovery secret. Real picker/device proof remains outstanding.
+- R-signin-fallback: a failed native attempt must open the existing browser flow and return its ticket. Regressions cover unregistered signing keys, DEVELOPER_ERROR, no Google account, native cancellation, unexpected native errors, missing start/complete routes, missing Android-client configuration, malformed responses, rejected proofs and failed cleanup. Native/browser recovery secrets are distinct, preventing a retained native recovery row from rejecting browser startup. The HTTP regression also starts a browser flow after native cancellation. A lost response after committed native completion recovers that ticket without opening a browser.
+
+Before/after local proof for R-signin-fallback: temporarily bundle the previous committed session module with the new native-failure browser harness. Its visible result is failed recovery (recovered=false, reads=1), and the test fails. Restore the fixed module and rerun that same harness: recovered=true, reads=4, browserOpened=true. The screenshot stand-ins are .beeline-proof/signin-before/google-native-fallback.png and .beeline-proof/signin/google-native-fallback.png. This demonstrates the production session function in a browser harness with a failing native adapter, not an Android system picker or a claim of live Google authentication.
 
 ## Production evidence
 
@@ -50,12 +55,11 @@ The EAS upload certificate SHA-1 is A1:2B:F1:07:C8:C1:CC:61:E7:46:2C:BB:CC:73:11
 
 EAS API inspection found the latest finished Android builds (version codes 39, 38, 37) all at commit b52aa384653a6e185683a9dd2b964291cb935805, which predates this native module. Those builds cannot demonstrate this picker. Store publishing requires owner dispatch naming a track under docs/release-pipeline.md; no store publication or release was performed here.
 
-## Work remaining
+## Post-release proof and merge
 
-- Complete exact root-cause attribution for each production signed-in trail if additional diagnostics establish it; current code fixes two reproducible entry hazards without pretending they prove a particular production exception.
-- Exercise the compiled native Kotlin module in a Play-signed internal-track build. Runtime pins and native fingerprints are updated for the native module; the picker requires a new Android store build. The release policy requires owner dispatch naming the internal track before publishing it.
-- Before/after Android recordings and Bone/Obsidian screenshots of the actual unchanged sign-in screen.
-- Demonstrate entry using built app/service under the reproduction IDs, including account linking and recovery.
-- Native cancellation revokes recovery and has a passing regression. Verify interrupted completion further on the device.
-- Re-run affected checks after subsequent edits. Commit/push only the assigned feature branch, rebase remote branch before push, open PR with exact SQL/counts and required Reproduced/Demonstrated sections. No merge or release is authorized by this checkpoint.
+Ruby owns the pending Play-signed tap → system picker → app recording after release, including live linking/recovery checks. No premerge internal-track build, server preview, publishing or deployment is authorized. A new Android store build remains necessary to ship the module; OTA alone cannot supply it.
+
+The production event trails confirm affected sessions but do not reveal their precise device-side exception. Local regressions prove and fix the repository-discovery entry barrier and stale-continuation restoration barrier. Do not claim either exception is known to have occurred on a particular external phone.
+
+After local proof, mark the PR ready and obtain independent review. Merge only through the normal live checks, exact-head yes and no-hold gate. The nightly release supplies the app and server configuration together; post-release conversion measurement remains with the value loop.
 

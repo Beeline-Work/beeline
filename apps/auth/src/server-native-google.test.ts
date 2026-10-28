@@ -52,4 +52,18 @@ describe('Native Android Google sign-in', () => {
     })).statusCode).toBe(400);
     expect((await post('/auth/oidc/native/complete', { state: config.state, recoveryToken, idToken })).statusCode).toBe(200);
   });
+
+  it('R-signin-fallback: starts browser sign-in while a canceled native recovery row still exists', async () => {
+    await start();
+    await post('/auth/oidc/completion/cancel', { recoveryToken });
+    const browserSecret = 'b'.repeat(43);
+    const query = new URLSearchParams({
+      app_redirect: `${alphaTenant.origin}/auth/oidc/mobile-callback`,
+      app_state: 's'.repeat(43),
+      app_recovery_challenge: createHash('sha256').update(browserSecret).digest('hex'),
+    });
+    const response = await app.inject({ method: 'GET', url: `/auth/oidc/start?${query}`, headers: { host: alphaTenant.host } });
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toContain('/authorize');
+  });
 });

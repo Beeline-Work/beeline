@@ -245,7 +245,11 @@ OAuth client IDs registered in the same Google Cloud project for
 `app.usebeeline`, including the Play app-signing and EAS development SHA-1
 certificates. Never substitute an Android client ID for the server's web
 client ID. The native start route fails closed until the Android clients are
-configured. Browser sign-in on iOS and existing Android binaries is unchanged.
+configured. Any native-picker or native-route failure falls back to browser
+Google sign-in, including unregistered test signing keys and servers without
+these routes or client configuration. Native and browser attempts use separate
+recovery secrets, so a failed native flow cannot block the browser retry.
+Browser sign-in on iOS and existing Android binaries is unchanged.
 Shipping the picker requires a new Android store build, not an OTA alone.
 
 Environment naming: `BEELINE_AUTH_TENANTS_JSON`, `BEELINE_AUTH_SETUP_TOKEN`, and

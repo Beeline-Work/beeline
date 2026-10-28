@@ -88,41 +88,55 @@ export async function runGoogleSignIn(input: {
   const redirect = googleSignInRedirectUri();
   const base = getBuzzRuntimeConfig().monolithUrl;
   if (googleAccountPicker) {
+    // A server keeps the native recovery hash even after cancellation. Give
+    // native and browser ceremonies separate secrets so fallback cannot hit
+    // that unique hash, even when native cleanup cannot reach the server.
+    const nativeToken = btoa(String.fromCharCode(...sha256(utf8ToBytes(`beeline-google-native:${input.recoveryToken}`))))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    const nativePending = { ...pending, recoveryToken: nativeToken };
+    let nativeStarted = false;
+    let completionAttempted = false;
     try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nativePending));
       const start = await googleAuthFetch(`${base}/auth/oidc/native/start`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ recoveryChallenge: bytesToHex(sha256(utf8ToBytes(input.recoveryToken))),
+        body: JSON.stringify({ recoveryChallenge: bytesToHex(sha256(utf8ToBytes(nativeToken))),
           ...(input.funnelContext ? { funnel: JSON.stringify(input.funnelContext) } : {}) }),
       });
       if (!start.ok) throw new OidcBindError('native_google_unavailable', 'Google sign-in could not start. Try again.');
+      nativeStarted = true;
       const config = await start.json() as { state: string; nonce: string; serverClientId: string };
       if (!TOKEN.test(config.state) || !TOKEN.test(config.nonce) ||
           typeof config.serverClientId !== 'string' || !config.serverClientId.endsWith('.apps.googleusercontent.com'))
         throw new OidcBindError('invalid_response', 'Invalid Google sign-in configuration');
       const idToken = await googleAccountPicker.signIn(config.serverClientId, config.nonce);
+      completionAttempted = true;
       const complete = await googleAuthFetch(`${base}/auth/oidc/native/complete`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ state: config.state, recoveryToken: input.recoveryToken, idToken }),
+        body: JSON.stringify({ state: config.state, recoveryToken: nativeToken, idToken }),
       });
       // A dropped response can follow a committed ticket. Recover the same
       // one-use proof; neither account linking nor session exchange changes.
       if (!complete.ok) throw new OidcBindError('invalid_oidc_proof', 'Google sign-in could not finish. Try again.');
-      return input.recoveryToken;
-    } catch (error) {
-      if (!(error instanceof OidcBindError) && (error as { code?: string })?.code === 'GOOGLE_CANCELLED') {
-        await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ recoveryToken: input.recoveryToken }),
-        }).catch(() => undefined);
-        await clearPendingGoogleSignIn();
-        throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
-      }
-      // Preserve the recovery secret if the complete response was interrupted.
-      if (!(error instanceof OidcBindError)) {
-        const recovered = await completion(pending).catch(() => null);
+      if ((await complete.json() as { completed?: unknown }).completed !== true)
+        throw new OidcBindError('invalid_response', 'Invalid Google sign-in completion');
+      return nativeToken;
+    } catch {
+      // A dropped response may follow a committed ticket. Recover it before
+      // falling back, without spending a second sign-in proof for that account.
+      if (completionAttempted) {
+        const recovered = await completion(nativePending).catch(() => null);
         if (recovered) return recovered;
       }
-      throw error;
+      if (nativeStarted) {
+        await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ recoveryToken: nativeToken }),
+        }).catch(() => undefined);
+      }
+      // Missing routes/configuration and every native failure retain browser
+      // sign-in, including test copies whose signing keys are unregistered.
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(pending));
     }
   }
   const url = new URL('/auth/oidc/start', base);

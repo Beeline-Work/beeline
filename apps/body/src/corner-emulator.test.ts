@@ -119,6 +119,19 @@ async function record(env: NodeJS.ProcessEnv, cornerId: string): Promise<KeptCor
 }
 
 describe('corner emulator lifetime', () => {
+  it('returns the emulator KVM failure through the supervisor socket before cleaning up', async () => {
+    const { socketPath, host } = await layout('diagnostic');
+    await writeFile(host.emulatorBinary, '#!/bin/sh\necho "/dev/kvm permission denied for this sandbox user" >&2\nexit 1\n', {mode:0o755});
+    const adb = join(host.androidHome, 'platform-tools', 'adb');
+    await mkdir(join(host.androidHome, 'platform-tools'), {recursive:true});
+    await writeFile(adb, '#!/bin/sh\nif [ \"$1\" = start-server ]; then exit 0; fi\nexit 1\n', {mode:0o755});
+    await listenCornerEmulator(socketPath, undefined, host);
+    const result = JSON.parse((await turn(socketPath, 'corner-keep')).response);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('/dev/kvm permission denied for this sandbox user');
+    console.info('Reproduction KVM-diagnostic: supervisor socket returns the emulator permission failure');
+  }, 15_000);
+
   it('keeps the leased emulator and its lease after the turn that started it exits', async () => {
     const cornerId = 'corner-keep';
     const { supervisor, socketPath, env, host } = await layout('keep');

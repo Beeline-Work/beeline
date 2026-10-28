@@ -392,7 +392,19 @@ function scan(files: Map<string, string>): Entry[] {
         : undefined;
     if (!query) return { literals: [], parts: [] };
     const parameters = ts.isCallExpression(node) ? array(node.arguments[1]) : [];
-    const tokens = sqlTokens(render(query));
+    const queryText = render(query);
+    // Command rows are transport receipts. Their INSERT values (depth, wake
+    // context and private payload) are not returned System phrase expressions.
+    // Explicit SQL phrase projections remain locked, as do returned JS strings.
+    let commandOwner: ts.Node | undefined = node;
+    while (commandOwner && !ts.isFunctionDeclaration(commandOwner)) commandOwner = commandOwner.parent;
+    if (commandOwner && ts.isFunctionDeclaration(commandOwner) &&
+        commandOwner.name?.text === 'createAgentCommand' &&
+        commandOwner.getSourceFile().fileName === resolve(server, 'src/agent-command.ts') &&
+        /\b(?:FROM|INTO)\s+agent_commands\b/i.test(queryText) &&
+        /\b(?:SELECT|RETURNING)\s+\*/i.test(queryText))
+      return { literals: [], parts: [] };
+    const tokens = sqlTokens(queryText);
     const literals: string[] = [];
     const parts: ts.Node[] = [];
     for (const token of wordingTokens(tokens)) {
@@ -732,18 +744,15 @@ function scan(files: Map<string, string>): Entry[] {
       : [node];
   const phraseParts = (node: ts.Node): ts.Node[] =>
     ts.isObjectLiteralExpression(node)
-      ? node.properties.flatMap((property) =>
-          ts.isSpreadAssignment(property)
-            ? [property.expression]
-            : ts.isShorthandPropertyAssignment(property)
-              ? [property.name]
-              : ts.isPropertyAssignment(property) &&
-                  /^(subject|verb|object|consequence|attribution|text|body|title|description|label|name|ask|card|cardType|card_type)$/.test(
-                    property.name.getText(),
-                  )
-                ? [property.initializer]
-                : [],
-        )
+      ? node.properties.flatMap((property) => {
+          if (ts.isSpreadAssignment(property)) return [property.expression];
+          if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) return [];
+          const name = property.name;
+          const transport = (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+            /^(id|roomId|authorId|kind|scheduleId|payload|subscriptionPrompt|subscriptionWorkflowSlug|wakes|presentation|cardType|card_type|requestId|commandId|durableFact|causeId|afterMessageId)$/.test(name.text);
+          if (transport) return [];
+          return [ts.isPropertyAssignment(property) ? property.initializer : name];
+        })
       : [node];
   const forward = (node: ts.Node, parts: readonly ts.Node[]) => {
     const owner = owners.get(node);
@@ -986,9 +995,9 @@ function scan(files: Map<string, string>): Entry[] {
     const args = ts.isCallExpression(node) ? invocationArguments(node) : [];
     // The database argument is transport, not a phrase dependency.
     if (ts.isCallExpression(node) && kind === 'systemLine') {
-      if (args[1]) wordingParts(args[1]).forEach(collect);
+      if (args[1]) phraseParts(args[1]).forEach(collect);
     } else if (ts.isCallExpression(node) && kind === 'restateSystemLine') {
-      if (args[2]) wordingParts(args[2]).forEach(collect);
+      if (args[2]) phraseParts(args[2]).forEach(collect);
     } else if (writes.has(node)) writes.get(node)!.parts.forEach(collect);
     else if (kind === 'wrapper' && ts.isCallExpression(node)) {
       const indices = callableDeclarations(node.expression).flatMap((declaration) => [
@@ -1588,6 +1597,7 @@ it.each([
 it.each([
   "return 'visible callback words';",
   "let text='visible callback words'; text += ' changed'; return text;",
+  "return (await db.query(\"SELECT 'visible callback words' AS text FROM agent_commands\")).rows[0].text;",
 ])('keeps returned command callback wording and mutations locked: %s', (body) => {
   const files = new Map([
     [
@@ -1736,3 +1746,26 @@ it('accepts local root renames for displayed member access and method calls', ()
   const renamed = new Map([...base].map(([path, text]) => [path, text.replaceAll('person', 'recipient')]));
   expect(() => enforce(scan(renamed), scan(base))).not.toThrow();
 });
+
+// Reproduction freeze: command depth and receipt routing are not displayed.
+it.each([
+  ["causeId:'old-receipt'", "causeId:'new-receipt'"],
+  ["wakes:['old-agent']", "wakes:['new-agent']"],
+  ["payload:{entry:'automatic'}", "payload:{entry:'manual'}"],
+])('freeze: accepts System transport metadata changes: %s', (before, after) => {
+  const base = fixture(`line(db,{verb:'joined',${before}});`);
+  const changed = new Map([...base].map(([path,text]) => [path,text.replace(before,after)]));
+  expect(() => enforce(scan(changed),scan(base))).not.toThrow();
+  const visible = new Map([...changed].map(([path,text]) => [path,text.replaceAll("verb:'joined'", "verb:'left'")]));
+  expect(() => enforce(scan(visible),scan(base))).toThrow(failure);
+});
+
+it('freeze: accepts real shared command depth metadata', () => {
+  const base=sources(resolve(server,'src'));
+  const path=resolve(server,'src/agent-command.ts');
+  const before='? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0';
+  expect(base.get(path)).toContain(before);
+  const changed=new Map(base);
+  changed.set(path,base.get(path)!.replace(before,'? parent.agent_depth : nextAgentDepth(parent.agent_depth) : input.initialAgentDepth ?? 0'));
+  expect(() => enforce(scan(changed),scan(base))).not.toThrow();
+},60_000);

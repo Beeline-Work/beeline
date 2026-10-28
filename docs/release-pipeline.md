@@ -99,6 +99,12 @@ non-`none` store track always selects `mobile-native`. Automatic selection with
 Explicit recovery selection (`all` or `mobile-native`) can still build binaries
 without submitting them to a store.
 
+On pull requests, NATIVE FINGERPRINT also compares the committed runtime pins
+against the PR base with `scripts/pr-store-build.mjs`. A changed pin adds a
+warning annotation and a Store build required job summary naming the affected
+platforms. This notice is informational and does not block merge; it brings
+the store-track decision into PR review before release planning.
+
 The per-platform native runtime pins couple OTA and store delivery: when
 `apps/mobile/native-fingerprint.json` changes `android.runtimeVersion` or
 `ios.runtimeVersion`, planning requires `mobile-native` plus a non-`none` store

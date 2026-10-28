@@ -876,6 +876,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Flag store builds before merge
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/pr-store-build.mjs "$PR_BASE_SHA"
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: 'true'
@@ -970,7 +978,7 @@ jobs:
       - name: Test iOS upload identity and Apple processing verification
         run: node --test scripts/ios-store-build.test.mjs
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs
+        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
       # every pull request (a test can be deleted without touching a workflow);
       # here it is where a workflow author gets the message.

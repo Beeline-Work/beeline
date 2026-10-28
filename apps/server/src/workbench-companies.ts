@@ -1,3 +1,4 @@
+import { isAppApiCredential } from './app-api-credential.js';
 import type {
   CompanyItem, CompanySuggestion, ConnectorViewState, WorkbenchCompany, WorkbenchCompanyIndex, WorkbenchView, WorkbenchAppSearchResult,
 } from '@beeline/api-contract/workbench';
@@ -10,6 +11,16 @@ type MutableItem = { -readonly [K in keyof CompanyItem]: CompanyItem[K] };
 type MutableCompany = { -readonly [K in keyof Omit<WorkbenchCompany, 'items' | 'machines' | 'alsoAvailable'>]: WorkbenchCompany[K] } & {
   items: MutableItem[]; machines: WorkbenchCompany['machines']; alsoAvailable: CompanySuggestion[];
 };
+/** Developer setup secrets do not make the owner's app account connected. */
+function hasAccountRoute(row: Pick<WorkbenchCompany, 'items'>, view: WorkbenchView): boolean {
+  const api = row.items.some(item => item.target.kind === 'key' &&
+    isAppApiCredential(view.connections.find(key => key.connectionId === item.id) ?? {}));
+  return api || row.items.some(item => {
+    const target = item.target;
+    return target.kind !== 'key' && (target.kind !== 'app' ||
+      view.apps?.find(app => app.appId === target.appId)?.transport !== 'squire-api');
+  });
+}
 const collator = new Intl.Collator('en', { sensitivity: 'base' });
 const sectionRank = { attention: 0, signin: 1, apps: 2, keys: 3 };
 const popularityCache = new WeakMap<SqlDatabase, { until: number; value: Promise<ReadonlyMap<string, number>> }>();
@@ -227,8 +238,9 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     }).join(' · ');
     const existing = appKeys.get(row.id);
     row.alsoAvailable = COMPANY_APPS.filter(app => resolveCompany({ domain: app.domain }).id === row.id
-      && app.appKey !== row.id && app.name.toLowerCase() !== row.name.toLowerCase()
-      && !existing?.has(app.appKey) && row.id !== 'squire').map(app => suggestion(app, origin));
+      && (app.appKey !== row.id && app.name.toLowerCase() !== row.name.toLowerCase()
+        || !hasAccountRoute(row, view))
+      && (!existing?.has(app.appKey) || !hasAccountRoute(row, view)) && row.id !== 'squire').map(app => suggestion(app, origin));
     row.items.sort((a, b) => ({ connection: 0, login: 1, key: 2 })[a.kind] - ({ connection: 0, login: 1, key: 2 })[b.kind]
       || collator.compare(a.title, b.title) || a.id.localeCompare(b.id));
   }
@@ -253,7 +265,8 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
 export function companySearchResults(view: WorkbenchView, candidates: WorkbenchAppSearchResult,
   query: string, origin: string): WorkbenchAppSearchResult {
   const index = view.companies!; const q = query.toLowerCase();
-  const seen = new Set(index.rows.map(r => r.kind === 'sign-in-service' ? 'squire' : r.id));
+  const seen = new Set(index.rows.filter(row => hasAccountRoute(row, view))
+    .map(r => r.kind === 'sign-in-service' ? 'squire' : r.id));
   const existing: WorkbenchAppSearchResult[number][] = index.rows.filter(r => r.name.toLowerCase().includes(q)
     || r.items.some(i => i.title.toLowerCase().includes(q) || i.title.toLowerCase().includes(humanize(query).toLowerCase())) || r.alsoAvailable.some(a => a.appName.toLowerCase().includes(q)))
     .map(r => ({ appKey: r.id, name: r.name, domain: r.domain, companyId: r.id, mark: r.logo, description: r.subtitle }));

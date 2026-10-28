@@ -59,7 +59,7 @@ describe('public invite website', () => {
       origin: 'https://evil.test', pathname: '/oauth/tiktok/callback/', hash: '#https://evil.test', replace };
     Function('location', script!)(location);
     expect(replace).toHaveBeenCalledTimes(1);
-    expect(replace).toHaveBeenCalledWith(`https://backend.composio.dev/api/v3/toolkits/auth/callback${carried}`);
+    expect(replace).toHaveBeenCalledWith(`https://backend.composio.dev/api/v1/auth-apps/add${carried}`);
   });
 
   it('renders one monochrome join action without exposing the invite token', () => {

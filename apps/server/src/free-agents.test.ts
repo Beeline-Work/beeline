@@ -224,6 +224,24 @@ describe('free starter agents', () => {
     await expect(daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'wrong' } as never, beebee)).rejects.toThrow();
   });
 
+  it('starts playback on the first Room read only for the onboarding person', async () => {
+    const workspace = await phone.execute('createWorkspace', { name: 'First entry' }, OWNER);
+    const onboarding = new StarterOnboardingService(db);
+    const open = vi.spyOn(onboarding, 'open').mockImplementation(() => {});
+    phone.setStarterOnboarding(onboarding);
+    await phone.readRoom(workspace.roomId!, OWNER);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(workspace.roomId!, OWNER);
+    open.mockClear();
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`, [workspace.id, workspace.roomId, FRIEND]);
+    await phone.readRoom(workspace.roomId!, FRIEND);
+    expect(open).not.toHaveBeenCalled();
+    await finishWelcome(workspace.roomId!, OWNER);
+    await phone.readRoom(workspace.roomId!, OWNER);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('offers the three jobs and lets Something else await the composer', async () => {
     const workspace = await phone.execute('createWorkspace', { name: 'Welcome' }, OWNER);
     await finishWelcome(workspace.roomId!, OWNER);

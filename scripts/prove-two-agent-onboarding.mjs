@@ -31,7 +31,8 @@ try {
   phone.setFreeAgents(free);
   phone.setStarterOnboarding(onboarding);
   const workspace = await phone.execute('createWorkspace', { name: 'Maya’s team', timeZone: 'America/New_York' }, owner);
-  await onboarding.enter(workspace.roomId, owner);
+  await phone.readRoom(workspace.roomId, owner);
+  await db.backgroundWork.drain();
   const snapshot = async name => {
     const view = await phone.readRoom(workspace.roomId, owner);
     await writeFile(`${output}/${name}.json`, JSON.stringify(view, null, 2));

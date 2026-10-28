@@ -497,6 +497,7 @@ function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSum
   };
 }
 interface RoomReadRow {
+  starter_onboarding_pending: boolean;
   room: RoomRow & {
     viewer_push_muted: boolean;
     workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
@@ -2142,7 +2143,7 @@ export class PhoneService {
     };
     const rows = await measured('data', this.roomRows(roomId, viewerId));
     if (!rows) return null;
-    this.starterOnboarding?.open(roomId, viewerId);
+    if (rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
     const room = rows.room;
     const corner = rows.corner;
     const parent = corner?.parent ?? undefined;
@@ -2985,6 +2986,9 @@ export class PhoneService {
            ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
          SELECT
+           EXISTS(SELECT 1 FROM starter_onboarding_runs onboarding
+             WHERE onboarding.room_id=authorized_room.id AND onboarding.user_id=$2
+               AND onboarding.status<>'complete') starter_onboarding_pending,
            (to_jsonb(authorized_room) - 'github_installation_id')
              || jsonb_build_object(
                'github_installation_id',authorized_room.github_installation_id::text

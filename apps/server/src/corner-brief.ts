@@ -71,7 +71,10 @@ export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = 
   const standIn = proofText.split(/(?=^#{1,6}[ \t]+)/m).some((section) =>
     /(?:^|\n)[ \t]*(?:[-*>][ \t]*)?Reproduction not feasible:[ \t]*\S[^\n]*?(?:[ \t;]+|\n[\s\S]*?)Stand-in:[ \t]*\S/i.test(section),
   );
-  return repositoryBacked && draft.repositoryWork !== false && bugfix && !reproduction && !reproductionSection && !standIn
+  const identifiedStandIn = proofText.split(/(?=^#{1,6}[ \t]+)/m).some(section =>
+    /(?:^|\n)[ \t]*(?:[-*>][ \t]*)?Reproduction[ \t]+(?!not[ \t]+feasible)[a-z0-9_-]+:?[ \t]*\n[ \t]*(?:[-*>][ \t]*)?Stand-in:[ \t]*\S/i.test(section),
+  );
+  return repositoryBacked && draft.repositoryWork !== false && bugfix && !reproduction && !reproductionSection && !standIn && !identifiedStandIn
     ? ['Repository bugfix brief needs Reproduction <id>: real-target steps and failure, or Reproduction not feasible: reason; Stand-in: closest check. Done repeats that check successfully.'] : [];
 }
 

@@ -578,6 +578,23 @@ describe('private command tools', () => {
       holds: [{ id: 'hold-1', holderId: 'person-1', holderName: 'Owner', setAt: '2026-10-10T00:00:00Z' }],
     });
   });
+  it.each(['oldest', 'newest'])('read-limit honors the requested message count from %s', async (from) => {
+    const items = Array.from({ length: 9 }, (_, index) => ({
+      id: `message-${index}`, cursor: `${index + 1},${'a'.repeat(64)}`,
+      authorId: 'agent', createdAt: index, type: 'message', body: `body ${index}`, attachments: [],
+    }));
+    const door = await daemonDoor(undefined, items);
+    const response = await callTool(door.origin,
+      { facet: 'messages', address: CORNER, from, limit: 5 }, { name: 'read' });
+    expect(response.result?.isError).not.toBe(true);
+    const page = JSON.parse(response.result!.content[0]!.text);
+    expect(page.items.map((item: { id: string }) => item.id)).toEqual(
+      (from === 'newest' ? items.slice(-5) : items.slice(0, 5)).map(item => item.id));
+    expect(page.limits.items).toBe(5);
+    expect(page.next).toEqual(from === 'newest' ? { before: items[4]!.cursor } : { after: items[4]!.cursor });
+    expect(door.calls.find(call => call.operation === 'getRoomConversation')).toMatchObject({ limit: 6 });
+  });
+
   it('passes a transcript cursor straight to the target corner read', async () => {
     const door = await daemonDoor();
     const response = await callTool(

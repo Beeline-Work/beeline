@@ -1,6 +1,7 @@
 import {
   ARTIFACT_MIME_TYPES,
   INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
+  INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS,
   INSTITUTIONAL_HISTORY_RESULT_MIN,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
 } from '@beeline/api-contract/daemon';
@@ -623,7 +624,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "messageId": {"type": "string"},
         "attachmentId": {"type": "string"},
         "slug": {"type": "string"},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Requested count, 1–100. messages returns at most 8, fewer when limit is smaller."},
         "from": {"type": "string", "enum": ["oldest", "newest"]},
         "activeOnly": {"type": "boolean"},
         "pullRequest": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
@@ -641,9 +642,9 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "scope": {"type": "string", "enum": ["history", "memory"]},
         "query": {
           ...INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
-          "description": "1–500 characters."
+          "description": `1–${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS} characters (Unicode; at most ${INSTITUTIONAL_SEARCH_QUERY_MAX_CHARACTERS * 4} UTF-8 bytes); same limit for history and memory.`
         },
-        "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX}
+        "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX, "description": `Integer ${INSTITUTIONAL_HISTORY_RESULT_MIN}–${INSTITUTIONAL_HISTORY_RESULT_MAX}; default ${INSTITUTIONAL_HISTORY_RESULT_MAX}.`}
       },
       "required": ["scope", "query"],
       "additionalProperties": false
@@ -809,7 +810,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "revise_corner",
-    "description": "Use metadata to rename or set reviewer; install_brief explicitly installs the first nested brief with a name; brief replaces a complete nested brief with expectedRevision and change. Supply address. Parent and ancestor restrictions remain enforced.",
+    "description": "Supply address. metadata requires name; install_brief requires name and brief. brief requires top-level expectedRevision and change, plus nested brief: {spec, repositoryWork?, approval?: {sourceMessageId}, attachments?}. Put Reproduction <id>: steps, or Reproduction not feasible: reason; Stand-in: check in spec. Parent and ancestor restrictions remain enforced.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -867,18 +868,22 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       },
       "required": ["address", "action"],
       "additionalProperties": false,
-      "allOf": [{"anyOf": [
+      // Keep action conditions out of anyOf: schema-to-TypeScript renderers
+      // otherwise expose only the discriminator and hide the shared fields.
+      "allOf": [
         {
-          "properties": {"action": {"const": "metadata"}},
-          "required": ["action", "name"],
-          "not": {"required": ["brief"]}
+          "if": {"properties": {"action": {"const": "metadata"}}, "required": ["action"]},
+          "then": {"required": ["name"], "not": {"required": ["brief"]}}
         },
         {
-          "properties": {"action": {"const": "brief"}},
-          "required": ["action", "brief", "expectedRevision", "change"]
+          "if": {"properties": {"action": {"const": "brief"}}, "required": ["action"]},
+          "then": {"required": ["brief", "expectedRevision", "change"]}
         },
-        {"properties": {"action": {"const": "install_brief"}}, "required": ["action", "brief", "name"]}
-      ]}]
+        {
+          "if": {"properties": {"action": {"const": "install_brief"}}, "required": ["action"]},
+          "then": {"required": ["brief", "name"]}
+        }
+      ]
     }
   },
   {

@@ -2910,7 +2910,7 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));
     const branches = tool.name === 'revise_corner'
-      ? (tool.inputSchema.allOf as JsonObject[])[0]!.anyOf
+      ? (tool.inputSchema.allOf as JsonObject[]).filter(schema => Check(asObject(schema.if), args)).map(schema => schema.then)
       : tool.inputSchema.anyOf;
     const diagnosticSchema = tool.name === 'wake' || tool.name === 'revise_corner'
       ? { ...tool.inputSchema, allOf: undefined, anyOf: (branches as JsonObject[]).filter(schema => {
@@ -3536,16 +3536,17 @@ async function executeAgentOperation(
         throw new Error('offset requires transcript mode and a nonnegative safe integer');
       // The server authorizes each read against the target corner: a member of
       // the corner or of its parent Room reaches it; anyone else is refused.
+      const itemLimit = Math.min(typeof args.limit === 'number' ? args.limit : 8, 8);
       if (args.mode === 'transcript' && args.from === 'newest') {
         const page = (await daemonExecute('getRoomConversation', {
           roomId: args.cornerId,
-          limit: 9,
+          limit: itemLimit + 1,
           window: 'recent',
           ...(args.before ? { before: args.before } : {}),
         })) as unknown as RoomConversationResult;
         // Walk back from the newest message; return the kept rows in transcript order.
         const items: Record<string, unknown>[] = [];
-        for (const item of page.items.slice(-8).reverse()) {
+        for (const item of page.items.slice(-itemLimit).reverse()) {
           let body = item.body.slice(0, 1000);
           const row = {
             id: item.id,
@@ -3569,20 +3570,20 @@ async function executeAgentOperation(
           cornerId: args.cornerId,
           items,
           ...(oldest && page.items.length > items.length ? { next: { before: oldest } } : {}),
-          limits: { items: 8, bodyChars: 1000, responseChars: 12000 },
+          limits: { items: itemLimit, bodyChars: 1000, responseChars: 12000 },
         });
       }
       if (args.mode === 'transcript') {
         const page = (await daemonExecute('getRoomConversation', {
           roomId: args.cornerId,
-          limit: 9,
+          limit: itemLimit + 1,
           ...(args.after ? { after: args.after } : { window: 'earliest' }),
         })) as unknown as RoomConversationResult;
         const items: Record<string, unknown>[] = [];
         let nextAfter = args.after as string | undefined;
         let nextOffset = args.offset as number | undefined;
         let hasMore = false;
-        for (const item of page.items.slice(0, 8)) {
+        for (const item of page.items.slice(0, itemLimit)) {
           const offset = nextOffset ?? 0;
           if (offset > item.body.length) throw new Error('offset exceeds message body');
           let body = item.body.slice(offset, offset + 1000);
@@ -3627,7 +3628,7 @@ async function executeAgentOperation(
                 },
               }
             : {}),
-          limits: { items: 8, bodyChars: 1000, responseChars: 12000 },
+          limits: { items: itemLimit, bodyChars: 1000, responseChars: 12000 },
         });
       }
       const status = (await daemonExecute('getCornerRestoreState', {

@@ -85,14 +85,10 @@ export async function resolveAppRoute(
   probes: AppRouteProbes,
 ): Promise<AppRouteDecision> {
   const existing = input.existing?.state === 'active' ? input.existing : undefined;
-  if (existing) {
-    if (!input.noApi) {
-      if (existing.transport === 'squire-api' &&
-          await probes.composio?.() === 'supported')
-        return { kind: 'route', route: 'composio', transport: 'composio',
-          reason: 'managed OAuth is supported for this app' };
-      return { kind: 'keep', transport: existing.transport };
-    }
+  // OAuth routes share the established sign-in decision below, including its wording.
+  if (existing && !(existing.transport === 'squire-api' && !input.noApi &&
+      await probes.composio?.() === 'supported')) {
+    if (!input.noApi) return { kind: 'keep', transport: existing.transport };
     if (existing.transport !== 'squire-api')
       return {
         kind: 'keep',
@@ -116,10 +112,7 @@ export async function resolveAppRoute(
     };
   }
   const backing = await probes.workbench();
-  if (backing?.transport === 'squire-api' && await probes.composio?.() === 'supported')
-    return { kind: 'route', route: 'composio', transport: 'composio',
-      reason: 'managed OAuth is supported for this app' };
-  if (backing)
+  if (backing && !(backing.transport === 'squire-api' && await probes.composio?.() === 'supported'))
     return {
       kind: 'route',
       route: 'workbench',
@@ -130,6 +123,9 @@ export async function resolveAppRoute(
           : `already connected in Connectors through vault key ${backing.reference}`,
       backing,
     };
+  if (input.preferredRoute === 'squire-api' && await probes.composio?.() !== 'supported')
+    return { kind: 'route', route: 'squire-api', transport: 'squire-api',
+      reason: 'person selected Trusty Squire for this new connection' };
   const oauth = await probes.composio?.() ?? 'unavailable';
   if (oauth === 'unavailable')
     return { kind: 'unavailable', reason: 'The app connection could not be checked. Try again shortly.' };
@@ -140,9 +136,6 @@ export async function resolveAppRoute(
       reason: input.preferredRoute === 'composio'
         ? 'person selected this sign-in for a new connection'
         : 'managed OAuth is supported for this app' };
-  if (input.preferredRoute === 'squire-api')
-    return { kind: 'route', route: 'squire-api', transport: 'squire-api',
-      reason: 'person selected Trusty Squire for this new connection' };
   if (input.preferredRoute === 'composio')
     return { kind: 'unavailable', reason: 'This sign-in is unavailable right now.' };
   return {

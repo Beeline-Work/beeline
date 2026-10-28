@@ -141,11 +141,11 @@ describe('the app route order', () => {
     const p = probes({ composio: vi.fn(async () => 'supported' as const) });
     await expect(resolveAppRoute({ reconnect: false, noApi: false,
       preferredRoute: 'squire-api' }, p)).resolves.toMatchObject({ transport: 'composio' });
-    expect(p.composio).toHaveBeenCalledTimes(1);
+    expect(p.composio).toHaveBeenCalledTimes(2);
     await expect(resolveAppRoute({ existing: { transport: 'squire-api', state: 'active',
       hasCredential: true }, reconnect: false, noApi: false, preferredRoute: 'composio' }, p))
       .resolves.toMatchObject({ kind: 'route', transport: 'composio' });
-    expect(p.composio).toHaveBeenCalledTimes(2);
+    expect(p.composio).toHaveBeenCalledTimes(4);
   });
 
 

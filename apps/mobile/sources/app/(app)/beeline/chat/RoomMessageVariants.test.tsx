@@ -907,6 +907,25 @@ describe('Room message variant components', () => {
     ).toHaveLength(0);
   });
 
+  it('keeps a connector app in the model slot and groups continued human messages', () => {
+    const props = {
+      participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
+      continued: false, firstBylineOfDay: false, participantHandles: [],
+      channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
+      onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
+      onRetry: vi.fn(), onDismiss: vi.fn(),
+    };
+    const sourceClient = { id: 'meta-muse', name: 'Meta Muse' };
+    const row = message({ id: 'muse', pubkey: 'muse', isAgentAuthor: true, sourceClient,
+      authorIdentity: { kind: 'agent', pubkey: 'muse', name: 'Muse' } });
+    const renderer = render(<OrdinaryLedgerMessage {...props} message={row} agentModel="Meta Muse" />);
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({ name: 'Muse', role: 'Meta Muse' });
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).not.toHaveProperty('sourceClient');
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} continued
+      message={message({ id: 'continued', pubkey: 'alex', sourceClient })} />));
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
+  });
+
   it('carries feedbackReported to the byline, even through a continued run', () => {
     render(
       <OrdinaryLedgerMessage

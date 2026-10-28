@@ -52,7 +52,7 @@ function Proof() {
       <ScrollView contentContainerStyle={{ padding: 24 }}>
         {page === 'clients' ? <AiClientsSection clients={view?.aiClients ?? []} onChanged={refresh} /> : messages.map(message =>
           <LedgerSteer key={message.id} itemId={message.id} bodyText={message.text} bodyTestID="proof-message" chronological
-            byline={{ name: message.author.name, stamp: '20:43', isViewer: message.author.kind === 'human', sourceClient: message.sourceClient }} />)}
+            byline={{ name: message.author.name, stamp: '20:43', isViewer: message.author.kind === 'human' }} />)}
         <Text style={{ marginTop: 24, color: '#4A4038' }}>{status}</Text>
         <Button label={page === 'clients' ? 'Show Room messages' : 'Show Connectors'} onPress={() => setPage(page === 'clients' ? 'messages' : 'clients')} />
       </ScrollView>

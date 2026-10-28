@@ -102,6 +102,8 @@
         "scripts/github-card-proof.tsx",
         // Gradle selects the Rooms connector native proof through entryFile.
         "scripts/rooms-mcp-native-proof.tsx",
+        // Selected as the temporary Metro entry by evidence/connector-byline/README.md.
+        "scripts/connector-byline-native-proof.tsx",
         // Reproduction CONNECTORS-1 selects this native Connectors proof as the Metro entry.
         "scripts/connectors-cleanup-native-proof.tsx",
         "scripts/github-card-proof-metro.cjs",

@@ -106,7 +106,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "40",
+            runtimeVersion: runtimeVersionOverride || "41",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -202,6 +202,14 @@ export default {
             ],
             "expo-secure-store",
             "expo-web-browser",
+            [
+                // Edge to edge leaves the system bar transparent, but Android
+                // still paints a contrast scrim over 3-button navigation.
+                "expo-navigation-bar",
+                {
+                    enforceContrast: false
+                }
+            ],
             [
                 "expo-image-picker",
                 {

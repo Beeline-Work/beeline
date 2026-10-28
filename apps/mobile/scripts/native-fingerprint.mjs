@@ -97,11 +97,19 @@ export async function computeNativeFingerprints(projectDir) {
     // falsely require a new Android runtime and binary. `withAndroidPushRouting`
     // is the inverse: it only writes Android manifest/Kotlin output, so it must
     // not force an unrelated iOS runtime bump.
+    // `expo-navigation-bar` is an Android-only package whose plugin only writes
+    // Android styles, so it is left out of iOS's inputs for the same reason.
     const config = require(join(projectDir, 'fingerprint.config.js'));
     const ignoredPlugin =
       platform === 'android' ? 'withoutIosPushCapabilities' : 'withAndroidPushRouting';
+    const ignoredPlugins =
+      platform === 'android' ? [ignoredPlugin] : [ignoredPlugin, 'expo-navigation-bar'];
     const platformSpecific = {
-      ignorePaths: [...(config.ignorePaths ?? []), `plugins/${ignoredPlugin}.js`],
+      ignorePaths: [
+        ...(config.ignorePaths ?? []),
+        `plugins/${ignoredPlugin}.js`,
+        ...(platform === 'ios' ? ['node_modules/expo-navigation-bar/**'] : []),
+      ],
       fileHookTransform(source, chunk, ...rest) {
         const transformed = config.fileHookTransform?.(source, chunk, ...rest) ?? chunk;
         if (
@@ -114,8 +122,12 @@ export async function computeNativeFingerprints(projectDir) {
         // Platform permission/service changes must not require rebuilding the
         // other platform. Expo otherwise hashes both platform config blocks.
         delete value[platform === 'ios' ? 'android' : 'ios'];
+        if (platform === 'ios') {
+          delete value.androidNavigationBar;
+          delete value.extra?.['expo-navigation-bar'];
+        }
         value.plugins = value.plugins?.filter(
-          (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) !== ignoredPlugin,
+          (plugin) => !ignoredPlugins.includes(Array.isArray(plugin) ? plugin[0] : plugin),
         );
         return JSON.stringify(value);
       },

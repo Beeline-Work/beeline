@@ -331,6 +331,26 @@ function isFrameMessage(data: WebSocket.RawData): boolean {
   } catch { return false; }
 }
 
+/**
+ * Page layout shared by both viewers. The page opens filling the frame
+ * (cover) and centred across; zoom runs from the whole page in view
+ * (contain) to 4x, and an axis that does not fill the frame stays centred.
+ * A frame resize keeps the page point at the middle of the frame in place.
+ */
+export const VIEWER_LAYOUT_SCRIPT = `function viewerLayout(state,viewWidth,viewHeight,remoteWidth,remoteHeight){
+  const cover=Math.max(viewWidth/remoteWidth,viewHeight/remoteHeight);
+  const minZoom=Math.min(1,Math.min(viewWidth/remoteWidth,viewHeight/remoteHeight)/cover);
+  const zoom=Math.min(4,Math.max(minZoom,state.zoom)),scale=cover*zoom,width=remoteWidth*scale,height=remoteHeight*scale;
+  let left=state.left,top=state.top;
+  if(!state.fitted||state.remoteWidth!==remoteWidth||state.remoteHeight!==remoteHeight){left=(viewWidth-width)/2;top=0;}
+  else if(state.viewWidth!==viewWidth||state.viewHeight!==viewHeight){
+    left=viewWidth/2-(state.viewWidth/2-state.left)*scale/state.scale;top=state.top*scale/state.scale;}
+  left=width<=viewWidth?(viewWidth-width)/2:Math.min(0,Math.max(viewWidth-width,left));
+  top=height<=viewHeight?(viewHeight-height)/2:Math.min(0,Math.max(viewHeight-height,top));
+  return {fitted:true,zoom,minZoom,scale,width,height,left,top,viewWidth,viewHeight,remoteWidth,remoteHeight};}
+function viewerZoomAt(state,zoom,x,y){const next=Math.min(4,Math.max(state.minZoom??1,zoom)),ratio=next/state.zoom;
+  return {...state,zoom:next,left:x-(x-state.left)*ratio,top:y-(y-state.top)*ratio};}`;
+
 function serveComputerRetry(request: IncomingMessage, response: ServerResponse): void {
   const retry = Math.min(10, Math.max(0, Number(new URL(request.url ?? '/', 'http://beeline.local').searchParams.get('retry')) || 0));
   const delay = Math.min(2_000, 300 * 2 ** retry);
@@ -423,6 +443,8 @@ export async function serveComputerSession(
       body.beeline-embedded #bar{bottom:12px!important}
       #focus{width:42px;height:42px;margin:0!important;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
       #focus::before{content:'⌨';font-size:20px}
+      #beeline-paste{width:42px;height:42px;margin:0 0 0 8px;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
+      #beeline-paste::before{content:'📋';font-size:18px}
       @media(pointer:fine){#bar{display:none!important}}
     </style>`;
     const bridge = `<script>
@@ -436,39 +458,44 @@ export async function serveComputerSession(
       addEventListener('message',event=>{if(event.data?.type!=='viewer-mode'||event.data.id!=='${id}'||!beelineQuery.has('warm'))return;
         beelineInteractive=Boolean(event.data.interactive);beelineMode();});
       if(beelineQuery.has('warm'))socket.addEventListener('open',beelineMode);
-      let beelineZoom=1,beelineLeft=0,beelineTop=0,beelineFitted=false;
+      let beelineView={zoom:1,left:0,top:0,fitted:false};
       addEventListener('message',event=>{if(event.data?.type!=='viewer-snapshot-request'||event.data.id!=='${id}')return;
         let image=null;try{if(beelineCanvas.width>1&&beelineCanvas.height>1)
           image=beelineCanvas.toDataURL('image/jpeg',0.72).split(',')[1]||null;}catch{}
         const answer={type:'computer-snapshot',id:'${id}',requestId:event.data.requestId,image};
         if(event.source!==window)event.source?.postMessage(answer,event.origin);window.ReactNativeWebView?.postMessage(JSON.stringify(answer));});
+      ${VIEWER_LAYOUT_SCRIPT}
       function beelineFit(){if(!beelineCanvas.width||!beelineCanvas.height)return;
-        const scale=Math.max(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height)*beelineZoom;
-        const w=beelineCanvas.width*scale,h=beelineCanvas.height*scale;
-        if(!beelineFitted){beelineLeft=0;beelineTop=0;beelineFitted=true;}
-        else{beelineLeft=Math.min(0,Math.max(beelineScreen.clientWidth-w,beelineLeft));beelineTop=Math.min(0,Math.max(beelineScreen.clientHeight-h,beelineTop));}
-        beelineCanvas.style.width=Math.ceil(w)+'px';beelineCanvas.style.height=Math.ceil(h)+'px';
-        beelineCanvas.style.left=Math.round(beelineLeft)+'px';beelineCanvas.style.top=Math.round(beelineTop)+'px';}
+        beelineView=viewerLayout(beelineView,beelineScreen.clientWidth,beelineScreen.clientHeight,beelineCanvas.width,beelineCanvas.height);
+        beelineCanvas.style.width=Math.ceil(beelineView.width)+'px';beelineCanvas.style.height=Math.ceil(beelineView.height)+'px';
+        beelineCanvas.style.left=Math.round(beelineView.left)+'px';beelineCanvas.style.top=Math.round(beelineView.top)+'px';}
       new MutationObserver(beelineFit).observe(beelineCanvas,{attributes:true,attributeFilter:['width','height']});
       addEventListener('resize',beelineFit);beelineFit();
-      if(matchMedia('(pointer:coarse)').matches){let drag,pinch;const pointers=new Map();
+      function beelinePans(dx,dy){return beelineView.zoom>1||(Math.abs(dx)>Math.abs(dy)&&beelineView.width>beelineScreen.clientWidth);}
+      // A trackpad pinch arrives as ctrl+wheel. Zoomed in, the wheel pans the page view.
+      beelineCanvas.addEventListener('wheel',event=>{if(!event.ctrlKey&&!beelinePans(event.deltaX,event.deltaY))return;
+        event.preventDefault();event.stopImmediatePropagation();const box=beelineScreen.getBoundingClientRect();
+        if(event.ctrlKey)beelineView=viewerZoomAt(beelineView,beelineView.zoom*Math.exp(-event.deltaY/300),event.clientX-box.left,event.clientY-box.top);
+        else{beelineView.left-=event.deltaX;beelineView.top-=event.deltaY;}
+        beelineFit();},{capture:true,passive:false});
+      {let drag,pinch;const pointers=new Map();
         beelineCanvas.addEventListener('pointerdown',event=>{if(event.pointerType!=='touch')return;
           event.preventDefault();event.stopImmediatePropagation();beelineCanvas.setPointerCapture(event.pointerId);
           pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
           if(pointers.size===1)drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};
-          if(pointers.size===2){const [a,b]=[...pointers.values()];pinch={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom:beelineZoom,
-            left:beelineLeft,top:beelineTop,x:(a.x+b.x)/2-beelineScreen.getBoundingClientRect().left,
+          if(pointers.size===2){const [a,b]=[...pointers.values()];pinch={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom:beelineView.zoom,
+            left:beelineView.left,top:beelineView.top,x:(a.x+b.x)/2-beelineScreen.getBoundingClientRect().left,
             y:(a.y+b.y)/2-beelineScreen.getBoundingClientRect().top};if(drag)drag.moved=true;}
           beelineCanvas.focus();},true);
         beelineCanvas.addEventListener('pointermove',event=>{if(event.pointerType!=='touch'||!pointers.has(event.pointerId))return;
           event.preventDefault();event.stopImmediatePropagation();pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
           if(pinch&&pointers.size>=2){const [a,b]=[...pointers.values()],distance=Math.hypot(a.x-b.x,a.y-b.y),ratio=Math.max(.25,distance/pinch.distance);
-            beelineZoom=Math.min(4,Math.max(1,pinch.zoom*ratio));const z=beelineZoom/pinch.zoom;
-            beelineLeft=(a.x+b.x)/2-beelineScreen.getBoundingClientRect().left-(pinch.x-pinch.left)*z;
-            beelineTop=(a.y+b.y)/2-beelineScreen.getBoundingClientRect().top-(pinch.y-pinch.top)*z;beelineFit();return;}
+            const zoom=Math.min(4,Math.max(beelineView.minZoom??1,pinch.zoom*ratio)),z=zoom/pinch.zoom;
+            beelineView.zoom=zoom;beelineView.left=(a.x+b.x)/2-beelineScreen.getBoundingClientRect().left-(pinch.x-pinch.left)*z;
+            beelineView.top=(a.y+b.y)/2-beelineScreen.getBoundingClientRect().top-(pinch.y-pinch.top)*z;beelineFit();return;}
           if(drag?.id!==event.pointerId)return;const dx=drag.x-event.clientX,dy=drag.y-event.clientY;
           if(Math.abs(dx)+Math.abs(dy)>3){drag.moved=true;
-            if(beelineZoom>1||(Math.abs(dx)>Math.abs(dy)&&beelineCanvas.getBoundingClientRect().width>beelineScreen.clientWidth)){beelineLeft-=dx;beelineTop-=dy;beelineFit();}
+            if(beelinePans(dx,dy)){beelineView.left-=dx;beelineView.top-=dy;beelineFit();}
             else send({type:'wheel',delta_x:dx,delta_y:dy,...point(event)});}
           drag.x=event.clientX;drag.y=event.clientY;},true);
         beelineCanvas.addEventListener('pointerup',event=>{if(event.pointerType!=='touch')return;
@@ -478,6 +505,30 @@ export async function serveComputerSession(
           drag=undefined;if(pointers.size===1){const [id,p]=[...pointers.entries()][0];drag={id,x:p.x,y:p.y,moved:true};}},true);
         beelineCanvas.addEventListener('pointercancel',event=>{if(event.pointerType==='touch'){pointers.delete(event.pointerId);drag=undefined;pinch=undefined;}},true);
       }
+      // Paste the viewer's own clipboard as text. Squire forwards Ctrl/Cmd+V
+      // as a key, which pastes the remote machine's clipboard instead. A
+      // focused canvas is not editable, so the shortcut moves focus to a
+      // hidden field and the browser pastes there. The shortcut never
+      // reaches the remote page, even when this clipboard has no text, so
+      // the remote machine's clipboard is never pasted.
+      const beelinePaste=document.createElement('textarea');
+      beelinePaste.setAttribute('aria-hidden','true');beelinePaste.tabIndex=-1;
+      beelinePaste.style.cssText='position:fixed;left:-1000px;top:0;width:1px;height:1px;opacity:0';document.body.append(beelinePaste);
+      addEventListener('keydown',event=>{if(!(event.ctrlKey||event.metaKey)||event.altKey||event.key.toLowerCase()!=='v'||document.activeElement!==beelineCanvas)return;
+        event.stopImmediatePropagation();beelinePaste.value='';beelinePaste.focus();},true);
+      beelinePaste.addEventListener('paste',event=>{event.preventDefault();event.stopImmediatePropagation();
+        const text=event.clipboardData?.getData('text/plain');beelineCanvas.focus();if(text)sendText(text);});
+      beelinePaste.addEventListener('keyup',()=>beelineCanvas.focus());
+      // Phones have no paste shortcut: this button reads the clipboard after a tap.
+      const beelinePasteButton=document.createElement('button');beelinePasteButton.id='beeline-paste';beelinePasteButton.type='button';
+      beelinePasteButton.setAttribute('aria-label','Paste');document.getElementById('bar').append(beelinePasteButton);
+      beelinePasteButton.addEventListener('click',()=>{
+        if(window.ReactNativeWebView){window.ReactNativeWebView.postMessage(JSON.stringify({type:'computer-paste-request',id:'${id}'}));return;}
+        const keyboard=document.getElementById('keyboard');
+        if(!navigator.clipboard?.readText){keyboard.focus();return;}
+        navigator.clipboard.readText().then(text=>{if(text)sendText(text);else keyboard.focus();},()=>keyboard.focus());});
+      addEventListener('message',event=>{if(event.source!==window||event.data?.type!=='viewer-paste'||event.data.id!=='${id}')return;
+        if(typeof event.data.text==='string'&&event.data.text)sendText(event.data.text);});
       // Signal a decoded canvas paint, not merely the receipt of JPEG bytes.
       let beelineFirstFrame=false;
       const beelineContext=beelineCanvas?.getContext('2d');
@@ -543,15 +594,14 @@ export function computerViewerHtml(id: string): string {
     if(event.source!==window)event.source?.postMessage(answer,event.origin);window.ReactNativeWebView?.postMessage(JSON.stringify(answer));});
   const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+location.search;
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
-  let zoom=1,offsetX=0,offsetY=0,fitted=false;
+  let view={zoom:1,left:0,top:0,fitted:false};
   const pointers=new Map();
+  ${VIEWER_LAYOUT_SCRIPT}
   function fit(){if(width<=1||height<=1)return;
-    const base=Math.max(stage.clientWidth/width,stage.clientHeight/height);
-    const w=width*base*zoom,h=height*base*zoom;
-    if(!fitted){offsetX=0;offsetY=0;fitted=true;}
-    else{offsetX=Math.min(0,Math.max(stage.clientWidth-w,offsetX));offsetY=Math.min(0,Math.max(stage.clientHeight-h,offsetY));}
-    image.style.width=Math.ceil(w)+'px';image.style.height=Math.ceil(h)+'px';
-    image.style.left=Math.round(offsetX)+'px';image.style.top=Math.round(offsetY)+'px';}
+    view=viewerLayout(view,stage.clientWidth,stage.clientHeight,width,height);
+    image.style.width=Math.ceil(view.width)+'px';image.style.height=Math.ceil(view.height)+'px';
+    image.style.left=Math.round(view.left)+'px';image.style.top=Math.round(view.top)+'px';}
+  function pans(dx,dy){return view.zoom>1||(Math.abs(dx)>Math.abs(dy)&&view.width>stage.clientWidth);}
   addEventListener('resize',fit);
   addEventListener('message',event=>{if(event.data?.type!=='viewer-mode'||event.data.id!=='${id}'||!query.has('warm'))return;
     preview=!event.data.interactive;if(preview)controlling=false;send({type:'viewer-mode',interactive:!preview});});
@@ -566,6 +616,7 @@ export function computerViewerHtml(id: string): string {
     wire.onopen=()=>{if(query.has('warm'))send({type:'viewer-mode',interactive:!preview});if(document.hidden)send({type:'pause-view'});};
     wire.onmessage=event=>{try{const message=JSON.parse(event.data);
       if(message.type==='ended'){showEnded();return;}
+      if(message.type==='clipboard'){copied?.(typeof message.text==='string'?message.text:'');copied=undefined;return;}
       if(message.method==='Page.screencastFrame'){const p=message.params;image.src='data:image/jpeg;base64,'+p.data;width=p.metadata?.deviceWidth||width;height=p.metadata?.deviceHeight||height;fit();}
     }catch{}};
     wire.onclose=async()=>{if(leaving||endedSession)return;controlling=false;
@@ -591,7 +642,7 @@ export function computerViewerHtml(id: string): string {
       event.preventDefault();pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
       if(pointers.size===1)touch={id:event.pointerId,clientX:event.clientX,clientY:event.clientY,moved:false};
       if(pointers.size===2){const pair=[...pointers.values()],m=mid(pair[0],pair[1]);
-        pinch={d:m.d,zoom,offsetX,offsetY,x:m.x-stage.getBoundingClientRect().left,y:m.y-stage.getBoundingClientRect().top};
+        pinch={d:m.d,zoom:view.zoom,left:view.left,top:view.top,x:m.x-stage.getBoundingClientRect().left,y:m.y-stage.getBoundingClientRect().top};
         if(touch)touch.moved=true;}
       return;}
     keys.focus();cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});});
@@ -599,12 +650,12 @@ export function computerViewerHtml(id: string): string {
     if(event.pointerType==='touch'&&pointers.has(event.pointerId)){
       event.preventDefault();pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
       if(pinch&&pointers.size>=2){const pair=[...pointers.values()],m=mid(pair[0],pair[1]),ratio=Math.max(.25,m.d/pinch.d);
-        zoom=Math.min(4,Math.max(1,pinch.zoom*ratio));const z=zoom/pinch.zoom;
-        offsetX=m.x-stage.getBoundingClientRect().left-(pinch.x-pinch.offsetX)*z;
-        offsetY=m.y-stage.getBoundingClientRect().top-(pinch.y-pinch.offsetY)*z;fit();return;}
+        view.zoom=Math.min(4,Math.max(view.minZoom??1,pinch.zoom*ratio));const z=view.zoom/pinch.zoom;
+        view.left=m.x-stage.getBoundingClientRect().left-(pinch.x-pinch.left)*z;
+        view.top=m.y-stage.getBoundingClientRect().top-(pinch.y-pinch.top)*z;fit();return;}
       if(touch?.id===event.pointerId){const dx=touch.clientX-event.clientX,dy=touch.clientY-event.clientY;
         if(Math.abs(dx)+Math.abs(dy)>3){touch.moved=true;
-          if(zoom>1||(Math.abs(dx)>Math.abs(dy)&&image.getBoundingClientRect().width>stage.clientWidth)){offsetX-=dx;offsetY-=dy;fit();}
+          if(pans(dx,dy)){view.left-=dx;view.top-=dy;fit();}
           else{const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:dx,deltaY:dy});}}
         touch.clientX=event.clientX;touch.clientY=event.clientY;return;}}
     if(!event.buttons)return;const p=point(event);
@@ -620,10 +671,22 @@ export function computerViewerHtml(id: string): string {
     cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});});
   image.addEventListener('pointercancel',event=>{pointers.delete(event.pointerId);touch=undefined;pinch=undefined;});
   image.addEventListener('wheel',event=>{if(preview)return;event.preventDefault();takeover();
-    if(event.ctrlKey){zoom=Math.min(4,Math.max(1,zoom*Math.exp(-event.deltaY/300)));fit();return;}
+    // A trackpad pinch arrives as ctrl+wheel. Zoomed in, the wheel pans the page view.
+    if(event.ctrlKey){const box=stage.getBoundingClientRect();
+      view=viewerZoomAt(view,view.zoom*Math.exp(-event.deltaY/300),event.clientX-box.left,event.clientY-box.top);fit();return;}
+    if(pans(event.deltaX,event.deltaY)){view.left-=event.deltaX;view.top-=event.deltaY;fit();return;}
     const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:event.deltaX,deltaY:event.deltaY});},{passive:false});
   keys.addEventListener('input',()=>{if(keys.value){takeover();cdp('Input.insertText',{text:keys.value});keys.value='';}});
-  keys.addEventListener('keydown',event=>{if(['Enter','Backspace','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){takeover();cdp('Input.dispatchKeyEvent',{type:'keyDown',key:event.key,code:event.code});cdp('Input.dispatchKeyEvent',{type:'keyUp',key:event.key,code:event.code});event.preventDefault();}});
+  // Copy the remote selection to this device. The clipboard write starts
+  // inside the key press, which browsers require, and resolves on the answer.
+  let copied;
+  function copySelection(){if(preview)return;takeover();const text=new Promise(resolve=>{copied=resolve;setTimeout(()=>resolve(''),3000);});
+    send({type:'copy'});
+    if(window.ReactNativeWebView){text.then(value=>{if(value)window.ReactNativeWebView.postMessage(JSON.stringify({type:'computer-copy',id:'${id}',text:value}));});return;}
+    try{navigator.clipboard.write([new ClipboardItem({'text/plain':text.then(value=>{if(!value)throw new Error('nothing selected');return new Blob([value],{type:'text/plain'});})})]).catch(()=>{});}
+    catch{text.then(value=>{if(value)return navigator.clipboard?.writeText(value);}).catch(()=>{});}}
+  keys.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&!event.altKey&&event.key.toLowerCase()==='c'){event.preventDefault();copySelection();return;}
+    if(['Enter','Backspace','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){takeover();cdp('Input.dispatchKeyEvent',{type:'keyDown',key:event.key,code:event.code});cdp('Input.dispatchKeyEvent',{type:'keyUp',key:event.key,code:event.code});event.preventDefault();}});
   document.getElementById('back').onclick=()=>{finish();window.close();history.back();};
   addEventListener('pagehide',finish);
   </script></body></html>`;
@@ -739,10 +802,16 @@ export async function upgradeBodyComputerSource(
     channel.lastFrame = undefined;
     source.on('message', (data, binary) => {
       try {
-        const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string };
+        const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string; text?: unknown };
         if (event.type === 'share-event' && event.name === 'navigation') {
           if (!channel.controller) return;
           void recordComputerActivity(database, row, 'navigation', event.detail).catch(() => {});
+          return;
+        }
+        // Copied page text goes only to the person who asked for it.
+        if (event.type === 'clipboard') {
+          if (channel.controller?.readyState === WebSocket.OPEN && typeof event.text === 'string')
+            channel.controller.send(JSON.stringify({ type: 'clipboard', text: event.text }));
           return;
         }
       } catch { /* An unrelated source frame is still forwarded below. */ }
@@ -827,6 +896,8 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
         channel.controller = undefined;
         channel.source?.send(data);
         handBack();
+      } else if (message.type === 'copy' && channel.controller === viewer) {
+        channel.source?.send(JSON.stringify({ type: 'copy' }));
       } else if (message.type === 'handback') {
         handBack();
       } else if (message.type === 'end-share' && !preview) {

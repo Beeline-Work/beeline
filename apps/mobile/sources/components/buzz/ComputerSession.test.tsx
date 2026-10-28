@@ -9,12 +9,14 @@ import { afterEach, expect, it, vi } from 'vitest';
 const phoneOperation = vi.hoisted(() => vi.fn(async () => ({ access: 'fresh-token' })));
 const openExternalUrl = vi.hoisted(() => vi.fn(async () => undefined));
 const injectJavaScript = vi.hoisted(() => vi.fn());
+const clipboard = vi.hoisted(() => ({ getStringAsync: vi.fn(async () => 'from my phone'), setStringAsync: vi.fn(async () => true) }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
   return { BackHandler: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) }, Platform: { OS: 'android' }, Image: host('Image'), Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
 });
+vi.mock('expo-clipboard', () => clipboard);
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) }));
 vi.mock('expo-image', async () => {
   const ReactModule = await import('react');
@@ -42,6 +44,7 @@ vi.mock('@/modal', () => ({ Modal: { show: vi.fn(), alert: vi.fn() } }));
 vi.mock('@/components/buzz/ViewerConversationDock', () => ({ ViewerConversationDock: () => null }));
 
 import { Modal } from '@/modal';
+import { Platform } from 'react-native';
 import { ComputerSessionCard, ComputerSessionViewer, WarmComputerSessionHost, openComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 
 const session = {
@@ -186,6 +189,47 @@ it('keeps the native WebView from owning pinch so the viewer gesture wins', asyn
   expect(webview.props.setBuiltInZoomControls).toBe(false);
   expect(webview.props.setDisplayZoomControls).toBe(false);
   await act(async () => tree!.unmount());
+});
+
+it('Reproduction SB-PASTE-1: pastes this phone\'s clipboard and keeps copied page text on the phone', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={() => {}} />); });
+  const webview = tree!.root.findByType('WebView');
+  await act(async () => {
+    webview.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'computer-paste-request', id: 'session-1' }) } });
+    await vi.waitFor(() => expect(injectJavaScript).toHaveBeenCalledWith(expect.stringContaining('"type":"viewer-paste"')));
+  });
+  expect(injectJavaScript).toHaveBeenCalledWith(expect.stringContaining('"text":"from my phone"'));
+  await act(async () => {
+    webview.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'computer-copy', id: 'session-1', text: 'page words' }) } });
+  });
+  expect(clipboard.setStringAsync).toHaveBeenCalledWith('page words');
+  // Another session's viewer cannot read or write this clipboard.
+  clipboard.getStringAsync.mockClear(); clipboard.setStringAsync.mockClear();
+  await act(async () => {
+    webview.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'computer-paste-request', id: 'other' }) } });
+    webview.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'computer-copy', id: 'other', text: 'x' }) } });
+  });
+  expect(clipboard.getStringAsync).not.toHaveBeenCalled();
+  expect(clipboard.setStringAsync).not.toHaveBeenCalled();
+  await act(async () => tree!.unmount());
+});
+
+it('delegates clipboard access to the cross-origin web viewer frame', async () => {
+  const previous = Platform.OS;
+  const globals = globalThis as { window?: unknown };
+  const hadWindow = 'window' in globals;
+  if (!hadWindow) globals.window = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  Platform.OS = 'web';
+  try {
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={() => {}} />); });
+    expect(tree!.root.findByType('iframe').props.allow).toBe('clipboard-read; clipboard-write');
+    await act(async () => tree!.unmount());
+  } finally {
+    Platform.OS = previous;
+    if (!hadWindow) delete globals.window;
+  }
 });
 
 it('removes the stream if background authorization refuses current viewer access', async () => {

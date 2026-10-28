@@ -25,6 +25,13 @@ export async function findChromiumPage(debugUrl: string, target?: string): Promi
 }
 
 type Share = { cdp: WebSocket; relay: WebSocket; controlled: boolean };
+/** The page selection a person copies, including inside a text field; never a password field. */
+const SELECTED_TEXT = `(() => {
+  const field = document.activeElement;
+  if (field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && field.type !== 'password'))
+    try { if (field.selectionStart !== field.selectionEnd) return field.value.slice(field.selectionStart, field.selectionEnd); } catch {}
+  return String(getSelection() ?? '');
+})()`;
 const shares = new Map<string, Share>();
 
 /** Agent browser tools can await this before an action on a shared tab. */
@@ -69,6 +76,7 @@ export async function shareChromiumPage(input: {
   let firstFrameLogged = false;
   let inputCount = 0;
   let screenshotId: number | undefined;
+  let copyId: number | undefined;
   let screenshotStartedAt = 0;
   let fallbackTimer: NodeJS.Timeout | undefined;
   const capture = () => {
@@ -77,10 +85,17 @@ export async function shareChromiumPage(input: {
     screenshotStartedAt = Date.now();
   };
   cdp.on('message', (data) => {
-    let message: { id?: number; method?: string; params?: { sessionId?: number; frame?: { url?: string } }; result?: { data?: string }; error?: { message?: string } };
+    let message: { id?: number; method?: string; params?: { sessionId?: number; frame?: { url?: string } }; result?: { data?: string; result?: { value?: unknown } }; error?: { message?: string } };
     try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
     if (message.id === screencastId)
       console.error(`[computer-share] screencast start ${message.error?.message ? `failed: ${message.error.message}` : 'accepted'}`);
+    if (copyId !== undefined && message.id === copyId) {
+      copyId = undefined;
+      const text = message.result?.result?.value;
+      if (relay.readyState === WebSocket.OPEN)
+        relay.send(JSON.stringify({ type: 'clipboard', text: typeof text === 'string' ? text.slice(0, 500_000) : '' }));
+      return;
+    }
     if (screenshotId !== undefined && message.id === screenshotId) {
       screenshotId = undefined;
       if (message.result?.data && relay.readyState === WebSocket.OPEN && relay.bufferedAmount < 4 * 1024 * 1024) {
@@ -114,6 +129,8 @@ export async function shareChromiumPage(input: {
     try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
     if (message.type === 'takeover') { share.controlled = true; console.error('[computer-share] viewer took control'); }
     else if (message.type === 'release') { share.controlled = false; console.error('[computer-share] viewer released control'); }
+    else if (share.controlled && message.type === 'copy')
+      copyId = sendCdp('Runtime.evaluate', { expression: SELECTED_TEXT, returnByValue: true });
     else if (share.controlled && message.method?.startsWith('Input.')) {
       if (inputCount++ < 5) console.error(`[computer-share] forwarded ${message.method}`);
       sendCdp(message.method, message.params ?? {});

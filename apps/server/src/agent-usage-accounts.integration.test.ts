@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readAgentDetailView, readWorkspaceMemberListView } from '@beeline/api-contract/phone';
 import { usageSummary, type AgentUsage } from '@beeline/api-contract/daemon';
-import { HarnessQuotaReader } from '../../body/src/harness-quota.js';
+import { HarnessQuotaReader, QUOTA_READ_INTERVAL_MS } from '../../body/src/harness-quota.js';
 import { createUsageRefresh } from '../../body/src/agent-usage-refresh.js';
 import { QUOTA_AXI_CLAUDE_REPORT } from '../../body/src/harness-quota.fixtures.js';
 import { DaemonService } from './daemon-service.js';
@@ -154,6 +154,36 @@ describe('R-USAGE-2: agents on one plan account report the same numbers', () => 
     } }, RUBY);
     expect((await views(RUBY)).profile?.windows[0]).toMatchObject({ rateLimitType: 'five_hour', status: 'rejected' });
     expect((await views(RUBY)).profile?.context).toEqual({ used: 1000, size: 200000 });
+  });
+
+  it('stops sharing when one agent signs in to another account', async () => {
+    let clock = Date.now();
+    const slots = new Map();
+    const accountOf: Record<string, [string, number]> = { [RUBY]: ['acct-1', 60], [NERD]: ['acct-1', 60] };
+    const publish = (agentId: string, force = false) => new HarnessQuotaReader({
+      agentId, slots, launch, now: () => clock,
+      credentialPath: () => `/agents/${agentId}/claude/.credentials.json`,
+      fingerprint: () => 'unchanged',
+      run: async () => report(accountOf[agentId]![1]).replace('acct-1', accountOf[agentId]![0]),
+      post: (usage) => daemon.execute('postAgentUsage', { agentId, usage }, agentId),
+    }).publish('claude', {}, force);
+    await publish(RUBY);
+    await publish(NERD);
+    expect((await views(NERD)).profile?.sharedWith).toEqual(['Ruby']);
+    // Nerd's helper now reads another account, with the credential file left as it was.
+    accountOf[NERD] = ['acct-2', 20];
+    for (let round = 0; round < 2; round++) {
+      clock += QUOTA_READ_INTERVAL_MS + 1;
+      await publish(RUBY, true);
+      await publish(NERD, true);
+    }
+    const nerd = await views(NERD);
+    const ruby = await views(RUBY);
+    for (const view of [nerd.profile, nerd.row, nerd.tool]) expect(view?.windows[0]?.utilization).toBe(0.8);
+    for (const view of [ruby.profile, ruby.row, ruby.tool]) expect(view?.windows[0]?.utilization).toBe(0.4);
+    expect(nerd.profile?.sharedWith).toBeUndefined();
+    expect(ruby.profile?.sharedWith).toBeUndefined();
+    expect(usageSummary(nerd.tool)).not.toContain('shared with');
   });
 });
 

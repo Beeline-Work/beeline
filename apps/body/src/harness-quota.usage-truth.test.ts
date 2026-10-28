@@ -104,14 +104,21 @@ describe('one read per plan account on this machine', () => {
       let clock = now * 1000;
       const slots = new Map();
       const posts: Array<[string, AgentUsage]> = [];
+      const logins: Record<string, string> = {};
       const run = vi.fn(async (_launch: unknown, env: Record<string, string>) =>
         JSON.stringify(verified(accountOf[env.CLAUDE_CONFIG_DIR!]!)));
       const publish = (agentId: string, force = false) => new HarnessQuotaReader({
         agentId, slots, run, launch, now: () => clock,
         post: async (usage) => { posts.push([agentId, usage]); },
         credentialPath: (_provider, env) => `${env.CLAUDE_CONFIG_DIR}/.credentials.json`,
+        fingerprint: (path) => logins[path] ?? 'first login',
       }).publish('claude', { CLAUDE_CONFIG_DIR: `/agents/${agentId}/claude` }, force);
-      return { run, posts, publish, advance: (ms: number) => { clock += ms; } };
+      /** `claude /login` to another account in one agent's home. */
+      const switchLogin = (agentId: string, accountId: string) => {
+        accountOf[`/agents/${agentId}/claude`] = accountId;
+        logins[`/agents/${agentId}/claude/.credentials.json`] = `login ${accountId}`;
+      };
+      return { run, posts, publish, switchLogin, accountOf, advance: (ms: number) => { clock += ms; } };
     };
 
     it('share one read per interval once quota-axi verifies the account', async () => {
@@ -134,8 +141,8 @@ describe('one read per plan account on this machine', () => {
       advance(QUOTA_READ_INTERVAL_MS + 1);
       let finish!: (stdout: string) => void;
       run.mockImplementationOnce(() => new Promise<string>((resolve) => { finish = resolve; }));
-      const ruby = publish('ruby', true);
-      const nerd = publish('nerd', true);
+      const ruby = publish('ruby');
+      const nerd = publish('nerd');
       finish(JSON.stringify(verified('acct-1')));
       await expect(Promise.all([ruby, nerd])).resolves.toEqual([{ status: 'fresh' }, { status: 'fresh' }]);
       expect(run).toHaveBeenCalledTimes(3);
@@ -152,6 +159,57 @@ describe('one read per plan account on this machine', () => {
       expect(run).toHaveBeenCalledTimes(4);
       expect(posts[3]![1].account).toEqual(posts[1]![1].account);
       expect(posts[3]![1].account).not.toEqual(posts[2]![1].account);
+    });
+
+    it('read their own login again as soon as its credential file changes', async () => {
+      const { run, posts, publish, switchLogin, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
+      await publish('ruby');
+      await publish('nerd');
+      switchLogin('nerd', 'acct-2');
+      advance(QUOTA_READ_INTERVAL_MS + 1);
+      await publish('ruby');
+      await publish('nerd');
+      expect(run).toHaveBeenCalledTimes(4);
+      const [ruby, nerd] = posts.slice(2);
+      expect(nerd![0]).toBe('nerd');
+      expect(nerd![1].account).not.toEqual(ruby![1].account);
+      // Ruby no longer rides Nerd's reads, and Nerd no longer rides Ruby's.
+      advance(QUOTA_READ_INTERVAL_MS + 1);
+      await publish('ruby');
+      await publish('nerd');
+      expect(run).toHaveBeenCalledTimes(6);
+    });
+
+    it('read their own login on a refresh, even when the file did not change', async () => {
+      const { run, posts, publish, accountOf, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
+      await publish('ruby');
+      await publish('nerd');
+      accountOf['/agents/nerd/claude'] = 'acct-2';
+      for (let round = 0; round < 3; round++) {
+        advance(QUOTA_READ_INTERVAL_MS + 1);
+        await publish('ruby', true);
+        await publish('nerd', true);
+      }
+      const nerd = posts.filter(([agent]) => agent === 'nerd').at(-1)![1];
+      const ruby = posts.filter(([agent]) => agent === 'ruby').at(-1)![1];
+      expect(nerd.account).not.toEqual(ruby.account);
+      expect(run).toHaveBeenCalledTimes(8);
+    });
+
+    it('read their own login again within a few intervals between turns', async () => {
+      const { run, posts, publish, accountOf, advance } = setup({ '/agents/ruby/claude': 'acct-1', '/agents/nerd/claude': 'acct-1' });
+      await publish('ruby');
+      await publish('nerd');
+      accountOf['/agents/nerd/claude'] = 'acct-2';
+      for (let round = 0; round < 3; round++) {
+        advance(QUOTA_READ_INTERVAL_MS + 1);
+        await publish('ruby');
+        await publish('nerd');
+      }
+      // Nerd rode Ruby's reads for two intervals, then read its own login.
+      expect(run).toHaveBeenCalledTimes(6);
+      const nerd = posts.filter(([agent]) => agent === 'nerd').at(-1)![1];
+      expect(nerd.account).not.toEqual(posts.filter(([agent]) => agent === 'ruby').at(-1)![1].account);
     });
 
     it("never hand one home's expired sign-in to another home", async () => {

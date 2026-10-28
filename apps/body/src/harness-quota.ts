@@ -11,7 +11,7 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -31,6 +31,11 @@ const READ_TIMEOUT_MS = 30_000;
 export const QUOTA_READ_INTERVAL_MS = 5 * 60_000;
 /** A refresh this soon after the last read shares that read instead of asking again. */
 const REFRESH_REUSE_MS = 30_000;
+/**
+ * How many intervals a home may ride another home's read before it reads its
+ * own login again, in case the login changed without its file changing.
+ */
+const ACCOUNT_REVERIFY_INTERVALS = 3;
 const MAX_WINDOWS = 8;
 
 /**
@@ -184,6 +189,19 @@ export function quotaCredentialPath(provider: string, env: Record<string, string
   }
 }
 
+/**
+ * A cheap stamp of the credential file, so a new login (or a renewed token)
+ * in that home is noticed without reading the vendor. Never reads the file.
+ */
+export function credentialFingerprint(path: string): string {
+  try {
+    const stat = statSync(path);
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return 'missing';
+  }
+}
+
 export type QuotaAxiRun = (
   launch: { command: string; args: string[] },
   env: Record<string, string>,
@@ -217,6 +235,10 @@ type ReadSlot = {
   posts: Map<string, Promise<void>>;
   /** The account the last verified read named, for reads that cannot say. */
   accountKey?: string;
+  /** When this home's own read last named `accountKey`, in ms. */
+  verifiedAt?: number;
+  /** The credential file's stamp at that read; a new stamp drops `accountKey`. */
+  verifiedLogin?: string;
 };
 /**
  * Every agent loop on this machine shares these slots, one per plan login:
@@ -260,6 +282,7 @@ export class HarnessQuotaReader {
       now?: () => number;
       intervalMs?: number;
       credentialPath?: (provider: string, env: Record<string, string>) => string | undefined;
+      fingerprint?: (path: string) => string;
     },
   ) {}
 
@@ -285,7 +308,15 @@ export class HarnessQuotaReader {
     let slot = slots.get(login);
     if (!slot) slots.set(login, (slot = { lastStartedAt: -Infinity, posts: new Map() }));
     if (slot.running) return this.deliver(slot, slot.running);
-    const account = slot.accountKey;
+    const fingerprint = credential ? (this.options.fingerprint ?? credentialFingerprint)(credential) : undefined;
+    // The login in this home changed since it last named its account: forget
+    // that account until this home reads again.
+    if (slot.accountKey && slot.verifiedLogin !== fingerprint) slot.accountKey = undefined;
+    const intervalMs = this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS;
+    // A refresh, or a home that has not read itself for a while, reads its own
+    // login rather than trust an account it named long ago.
+    const verifiedFor = force ? intervalMs : intervalMs * ACCOUNT_REVERIFY_INTERVALS;
+    const account = slot.accountKey && now - (slot.verifiedAt ?? -Infinity) < verifiedFor ? slot.accountKey : undefined;
     const sibling = shareAccount && account ? slots.get(`account:${account}`) : undefined;
     // Another home on this verified account is reading it now: join, unless
     // that read finds its login moved or its own sign-in broken.
@@ -299,7 +330,7 @@ export class HarnessQuotaReader {
     const latest = account && sibling && sibling.accountKey === account && sibling.lastStartedAt > slot.lastStartedAt
       && sibling.last && sharesAccount(sibling.last, account) ? sibling : slot;
     const since = now - latest.lastStartedAt;
-    if (since < (force ? REFRESH_REUSE_MS : (this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS)))
+    if (since < (force ? REFRESH_REUSE_MS : intervalMs))
       return latest.last ? this.deliver(latest, Promise.resolve(latest.last)) : Promise.resolve(undefined);
     // Turn-loop tests must never read the developer's real vendor quota.
     if (!this.options.run && process.env.VITEST) return Promise.resolve(undefined);
@@ -307,7 +338,7 @@ export class HarnessQuotaReader {
     held.lastStartedAt = now;
     held.posts = new Map();
     if (account) slots.set(`account:${account}`, held);
-    held.running = this.read(provider, env, held, login, now / 1000).finally(() => {
+    held.running = this.read(provider, env, held, login, now, fingerprint).finally(() => {
       held.running = undefined;
     });
     void held.running.then(() => {
@@ -321,8 +352,10 @@ export class HarnessQuotaReader {
     env: Record<string, string>,
     slot: ReadSlot,
     login: string,
-    now: number,
+    nowMs: number,
+    fingerprint: string | undefined,
   ): Promise<AgentUsage> {
+    const now = nowMs / 1000;
     let usage: AgentUsage;
     try {
       const launch = (this.options.launch ?? quotaAxiLaunch)();
@@ -331,7 +364,8 @@ export class HarnessQuotaReader {
         env,
       );
       const report: unknown = JSON.parse(stdout);
-      slot.accountKey = quotaAxiAccountKey(report, provider) ?? slot.accountKey;
+      const accountKey = quotaAxiAccountKey(report, provider);
+      if (accountKey) Object.assign(slot, { accountKey, verifiedAt: nowMs, verifiedLogin: fingerprint });
       usage = quotaAxiUsage(report, provider, now) ?? {
         updatedAt: now, windows: [], read: { status: 'failed', at: now, reason: 'no plan numbers' },
       };

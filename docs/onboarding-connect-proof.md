@@ -1,6 +1,6 @@
 # Onboarding connect proof (28 October 2026)
 
-The hosted service-manager and cold-broker failures now pass an isolated Fly installation proof. This work remains incomplete: the PR stays draft until a fresh Beeline test account completes provider sign-in and a real Squire app connects.
+The hosted service-manager and cold-broker failures now pass an isolated Fly installation proof. This work remains incomplete: the PR stays draft until a fresh Beeline test account completes account pairing and a real Squire app connects in Beeline. Hosted API readiness does not require Google cookies in Chrome.
 
 ## Reproduction onboarding-connect-1
 
@@ -43,7 +43,7 @@ Each free agent gets a separate Fly VM and private persistent rootfs (`FlyMachin
 
 During the hosted sign-in page: available memory (1061 MiB), anonymous pages (635 MiB), OOM kills (zero). Disk used (1635 MiB of 7964 MiB); Chrome (446 MiB), Squire package (135 MiB), browser/profile state (79 MiB), noVNC assets (2 MiB). The VM did not also run a free-agent model turn, so peak combined memory remains unverified.
 
-The main proof VM remains temporary while its provider sign-in awaits human completion; delete it when the handoff finishes. No production user machine or another user's profile/vault was opened. Fresh Beeline account setup, completed phone login, Shopify connection and full account-level isolation remain outstanding.
+The main proof VM remains temporary for account-level verification; delete it after the remaining proof and remove only its test resources. No production user machine or another user's profile/vault was opened. Fresh Beeline account setup, completed phone login, Shopify connection and full account-level isolation remain outstanding.
 
 ## Browser observation
 
@@ -59,3 +59,19 @@ Trusty Squire drove the live web app through Settings > Connectors > Trusty Squi
 
 - Hosted body connector tests passed (52), including real socket-readiness coverage.
 - Hosted-services image stage built successfully; shellcheck passed for both entrypoint scripts.
+
+## Hosted API readiness follow-up (28 October)
+
+The approved readiness rule now uses hosted broker sockets and an authenticated `list_credentials` round trip, including an empty vault. Hosted connect uses `--skip-browser` so the pairing link can open in the phone's own browser. A terminal `provider_session_missing` with a bound account is non-fatal. An already authenticated hosted broker completes without starting another pairing ceremony. Personal-computer readiness is unchanged. Browser-provider sign-in is requested only when a later task needs it.
+
+Reproduction hosted-squire-install-1: the disposable Fly VM's separate-browser pairing completed at `/install/done`, but the published CLI ended with `no-browser`, `provider_session_missing`, and an empty providers list. The old installer treated that as an error despite authenticated vault access and a successful real Fly request through the hosted broker.
+
+Demonstrated on the same disposable VM with a bundle of the changed `installSquire`: `status: connected`, all steps done, `hasSignIn: false`. Its MCP adapter sends the real vault probe through one retained MCP connection in the VM. A real hosted MCP `use_credential` request to Fly's Machines API returned HTTP (200) for this VM. The saved Groq key returned HTTP (401), `Invalid API Key`, and is not a passing proof. The Google saved-login attempt was stopped at two-step verification and its hosted session was explicitly closed; no Google provider session is claimed.
+
+This is the owner's existing Squire account on a manual disposable VM, not a fresh Beeline test account. It does not prove `workspace_apps` connected state, the phone card-to-helper path, two-owner account isolation, or the reviewer-bypass browser path. Those remain required before ready-for-review. Do not remove owner vault objects during cleanup.
+
+After pairing, available memory was (939 MiB) with used memory (1029 MiB of 1968 MiB), no swap. Disk used (1722 MiB of 7964 MiB); Chrome installation (446 MiB), Squire package (135 MiB), Chrome profile (165 MiB). These are point-in-time VM figures, not peak Chrome-only RSS or combined free-agent turn measurements.
+
+Connector tests pass (53), covering an empty vault, missing account binding and a failed authenticated probe. Body typecheck passes.
+
+Chrome process memory after the follow-up: aggregate PSS (591353 KiB) across (13) Chrome processes; summed RSS (1576488 KiB) double-counts shared pages. This is a point-in-time measurement with browser tabs open, not a peak.

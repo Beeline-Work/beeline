@@ -8,7 +8,9 @@
  * page opened (Squire writes the placement on a later line, always before it
  * waits on the human), or a terminal report.
  *
- * Connect is not given `--skip-browser` or `--force-relogin`: skip-browser signs the
+ * Hosted connect uses `--skip-browser`: account pairing and an authenticated
+ * vault read establish API readiness without browser provider cookies.
+ * Personal-computer connect is not given `--skip-browser` or `--force-relogin`: skip-browser signs the
  * human in outside the bot profile so the shared Chrome never gains the
  * session, and force-relogin clears provider cookies and asserts a
  * single-session precondition the broker does not have. Not passing
@@ -739,6 +741,17 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     );
   }
 
+  // A paired hosted broker can serve API apps before any browser provider is
+  // signed in. Do not start another pairing ceremony for that account.
+  if (hostedEntry && (await pairSquire(options.mcp, options.workspaceId)).ok) {
+    push(step(`trusty-squire${resolution.resolvedVersion ? ` ${resolution.resolvedVersion}` : ''} installed`, 'done'));
+    push(step('waiting for sign-in', 'done'));
+    push(step('paired to workspace', 'done'));
+    push(step('Browser provider sign-in is available when a task needs it', 'done'));
+    return { status: 'connected', steps,
+      ...(resolution.resolvedVersion ? { squireVersion: resolution.resolvedVersion } : {}) };
+  }
+
   // Connect uses the shared host Chrome (or its headless noVNC URL). The
   // ordinary pairing path never passes --skip-browser (it signs the human in
   // OUTSIDE the bot profile — no Chrome-profile provider session lands) or
@@ -756,6 +769,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       'connect',
       '--target=codex',
       '--json',
+      ...(hostedEntry ? ['--skip-browser'] : []),
       ...(options.forceReloginProvider
         ? [`--force-relogin=${options.forceReloginProvider}`]
         : []),
@@ -780,7 +794,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
   }
-  if (report.state !== 'connected' && !isOutstandingSignIn(report)) {
+  const hostedAccountReady = !!hostedEntry && report.terminal &&
+    report.reason === 'provider_session_missing' && !!report.account?.id;
+  if (report.state !== 'connected' && !hostedAccountReady && !isOutstandingSignIn(report)) {
     const reason = connectBlockedLine(report) ?? 'Trusty Squire could not connect';
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
@@ -809,6 +825,13 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // nobody to wait for.
   push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
 
+  if (hostedEntry) {
+    const sockets = squireHostPaths(homedir());
+    if (!await squireBrokerSocketReady(sockets.brokerSocket) ||
+        !await squireBrokerSocketReady(sockets.mcpSocket)) {
+      return fail('The hosted browser service disconnected. Retry the Trusty Squire connection.');
+    }
+  }
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {
     push(step('paired to workspace', 'failed', pair.reason));
@@ -820,6 +843,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     };
   }
   push(step('paired to workspace', 'done'));
+  if (hostedAccountReady) {
+    push(step('Browser provider sign-in is available when a task needs it', 'done'));
+  }
   // An OUTSTANDING ceremony is not a connected helper. The vault answering
   // `list_credentials` proves the credential plane, never that the shared
   // Chrome carries a provider session — and `installConnector` completes the
@@ -850,7 +876,10 @@ export async function pairSquire(
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (!mcp) return { ok: false, reason: 'the Squire MCP surface is not mounted on this helper' };
   try {
-    await mcp.call('list_credentials', { fields: 'summary' });
+    const result = await mcp.call('list_credentials', { fields: 'summary' });
+    if (isRecord(result) && result.isError === true) {
+      return { ok: false, reason: 'The authenticated Squire vault check failed' };
+    }
     return { ok: true };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };

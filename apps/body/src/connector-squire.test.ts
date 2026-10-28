@@ -34,6 +34,45 @@ import {
 } from './connector-squire.js';
 
 describe('hosted broker readiness', () => {
+  it('completes hosted API pairing without provider cookies only after an authenticated vault probe', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hosted-api-ready-'));
+    mkdirSync(join(root, '.trusty-squire'));
+    const broker = createServer(socket => socket.destroy());
+    const mcpSocket = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => broker.listen(join(root, '.trusty-squire/broker.sock'), resolve));
+    await new Promise<void>(resolve => mcpSocket.listen(join(root, '.trusty-squire/mcp.sock'), resolve));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('BEELINE_HOSTED_SERVICES', '1');
+    try {
+      for (const [account, probe, expected] of [
+        [{ id: 'fresh-owner', providers: [] }, { credentials: [] }, 'connected'],
+        [null, { credentials: [] }, 'error'],
+        [{ id: 'fresh-owner', providers: [] }, { isError: true }, 'installing'],
+      ] as const) {
+        let args: readonly string[] = [];
+        let probes = 0;
+        const result = await installSquire({
+          workspaceId: 'hosted-proof', run: okRunner(),
+          streamRun: async (_command, supplied) => {
+            args = supplied;
+            return { stdout: '', stderr: '', abort: () => {}, report: report({
+              state: 'no-browser', terminal: true, reason: 'provider_session_missing', account,
+            }) };
+          },
+          mcp: mockSquire({ list_credentials: () => { if (++probes === 1) throw new Error('not paired yet'); return probe; } }).client,
+        });
+        expect(args).toContain('--skip-browser');
+        expect(result.status).toBe(expected);
+        expect(result.signIn).toBeUndefined();
+        if (expected === 'connected') expect(result.steps.every(step => step.status === 'done')).toBe(true);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      broker.close(); mcpSocket.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('waits for both real socket listeners before allowing connect', async () => {
     const root = mkdtempSync(join(tmpdir(), 'hosted-squire-'));
     const brokerSocket = join(root, 'broker.sock'), mcpSocket = join(root, 'mcp.sock');

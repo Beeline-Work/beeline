@@ -150,10 +150,11 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
-import { APP_INPUT_MAX_LENGTH, builtinBeelineApp, appIdentity, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
+import { APP_INPUT_MAX_LENGTH, builtinBeelineApp, appIdentity, registryServerAppKey, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
 import { normalizeAppContinuation, registrableDomain, urlBelongsToApp,
   type AppTransport } from '@beeline/api-contract/app-connections';
 import { McpRegistryClient, DEFAULT_MCP_REGISTRY_CLIENT } from './mcp-registry.js';
+import { isAppRegistryPublisher, registryAppCompany } from './mcp-registry-policy.js';
 import { connectorIntentIndex } from './connector-intent-index.js';
 import {
   appGateFor,
@@ -7615,8 +7616,7 @@ export class DaemonService {
           console.warn(`[connect] Registry search failed for ${service}; using the managed route`, error);
           manifests = [];
         }
-        const match = manifests.find(entry => entry.name.toLowerCase() === normalized
-          || entry.title?.toLowerCase() === normalized || entry.websiteUrl && appIdentity(entry.websiteUrl)?.key === key);
+        const match = manifests.find(entry => isAppRegistryPublisher(entry.name, service));
         if (match) {
           const installed = await this.connectMcpServer({ ...input, serverName: match.name,
             version: match.version, reason }, agentId);
@@ -8005,6 +8005,17 @@ export class DaemonService {
     const manifest = await this.mcpRegistry.exact(serverName, version);
     if (!manifest)
       return { status: 'unsupported', reason: 'The exact Registry entry was not found.' };
+    // Claims can identify a protected app, but only the namespace can authorize its publisher.
+    const claims = [registryServerAppKey(serverName), serverName.split('/').pop(), manifest.title, manifest.websiteUrl]
+      .filter((value): value is string => Boolean(value));
+    for (const claim of claims) {
+      const key = appIdentity(claim)?.key;
+      if (!key || isAppRegistryPublisher(manifest.name, claim)) continue;
+      const known = registryAppCompany(claim)
+        || await this.composio?.supportsOAuth(composioToolkitForApp(key));
+      if (known) return { status: 'unsupported',
+        reason: `This Registry publisher is not official for ${key}. Use connect for ${key} instead.` };
+    }
     const remote = manifest.remotes.find((entry) => entry.type === 'streamable-http');
     if (!remote)
       return {

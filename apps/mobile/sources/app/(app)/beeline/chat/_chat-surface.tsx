@@ -6691,7 +6691,8 @@ export function BuzzChatSurface({
                     {cornerOpenRepoPrompt && (roomRepoAccessIssue ? (
                       <ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}
                         description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}
-                        retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation →' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
+                        retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]}`}
+                        retryDestination="external"
                         onRetry={() => void handleReconnectRoomRepository()} retryTestID="corner-open-repo-connect"
                         secondaryAction={{ label: 'Dismiss', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID="corner-open-repo-prompt" />
                     ) : (

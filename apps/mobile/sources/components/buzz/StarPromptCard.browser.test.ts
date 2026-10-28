@@ -52,8 +52,9 @@ describe.skipIf(!existsSync(CHROME))('GitHub star card in a browser', () => {
     expect(result).toContain('Your agents have answered you 3 times.');
     expect(result).toContain('Beeline-Work/beeline');
     expect(result).toContain('Not now');
-    expect(result).toContain('★ Star');
-    expect(result).toContain('✕');
+    expect(result).toContain('Star');
+    expect(result).toContain('drawn close');
+    expect(result).not.toContain('✕');
   }, 90_000);
 
   it('stars in place and opens nothing when GitHub accepts the star', async () => {

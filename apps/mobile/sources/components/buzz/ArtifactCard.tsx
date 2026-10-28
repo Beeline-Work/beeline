@@ -88,7 +88,8 @@ export function openArtifactViewer(attachment: AttachmentReference, isDesktop = 
  * once when the card mounts into the transcript window and snapshotted to an
  * image cached on the device keyed by object id. Every later mount shows the
  * cached image — no second render on scroll. Title as caption with author and
- * size; footer `Open in browser ↗` on the left and `Open →` on the right; no
+ * size; footer `Open in browser` (leaves-Beeline mark) on the left and `Open`
+ * (chevron) on the right; no
  * status label — if it is in front of you it is ready. The existing expired
  * treatment (the plain attachment card) covers the page-is-gone case upstream,
  * so this component only ever renders a live artifact.
@@ -291,7 +292,8 @@ function ArtifactCardShell({
             accessibilityRole="link"
             onPress={onOpenInBrowser}
             testID="artifact-open-browser"
-            label={'Open in browser ↗'}
+            label="Open in browser"
+            destination="external"
             variant="quiet"
             appearance={{ control: undefined, label: styles.footerQuiet }}
           />
@@ -303,7 +305,8 @@ function ArtifactCardShell({
             accessibilityRole="link"
             onPress={onOpenFull}
             testID="artifact-open"
-            label={'Open →'}
+            label="Open"
+            destination="screen"
             variant="quiet"
             appearance={{ control: undefined, label: styles.footerPrimary }}
           />

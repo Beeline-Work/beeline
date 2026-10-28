@@ -27,12 +27,12 @@ export function connectorOfferSwitchTitle(connectorName: string, provider = 'goo
   return `Switch ${connectorName}'s ${provider[0]!.toUpperCase()}${provider.slice(1)} account?`;
 }
 
-/** `✓ Switch account` — the one action on a `'switch'` offer. */
-export const CONNECTOR_OFFER_SWITCH_ACTION = '✓ Switch account';
+/** `Switch account` — the one action on a `'switch'` offer. */
+export const CONNECTOR_OFFER_SWITCH_ACTION = 'Switch account';
 
-/** `✓ Add Trusty Squire` — the one action, with the check glyph the captain photographed. */
+/** `Add Trusty Squire` — the one action; a label carries words only. */
 export function connectorOfferActionLabel(connectorName: string): string {
-  return `✓ Add ${connectorName}`;
+  return `Add ${connectorName}`;
 }
 
 function clock(seconds: number): string {

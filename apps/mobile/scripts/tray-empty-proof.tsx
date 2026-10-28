@@ -68,8 +68,11 @@ async function readRow() {
     Math.abs(row!.getBoundingClientRect().right - saved!.getBoundingClientRect().right) <= 18,
     'save age is not at the right edge of the row',
   );
-  assert(rowText.includes(desktop ? 'REMOVE' : 'OPEN →'), `the row action is missing: ${rowText}`);
-  report(`PASS ${rowText}`);
+  assert(rowText.includes(desktop ? 'REMOVE' : 'OPEN'), `the row action is missing: ${rowText}`);
+  assert(!/[→↗]/.test(rowText), `the row action types an arrow: ${rowText}`);
+  const chevron = !desktop && row!.querySelector('svg polyline') ? ' + drawn chevron' : '';
+  assert(desktop || Boolean(chevron), 'the OPEN action has no drawn chevron');
+  report(`PASS ${rowText}${chevron}`);
 }
 
 /** A link with no communityId paints the Tray or a way back, never only the loader. */

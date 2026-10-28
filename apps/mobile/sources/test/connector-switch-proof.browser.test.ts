@@ -67,11 +67,11 @@ it.skipIf(!out || !existsSync(CHROME))(
       expect(status, stderr).toBe(0);
       // The approved frames' words, read off the real card.
       expect(result).toContain('PASS');
-      expect(result).toContain('action ✓ Switch account');
+      expect(result).toContain('action Switch account');
       expect(result).toMatch(/waiting waiting for @zeke/i);
       expect(result).toMatch(/connecting switching for @zeke/i);
       expect(result).toMatch(/outcome switched by @zeke · \d\d:\d\d/i);
-      expect(result).toContain('add ✓ Add Trusty Squire');
+      expect(result).toContain('add Add Trusty Squire');
     }
   },
   180_000,

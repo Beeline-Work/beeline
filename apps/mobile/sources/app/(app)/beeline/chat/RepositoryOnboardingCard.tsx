@@ -75,7 +75,7 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
   const choices: TranscriptCardChoice[] = card.kind === 'starters'
     ? card.starters.map((starter, index) => ({ id: starter.id, letter: String(index + 1), label: starter.title,
       consequence: starter.evidence, ...(canAct ? { onPress: () => void act('starter', { starterId: starter.id }) } : {}) }))
-    : picker ? card.repositories.map(repository => ({ id: String(repository.id), letter: repository.current ? '✓' : '→',
+    : picker ? card.repositories.map((repository, index) => ({ id: String(repository.id), letter: String(index + 1), mark: repository.current ? 'none' as const : 'chevron' as const,
       label: repository.fullName, consequence: repository.current ? 'Current · open PRs stay open' : 'Use this repository',
       selected: repository.current, ...(canAct && !repository.current ? { onPress: () => void act('link', { repositoryId: repository.id }) } : {}) })) : [];
   const actions: TranscriptCardAction[] = card.kind === 'repository' && card.canLink && card.status === 'open' && card.requesterId === viewerId ? [

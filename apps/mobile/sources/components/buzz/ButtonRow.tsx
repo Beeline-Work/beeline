@@ -13,6 +13,7 @@ export type ButtonRowAction = Pick<
   | 'disabled'
   | 'onPress'
   | 'testID'
+  | 'destination'
 > & { busy?: boolean; description?: React.ReactNode };
 /** Shared action layout for cards and inline decisions; the Button owns every target. */
 export function ButtonRow({
@@ -46,6 +47,7 @@ export function ButtonRow({
             disabled={action.disabled}
             onPress={action.onPress}
             testID={action.testID}
+            destination={action.destination}
           />
           {action.description}
         </View>

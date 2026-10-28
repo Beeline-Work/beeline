@@ -42,6 +42,7 @@ vi.mock('react-native-unistyles', async () => {
             textDisabled: '#555',
             accent: '#d7af5f',
             type: typeRoles,
+            space: { xs: 4, sm: 8, md: 16 },
           },
         }),
       hairlineWidth: 1,
@@ -94,7 +95,8 @@ function find_by_test_id(renderer: ReactTestRenderer, testId: string) {
   // The pass-through host mock propagates props to children, so restrict to
   // the touchable host nodes that actually own the testID.
   return renderer.root.findAll(
-    (node) => node.type === 'TouchableOpacity' && node.props.testID === testId,
+    (node) =>
+      (node.type === 'TouchableOpacity' || node.type === 'Pressable') && node.props.testID === testId,
   );
 }
 

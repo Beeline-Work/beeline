@@ -143,6 +143,33 @@ describe('parseAdvertisedConfigOptions', () => {
     expect(options.map((option) => option.id)).toEqual(['model', 'effort', 'mode']);
   });
 
+  it("keeps each model choice's description: the default alias names its model only there", () => {
+    // Captured from claude-agent-acp 0.97.0 session/new (2026-10-27).
+    const [model] = parseAdvertisedConfigOptions({
+      configOptions: [{
+        id: 'model', category: 'model', currentValue: 'default',
+        options: [
+          { value: 'default', name: 'Default (recommended)', description: 'Opus' },
+          { value: 'opus', name: 'Opus 5.5', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+          { value: 'haiku', name: 'Haiku 5.5', description: '' },
+        ],
+      }],
+      models: {
+        currentModelId: 'default',
+        availableModels: [{ modelId: 'default', name: 'Default (recommended)', description: 'Opus' }],
+      },
+    });
+    expect(model?.options).toEqual([
+      { id: 'default', name: 'Default (recommended)', description: 'Opus' },
+      { id: 'opus', name: 'Opus 5.5', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+      { id: 'haiku', name: 'Haiku 5.5' },
+    ]);
+    const [grok] = parseAdvertisedConfigOptions({
+      models: { availableModels: [{ modelId: 'auto', name: 'Default', description: 'Grok 4.6' }] },
+    });
+    expect(grok?.options).toEqual([{ id: 'auto', name: 'Default', description: 'Grok 4.6' }]);
+  });
+
   it('tolerates a raw result with no configOptions at all', () => {
     expect(parseAdvertisedConfigOptions({ sessionId: 'x' })).toEqual([]);
     expect(parseAdvertisedConfigOptions(undefined)).toEqual([]);

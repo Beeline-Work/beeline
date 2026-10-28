@@ -37,7 +37,7 @@ export interface AgentModelConfigOption {
   id: string;
   category: string;
   currentValue?: string;
-  options: Array<{ id: string; name?: string }>;
+  options: Array<{ id: string; name?: string; description?: string }>;
 }
 
 export interface AgentModelSelection {

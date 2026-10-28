@@ -141,7 +141,7 @@ describe('RepoPicker', () => {
 
     const action = renderer.root.findByProps({ testID: 'room-repo-picker-add-account' });
     expect(action.findByType('Text').props.children).toBe(
-      '＋ Add repositories, accounts, or organizations',
+      'Add repositories, accounts, or organizations',
     );
     act(() => renderer.unmount());
   });

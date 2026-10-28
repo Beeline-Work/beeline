@@ -34,7 +34,7 @@ export function cornerStatusLine(
       const count = failed.length || summary?.failing.length || 0;
       const name = failed[0]?.name ?? summary?.failing[0];
       const label = `${count || ''} ${plural(count, 'test')} failed`.trim();
-      return name ? `${prefix}${label} × ${titleCase(name)}` : `${prefix}${label}`;
+      return name ? `${prefix}${label} · ${titleCase(name)}` : `${prefix}${label}`;
     }
     case 'passing':
       return `${prefix}all ${total} ${plural(total, 'test')} passed`;

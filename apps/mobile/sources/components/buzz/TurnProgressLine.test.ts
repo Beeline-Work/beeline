@@ -101,7 +101,7 @@ function pressableStyle(node: { props: { style?: unknown } }, pressed = false) {
     typeof style === 'function'
       ? (style as (state: { pressed: boolean }) => unknown)({ pressed })
       : style;
-  return (Array.isArray(resolved) ? resolved : [resolved]).filter(Boolean);
+  return [resolved].flat(Number.POSITIVE_INFINITY).filter(Boolean);
 }
 
 describe('the per-turn progress indicator', () => {
@@ -199,14 +199,16 @@ describe('the per-turn progress indicator', () => {
     expect(pressableStyle(stop, true)).toEqual(
       expect.arrayContaining([expect.objectContaining({ opacity: 0.6 })]),
     );
-    expect(stop.findByType('Text').props.children).toBe('■ STOP');
+    expect(stop.findByType('Text').props.children).toBe('STOP');
     act(() => stop.props.onPress());
     expect(onStop).toHaveBeenCalledTimes(1);
 
     // It sits at the right, after the elapsed counter, so the label's own
     // left edge and the counter's place never move for anybody.
-    const row = stop.parent;
-    expect(row?.children.indexOf(stop)).toBe((row?.children.length ?? 0) - 1);
+    // The shared Button owns the press target; its slot is the row's last.
+    const control = stop.parent;
+    const row = control?.parent;
+    expect(row?.children.indexOf(control)).toBe((row?.children.length ?? 0) - 1);
   });
 
   it('empties the square and says stopping the moment the asker has pressed', () => {
@@ -241,7 +243,8 @@ describe('the per-turn progress indicator', () => {
     );
     // Pressed must not layer on top of stopping: the empty square is the state.
     expect(pressableStyle(stop, true)).toEqual(pressableStyle(stop, false));
-    expect(stop.props.onPress).toBeUndefined();
+    // A second press while stopping reaches nothing.
+    act(() => stop.props.onPress?.({}));
     expect(onStop).not.toHaveBeenCalled();
   });
 

@@ -206,7 +206,7 @@ export function NeedsYouCell({
         <View style={styles.actionArea}>
           {actions.map((action, index) => action.kind === 'external' ? (
             <Button key={index} label={action.label} size="inline" variant="secondary"
-              accessibilityRole="link" disabled={busy !== null} loading={busy === index}
+              accessibilityRole="link" destination="external" disabled={busy !== null} loading={busy === index}
               onPress={() => void send(action, index)} testID={`needs-you-action-${item.messageId}-${index}`} />
           ) : null)}
           {choiceActions ? (

@@ -1575,6 +1575,10 @@ function readModelOption(value: unknown): AgentModelConfigOption | null {
     return {
       id: option.id,
       ...field('name', typeof option.name === 'string' ? option.name : undefined),
+      ...field(
+        'description',
+        typeof option.description === 'string' ? option.description : undefined,
+      ),
     };
   });
   if (!options) return null;

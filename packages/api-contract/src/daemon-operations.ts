@@ -2164,7 +2164,7 @@ export type DaemonModelConfigOption = {
   readonly id: string;
   readonly category: 'model' | 'thought_level' | 'effort' | 'reasoning_effort' | 'model_config';
   readonly currentValue?: string;
-  readonly options: readonly { readonly id: string; readonly name?: string }[];
+  readonly options: readonly { readonly id: string; readonly name?: string; readonly description?: string }[];
 };
 export type DaemonPullRequestFact = {
   readonly number: number;

@@ -72,7 +72,8 @@ async function run() {
   }
   const shown = (card.textContent ?? '').replace(/\s+/g, ' ').trim();
   if (!tap) {
-    report(`PASS shown: ${shown}`);
+    const close = card.querySelector('[data-testid="star-prompt-dismiss"] svg') ? 'drawn close' : 'no close';
+    report(`PASS shown: ${shown} | ${close}`);
     return;
   }
   const control = document.querySelector<HTMLElement>(

@@ -5,7 +5,8 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CornerAppBlock, CornerAppView } from '@beeline/api-contract/phone';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { ContentTarget, InlineRow } from '@/components/buzz/IndexRow';
 
 export function CornerAppScreen({
   app,
@@ -72,7 +73,7 @@ export function CornerAppScreen({
 
 export function CornerAppRow({ title, onOpen }: { title: string; onOpen: () => void }) {
   return (
-    <Pressable
+    <ContentTarget
       accessibilityLabel={`Open Corner App ${title}`}
       accessibilityRole="button"
       onPress={onOpen}
@@ -85,8 +86,11 @@ export function CornerAppRow({ title, onOpen }: { title: string; onOpen: () => v
           {title}
         </Text>
       </View>
-      <Text style={styles.actionArrow}>OPEN →</Text>
-    </Pressable>
+      <InlineRow style={styles.appRowOpen}>
+        <Text style={styles.actionArrow}>OPEN</Text>
+        <ChevronGlyph color={styles.actionArrow.color} size={CHEVRON_ROW_SIZE} />
+      </InlineRow>
+    </ContentTarget>
   );
 }
 
@@ -139,11 +143,7 @@ function CornerAppBlockView({
           label={busy ? 'Sending…' : block.label}
           variant="quiet"
           iconPosition="end"
-          icon={
-            <>
-              <Text style={styles.actionArrow}>→</Text>
-            </>
-          }
+          icon={<ChevronGlyph color={styles.actionArrow.color} size={CHEVRON_ROW_SIZE} />}
           appearance={{
             control: ({ pressed }) => [
               styles.action,
@@ -239,6 +239,7 @@ const styles = StyleSheet.create((theme) => ({
   actionBusy: { opacity: 0.6 },
   actionLabel: { ...theme.buzz.type.bodyStrong, color: theme.buzz.buttonSecondaryText },
   actionArrow: { ...theme.buzz.type.bodyStrong, color: theme.buzz.accent },
+  appRowOpen: { alignItems: 'center', gap: theme.buzz.space.xs },
   revision: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: theme.buzz.space.xl },
   empty: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   appRow: {

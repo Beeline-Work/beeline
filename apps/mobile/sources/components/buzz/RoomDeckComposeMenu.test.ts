@@ -123,15 +123,15 @@ describe('Room deck compose menu', () => {
     const renderer = renderMenu();
     const fab = renderer.root.findByProps({ testID: 'room-deck-compose-fab' });
     expect(fab.props.accessibilityState).toEqual({ expanded: false });
-    expect(fab.props.accessibilityValue).toEqual({ text: '+' });
+    expect(fab.props.accessibilityValue).toBeUndefined();
 
     open(renderer);
 
     expect(renderer.root.findByProps({ testID: 'room-deck-compose-fab' }).props).toMatchObject({
       accessibilityLabel: 'Close compose menu',
       accessibilityState: { expanded: true },
-      accessibilityValue: { text: '×' },
     });
+    expect(renderer.root.findByProps({ testID: 'room-deck-compose-fab' }).props.accessibilityValue).toBeUndefined();
     const rows = actions.map((action) =>
       renderer.root
         .findAllByProps({ testID: `room-deck-compose-${action}` })
@@ -183,15 +183,15 @@ describe('Room deck compose menu', () => {
     expect(actionSheetSource).not.toMatch(/rgba?\(/);
   });
 
-  it('dismisses from the scrim and the × FAB', () => {
+  it('dismisses from the scrim and the close FAB', () => {
     const renderer = renderMenu();
 
     open(renderer);
     act(() => renderer.root.findByProps({ testID: 'room-deck-compose-scrim' }).props.onPress());
     expect(renderer.root.findAllByProps({ testID: 'room-deck-compose-menu' })).toHaveLength(0);
     expect(
-      renderer.root.findByProps({ testID: 'room-deck-compose-fab' }).props.accessibilityValue,
-    ).toEqual({ text: '+' });
+      renderer.root.findByProps({ testID: 'room-deck-compose-fab' }).props.accessibilityState,
+    ).toEqual({ expanded: false });
 
     open(renderer);
     act(() => renderer.root.findByProps({ testID: 'room-deck-compose-close' }).props.onPress());

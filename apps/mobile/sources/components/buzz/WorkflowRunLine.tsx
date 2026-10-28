@@ -24,6 +24,8 @@ import {
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { findRoomCornerRow, useRoomCornerRecord } from '@/buzz/room-corner-store';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
+import { ContentTarget } from './IndexRow';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import { IdentityMark } from './IdentityMark';
 import { provisionalProseStyle, settledAgentProseStyle } from './Ledger';
@@ -258,7 +260,7 @@ function OpenedCorner({
   const row = record ? findRoomCornerRow(record, corner.id) : undefined;
   const named = row ? { ...corner, name: row.corner.name } : corner;
   return (
-    <Pressable
+    <ContentTarget
       accessibilityLabel={`Open corner ${named.name}`}
       accessibilityRole="link"
       onPress={() => onOpenCorner(named)}
@@ -269,8 +271,8 @@ function OpenedCorner({
       <Text numberOfLines={1} style={styles.cornerName}>
         {named.name}
       </Text>
-      <Text style={styles.cornerArrow}>→</Text>
-    </Pressable>
+      <ChevronGlyph color={styles.cornerArrow.color} size={CHEVRON_ROW_SIZE} />
+    </ContentTarget>
   );
 }
 
@@ -481,6 +483,6 @@ const styles = StyleSheet.create((theme) => {
     corners: { marginTop: space.sm },
     cornerLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.sm },
     cornerName: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textPrimary },
-    cornerArrow: { ...type.meta, color: theme.buzz.accent },
+    cornerArrow: { color: theme.buzz.accent },
   };
 });

@@ -2,7 +2,7 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { Button, type ButtonVariant } from './Button';
+import { Button, type ButtonDestination, type ButtonVariant } from './Button';
 
 /**
  * The one error banner: what failed, one short line on what it means, and its
@@ -13,6 +13,7 @@ export function ErrorBanner({
   description,
   onRetry,
   retryLabel = 'Retry',
+  retryDestination,
   retrying = false,
   retryTestID,
   retryVariant = 'secondary',
@@ -25,6 +26,8 @@ export function ErrorBanner({
   description?: string;
   onRetry?: () => void;
   retryLabel?: string;
+  /** Where the retry goes when it leaves this screen (`Button.destination`). */
+  retryDestination?: ButtonDestination;
   retrying?: boolean;
   retryTestID?: string;
   retryVariant?: ButtonVariant;
@@ -62,6 +65,7 @@ export function ErrorBanner({
             <Button
               size={inline ? 'inline' : 'default'}
               label={retryLabel}
+              destination={retryDestination}
               loading={retrying}
               onPress={onRetry}
               testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)}

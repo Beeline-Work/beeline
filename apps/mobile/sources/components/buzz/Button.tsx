@@ -13,6 +13,13 @@ import {
 import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import { PixelLoader } from './MonoHull';
+import { ChevronGlyph } from './ChevronGlyph';
+import { ExternalGlyph } from './ExternalGlyph';
+
+export type ButtonDestination = 'external' | 'screen';
+
+/** The one size every destination mark draws at, beside a `body` label. */
+export const DESTINATION_MARK_SIZE = 14;
 
 export type ButtonVariant =
   'primary' | 'secondary' | 'provider' | 'brass' | 'quiet' | 'destructive' | 'danger';
@@ -31,6 +38,12 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   /** Compact filters for a mouse; touch keeps the house target. */
   compact?: boolean;
   iconPosition?: 'start' | 'end';
+  /**
+   * Where the press goes, drawn after the label in the label's colour:
+   * `external` leaves Beeline (`ExternalGlyph`), `screen` opens another
+   * Beeline screen (`ChevronGlyph`). Labels carry words only, never an arrow.
+   */
+  destination?: ButtonDestination;
   /**
    * `primary`: the filled action (one per surface).
    * `secondary`: outlined in `borderStrong`, for the alternative action.
@@ -73,6 +86,7 @@ function RecoveryButton({
   compact = false,
   size = 'default',
   iconPosition = 'start',
+  destination,
   variant = 'primary',
   labelTone,
   loading = false,
@@ -139,6 +153,7 @@ function ButtonFrame({
   compact = false,
   size = 'default',
   iconPosition = 'start',
+  destination,
   variant = 'primary',
   labelTone,
   loading = false,
@@ -157,6 +172,31 @@ function ButtonFrame({
   const primary = !inline && variant === 'primary';
   const filled = primary || variant === 'provider';
   const borderless = variant === 'quiet' || variant === 'destructive';
+  const labelStyles: StyleProp<TextStyle> = appearance
+    ? appearance.label
+    : [
+        styles.label,
+        labelStyle,
+        primary
+          ? styles.primaryLabel
+          : variant === 'provider'
+            ? styles.providerLabel
+            : variant === 'brass'
+              ? styles.brassLabel
+              : variant === 'danger'
+                ? styles.dangerLabel
+                : variant === 'destructive'
+                  ? styles.destructiveLabel
+                  : styles.secondaryLabel,
+        labelTone === 'quiet' && styles.quietLabel,
+        inline && styles.inlineLabel,
+        inline && variant === 'quiet' && styles.inlineQuietLabel,
+        inline && (variant === 'destructive' || variant === 'danger') && styles.destructiveLabel,
+        isDisabled && variant !== 'provider' && styles.disabledLabel,
+      ];
+  // With `appearance` the control style is the caller's own; a label with a
+  // glyph beside it still sits in one row.
+  const appearanceRow = Boolean(label && (icon || destination)) && styles.appearanceRow;
   return (
     <Pressable
       accessibilityRole="button"
@@ -177,6 +217,7 @@ function ButtonFrame({
       style={(state) =>
         appearance
           ? [
+              appearanceRow,
               typeof appearance.control === 'function'
                 ? appearance.control(state)
                 : appearance.control,
@@ -208,38 +249,45 @@ function ButtonFrame({
       {label ? (
         <Text
           numberOfLines={appearance || inline ? undefined : 1}
-          style={[
-            ...(appearance
-              ? [appearance.label]
-              : [
-                  styles.label,
-                  labelStyle,
-                  primary
-                    ? styles.primaryLabel
-                    : variant === 'provider'
-                      ? styles.providerLabel
-                      : variant === 'brass'
-                        ? styles.brassLabel
-                        : variant === 'danger'
-                          ? styles.dangerLabel
-                          : variant === 'destructive'
-                            ? styles.destructiveLabel
-                            : styles.secondaryLabel,
-                  labelTone === 'quiet' && styles.quietLabel,
-                  inline && styles.inlineLabel,
-                  inline && variant === 'quiet' && styles.inlineQuietLabel,
-                  inline &&
-                    (variant === 'destructive' || variant === 'danger') &&
-                    styles.destructiveLabel,
-                  isDisabled && variant !== 'provider' && styles.disabledLabel,
-                ]),
-          ]}
+          style={labelStyles}
         >
           {label}
         </Text>
       ) : null}
       {iconPosition === 'end' && icon}
+      {destination && label ? (
+        <DestinationMark destination={destination} labelStyle={labelStyles} />
+      ) : null}
     </Pressable>
+  );
+}
+
+/** The colour a label style resolves to: the last style that sets one wins. */
+function labelColor(style: StyleProp<TextStyle>): string | undefined {
+  if (Array.isArray(style)) {
+    for (let index = style.length - 1; index >= 0; index -= 1) {
+      const color = labelColor(style[index] as StyleProp<TextStyle>);
+      if (color) return color;
+    }
+    return undefined;
+  }
+  const color = style && typeof style === 'object' ? (style as TextStyle).color : undefined;
+  return typeof color === 'string' ? color : undefined;
+}
+
+/** The drawn mark after a label that says where the press goes, in the label's own colour. */
+function DestinationMark({
+  destination,
+  labelStyle,
+}: {
+  destination: ButtonDestination;
+  labelStyle: StyleProp<TextStyle>;
+}) {
+  const stroke = labelColor(labelStyle) ?? styles.secondaryLabel.color;
+  return destination === 'external' ? (
+    <ExternalGlyph color={stroke} size={DESTINATION_MARK_SIZE} testID="button-destination-external" />
+  ) : (
+    <ChevronGlyph color={stroke} size={DESTINATION_MARK_SIZE} testID="button-destination-screen" />
   );
 }
 
@@ -268,6 +316,7 @@ const styles = StyleSheet.create((theme) => {
       alignSelf: 'flex-start',
     },
     inlinePressed: { opacity: 0.6 },
+    appearanceRow: { flexDirection: 'row', alignItems: 'center', gap: buzz.space.sm },
     inlineLabel: { ...buzz.type.meta, color: buzz.accent },
     inlineQuietLabel: { color: buzz.textSecondary },
     compact: { minHeight: 32 },

@@ -1,5 +1,6 @@
 import { InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import * as React from 'react';
 import {
   Text,
@@ -389,16 +390,11 @@ function ConversationComposerContent({
                   {reply.preview}
                 </Text>
               </View>
-              <Button
+              <CloseButton
                 accessibilityLabel="Cancel reply"
-                accessibilityRole="button"
                 onPress={onCancelReply}
                 testID="reply-composer-cancel"
-                label=""
-                icon={<Text style={styles.removeButtonText}>{'×'}</Text>}
-                variant="quiet"
-                iconOnly
-                appearance={{ control: styles.removeButton, label: undefined }}
+                control={styles.removeButton}
               />
             </View>
           )}
@@ -444,17 +440,12 @@ function ConversationComposerContent({
                   </InlineRow>
                 </View>
 
-                <Button
+                <CloseButton
                 accessibilityLabel={`Remove ${attachment.name}`}
-                accessibilityRole="button"
                 disabled={attachmentsUploading}
                 onPress={() => onRemoveAttachment?.(index)}
                 testID={`pending-chat-attachment-remove-${index}`}
-                label=""
-                icon={<Text style={styles.removeButtonText}>{'×'}</Text>}
-                variant="quiet"
-                iconOnly
-                appearance={{ control: styles.removeButton, label: undefined }}
+                control={styles.removeButton}
               />
             </View>
           ))}
@@ -855,7 +846,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  removeButtonText: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   moreAttachments: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 16 },
   moreAttachmentsText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   attachButton: {

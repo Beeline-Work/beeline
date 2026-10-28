@@ -762,7 +762,7 @@ describe('PhoneService Needs-you tray', () => {
         ask: 'wants to',
         subject: 'reveal a key',
         literal: true,
-        actions: [{ kind: 'external', label: 'Use passkey ↗', url: 'https://squire.example/approve/1' }],
+        actions: [{ kind: 'external', label: 'Use passkey', url: 'https://squire.example/approve/1' }],
       },
     ]);
     await card(CORNER, 'squire-approval-decision', {

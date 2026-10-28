@@ -100,6 +100,27 @@ describe('postAgentModelCatalog: automatic fallback notice', () => {
     expect(await ownerDmText(database)).toEqual(['@niglet switched models · Old Opus is no longer offered; now using Opus 5.5.']);
   });
 
+  it('names the model an alias runs, never the alias menu text, on either side', async () => {
+    const aliasOptions = (description?: string) => [{
+      id: 'model', category: 'model', currentValue: 'default',
+      options: [
+        { id: 'default', name: 'Default (recommended)', ...(description ? { description } : {}) },
+        { id: 'opus', name: 'Opus 5.5', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+      ],
+    }];
+    const daemon = new DaemonService(database, new LiveHub());
+    await daemon.execute('postAgentModelCatalog', { agentId: AGENT, workspaceId: WORKSPACE, options: aliasOptions('Opus'), selection: { model: 'default' } }, AGENT);
+    // A catalog stored before helpers kept descriptions cannot name the alias's model.
+    await database.query(`UPDATE agents SET selected_model='default',model_catalog=$2::jsonb WHERE agent_id=$1`, [AGENT, JSON.stringify(aliasOptions())]);
+    await daemon.execute('postAgentModelCatalog', { agentId: AGENT, workspaceId: WORKSPACE, options: MODEL_OPTIONS, selection: { model: 'sonnet' } }, AGENT);
+    const texts = await ownerDmText(database);
+    expect(texts).toEqual([
+      '@niglet switched models · opus[1m] is no longer offered; now using Opus 5.5.',
+      '@niglet switched models · The previous model is no longer offered; now using Sonnet 5.5.',
+    ]);
+    expect(texts.join(' ')).not.toMatch(/default/i);
+  });
+
   it('does not re-notify on the next routine catalog mirror once the correction has landed', async () => {
     const daemon = new DaemonService(database, new LiveHub());
     await daemon.execute(

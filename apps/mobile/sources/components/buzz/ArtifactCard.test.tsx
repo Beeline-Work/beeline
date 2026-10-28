@@ -120,6 +120,8 @@ vi.mock('@/components/buzz/ArtifactPdfView', () => ({
 }));
 
 import { ArtifactCard } from './ArtifactCard';
+import { ChevronGlyph } from './ChevronGlyph';
+import { ExternalGlyph } from './ExternalGlyph';
 import { createInitialLoadGuard } from '@/buzz/artifact';
 import { ARTIFACT_PDF_BASE_URL, ARTIFACT_PDF_RENDERED_URL } from '@/buzz/artifact-pdf';
 
@@ -225,14 +227,19 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(text).toContain('Login mock');
     expect(text).toContain('@hoots');
     expect(text).toContain('2.0 KB');
-    expect(text).toContain('Open in browser ↗');
-    expect(text).toContain('Open →');
+    expect(text).toContain('Open in browser');
+    expect(text).not.toMatch(/[↗→]/);
+    expect(renderer.root.findAll((node: any) => node.props.children === 'Open').length).toBeGreaterThan(0);
+    // Drawn marks say where each goes: out to the browser, or into Beeline's viewer.
+    expect(renderer.root.findAllByType(ExternalGlyph)).toHaveLength(1);
+    expect(renderer.root.findAllByType(ChevronGlyph)).toHaveLength(1);
     // The captain's rule: if you are showing it to me it is ready — no status word.
     expect(text).not.toMatch(/\b(ready|pending|failed)\b/i);
   });
 
-  // The v0.1.106 footer is the one true footer: quiet "Open in browser ↗" on
-  // the left, a spacer, and the accent "Open →" on the right. PR 2959 gave
+  // The v0.1.106 footer is the one true footer: quiet "Open in browser" with
+  // the leaves-Beeline mark on the left, a spacer, and the accent "Open" with
+  // a chevron on the right. PR 2959 gave
   // previewable artifacts a shorter inline "Open"; this pins the restore for
   // every card that shares ArtifactCardShell.
   it.each([
@@ -255,11 +262,13 @@ describe('the artifact card is the preview (mock 1b)', () => {
     );
     await flush();
     const text = textOf(renderer);
-    expect(text).toContain('Open in browser ↗');
+    expect(text).toContain('Open in browser');
+    expect(text).not.toMatch(/[↗→]/);
     expect(hostNodes(renderer, 'artifact-open-browser')).toHaveLength(1);
+    expect(renderer.root.findAllByType(ExternalGlyph)).toHaveLength(1);
     // A document card has no in-app viewer, so its only action is the browser
-    // link; every previewable card also gets the accent Open → on the right.
-    if (hasOpen) expect(text).toContain('Open →');
+    // link; every previewable card also gets the accent Open on the right.
+    expect(renderer.root.findAllByType(ChevronGlyph)).toHaveLength(hasOpen ? 1 : 0);
     expect(hostNodes(renderer, 'artifact-open')).toHaveLength(hasOpen ? 1 : 0);
   });
 

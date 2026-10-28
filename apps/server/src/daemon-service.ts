@@ -5,7 +5,7 @@ import { visibleMessageSql } from './read-cursor.js';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
 import { postStarterInviteOffer } from './starter-invite.js';
-import { squireApprovalAction } from '@beeline/api-contract/phone';
+import { modelChoiceLabel, squireApprovalAction } from '@beeline/api-contract/phone';
 import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
 import { agentPostText } from './agent-post-text.js';
@@ -6112,16 +6112,17 @@ export class DaemonService {
       const roomId = await ensureSystemDirectMessageRoom(
         database, input.workspaceId, prior.owner_id,
       );
+      // An alias (`default`) names the model it runs, never its menu text.
       const oldModelName =
-        prior.model_catalog
-          .find((axis) => axis.category === 'model')
-          ?.options.find((choice) => choice.id === prior.selected_model)?.name ??
-        prior.selected_model;
+        modelChoiceLabel(
+          prior.model_catalog.find((axis) => axis.category === 'model'),
+          prior.selected_model,
+        ) ?? 'The previous model';
       const newModelName =
-        input.options
-          .find((axis) => axis.category === 'model')
-          ?.options.find((choice) => choice.id === input.selection?.model)?.name ??
-        input.selection.model;
+        modelChoiceLabel(
+          input.options.find((axis) => axis.category === 'model'),
+          input.selection.model,
+        ) ?? 'the default model';
       await systemLine(database, {
         roomId,
         authorId: SYSTEM_IDENTITY_ID,

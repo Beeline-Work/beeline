@@ -124,7 +124,8 @@ export interface AgentModelConfigOption {
   id: string;
   category: string;
   currentValue?: string;
-  options: Array<{ id: string; name?: string }>;
+  /** `description` is the harness's note; for an alias it names the model it runs. */
+  options: Array<{ id: string; name?: string; description?: string }>;
 }
 
 export interface AgentModelConfigInput {

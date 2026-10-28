@@ -14,7 +14,7 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { default: host('Svg'), Circle: host('Circle'), Path: host('Path') };
+  return { default: host('Svg'), Circle: host('Circle'), Path: host('Path'), Polyline: host('Polyline') };
 });
 vi.mock('react-native-unistyles', () => {
   // Any theme token reads as a plain value.

@@ -19,6 +19,7 @@ import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
 import { AgentVoiceSection, type AgentVoiceApi } from './AgentVoiceSection';
 import { displayModel } from '@/buzz/model-display';
+import { modelChoiceLabel } from '@beeline/api-contract/phone';
 
 export function AgentProfileView({
   detail,
@@ -268,7 +269,10 @@ export function AgentProfileView({
                 modelManagement
               ) : (
                 <>
-                  <SettingsRow title="Model" description={displayModel(label(model, modelAxis))} />
+                  <SettingsRow
+                    title="Model"
+                    description={model ? displayModel(modelChoiceLabel(modelAxis, model) ?? '') || undefined : 'Not available'}
+                  />
                   <SettingsRow title="Thinking level" value={label(effort, effortAxis)} />
                 </>
               )}

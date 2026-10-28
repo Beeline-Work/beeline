@@ -1,7 +1,7 @@
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
-import { ContentTarget } from '@/components/buzz/IndexRow';
+import { ContentTarget, InlineRow } from '@/components/buzz/IndexRow';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
@@ -40,6 +40,7 @@ import {
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -680,7 +681,12 @@ export default function TrayScreen() {
           <Text style={styles.unavailable}>Deleted or no longer accessible</Text>
         )}
         <View style={styles.rowFooter}>
-          {!desktop ? <Text style={styles.open}>OPEN →</Text> : null}
+          {!desktop ? (
+            <InlineRow style={styles.openRow}>
+              <Text style={styles.open}>OPEN</Text>
+              <ChevronGlyph color={styles.open.color} size={CHEVRON_ROW_SIZE} />
+            </InlineRow>
+          ) : null}
           {desktop && bookmark.available ? (
             <Button
               accessibilityLabel="Remove bookmark"
@@ -932,6 +938,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs,
   },
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: theme.buzz.space.sm },
+  openRow: { alignItems: 'center', gap: theme.buzz.space.xs },
   open: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
   removeText: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },

@@ -88,7 +88,7 @@ describe('cornerStatusLine', () => {
         updatedAt: 1,
       },
     });
-    expect(cornerStatusLine(lifecycle, false)).toBe('PR #840 · 2 tests failed × Mobile suite');
+    expect(cornerStatusLine(lifecycle, false)).toBe('PR #840 · 2 tests failed · Mobile suite');
   });
 
   it('uses the singular for one failure and names it from the failing list when needed', () => {
@@ -96,7 +96,7 @@ describe('cornerStatusLine', () => {
       checks: 'failing',
       checksSummary: { status: 'failing', total: 3, failing: ['lint'], checks: [], updatedAt: 1 },
     });
-    expect(cornerStatusLine(lifecycle, false)).toBe('PR #840 · 1 test failed × Lint');
+    expect(cornerStatusLine(lifecycle, false)).toBe('PR #840 · 1 test failed · Lint');
   });
 
   it('lets a merge conflict outrank the check copy', () => {

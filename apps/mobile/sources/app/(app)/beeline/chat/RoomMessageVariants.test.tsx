@@ -3099,6 +3099,8 @@ describe('Room message variant components', () => {
       const resume = reconnecting.root.findByProps({
         testID: 'connector-offer-offer-1-continue',
       });
+      // The continue action names the service it signs in to, in words only.
+      expect(resume.props.label).toBe('Continue Trusty Squire sign-in');
       act(() => resume.props.onPress());
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });

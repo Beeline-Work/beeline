@@ -1,4 +1,6 @@
-import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -52,16 +54,11 @@ export function SlashVerbPicker({
         <Text numberOfLines={1} style={styles.headingText}>
           {heading}
         </Text>
-        <Button
+        <CloseButton
           accessibilityLabel="Dismiss commands"
-          accessibilityRole="button"
           onPress={onDismiss}
           testID="slash-verb-dismiss"
-          label=""
-          icon={<Text style={styles.dismissText}>{'×'}</Text>}
-          variant="quiet"
-          iconOnly
-          appearance={{ control: styles.dismiss, label: undefined }}
+          control={styles.dismiss}
         />
       </View>
       {commandCount > 0 || appCount > 0 || verbs.length > 0 ? (
@@ -127,13 +124,18 @@ export function SlashVerbPicker({
             const index = commandCount + appIndex;
             const selected = index === highlightedIndex;
             return (
-              <TouchableOpacity
+              <ContentTarget
                 accessibilityLabel={`/${app.command}. Open ${app.title}`}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
                 key={`app:${app.slug}`}
                 onPress={() => onSelectApp?.(app.slug)}
-                style={[styles.row, styles.commandRow, selected && styles.rowSelected]}
+                style={({ pressed }) => [
+                  styles.row,
+                  styles.commandRow,
+                  selected && styles.rowSelected,
+                  pressed && styles.rowPressed,
+                ]}
                 testID={`slash-corner-app-${app.slug}`}
               >
                 <Text numberOfLines={1} style={[styles.command, styles.agentCommand]}>
@@ -149,8 +151,8 @@ export function SlashVerbPicker({
                     </Text>
                   ) : null}
                 </View>
-                <Text style={styles.enter}>→</Text>
-              </TouchableOpacity>
+                <ChevronGlyph color={styles.enter.color} size={CHEVRON_ROW_SIZE} />
+              </ContentTarget>
             );
           })}
           {verbs.map((verb, verbIndex) => {
@@ -232,10 +234,6 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    dismissText: {
-      ...groknight.type.body,
-      color: groknight.textSecondary,
-    },
     list: { maxHeight: 240 },
     row: {
       minHeight: 58,
@@ -248,6 +246,8 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.borderQuiet,
     },
     rowSelected: { backgroundColor: groknight.bgHover },
+    // The press feedback of the touchable rows beside it.
+    rowPressed: { opacity: 0.2 },
     command: {
       ...groknight.type.machine,
       fontFamily: groknight.monoSemibold,

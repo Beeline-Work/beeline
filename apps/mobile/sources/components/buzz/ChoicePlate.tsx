@@ -2,10 +2,17 @@ import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { PixelLoader } from './MonoHull';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
 export type TranscriptCardChoice = {
   id: string;
+  /** The plate's letter or number; screen readers always read it. */
   letter: string;
+  /**
+   * A drawn mark shown in place of the letter: `chevron` for a choice that
+   * applies something, `none` for the current one its selected box marks.
+   */
+  mark?: 'chevron' | 'none';
   label: string;
   consequence: string;
   costly?: boolean;
@@ -55,15 +62,28 @@ export function TranscriptCardChoicePlate({
           ]}
           testID={`transcript-card-choice-letter-${choice.id}`}
         >
-          <Text
-            style={[
-              styles.choiceLetterText,
-              choice.selected ? styles.choiceLetterTextSelected : null,
-              choice.costly ? styles.choiceLetterTextCostly : null,
-            ]}
-          >
-            {choice.letter}
-          </Text>
+          {choice.mark === 'chevron' ? (
+            <ChevronGlyph
+              color={
+                choice.selected
+                  ? styles.choiceLetterTextSelected.color
+                  : choice.costly
+                    ? styles.choiceLetterTextCostly.color
+                    : styles.choiceLetterText.color
+              }
+              size={CHEVRON_ROW_SIZE}
+            />
+          ) : choice.mark === 'none' ? null : (
+            <Text
+              style={[
+                styles.choiceLetterText,
+                choice.selected ? styles.choiceLetterTextSelected : null,
+                choice.costly ? styles.choiceLetterTextCostly : null,
+              ]}
+            >
+              {choice.letter}
+            </Text>
+          )}
         </View>
         <View style={styles.choiceCopy}>
           <Text

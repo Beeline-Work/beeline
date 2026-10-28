@@ -1,4 +1,5 @@
 import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -136,16 +137,10 @@ export function ArtifactViewerScreen({
               />
           </>
         ) : null}
-        <Button
+        <CloseButton
           accessibilityLabel="Close artifact viewer"
-          accessibilityRole="button"
           onPress={onClose}
           testID="artifact-viewer-close"
-          label=""
-          icon={<Text style={styles.closeGlyph}>{'✕'}</Text>}
-          variant="quiet"
-          iconOnly
-          appearance={{ control: styles.headerAction, label: undefined }}
         />
       </View>
       <View style={styles.body}>
@@ -356,7 +351,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
-  closeGlyph: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   headerAction: {
     minWidth: 44,
     minHeight: 44,

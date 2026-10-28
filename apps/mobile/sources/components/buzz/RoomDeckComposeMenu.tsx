@@ -16,6 +16,7 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
+import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Typography } from '@/constants/Typography';
 
 export type RoomDeckComposeAction = 'message' | 'room' | 'invite' | 'agent' | 'join';
@@ -80,13 +81,12 @@ export function RoomDeckComposeMenu({
 
   return (
     <>
-      <TouchableOpacity
+      <ContentTarget
         accessibilityLabel={open ? 'Close compose menu' : 'Open compose menu'}
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
-        accessibilityValue={{ text: open ? '×' : '+' }}
         onPress={() => setOpen((value) => !value)}
-        style={[styles.fab, header && styles.header]}
+        style={({ pressed }) => [styles.fab, header && styles.header, pressed && styles.fabPressed]}
         testID="room-deck-compose-fab"
       >
         <Animated.View style={[styles.fabGlyph, glyphStyle]}>
@@ -106,7 +106,7 @@ export function RoomDeckComposeMenu({
             />
           </Svg>
         </Animated.View>
-      </TouchableOpacity>
+      </ContentTarget>
 
       {open && (
         <HullActionSheetModal
@@ -212,6 +212,8 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       backgroundColor: groknight.buttonPrimaryFill,
     },
+    // The press feedback the FAB had as a touchable.
+    fabPressed: { opacity: 0.2 },
     fabGlyph: {
       color: groknight.buttonPrimaryText,
       width: FAB_GLYPH_SIZE,

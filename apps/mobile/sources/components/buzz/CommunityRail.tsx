@@ -1,4 +1,5 @@
 import { Button } from '@/components/buzz/Button';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import { useIsDesktop } from '@/utils/responsive';
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -24,6 +25,10 @@ import {
   workspacePictureSeat,
 } from '@/buzz/workspace-tile';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import Svg, { Circle, Path } from 'react-native-svg';
+import { DECORATIVE_GLYPH_PROPS } from '@/components/buzz/decorative-glyph';
+import { ContentTarget } from '@/components/buzz/IndexRow';
+import { chromeStrokeWidth } from '@/components/buzz/MembersGlyph';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
@@ -112,16 +117,11 @@ function RailButton({
         {children}
       </TouchableOpacity>
       {exitArmed && (
-        <Button
-          accessibilityRole="button"
+        <CloseButton
           accessibilityLabel={`Exit ${label}`}
           testID={`workspace-exit-${testID?.replace('community-rail-', '') ?? ''}`}
           onPress={onExitPress}
-          label=""
-          icon={<Text style={styles.exitAffordanceGlyph}>{'×'}</Text>}
-          variant="quiet"
-          iconOnly
-          appearance={{ control: styles.exitAffordance, label: undefined }}
+          control={styles.exitAffordance}
         />
       )}
     </View>
@@ -132,11 +132,42 @@ type RailCommandProps = {
   label: string;
   accessibilityLabel: string;
   onPress: () => void;
-  glyph?: string;
+  glyph?: RailGlyph;
   children?: React.ReactNode;
   testID?: string;
   presentation?: 'rail' | 'column';
 };
+
+type RailGlyph = 'add' | 'settings';
+const RAIL_GLYPH_SIZE = 22;
+
+/** A rail command's drawn mark: a plus to add, three sliders for settings. */
+function RailCommandGlyph({ glyph }: { glyph: RailGlyph }) {
+  return (
+    <View style={styles.railCommandGlyph} testID={`rail-glyph-${glyph}`}>
+      <Svg
+        {...DECORATIVE_GLYPH_PROPS}
+        fill="none"
+        height={RAIL_GLYPH_SIZE}
+        stroke={styles.railCommandGlyphInk.color}
+        strokeLinecap="round"
+        strokeWidth={chromeStrokeWidth(RAIL_GLYPH_SIZE)}
+        viewBox="0 0 24 24"
+        width={RAIL_GLYPH_SIZE}
+      >
+        {glyph === 'add' ? (
+          <Path d="M12 5v14M5 12h14" />
+        ) : (
+          <>
+            <Path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+            <Circle cx={15} cy={7} r={2} />
+            <Circle cx={9} cy={17} r={2} />
+          </>
+        )}
+      </Svg>
+    </View>
+  );
+}
 
 /**
  * A rail command: glyph (or identity mark) over a mono micro-label. The label
@@ -154,16 +185,20 @@ function RailCommand({
 }: RailCommandProps) {
   const column = presentation === 'column';
   return (
-    <TouchableOpacity
+    <ContentTarget
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      style={[styles.railCommand, column && styles.columnCommand]}
+      style={({ pressed }) => [
+        styles.railCommand,
+        column && styles.columnCommand,
+        pressed && styles.railCommandPressed,
+      ]}
       testID={testID}
     >
-      {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children}
+      {glyph ? <RailCommandGlyph glyph={glyph} /> : children}
       <Text style={styles.railCommandLabel}>{label}</Text>
-    </TouchableOpacity>
+    </ContentTarget>
   );
 }
 
@@ -270,7 +305,7 @@ export function CommunityRail({
         })}
         <RailCommand
           accessibilityLabel={`Create or join a ${WORKSPACE_LABEL}`}
-          glyph="＋"
+          glyph="add"
           label={column ? `ADD ${WORKSPACE_LABEL.toUpperCase()}` : 'ADD'}
           onPress={onAdd}
           testID="community-rail-add"
@@ -281,7 +316,7 @@ export function CommunityRail({
       <View style={styles.railDivider} />
       <RailCommand
         accessibilityLabel="Settings"
-        glyph={viewerPubkey ? undefined : '⚙'}
+        glyph={viewerPubkey ? undefined : 'settings'}
         label="SETTINGS"
         onPress={onSettings}
         testID="community-rail-settings"
@@ -648,12 +683,6 @@ const styles = StyleSheet.create((theme, runtime) => {
       borderRadius: 3,
       backgroundColor: groknight.bgHover,
     },
-    exitAffordanceGlyph: {
-      ...theme.buzz.type.body,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      textAlign: 'center',
-    },
     selectionBar: {
       position: 'absolute',
       top: 9,
@@ -676,6 +705,8 @@ const styles = StyleSheet.create((theme, runtime) => {
       justifyContent: 'center',
       gap: groknight.space.xs,
     },
+    // The press feedback the rail's touchables have always had.
+    railCommandPressed: { opacity: 0.2 },
     columnCommand: {
       width: '100%',
       minHeight: 48,
@@ -688,10 +719,11 @@ const styles = StyleSheet.create((theme, runtime) => {
      * mono micro-label under it carries the meaning and the glyph sits on the
      * same quiet tier as the rest of the chrome. */
     railCommandGlyph: {
-      ...theme.buzz.type.hero,
-      color: groknight.textSecondary,
-      textAlign: 'center',
+      height: theme.buzz.type.hero.lineHeight,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
+    railCommandGlyphInk: { color: groknight.textSecondary },
     /* Tracking is drawn after every letter, the last one included, so a
      * centred label sits one tracking step left of centre. The left padding
      * of the same width re-centres the glyphs, keeping SETTINGS' first "S"

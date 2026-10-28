@@ -233,6 +233,8 @@
         "scripts/new-corner-dialog-proof.tsx",
         "scripts/room-repo-choice-proof.tsx",
         "scripts/room-sheet-height-proof.tsx",
+        // person-invite.browser.test.ts bundles this entry by path.
+        "scripts/person-invite-proof.tsx",
         "scripts/build-subscriptions-frame.ts",
         "scripts/subscriptions-frame.tsx",
         "scripts/composer-dictation-proof.tsx",

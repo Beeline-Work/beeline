@@ -10,6 +10,8 @@ const RUBY_MESSAGE =
   '- **review-loop-fixes:** items 2, 4, 5. Idle alerts on corners waiting for review or checks.\n' +
   '- **tool-schema-truth:** items 3, 7. Search and read limits now match what the tools accept.\n\n' +
   '**3. Sentry.** One corner, **sentry-four-errors**, assigned to Jellybean.';
+// Review regression: a sentence end inside the bold run stops the lead where the run closes.
+const REVIEW_MESSAGE = '**Shipped. Finally** Next up is review. More.';
 
 it.skipIf(!existsSync(CHROME))('Reproduction lead-split-1: a bold lead renders without literal asterisks', async () => {
   const mobile = process.cwd();
@@ -35,14 +37,19 @@ it.skipIf(!existsSync(CHROME))('Reproduction lead-split-1: a bold lead renders w
         return <div style={{padding: 16}}>
           <LedgerEntry itemId="ruby" luminous chronological bodyText={${JSON.stringify(RUBY_MESSAGE)}}
             bodyTestID="ruby-body" byline={{name: 'ruby', role: 'opus 5.5', stamp: '09:41'}}/>
+          <LedgerEntry itemId="review" luminous chronological bodyText={${JSON.stringify(REVIEW_MESSAGE)}}
+            bodyTestID="review-body" byline={{name: 'speedy', role: 'opus 5.5', stamp: '09:42'}}/>
         </div>;
       }
       createRoot(document.getElementById('root')).render(<Proof/>);
       setTimeout(() => {
         const lead = document.querySelector('[data-testid="ruby-body-lead"]');
         const row = document.querySelector('[data-testid="chat-message-ruby"]');
+        const reviewLead = document.querySelector('[data-testid="review-body-lead"]');
+        const reviewRow = document.querySelector('[data-testid="chat-message-review"]');
         document.getElementById('result').textContent = JSON.stringify({
-          lead: lead?.textContent, text: row?.textContent });
+          lead: lead?.textContent, text: row?.textContent,
+          reviewLead: reviewLead?.textContent, reviewText: reviewRow?.textContent });
       }, 1500);`);
     for (const theme of ['bone', 'obsidian']) {
       const shims = webProofShims(mobile);
@@ -59,7 +66,10 @@ it.skipIf(!existsSync(CHROME))('Reproduction lead-split-1: a bold lead renders w
       expect(result.lead).toBe('1. Fixes dispatched.');
       expect(result.text).toContain('Items 2–9 are in 3 corners.');
       expect(result.text).not.toContain('*');
-      console.log(`Reproduction lead-split-1 Demonstrated ${theme}: ${JSON.stringify(result.lead)}`);
+      expect(result.reviewLead).toBe('Shipped. Finally');
+      expect(result.reviewText).toContain('Next up is review. More.');
+      expect(result.reviewText).not.toContain('*');
+      console.log(`Reproduction lead-split-1 Demonstrated ${theme}: ${JSON.stringify(result.lead)}, ${JSON.stringify(result.reviewLead)}`);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

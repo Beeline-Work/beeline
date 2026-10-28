@@ -186,7 +186,6 @@ const TYPEWRITER_MS_PER_CHARACTER = 10;
 // Same inline constructs `parseMarkdownSpans` renders: bold, italic, link, code.
 const LEAD_INLINE_PATTERN =
   /(\*\*(.*?)\*\*)|((?<!\*)\*(?!\*)(.*?)\*(?!\*))|(\[([^\]]+)\]\(([^)]+)\))|(`(.*?)`)/g;
-const LEAD_TERMINATOR = /[.!?]["')\]]*$/;
 const LEAD_ABBREVIATIONS = new Set(['e.g.', 'i.e.', 'vs.', 'cf.']);
 
 /** A first line `parseMarkdownBlock` draws as its own block, not as prose. */
@@ -212,6 +211,18 @@ function isFalseSentenceEnd(line: string, end: number): boolean {
   return /^\d+\.$/.test(word) && lead === word;
 }
 
+/** Index just past the first real sentence end in `line` between `from` and `to`, or -1. */
+function findSentenceEnd(line: string, from = 0, to = line.length): number {
+  for (let index = from; index < to; index++) {
+    if (!/[.!?]/.test(line[index])) continue;
+    let end = index;
+    while (/["')\]]/.test(line[end + 1] ?? '')) end++;
+    if (/^(\s|$)/.test(line.slice(end + 1)) && !isFalseSentenceEnd(line, index)) return end + 1;
+    index = end;
+  }
+  return -1;
+}
+
 /**
  * Split a turn into its emphasized lead sentence and regular body copy. The
  * two halves render as separate Markdown blocks, so the cut never lands inside
@@ -232,7 +243,7 @@ export function splitLeadSentence(text: string): [string, string] {
     constructs.push({
       start: match.index!,
       end: match.index! + match[0].length,
-      closesSentence: match[8] === undefined && LEAD_TERMINATOR.test(visible.trimEnd()),
+      closesSentence: match[8] === undefined && findSentenceEnd(visible) >= 0,
     });
   }
 
@@ -245,16 +256,10 @@ export function splitLeadSentence(text: string): [string, string] {
       if (construct.closesSentence && /^(\s|$)/.test(firstLine.slice(index))) cut = index;
       continue;
     }
-    if (/[.!?]/.test(firstLine[index])) {
-      let end = index;
-      while (/["')\]]/.test(firstLine[end + 1] ?? '')) end++;
-      if (/^(\s|$)/.test(firstLine.slice(end + 1)) && !isFalseSentenceEnd(firstLine, index)) {
-        cut = end + 1;
-      }
-      index = end + 1;
-      continue;
-    }
-    index++;
+    const nextConstruct = constructs.find((c) => c.start > index)?.start ?? firstLine.length;
+    const end = findSentenceEnd(firstLine, index, nextConstruct);
+    if (end >= 0) cut = end;
+    index = nextConstruct;
   }
 
   if (cut < 0) return [firstLine, rest.trim()];

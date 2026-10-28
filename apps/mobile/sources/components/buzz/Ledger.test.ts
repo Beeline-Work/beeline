@@ -757,6 +757,14 @@ describe('the ledger — the lead sentence keeps Markdown whole', () => {
       '*Shipped. Finally.*',
       'Next up is review.',
     ]);
+    expect(splitLeadSentence('**Shipped. Finally** Next up is review. More.')).toEqual([
+      '**Shipped. Finally**',
+      'Next up is review. More.',
+    ]);
+    expect(splitLeadSentence('**e.g. this one** stays in the lead. Rest.')).toEqual([
+      '**e.g. this one** stays in the lead.',
+      'Rest.',
+    ]);
   });
 
   it('never cuts inside inline code or a link', () => {
@@ -768,9 +776,13 @@ describe('the ledger — the lead sentence keeps Markdown whole', () => {
       'See `foo.ts` for details.',
       'Rest.',
     ]);
-    expect(splitLeadSentence('Read [the spec. v2](https://x.dev/a) first. Then build.')).toEqual([
-      'Read [the spec. v2](https://x.dev/a) first.',
+    expect(splitLeadSentence('Read [the spec](https://x.dev/a.b) first. Then build.')).toEqual([
+      'Read [the spec](https://x.dev/a.b) first.',
       'Then build.',
+    ]);
+    expect(splitLeadSentence('Read [the spec. v2](https://x.dev/a) first. Then build.')).toEqual([
+      'Read [the spec. v2](https://x.dev/a)',
+      'first. Then build.',
     ]);
     expect(splitLeadSentence('**a. b**c, then more. Rest.')).toEqual([
       '**a. b**c, then more.',

@@ -15,12 +15,12 @@ it.each(['clients', 'sheet', 'message', 'disconnect', 'failure'])('renders conne
     const entry = path.join(dir, 'proof.jsx');
     await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';
       import { AiClientsSection } from '@/components/buzz/AiClientsSection';
-      import { LedgerSteer } from '@/components/buzz/Ledger';
+      import { LedgerEntry } from '@/components/buzz/Ledger';
       import { PageHeader } from '@/components/buzz/PageHeader';
       const frame=${JSON.stringify(frame)}; const clients=${JSON.stringify(clients)};
       createRoot(document.getElementById('root')).render(<div style={{minHeight:'100vh',background:'#F3EEE4'}}>
         <PageHeader prominent eyebrow={frame === 'message' ? undefined : 'Settings'} title={frame === 'message' ? '#connector-demo' : 'Connectors'} />
-        <div style={{padding:24}}>{frame === 'message' ? <LedgerSteer itemId="message" bodyText="@demo-agent acknowledge the connector review" bodyTestID="message" chronological byline={{name:'Connector Reviewer',stamp:'20:43',isViewer:true,sourceClient:{id:'client-0',name:'Grok'}}} /> :
+        <div style={{padding:24}}>{frame === 'message' ? <LedgerEntry itemId="message" bodyText="@demo-agent acknowledge the connector review" bodyTestID="message" chronological byline={{name:'Muse',stamp:'20:43',role:'Meta Muse'}} /> :
           <AiClientsSection clients={clients} onChanged={() => {globalThis.changed=true;}} />}</div></div>);
       setTimeout(()=>{
         if(['sheet','disconnect','failure'].includes(frame)) document.querySelector('[data-testid="ai-client-client-0"]').click();
@@ -44,7 +44,12 @@ it.each(['clients', 'sheet', 'message', 'disconnect', 'failure'])('renders conne
       head: `<style>${fonts}#result{display:none}</style>` });
     expect(result.status, result.stderr).toBe(0);
     const shown = JSON.parse(result.result);
-    expect(shown.text).toContain(frame === 'message' ? 'via Grok' : frame === 'sheet' ? 'Disconnect Grok?' : 'Meta Muse');
+    expect(shown.text).toContain(frame === 'message' ? 'Meta Muse' : frame === 'sheet' ? 'Disconnect Grok?' : 'Meta Muse');
+    if(frame === 'message') {
+      expect(shown.text).not.toContain('via ');
+      expect(shown.text.match(/Meta Muse/g)).toHaveLength(1);
+      expect(shown.text).toContain('Muse');
+    }
     if(['disconnect','failure'].includes(frame)) {
       expect(shown.operation).toEqual({name:'disconnectAiClient',input:{clientId:'client-0'}});
       if(frame==='disconnect') { expect(shown.changed).toBe(true); expect(shown.text).not.toContain('Disconnect Grok?'); }

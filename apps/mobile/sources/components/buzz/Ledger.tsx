@@ -83,7 +83,6 @@ export type LedgerBylineMark = {
 
 /** The author byline; human continuations may omit it. */
 export type LedgerByline = {
-  sourceClient?: { id: string; name: string };
   onOpenProfile?: () => void;
   /** Claims a long press before the nested profile control can turn it into a tap. */
   onLongPress?: () => void;
@@ -464,7 +463,6 @@ function Byline({ byline }: { byline: LedgerByline }) {
             {byline.name}
           </Text>
         ) : null}
-        {byline.sourceClient ? <Text numberOfLines={1} style={styles.bylineClient} testID="chat-byline-client">via {byline.sourceClient.name}</Text> : null}
         {byline.role ? (
           <Text
             ellipsizeMode="tail"
@@ -1146,9 +1144,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   bylineNameViewer: { color: theme.buzz.accent },
   // The quiet role tag and the clock stamp keep the mono metadata voice.
-  bylineClient: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, backgroundColor: theme.buzz.bgRaised,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.buzz.border, borderRadius: theme.buzz.radius,
-    paddingHorizontal: theme.buzz.space.xs, flexShrink: 1, maxWidth: '44%' },
   bylineTag: {
     ...theme.buzz.type.machine,
     maxWidth: '44%',

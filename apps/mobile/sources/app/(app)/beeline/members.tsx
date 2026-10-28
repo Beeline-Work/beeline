@@ -1,3 +1,4 @@
+import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
@@ -15,7 +16,6 @@ import { USAGE_REFRESH_CLIENT_TIMEOUT_MS } from '@/components/buzz/AgentUsageSec
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
-  Share,
   Switch,
   Text,
   TextInput,
@@ -599,7 +599,7 @@ export default function BuzzMembers({
         workspaceId,
         publicInviteOrigin,
       );
-      await Share.share({ message: url });
+      await presentPersonInvite(url);
     } catch (reason) {
       setError(appErrorCopy(reason, `Could not create person invite.`));
     } finally {

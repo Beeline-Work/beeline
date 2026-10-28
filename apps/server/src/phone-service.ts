@@ -7,6 +7,7 @@ import { waitForConnection } from './connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from './company-mcp-discovery.js';
 import { COMPANY_REGISTRY } from './company-registry.js';
+import { isAppRegistryPublisher } from './mcp-registry-policy.js';
 import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { modelChoiceLabel, readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
@@ -9659,9 +9660,7 @@ export class PhoneService {
       if (!input.registryServerName || !input.registryVersion ||
           registryServerAppKey(input.registryServerName) !== identity.key)
         throw new Error('Select the official sign-in from search results');
-      const publisher = registryServerDomain(input.registryServerName);
-      const known = COMPANY_REGISTRY.find(company => appIdentity(company.domain ?? '')?.key === identity.key);
-      if (!publisher || known && !known.hosts.includes(publisher)) throw new Error('Select the official sign-in from search results');
+      if (!isAppRegistryPublisher(input.registryServerName, app)) throw new Error('Select the official sign-in from search results');
       const manifest = await this.mcpRegistry.selected(input.registryServerName, input.registryVersion);
       if (!manifest || !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
           manifest.secretInputNames.length > 0)

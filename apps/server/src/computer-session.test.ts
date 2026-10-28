@@ -984,18 +984,18 @@ describe('computer session handoff', () => {
       await shareChromiumPage({ page, serverBaseUrl: origin, shareId: share.id,
         daemonToken: 'test-token', onEnded: async () => {} });
       const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+      // The server can send its cached frame in the same packet as the upgrade.
+      // Listen before open so a static page's only frame cannot be missed.
+      let receivedScreen: { decoded: { method?: string; params?: { data?: string } }; binary: boolean } | undefined;
+      const receiveScreen = (data: WebSocket.RawData, binary: boolean) => {
+        const decoded = JSON.parse(data.toString()) as { method?: string; params?: { data?: string } };
+        if (decoded.method === 'Page.screencastFrame' && decoded.params?.data)
+          receivedScreen = { decoded, binary };
+      };
+      viewer.on('message', receiveScreen);
       await opened(viewer);
-      const screen = await until(async () => {
-        const message = await Promise.race([
-          new Promise<{ text: string; binary: boolean }>((resolve) =>
-            viewer.once('message', (data, binary) => resolve({ text: data.toString(), binary }))),
-          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 500)),
-        ]);
-        if (!message) return undefined;
-        const decoded = JSON.parse(message.text) as { method?: string; params?: { data?: string } };
-        return decoded.method === 'Page.screencastFrame' && decoded.params?.data
-          ? { decoded, binary: message.binary } : undefined;
-      });
+      const screen = await until(async () => receivedScreen);
+      viewer.off('message', receiveScreen);
       expect(screen.binary).toBe(false);
       expect(Buffer.from(screen.decoded.params!.data!, 'base64').subarray(0, 3).toString('hex')).toBe('ffd8ff');
       const agentWait = waitForComputerHandback({ serverBaseUrl: origin, shareId: share.id, daemonToken: 'test-token' });

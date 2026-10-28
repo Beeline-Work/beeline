@@ -409,9 +409,10 @@ describe('connect_app', () => {
   });
 
   it('connect installs a no-sign-in Registry remote to ready with no owner card', async () => {
-    const registry = fakeRegistry([{ ...linearServer, name: 'org.example/echo', title: 'Echo', websiteUrl: 'https://echo.test' }]);
+    const registry = fakeRegistry([{ ...linearServer, name: 'org.example/echo', title: 'Echo', websiteUrl: 'https://example.org' }]);
+    vi.spyOn(registry.client, 'search').mockResolvedValue([(await registry.client.exact('org.example/echo', linearServer.version))!]);
     const daemon = daemonWith(registry.client);
-    const connection = daemon.execute('connect', { ...turn, service: 'org.example/echo', reason: 'Use Echo' }, HELPER);
+    const connection = daemon.execute('connect', { ...turn, service: 'https://example.org', reason: 'Use Echo' }, HELPER);
     let connectorId = '';
     await vi.waitFor(async () => {
       const row = (await database.query<{ id: string }>(`SELECT id FROM workspace_connectors WHERE connector_type='registry-mcp'`)).rows[0];
@@ -833,6 +834,58 @@ describe('connect_app', () => {
       }));
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [CORNER, HELPER])).rowCount).toBe(1);
+  });
+
+  it('R-YOUTUBE-PUBLISHER: refuses a third-party YouTube install before creating a connector', async () => {
+    const server = { ...linearServer, name: 'click.myagents/youtube', title: 'YouTube',
+      websiteUrl: 'https://youtube.com', version: '1.0.2' };
+    const registry = fakeRegistry([server]);
+    const result = await daemonWith(registry.client).execute('connectMcpServer', { ...turn,
+      serverName: server.name, version: server.version, reason: 'Upload a YouTube video' }, HELPER);
+    expect(result).toMatchObject({ status: 'unsupported', reason: expect.stringContaining('connect') });
+    expect((await database.query(`SELECT id FROM workspace_connectors WHERE connector_type='registry-mcp'`)).rows).toHaveLength(0);
+  });
+
+  it('R-YOUTUBE-PUBLISHER: connect YouTube rejects the Registry impostor and posts the managed sign-in card', async () => {
+    const registry = fakeRegistry([{ ...linearServer, name: 'click.myagents/youtube', title: 'YouTube',
+      websiteUrl: 'https://youtube.com', version: '1.0.2' }]);
+    const search = vi.spyOn(registry.client, 'search');
+    const provider = fakeComposio('youtube');
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'youtube');
+    const result = await daemonWith(registry.client, provider).execute('connect', { ...turn,
+      service: 'youtube', reason: 'Upload a YouTube video' }, HELPER);
+    expect(result).toMatchObject({ status: 'needs_sign_in', transport: 'composio', appKey: 'youtube' });
+    expect(search).toHaveBeenCalled();
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    expect((await phone.readRoom(ROOM, OWNER))?.messages.find(message => message.appSignIn)?.appSignIn)
+      .toMatchObject({ appKey: 'youtube', status: 'pending', ownerId: OWNER });
+    expect((await database.query(`SELECT id FROM workspace_connectors WHERE connector_type='registry-mcp'`)).rows).toHaveLength(0);
+  });
+
+  it.each([['com.stripe/mcp', 'Stripe', 'https://stripe.com'], ['app.linear/linear', 'Linear', 'https://linear.app']])('R-YOUTUBE-PUBLISHER: official %s still installs directly', async (name, title, websiteUrl) => {
+    const server = { ...linearServer, name, title, websiteUrl };
+    const registry = fakeRegistry([server]);
+    const result = await daemonWith(registry.client).execute('connectMcpServer', { ...turn,
+      serverName: server.name, version: server.version, reason: 'Use Stripe' }, HELPER);
+    expect(result).toMatchObject({ status: 'connecting', connectorId: expect.any(String) });
+    expect((await database.query(`SELECT registry_server_name FROM workspace_connectors WHERE connector_type='registry-mcp'`)).rows)
+      .toEqual([{ registry_server_name: server.name }]);
+  });
+
+  it.each([['com.stripe/mcp', 'Stripe', 'https://stripe.com'], ['app.linear/linear', 'Linear', 'https://linear.app']])('R-YOUTUBE-PUBLISHER: connect uses official %s', async (name, title, websiteUrl) => {
+    const registry = fakeRegistry([{ ...linearServer, name, title, websiteUrl }]);
+    const manifest = await registry.client.exact(name, linearServer.version);
+    vi.spyOn(registry.client, 'search').mockResolvedValue([manifest!]);
+    const daemon = daemonWith(registry.client);
+    const connection = daemon.execute('connect', { ...turn, service: title, reason: 'Use the official app' }, HELPER);
+    let connectorId = '';
+    await vi.waitFor(async () => {
+      const row = (await database.query<{ id: string }>(`SELECT id FROM workspace_connectors WHERE registry_server_name=$1`, [name])).rows[0];
+      expect(row).toBeDefined(); connectorId = row!.id;
+    });
+    await daemon.execute('installConnector', { agentId: HELPER, connectorId }, HELPER);
+    expect(await connection).toMatchObject({ status: 'ready', transport: 'registry-mcp' });
   });
 
   it('owner opens agent-started Registry GitHub sign-in and selects personal authentication', async () => {
@@ -2165,12 +2218,12 @@ describe('connect_app', () => {
     else expect(results.map(row => row.name)).toEqual(['Notion', 'insightfulpipe.com']);
   });
 
-  it('keeps a third-party Registry publisher separate from the company named in its title or website', async () => {
-    const registry = fakeRegistry([{ name: 'com.pulsemcp/fly-io', version: '1', title: 'Fly.io',
-      websiteUrl: 'https://fly.io', remotes: [{ type: 'streamable-http', url: 'https://third-party.example/mcp' }] }]);
+  it('keeps a niche Registry publisher in its own company', async () => {
+    const registry = fakeRegistry([{ name: 'com.pulsemcp/catalog', version: '1', title: 'Catalog',
+      websiteUrl: 'https://pulsemcp.com', remotes: [{ type: 'streamable-http', url: 'https://third-party.example/mcp' }] }]);
     const daemon = daemonWith(registry.client);
-    await daemon.execute('connectMcpServer', { ...turn, serverName: 'com.pulsemcp/fly-io', version: '1', reason: 'Use the third-party server' }, HELPER);
-    await database.query("UPDATE workspace_connectors SET status='connected',connected_at=now() WHERE registry_server_name='com.pulsemcp/fly-io'");
+    await daemon.execute('connectMcpServer', { ...turn, serverName: 'com.pulsemcp/catalog', version: '1', reason: 'Use the third-party server' }, HELPER);
+    await database.query("UPDATE workspace_connectors SET status='connected',connected_at=now() WHERE registry_server_name='com.pulsemcp/catalog'");
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);

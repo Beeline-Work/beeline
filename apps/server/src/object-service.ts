@@ -219,6 +219,7 @@ export class ObjectService {
     if (!row) return undefined;
     const storage = this.#requireStorage();
     return {
+      url: `${this.publicOrigin}/v1/media/${objectId.toLowerCase()}`,
       name: row.title ?? 'file',
       mimeType: row.mime,
       size: Number(row.size),

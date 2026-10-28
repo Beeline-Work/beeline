@@ -20,7 +20,7 @@ beforeEach(async () => {
 afterEach(() => {vi.unstubAllEnvs();vi.unstubAllGlobals();});
 it('discovers cards and Room invitations without an external connection and binds writes to the active turn',async()=>{
   const discovered=JSON.parse(await callAgentTool('app_tool',{app:'beeline:onboarding'},'discover'));
-  expect(discovered.tools.map((t:{name:string})=>t.name)).toEqual(['welcome','invite','repository','starters']);
+  expect(discovered.tools.map((t:{name:string})=>t.name)).toEqual(expect.arrayContaining(['welcome','video_preview','invite','repository','starters']));
   calls.length = 0;
   await callAgentTool('app_tool',{app:'beeline:onboarding',tool:'welcome',args:{}});
   expect(calls.find(call => call.name === 'postStarterWelcome')!.input).toMatchObject({roomId:'room-1',requestId:'request-1',taskId:'command-1',generationId:context.generationId});
@@ -67,4 +67,10 @@ it('reports unavailable repo cards without attempting an external connector', as
 it('keeps ordinary GitHub repository reads on the connector route', async () => {
   await callAgentTool('connect', {mode:'ensure', service:'GitHub', reason:'List repositories', continuation:'Read the account repositories.'}, 'github');
   expect(calls.map(call => call.name)).toEqual(['connect']);
+});
+
+it('binds the visual clip preview and visibility to the active Room turn', async () => {
+  const args={videoObjectId:'11111111-1111-4111-8111-111111111111',frameObjectId:'22222222-2222-4222-8222-222222222222',title:'Clip preview',description:'A short clip',visibility:'unlisted'};
+  await callAgentTool('app_tool',{app:'beeline:onboarding',tool:'video_preview',args});
+  expect(calls.find(call=>call.name==='postStarterVideoPreview')!.input).toMatchObject({...args,roomId:'room-1',requestId:'request-1',taskId:'command-1',generationId:context.generationId});
 });

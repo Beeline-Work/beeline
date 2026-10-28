@@ -1,3 +1,4 @@
+import { Writable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentTokenCapAt, type FreeAgentLimits } from './free-agent-limits.js';
@@ -431,6 +432,19 @@ export async function handleFreeAgentModelRequest(
     sendJson(response, 403, { error: { message: 'free agent model access requires a live turn' } });
     return true;
   }
+  return executeFreeAgentModel(response, body, agent, turn, options);
+}
+
+interface ModelAgent { agent_id: string; owner_id: string; model: string | null }
+interface ModelTurn { started: Date | string; room_id: string; turn_request_id: string }
+
+async function executeFreeAgentModel(response: ServerResponse, body: Record<string, unknown>,
+  agent: ModelAgent, turn: ModelTurn, options: FreeAgentModelProxyOptions, signal?: AbortSignal): Promise<boolean> {
+  const now = options.now?.() ?? new Date();
+  const limits = options.config.limits ?? DEFAULT_FREE_AGENT_LIMITS;
+  options = { ...options, config: { ...options.config, model: agent.model ?? options.config.model } };
+  const config = { ...options.config,
+    dailyTokenCap: await freeAgentTokenCapAt(options.database, agent.owner_id, now, options.config) };
   const stream = body.stream === true;
   const requested = [body.max_tokens, body.max_completion_tokens]
     .map(Number)
@@ -505,6 +519,8 @@ export async function handleFreeAgentModelRequest(
   };
   const abort = new AbortController();
   response.on('close', () => abort.abort());
+  signal?.addEventListener('abort', () => abort.abort(), { once: true });
+  if (signal?.aborted) abort.abort();
   // Queued calls keep their reservation, so they give up when the turn cap ends or the caller leaves.
   const turnDeadline = new Date(turn.started).getTime() + limits.maxTurnMs;
   const forwardUpstream = async (): Promise<void> => {
@@ -630,4 +646,37 @@ export async function handleFreeAgentModelRequest(
     release();
   }
   return true;
+}
+
+/** Server-owned onboarding calls share admission, queueing and settlement with helper turns.
+ * The persisted run binds the caller to the newly created team; HTTP callers cannot select this path.
+ */
+export async function completeStarterBanter(options: FreeAgentModelProxyOptions, runId: string,
+  agentId: string, messages: { role: string; content: string }[], signal: AbortSignal): Promise<string> {
+  const agent = (await options.database.query<ModelAgent & { room_id: string }>(
+    `SELECT f.agent_id,f.owner_id,f.model,r.room_id FROM starter_onboarding_runs r
+     JOIN free_agents f ON f.owner_id=r.user_id AND f.agent_id=ANY(ARRAY[r.beebee_id,r.luna_id])
+     JOIN memberships m ON m.identity_id=f.agent_id AND m.room_id=r.room_id AND m.removed_at IS NULL
+     WHERE r.id=$1 AND f.agent_id=$2 AND f.removed_at IS NULL AND f.state NOT IN ('failed','destroyed') AND r.status='generating'
+       AND r.created_at>clock_timestamp()-interval '2 minutes'`, [runId, agentId])).rows[0];
+  if (!agent) throw new Error('Onboarding generation is no longer active');
+  let status = 200;
+  let reply = '';
+  const capture = new Writable({ write(chunk, _encoding, callback) { reply += chunk.toString(); callback(); } });
+  const response = Object.assign(capture, {
+    headersSent: false,
+    writeHead(code: number) { status = code; this.headersSent = true; return this; },
+  });
+  const abort = () => capture.emit('close');
+  signal.throwIfAborted();
+  signal.addEventListener('abort', abort, { once: true });
+  try {
+    await executeFreeAgentModel(response as unknown as ServerResponse,
+      { messages, stream: false, max_tokens: 4096, reasoning: { exclude: true, ...(agent.model?.startsWith('openai/') ? { effort: 'low' } : {}) } }, agent,
+      { room_id: agent.room_id, turn_request_id: runId, started: new Date() }, options, signal);
+    if (status !== 200) throw new Error(`Onboarding model returned ${status}`);
+    const result = JSON.parse(reply) as { choices?: { message?: { content?: unknown } }[] };
+    const text = result.choices?.[0]?.message?.content;
+    return typeof text === 'string' ? text : '';
+  } finally { signal.removeEventListener('abort', abort); }
 }

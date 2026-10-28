@@ -1,3 +1,4 @@
+import { ChoiceVideoPreview } from '@/components/buzz/ChoiceVideoPreview';
 import { funnelOnboarding } from '@/auth/signin-funnel';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -502,11 +503,12 @@ export const ChoiceCard = React.memo(function ChoiceCard({
           size={26}
         />
       }
-      title={card.starterOnboarding === 'welcome' ? null : card.prompt}
+      title={card.prompt}
       wrapTitle
       subline={subline || card.constraint}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
+      body={card.videoPreview ? <ChoiceVideoPreview {...card.videoPreview} /> : undefined}
       choices={choices}
       noteInput={
         takesNote

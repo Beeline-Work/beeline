@@ -50,3 +50,5 @@ export const reconnectWorkbenchApp = async () => {};
 
 export const funnelOnboarding = async () => {};
 export const runnableArtifactUrl = async () => 'http://127.0.0.1:8127/game.html';
+
+export const monolithSession = { authorization: async () => { throw new Error('The snapshot proof has no signed-in session'); } };

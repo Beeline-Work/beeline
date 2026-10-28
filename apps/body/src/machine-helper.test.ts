@@ -602,7 +602,7 @@ describe('one update drain for every hosted agent', () => {
     }
   }, 20_000);
 
-  it.each(['quiet gap', 'deadline', 'deadline retry'] as const)('installs at %s without interrupting active work in an isolated helper', async (handoff) => {
+  it.each(['quiet gap', 'deadline', 'deadline retry', 'over-limit'] as const)('R-drain: installs at %s and continues queued work in an isolated helper', async (handoff) => {
     const { root, configPaths, env, signals } = await machine(1);
     const layout = { libDir: resolve(root, 'lib/beeline'),
       releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
@@ -638,6 +638,7 @@ describe('one update drain for every hosted agent', () => {
     const claims = new Map<string, number>();
     const claimed = new Map<string, AgentCommand>();
     const claimGenerations: string[] = [];
+    const interruptions: { requestId: string; generationId: string }[] = [];
     const replies: string[] = [];
     const errors: unknown[] = [];
     const push = () => {
@@ -669,6 +670,7 @@ describe('one update drain for every hosted agent', () => {
         claimGenerations.push(input.generationId);
         queued.delete(input.commandId);
       } else if (req.url?.endsWith('/postAgentTurnReceipt') && input.reasonKind === 'update-interrupted') {
+        interruptions.push({ requestId: input.requestId, generationId: input.generationId });
         const command = claimed.get(input.requestId)!;
         queued.set(command.id, command);
       } else if (req.url?.endsWith('/postRoomMessage')) replies.push(input.text);
@@ -721,6 +723,7 @@ describe('one update drain for every hosted agent', () => {
         let busy = false;
         const context = new CommandExecutionContext(root);
         internal.roomRuntime.running.set(roomId, { body: { isBusy: () => busy,
+          requestReconciliation: () => undefined,
           interruptedTurn: () => busy && context.current ? {
             roomId, requestId: context.current.turnRequestId, generationId: context.generationId,
           } : undefined,
@@ -758,8 +761,10 @@ describe('one update drain for every hosted agent', () => {
       const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...env,
         BEELINE_UPDATE_MANIFEST_URL: `${origin}/manifest.json` }, logger: () => undefined });
       await manager.checkAndApply();
+      const preparedAt = Date.now();
       await requestMachine(root, { operation: 'update', releaseId: 'new' }, () => true);
       expect(core.activeTurnCount()).toBe(1);
+      const interrupt = vi.spyOn(core, 'interruptForServerMinimum');
       expect(await activeReleaseId(layout)).toBe('old');
       await send('same-corner-wake', 'long-room');
       expect(claims.has('same-corner-wake')).toBe(false);
@@ -802,14 +807,29 @@ describe('one update drain for every hosted agent', () => {
         process.kill(child.pid!, 0);
         expect(child.exitCode).toBeNull();
         expect(child.signalCode).toBeNull();
-        finishHeld();
-        await vi.waitFor(() => expect(core.activeTurnCount()).toBe(0));
-        await host.tickUpdate();
+        if (handoff === 'over-limit') {
+          vi.setSystemTime(preparedAt + 14 * 60_000);
+          await host.tickUpdate();
+          expect(agentLifecycle.serving).toBe(false);
+          expect(core.activeTurnCount()).toBe(1);
+          expect(generation).toBe(1);
+          vi.setSystemTime(preparedAt + 16 * 60_000);
+          await host.tickUpdate();
+          // The production handoff persists the original generation before stopping.
+          expect(JSON.parse(await readFile(resolve(dirname(configPaths[0]!), 'force-update-interruptions.json'), 'utf8')))
+            .toEqual([{ roomId: 'long-room', requestId: 'held', generationId: claimGenerations[0] }]);
+          expect(replies).not.toContain('held');
+        } else {
+          finishHeld();
+          await vi.waitFor(() => expect(core.activeTurnCount()).toBe(0));
+          await host.tickUpdate();
+        }
       }
       expect((await running).reason).toBe('update');
+      expect(interrupt).toHaveBeenCalledTimes(handoff === 'over-limit' ? 1 : 0);
       await activateRelease(layout, 'new');
       expect(await activeReleaseId(layout)).toBe('new');
-      expect(Date.now() - restartAt).toBeLessThan(1_000);
+      if (handoff !== 'over-limit') expect(Date.now() - restartAt).toBeLessThan(1_000);
       vi.useRealTimers();
 
       // Arrives with no serving helper. The successor's initial GET claims it.
@@ -828,6 +848,8 @@ describe('one update drain for every hosted agent', () => {
         expect(replies.filter((reply) => reply === 'held')).toHaveLength(1);
       }
       await vi.waitFor(() => expect(replies).toContain('same-corner-wake'));
+      expect(interruptions).toEqual(handoff === 'over-limit'
+        ? [{ requestId: 'held', generationId: claimGenerations[0] }] : []);
       expect(queued.size).toBe(0);
       expect(await readFile(legacyAttemptPath, 'utf8')).toBe(legacyAttempt);
       expect(await readFile(resolve(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');

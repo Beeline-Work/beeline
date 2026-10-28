@@ -700,6 +700,15 @@ function readChoiceOption(value: unknown): ChoiceCardView['options'][number] | n
   };
 }
 
+function readChoiceVideoPreview(value: unknown): ChoiceCardView['videoPreview'] | undefined {
+  const item = record(value);
+  if (!item || !uuid(item.videoObjectId) || typeof item.frameUrl !== 'string' || !/^https?:\/\//.test(item.frameUrl) ||
+    typeof item.title !== 'string' || item.title.length > 100 || typeof item.description !== 'string' || item.description.length > 5000 ||
+    !oneOf(item.visibility, ['public', 'unlisted', 'private'])) return undefined;
+  return { videoObjectId: item.videoObjectId, frameUrl: item.frameUrl, title: item.title, description: item.description,
+    visibility: item.visibility as 'public' | 'unlisted' | 'private' };
+}
+
 function readChoiceCard(value: unknown): ChoiceCardView | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
@@ -728,6 +737,7 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     return { identityId: response.identityId, optionId: response.optionId };
   });
   return {
+    ...field('videoPreview', readChoiceVideoPreview(item.videoPreview)),
     ...field('onboardingManual', typeof item.onboardingManual === 'boolean' ? item.onboardingManual : undefined),
     ...field('starterOnboarding', oneOf(item.starterOnboarding, ['welcome', 'next'] as const)),
     choiceId: item.choiceId,

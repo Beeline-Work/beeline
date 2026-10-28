@@ -49,6 +49,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (
     [
       '@/auth/signin-funnel',
+      '@/auth/monolith-session',
       '@/buzz/artifact-link',
       '@/buzz/app-reconnect',
       '@/buzz/use-active-community',

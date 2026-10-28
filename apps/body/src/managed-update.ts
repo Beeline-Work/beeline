@@ -9,8 +9,10 @@ import {
   type BeelineInstallLayout,
 } from './self-update.js';
 
-export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
+// Preparation, the active-turn allowance, and successor startup headroom.
+export const UPDATE_CONVERGENCE_SLO_MS = 20 * 60_000;
 export const UPDATE_DRAIN_DEADLINE_MS = 5 * 60_000;
+const UPDATE_INTERRUPT_DEADLINE_MS = 15 * 60_000;
 const UPDATE_PREPARE_DEADLINE_MS = 3 * 60_000;
 
 export function withInstallLock<T>(
@@ -31,13 +33,14 @@ export function versionAtLeast(actual: string, minimum: string): boolean {
   return true;
 }
 
-/** One machine-owned transaction: prepare, drain intake, idle handoff and acknowledgment. */
+/** One machine-owned transaction: prepare, drain intake, bounded handoff and acknowledgment. */
 export class ReleaseTransaction {
   #pendingCheck = false;
   #preparing: Promise<void> | undefined;
   #prepared: string | undefined;
   #minimum: string | undefined;
   #handoffAt: number | undefined;
+  #interruptAt: number | undefined;
   #deadlineAt: number | undefined;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #handingOff: Promise<void> | undefined;
@@ -101,6 +104,7 @@ export class ReleaseTransaction {
       this.#prepared = undefined;
       this.#deadlineAt = undefined;
       this.#handoffAt = undefined;
+      this.#interruptAt = undefined;
       this.#draining = false;
       clearTimeout(this.#timer);
       this.#timer = undefined;
@@ -113,6 +117,7 @@ export class ReleaseTransaction {
       this.now() + (this.options.drainMs ?? UPDATE_DRAIN_DEADLINE_MS),
       this.#deadlineAt - 120_000,
     );
+    this.#interruptAt ??= this.now() + UPDATE_INTERRUPT_DEADLINE_MS;
     this.options.changed(releaseId);
     if (!this.#timer)
       this.#timer = setTimeout(
@@ -133,11 +138,11 @@ export class ReleaseTransaction {
       this.#handingOff
     )
       return;
-    const interrupted = Boolean(this.#minimum);
-    if (!interrupted && !this.options.idle()) {
-      // A release notification is not permission to cancel a running turn.
-      // Bound admission instead: existing work finishes while new commands
-      // remain durable on the server for the successor to claim.
+    const idle = this.options.idle();
+    const interrupted = Boolean(this.#minimum) || (!idle && this.now() >= this.#interruptAt!);
+    if (!interrupted && !idle) {
+      // Close admission first, then give active work the remaining allowance
+      // before using the journaled interruption handoff.
       if (!this.#draining && this.now() >= this.#handoffAt!) {
         try {
           this.options.drain();
@@ -146,6 +151,11 @@ export class ReleaseTransaction {
           this.options.failed(error, this.#minimum);
         }
       }
+      if (!this.#timer && this.now() >= this.#handoffAt!)
+        this.#timer = setTimeout(() => {
+          this.#timer = undefined;
+          void this.idleChanged();
+        }, Math.max(0, this.#interruptAt! - this.now()));
       return;
     }
     clearTimeout(this.#timer);

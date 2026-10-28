@@ -4530,6 +4530,8 @@ export function BuzzChatSurface({
           optionId,
           ...(note ? { note } : {}),
         });
+        const picked = roomSurface?.messages.find(message => message.choice?.choiceId === choiceId)?.choice;
+        if (picked?.options.find(option => option.optionId === optionId)?.label === 'Something else') focusComposer();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         refreshSignal.force();
@@ -4539,7 +4541,7 @@ export function BuzzChatSurface({
         setChoiceActionId(null);
       }
     },
-    [choiceActionId, viewerIsAgent],
+    [choiceActionId, viewerIsAgent, roomSurface, focusComposer],
   );
 
   const handleChoiceSkip = useCallback(

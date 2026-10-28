@@ -3550,19 +3550,20 @@ describe('Room message variant components', () => {
     expect(onSkip).toHaveBeenCalledWith('c-1');
   });
 
-  it('shows the welcome options without repeating the greeting question or adding subtitles', () => {
+  it('shows the job-card heading and current options', () => {
     const renderer = render(<ChoiceCard message={message({ choice: {
       starterOnboarding: 'welcome', choiceId: 'welcome', mode: 'question', status: 'open',
-      agent: { pubkey: 'beebee', kind: 'agent', name: 'Beebee' }, prompt: 'What should we do first?',
+      agent: { pubkey: 'beebee', kind: 'agent', name: 'Beebee' }, prompt: 'Pick a first job',
       options: [
-        { optionId: 'A', letter: 'A', label: 'Give us a task', consequence: 'Give us a task' },
-        { optionId: 'D', letter: 'D', label: 'Tell me what makes Beeline different', consequence: 'Tell me what makes Beeline different' },
+        { optionId: 'A', letter: 'A', label: 'Write code in your repo', consequence: 'Write code in your repo' },
+        { optionId: 'B', letter: 'B', label: 'Post a video to your YouTube', consequence: 'Post a video to your YouTube' },
+        { optionId: 'C', letter: 'C', label: 'Something else', consequence: 'Something else' },
       ], electorate: ['human'], votedCount: 0, electorateCount: 1, responses: [],
     } })} viewerIsAgent={false} viewerPubkey="human" actionId={null} onAnswer={vi.fn()} onSkip={vi.fn()} />);
-    const text = JSON.stringify(renderer.toJSON());
-    expect(text).not.toContain('What should we do first?');
-    expect(text).toContain('Tell me what makes Beeline different');
-    expect(text).not.toContain('Luna checks the work');
+    expect(renderer.root.findByProps({ testID: 'choice-welcome-title' }).props.children).toBe('Pick a first job');
+    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-A' }).props.onPress).toBeTypeOf('function');
+    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-B' }).props.onPress).toBeTypeOf('function');
+    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-C' }).props.onPress).toBeTypeOf('function');
   });
 
   it('offers a note only on a workflow gate and submits it with the pick', () => {

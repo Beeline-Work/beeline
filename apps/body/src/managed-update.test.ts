@@ -148,3 +148,56 @@ it('a fresh current target cancels an obsolete prepared release', async () => {
   expect(f.handoff).not.toHaveBeenCalled();
   f.transaction.dispose();
 });
+
+it('R-drain: interrupts a never-ending ordinary turn at fifteen minutes, without a progress wake', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  await f.transaction.prepared('new');
+  await vi.advanceTimersByTimeAsync(UPDATE_DRAIN_DEADLINE_MS);
+  expect(f.drain).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(10 * 60_000 - 1);
+  expect(f.handoff).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.handoff).toHaveBeenCalledOnce();
+  expect(f.handoff).toHaveBeenCalledWith('new', true);
+  f.transaction.dispose();
+});
+
+it('R-drain: a turn finishing inside the allowance hands off idle', async () => {
+  vi.useFakeTimers();
+  let idle = false;
+  const f = await fixture({ idle: () => idle });
+  await f.transaction.prepared('new');
+  await vi.advanceTimersByTimeAsync(15 * 60_000 - 1);
+  idle = true;
+  await f.transaction.idleChanged();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.handoff).toHaveBeenCalledOnce();
+  expect(f.handoff).toHaveBeenCalledWith('new', false);
+  f.transaction.dispose();
+});
+
+it('R-drain: newer content does not renew the interruption allowance', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  await f.transaction.prepared('first');
+  await vi.advanceTimersByTimeAsync(14 * 60_000);
+  await f.transaction.prepared('newer');
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(f.handoff).toHaveBeenCalledOnce();
+  expect(f.handoff).toHaveBeenCalledWith('newer', true);
+  f.transaction.dispose();
+});
+
+it('R-drain: a failed interrupted handoff resumes through failed without timer retries', async () => {
+  vi.useFakeTimers();
+  const handoff = vi.fn().mockRejectedValue(new Error('handoff unavailable'));
+  const f = await fixture({ handoff });
+  await f.transaction.prepared('new');
+  await vi.advanceTimersByTimeAsync(15 * 60_000);
+  expect(handoff).toHaveBeenCalledOnce();
+  expect(f.failed).toHaveBeenCalledWith(expect.objectContaining({ message: 'handoff unavailable' }), undefined);
+  await vi.advanceTimersByTimeAsync(60 * 60_000);
+  expect(handoff).toHaveBeenCalledOnce();
+  f.transaction.dispose();
+});

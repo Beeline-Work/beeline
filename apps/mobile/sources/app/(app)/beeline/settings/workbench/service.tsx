@@ -82,11 +82,11 @@ export default function ConnectorServiceScreen() {
     if (state === 'error') {
       return <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
         value={busy ? 'Connecting…' : reason} valueTone="danger" disabled={busy}
-        onPress={() => setAppOpen(app)} testID={`company-item-${item.id}`} />;
+        action="Reconnect" onPress={() => void reconnectApp(app)} testID={`company-item-${item.id}`} />;
     }
     return <SettingsRow appBoard key={item.id} title={item.title} description={[computer, item.subtitle].filter(Boolean).join(' · ')}
       action={busy ? undefined : 'Connect'} value={busy ? 'Connecting…' : undefined} disabled={busy}
-      onPress={() => app.transport === 'composio' ? setAppOpen(app) : void reconnectApp(app)} testID={`company-item-${item.id}`} />;
+      onPress={() => void reconnectApp(app)} testID={`company-item-${item.id}`} />;
   };
   // Connect reuses each item's existing path: app reconnect, or its connector/wallet page.
   const connectItem = (item: WorkbenchCompany['items'][number]) => {
@@ -177,7 +177,6 @@ export default function ConnectorServiceScreen() {
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />
     </HullActionSheetModal>
     <HullActionSheetModal visible={Boolean(appOpen)} title={appOpen?.name} onClose={() => setAppOpen(null)}>
-      {appOpen && appOpen.status !== 'connected' ? <HullActionSheetRow label="Connect" onPress={() => { setAppOpen(null); void reconnectApp(appOpen); }} /> : null}
       {appOpen ? <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnectApp(appOpen)} /> : null}
       <HullActionSheetCancel onPress={() => setAppOpen(null)} />
     </HullActionSheetModal>

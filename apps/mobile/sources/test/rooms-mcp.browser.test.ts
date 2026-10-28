@@ -44,7 +44,7 @@ it.each(['clients', 'sheet', 'message', 'disconnect', 'failure'])('renders conne
       head: `<style>${fonts}#result{display:none}</style>` });
     expect(result.status, result.stderr).toBe(0);
     const shown = JSON.parse(result.result);
-    expect(shown.text).toContain(frame === 'message' ? 'via Grok' : frame === 'sheet' ? 'Disconnect Grok?' : 'AI CLIENTS');
+    expect(shown.text).toContain(frame === 'message' ? 'via Grok' : frame === 'sheet' ? 'Disconnect Grok?' : 'Meta Muse');
     if(['disconnect','failure'].includes(frame)) {
       expect(shown.operation).toEqual({name:'disconnectAiClient',input:{clientId:'client-0'}});
       if(frame==='disconnect') { expect(shown.changed).toBe(true); expect(shown.text).not.toContain('Disconnect Grok?'); }

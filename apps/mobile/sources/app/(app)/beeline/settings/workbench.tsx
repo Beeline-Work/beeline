@@ -31,7 +31,7 @@ export default function WorkbenchScreen() {
   const desktop = useIsDesktop();
   const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
-  const { value: view, error, refresh } = useSharedWorkbench(scope.viewerId ? scope : null);
+  const { value: view, error, refresh, refreshAfterChange } = useSharedWorkbench(scope.viewerId ? scope : null);
   const index = view?.companies;
   const [searchOpen, setSearchOpen] = useState(false);
   const actions = useConnectCompanyApp(scope);
@@ -44,7 +44,6 @@ export default function WorkbenchScreen() {
         <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
           value="" editable={false} variant="search" placeholderTextColor={theme.buzz.textDisabled}
           testID="connectors-search" onPress={() => setSearchOpen(true)} />
-        <AiClientsSection clients={view?.aiClients ?? []} onChanged={refresh} />
         {!index.hasConnections ? <View>
           <Text style={styles.note}>No connections yet. Choose a service to get started.</Text>
           <RoomListSectionHeader title="Suggested" inset="content" spacing="flush" />
@@ -56,11 +55,13 @@ export default function WorkbenchScreen() {
           return rows.length ? <View key={section} testID={`connectors-${section}`}>
             <RoomListSectionHeader title={title} inset="content" spacing="flush" />
             {rows.map(row => {
+              if (row.roomsClientId) return <AiClientsSection key={row.id}
+                clients={(view?.aiClients ?? []).filter(client => client.clientId === row.roomsClientId)} onChanged={refreshAfterChange} />;
               const state = connectionViewState(row);
               return <SettingsRow appBoard key={row.id} title={row.name}
                 description={state === 'error' && row.status ? `${row.status} · ${row.subtitle}` : row.subtitle}
                 leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
-                action={state === 'connect' ? 'Connect' : undefined}
+                action={section === 'attention' ? 'Reconnect' : state === 'connect' ? 'Connect' : undefined}
                 value={state === 'error' ? row.status : state === 'connected' && row.kind === 'sign-in-service' ? row.status : undefined}
                 valueTone={state === 'error' ? 'danger' : undefined}
                 statusGlyph={state === 'error' ? 'failed' : row.kind === 'sign-in-service' && row.status === 'Ready' ? 'live' : undefined}

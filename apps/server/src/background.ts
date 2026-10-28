@@ -1,3 +1,4 @@
+import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import type { SqlDatabase } from './database.js';
@@ -962,6 +963,7 @@ export class MediaExpiryLoop {
 }
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
+  await cleanupUnfinishedAppSignIns(database, true);
   // Outgoing MCP member webhooks leave the wake transaction here.
   try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.

@@ -114,7 +114,14 @@ export function useSharedWorkbench(scope: WorkbenchScope | null) {
     ownerErrors.set(key, listeners);
     return () => { listeners.delete(resource.setError); if (!listeners.size) ownerErrors.delete(key); };
   }, [resource.address, resource.setError]);
-  return resource;
+  // A mutation must not reuse a read that started before its commit.
+  const refreshAfterChange = useCallback(async () => {
+    if (!resource.address) return null;
+    const next = await readWorkbenchWithTimeout(scope!);
+    await mobileSurfaceCache.write(resource.address, next, isWorkbenchView);
+    return next;
+  }, [resource.address, scope?.workspaceId, scope?.viewerId]);
+  return { ...resource, refreshAfterChange };
 }
 
 const isConnectionDetail = (value: unknown): value is ConnectionDetailView => Boolean(

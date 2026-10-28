@@ -54,6 +54,16 @@ describe('server-owned Connectors company projection', () => {
     const reordered = projectWorkbenchCompanies({ ...view, connections: [...view.connections].reverse(), apps: [...(view.apps ?? [])].reverse() }, origin, new Map(), 10);
     expect(reordered.rows).toEqual(result.rows);
   });
+  it('Reproduction CONNECTORS-1: places Rooms apps by name among Connected apps', () => {
+    const view = { ...base([], [app('notion', 'Notion', 'notion.so')]), helpers: [], aiClients: [
+      { clientId: 'muse', name: 'Meta Muse', scopes: ['rooms:read'], connectedAt: 1, lastUsedAt: null },
+      { clientId: 'grok', name: 'Grok Bot', scopes: ['rooms:read', 'rooms:write'], connectedAt: 1, lastUsedAt: null },
+    ] };
+    const index = projectWorkbenchCompanies(view, origin);
+    expect(index.rows.filter(row => row.section === 'apps').map(row => row.name)).toEqual(['Grok Bot', 'Meta Muse', 'Notion']);
+    expect(index.rows[0]?.roomsClientId).toBe('grok');
+    expect(projectWorkbenchCompanies({ ...view, apps: [] }, origin).hasConnections).toBe(true);
+  });
   it('keeps one company for seven keys, and distinct Squire credentials out of the sign-in service', () => {
     const result = projectWorkbenchCompanies(messy[0]!, origin);
     expect(result.rows.find(r => r.id === 'sentry')?.items).toHaveLength(7);

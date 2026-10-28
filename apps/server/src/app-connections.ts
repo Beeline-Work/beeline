@@ -272,6 +272,7 @@ type AppRow = {
   composio_account_id: string | null;
   composio_link_expires_at: Date | null;
   sign_in_error: string | null;
+  authorised_at: Date | null;
   machine_id: string | null;
   state: 'active' | 'disconnected';
   created_at: Date;
@@ -357,7 +358,7 @@ type Derived = {
 /** A composio row that is not actually connected — a fresh sign-in is the remedy. */
 const APP_SIGN_IN_NEEDS_ATTENTION = 'App sign-in needs attention';
 const APP_SIGN_IN_TIMEOUT_MS = 10 * 60_000;
-const APP_SIGN_IN_TIMED_OUT = 'App sign-in timed out. Open the connection card and sign in again.';
+const APP_SIGN_IN_TIMED_OUT = 'App sign-in timed out. Ask to sign in again.';
 
 async function failAppSignInCards(database: SqlDatabase, appId: string, reason: string): Promise<void> {
   await database.query(
@@ -439,7 +440,10 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
 
 const APP_COLUMNS = `a.id,a.workspace_id,a.owner_identity_id,a.app_key,a.display_name,a.domain,
   a.transport,a.route,a.connector_id,a.composio_account_id,a.composio_link_expires_at,a.sign_in_error,
-  a.machine_id,a.state,a.created_at`;
+  a.machine_id,a.state,a.created_at,COALESCE(a.authorised_at,
+    CASE WHEN a.transport='composio' AND a.composio_account_id IS NOT NULL
+      AND a.composio_link_expires_at IS NULL AND a.sign_in_error IS NULL THEN a.created_at END,
+    (SELECT c.connected_at FROM workspace_connectors c WHERE c.id=a.connector_id)) authorised_at`;
 
 /**
  * The person's apps — ONE row per app, across every Workspace, because the
@@ -492,7 +496,19 @@ export async function readOwnerApps(
       try { await failAppSignInCards(database, row.id, derived.errorMessage); }
       catch { /* The Workbench error remains visible even if a Room card cannot update. */ }
     }
+    if (derived.status === 'connected' && !row.authorised_at) {
+      await database.query(`UPDATE workspace_apps SET authorised_at=COALESCE(authorised_at,now()) WHERE id=$1`, [row.id]);
+    }
+    if (row.transport === 'composio' && !row.authorised_at && derived.status === 'error'
+      && (row.sign_in_error || (row.composio_link_expires_at && row.composio_link_expires_at <= new Date()))) {
+      await database.query(`DELETE FROM workspace_apps WHERE id=$1 AND authorised_at IS NULL
+        AND NOT EXISTS(SELECT 1 FROM workspace_app_usage WHERE app_id=$1)
+        AND NOT EXISTS(SELECT 1 FROM messages WHERE card_type='app-sign-in'
+          AND card->>'appId'=$1::text AND card->>'status'='connected')`, [row.id]);
+      continue;
+    }
     views.push({
+      hasConnected: Boolean(row.authorised_at) || derived.status === 'connected',
       appId: row.id,
       ...(row.connector_id ? { connectorId: row.connector_id } : {}),
       appKey: row.app_key,
@@ -1059,7 +1075,7 @@ export async function completeComposioSignIn(
       return { error };
     }
     const updated = await db.query(
-      `UPDATE workspace_apps SET composio_link_expires_at=NULL,sign_in_error=NULL,updated_at=now()
+      `UPDATE workspace_apps SET composio_link_expires_at=NULL,sign_in_error=NULL,authorised_at=COALESCE(authorised_at,now()),updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2 AND composio_account_id=$3
          AND composio_link_expires_at>now()`,
       [pending.id, viewerId, completed.accountId],

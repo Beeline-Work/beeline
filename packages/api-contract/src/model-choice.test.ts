@@ -38,6 +38,8 @@ describe('modelChoiceLabel', () => {
     expect(modelChoiceLabel(stored, 'default')).toBeUndefined();
     expect(modelChoiceLabel({ options: [] }, 'default')).toBeUndefined();
     expect(modelChoiceLabel(undefined, 'default')).toBeUndefined();
+    expect(modelChoiceLabel({}, 'default')).toBeUndefined();
+    expect(modelChoiceLabel({}, 'gpt-5.6-codex')).toBe('gpt-5.6-codex');
     const selfDescribed = { options: [{ id: 'default', name: 'Default', description: 'Default (recommended)' }] };
     expect(modelChoiceLabel(selfDescribed, 'default')).toBeUndefined();
   });

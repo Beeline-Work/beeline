@@ -6,7 +6,7 @@ export type ModelChoice = {
   readonly description?: string;
 };
 
-type ModelChoiceAxis = { readonly options: readonly ModelChoice[] };
+type ModelChoiceAxis = { readonly options?: readonly ModelChoice[] };
 
 const ALIAS_NAME = /^default\b/i;
 
@@ -28,7 +28,7 @@ function aliasModelName(axis: ModelChoiceAxis, alias: ModelChoice): string | und
   const described = alias.description?.split('·')[0]?.trim();
   if (!described || ALIAS_NAME.test(described)) return undefined;
   const wanted = described.toLowerCase();
-  const concrete = axis.options.filter((choice) => !isModelAliasChoice(choice));
+  const concrete = (axis.options ?? []).filter((choice) => !isModelAliasChoice(choice));
   const exact = concrete.find(
     (choice) => choice.id.toLowerCase() === wanted || choice.name?.trim().toLowerCase() === wanted,
   );
@@ -49,7 +49,7 @@ export function modelChoiceLabel(
   id: string | null | undefined,
 ): string | undefined {
   if (!id) return undefined;
-  const choice = axis?.options.find((candidate) => candidate.id === id);
+  const choice = axis?.options?.find((candidate) => candidate.id === id);
   if (!choice) return isModelAliasChoice({ id }) ? undefined : id;
   if (axis && isModelAliasChoice(choice)) return aliasModelName(axis, choice);
   return choice.name?.trim() || choice.id;

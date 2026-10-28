@@ -152,6 +152,18 @@ export class RoomsMcp {
       'SELECT profile_set FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0];
     return row && !row.profile_set ? { setup: SETUP_NOTE } : {};
   }
+  /** Complete a saved post, including a retry after the HTTP request was interrupted. */
+  private async finishPost(member: string, roomId: string, messageId: string, key: string | null) {
+    const db = this.oauth.database;
+    const routed = await routeMcpMemberPost(db, member, roomId, messageId);
+    const result = { messageId, woken: routed.woken,
+      ...(routed.routing === 'retrying' ? { routing: 'retrying' } : {}) };
+    if (key)
+      await db.query(`UPDATE rooms_mcp_idempotency SET message_id=$3,result=$4::jsonb
+        WHERE member_id=$1 AND idempotency_key=$2`, [member, key, messageId, JSON.stringify(result)]);
+    this.live.publish({ type: 'invalidate', roomId, reason: 'phone-write', messageId });
+    return result;
+  }
   private async call(principal: McpPrincipal, name: string, args: Record<string, unknown>): Promise<unknown> {
     const definition = TOOLS.find(t => t.name === name);
     if (!definition || Object.keys(args).some(key => !(key in (definition.inputSchema.properties ?? {})))) throw new Error('Invalid arguments');
@@ -230,36 +242,28 @@ export class RoomsMcp {
             const existing = (await db.query<{ message_id: string; result: unknown; stale: boolean }>(
               `SELECT message_id,result,claimed_at<now()-interval '60 seconds' stale FROM rooms_mcp_idempotency
                WHERE member_id=$1 AND idempotency_key=$2`, [member, key])).rows[0];
-            if (existing?.message_id) return existing.result ?? { messageId: existing.message_id };
+            if (existing?.message_id) {
+              if (existing.result && (existing.result as { routing?: string }).routing !== 'retrying') return existing.result;
+              break;
+            }
             if (!existing || existing.stale) break;
             await new Promise(resolve => setTimeout(resolve, 100));
           }
-          const posted = (await db.query('SELECT 1 FROM messages WHERE id=$1', [messageId])).rowCount > 0;
-          if (posted) return { messageId, woken: [] };
+          const posted = (await db.query<{ room_id: string }>(
+            'SELECT room_id FROM messages WHERE id=$1 AND author_id=$2', [messageId, member])).rows[0];
+          if (posted) return this.finishPost(member, posted.room_id, messageId!, key);
           const reclaimed = await db.query(`DELETE FROM rooms_mcp_idempotency
             WHERE member_id=$1 AND idempotency_key=$2 AND claimed_at<now()-interval '60 seconds'`, [member, key]);
           if (!reclaimed.rowCount) throw new Error('This message is still being sent; retry shortly');
           await db.query(`INSERT INTO rooms_mcp_idempotency(member_id,idempotency_key,message_id) VALUES($1,$2,'')`, [member, key]);
         }
       }
-      const preexisting = messageId
-        ? (await db.query('SELECT 1 FROM messages WHERE id=$1', [messageId])).rowCount > 0 : false;
       const source = (await db.query<{ name: string }>('SELECT name FROM rooms_mcp_clients WHERE id=$1', [principal.client_id])).rows[0]!;
       const client = { id: principal.client_id, name: source.name };
       const stored = replyTo
         ? await this.phone.execute('sendRoomReply', { roomId, text, parentMessageId: replyTo, ...(messageId ? { messageId } : {}) }, member, client)
         : await this.phone.execute('sendRoomMessage', { roomId, text, ...(messageId ? { messageId } : {}) }, member, client);
-      // An agent's own tags follow the agent-to-agent path, one wake per tagged agent.
-      const routed = preexisting
-        ? { woken: [] as string[], routing: 'done' as const }
-        : await routeMcpMemberPost(db, member, roomId, stored.messageId);
-      const result = { messageId: stored.messageId, woken: routed.woken,
-        ...(routed.routing === 'retrying' ? { routing: 'retrying' } : {}) };
-      if (key)
-        await db.query(`UPDATE rooms_mcp_idempotency SET message_id=$3,result=$4::jsonb
-          WHERE member_id=$1 AND idempotency_key=$2`, [member, key, stored.messageId, JSON.stringify(result)]);
-      this.live.publish({ type: 'invalidate', roomId, reason: 'phone-write', messageId: stored.messageId });
-      return result;
+      return this.finishPost(member, roomId, stored.messageId, key);
     }
     if (name === 'set_profile') {
       const stored = await setMcpMemberProfile(db, member, { name: args.name, handle: args.handle, avatar: args.avatar });

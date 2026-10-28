@@ -796,6 +796,97 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(profile.seededSoul).toContain('Local MCP reviewer');
     expect(Object.values(FACE_SOULS)).not.toContain(profile.seededSoul);
   });
+  it.each([false, true])('commits the post and routing record atomically (reply=%s)', async reply => {
+    const { client, member } = await connected();
+    const parent = reply ? await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'atomic reply parent' }, USER) : undefined;
+    const args = { room: ROOM, text: '@demo-agent please handle this atomic post', idempotencyKey: `atomic-${reply}`,
+      ...(parent ? { replyTo: parent.messageId } : {}) };
+    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
+    await db.query(`CREATE FUNCTION reject_mcp_route_proof() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'proof: pending route storage unavailable'; END $$;
+      CREATE TRIGGER reject_mcp_route_proof BEFORE INSERT ON rooms_mcp_pending_routes
+      FOR EACH ROW EXECUTE FUNCTION reject_mcp_route_proof()`);
+    try {
+      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
+      expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(0);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
+    } finally {
+      await db.query('DROP TRIGGER reject_mcp_route_proof ON rooms_mcp_pending_routes; DROP FUNCTION reject_mcp_route_proof()');
+    }
+    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
+  });
+  it('resumes a saved post after interruption before routing, without posting twice', async () => {
+    const { client, member } = await connected();
+    const args = { room: ROOM, text: '@demo-agent please resume this saved post', idempotencyKey: 'saved-post' };
+    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
+    const execute = phone.execute.bind(phone);
+    const fault = vi.spyOn(phone, 'execute').mockImplementation(async (...args) => {
+      await execute(...args);
+      throw new Error('proof: request interrupted after message commit');
+    });
+    try {
+      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
+    } finally { fault.mockRestore(); }
+    expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(1);
+    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
+    expect(data(await client.callTool({ name: 'send_message', arguments: args }))).toEqual(retry);
+  });
+  it('retries a cached routing failure instead of returning it forever', async () => {
+    const { client } = await connected();
+    const args = { room: ROOM, text: '@demo-agent please retry this failed wake', idempotencyKey: 'cached-failed-wake' };
+    const query = db.query.bind(db);
+    let injected = false;
+    const fault = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+      if (!injected && sql.includes('SELECT text,room_id FROM messages')) {
+        injected = true;
+        throw new Error('proof: transient wake routing failure');
+      }
+      return query(sql, values);
+    });
+    let first: ReturnType<typeof data>;
+    try {
+      first = data(await client.callTool({ name: 'send_message', arguments: args }));
+      expect(first.routing).toBe('retrying');
+    } finally { fault.mockRestore(); }
+    expect(injected).toBe(true);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.messageId).toBe(first!.messageId);
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect(retry.routing).toBeUndefined();
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [retry.messageId, AGENT])).rowCount).toBe(1);
+  });
+  it('review proof: an interrupted routing record cannot lose a tagged wake on retry', async () => {
+    const { client, member } = await connected();
+    const args = { room: ROOM, text: '@demo-agent please handle this interrupted post', idempotencyKey: 'interrupted-route' };
+    const id = createHash('sha256').update(`rooms-mcp-message:${member}:${args.idempotencyKey}`).digest('hex');
+    const query = db.query.bind(db);
+    let injected = false;
+    const fault = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+      if (!injected && sql.includes('INSERT INTO rooms_mcp_pending_routes')) {
+        injected = true;
+        throw new Error('review proof: interrupted routing insert');
+      }
+      return query(sql, values);
+    });
+    try {
+      expect((await client.callTool({ name: 'send_message', arguments: args })).isError).toBe(true);
+    } finally { fault.mockRestore(); }
+    expect(injected).toBe(true);
+    await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+    const retry = data(await client.callTool({ name: 'send_message', arguments: args }));
+    expect(retry.messageId).toBe(id);
+    expect(retry.woken).toEqual(['demo-agent']);
+    expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [id])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [id, AGENT])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [id])).rowCount).toBe(0);
+  });
   describe('in a Room of 20,000 messages', () => {
     const BIG = '66666666-6666-4666-8666-666666666666';
     beforeAll(async () => {

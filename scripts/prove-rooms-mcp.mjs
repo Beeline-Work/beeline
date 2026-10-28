@@ -235,6 +235,29 @@ try {
     assert.equal(commands, 0); assert.equal(offline, false); assert.equal(working, false);
     assert.match(JSON.stringify(view), /pong/);
   }
+  // MCP-INTERRUPTED-1: the authenticated HTTP retry must recover a saved post's wake.
+  const interruptedArgs = { room, text: '@demo-agent please recover this interrupted handoff', idempotencyKey: 'interrupted-handoff-proof' };
+  const query = db.query.bind(db);
+  let interrupted = false;
+  db.query = async (sql, values) => {
+    if (!interrupted && sql.includes('INSERT INTO rooms_mcp_pending_routes')) {
+      interrupted = true;
+      throw new Error('MCP-INTERRUPTED-1: interrupted routing record');
+    }
+    return query(sql, values);
+  };
+  try {
+    assert.equal((await client.callTool({ name: 'send_message', arguments: interruptedArgs })).isError, true);
+  } finally { db.query = query; }
+  assert.equal(interrupted, true);
+  await db.query("UPDATE rooms_mcp_idempotency SET claimed_at=now()-interval '2 minutes' WHERE member_id=$1", [member]);
+  const recovered = JSON.parse((await client.callTool({ name: 'send_message', arguments: interruptedArgs })).content[0].text).data;
+  assert.deepEqual(recovered.woken, ['demo-agent']);
+  assert.equal((await db.query('SELECT 1 FROM messages WHERE id=$1', [recovered.messageId])).rowCount, 1);
+  assert.equal((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [recovered.messageId, agent])).rowCount, 1);
+  assert.equal((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [recovered.messageId])).rowCount, 0);
+  assert.match(JSON.stringify(await options.phone.readRoom(room, person)), /recover this interrupted handoff/);
+  transcript('MCP-INTERRUPTED-1 PASS: authenticated retry returned the saved message and demo-agent wake; one visible message, one wake command, no pending routing gap.');
   const sent = await client.callTool({ name: 'send_message', arguments: { room, text: '@demo-agent acknowledge the connector review' } }); assert.notEqual(sent.isError, true);
   const row = (await db.query(`SELECT m.id,m.author_id,c.id command_id FROM messages m JOIN agent_commands c ON c.source_message_id=m.id WHERE m.text=$1 AND m.room_id=$2`, ['@demo-agent acknowledge the connector review', room])).rows[0];
   assert.equal(row.author_id, member);

@@ -229,6 +229,28 @@ describe('approved Usage gallery and refresh', () => {
     expect(stamp()).toMatch(/^updated [^·]*$/);
     act(() => renderer.unmount());
   });
+  it('says why a first read failed before any numbers arrived, and offers a retry', async () => {
+    const reads: Array<[Record<string, unknown>, RegExp]> = [
+      [{ status: 'signed_out', at: now }, /^sign-in expired till next turn$/],
+      [{ status: 'rate_limited', at: now, retryAfter: now + 600 }, /^rate-limited, retrying .+$/],
+      [{ status: 'failed', at: now, reason: 'unavailable' }, /^couldn't read: unavailable$/],
+    ];
+    for (const [read, line] of reads) {
+      const onRefresh = vi.fn(async () => ({ status: 'fresh' }));
+      let renderer: any;
+      await act(async () => {
+        renderer = create(<AgentUsageSection harness="claude" onRefresh={onRefresh}
+          usage={{ updatedAt: now, windows: [], read: read as any, machine: 'squire' }} />);
+      });
+      expect(renderer.root.findByProps({ testID: 'agent-usage-note' }).props.children).toBe('Claude Code');
+      const stamp = renderer.root.findByProps({ testID: 'agent-usage-stamp' });
+      expect(stamp.props.children).toMatch(line);
+      expect(stamp.props.accessibilityRole).toBe('alert');
+      await act(async () => renderer.root.findByType('Button').props.onPress());
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      act(() => renderer.unmount());
+    }
+  });
   it('reads once on open when the numbers are over 2 minutes old', async () => {
     const onRefresh = vi.fn(async () => ({ status: 'fresh' }));
     let renderer: any;

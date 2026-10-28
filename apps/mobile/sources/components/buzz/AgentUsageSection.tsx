@@ -148,6 +148,17 @@ export function usageCell(
       muted,
     };
   }
+  // A plan read that failed before any numbers arrived still says why and can be retried.
+  if (why) {
+    return {
+      columns: [],
+      note: [context, usageHarness(harness), usage.plan ? `${usage.plan} plan` : undefined].filter(Boolean).join(' · '),
+      ...(shared ? { shared } : {}),
+      stamp: why,
+      refreshable: true,
+      muted,
+    };
+  }
   return {
     columns: [],
     note: [`${usageHarness(harness)} doesn't report usage to Beeline`, context].filter(Boolean).join(' · '),

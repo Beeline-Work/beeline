@@ -1,3 +1,4 @@
+import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
@@ -3922,6 +3923,8 @@ export class DaemonService {
         );
       await assertIndependentCornerReviewer(db, input.cornerId, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
+      if (await missingReviewAttachments(db, input.cornerId, {headSha: target.head_sha, number: target.pull_request_number}, agentId))
+        throw new CommandRefusalError('missing review attachments: attach the screenshots or files claimed by the verdict',409);
       await recordCornerMergeApproval(db, {
         cornerId: input.cornerId,
         approvedBy: agentId,

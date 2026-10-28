@@ -436,6 +436,11 @@ export async function reportToCommander(
     if (member.kind === 'agent' && returnRoom === roomId)
       reportMessageId = createHash('sha256').update(`agent-command-card:${reportId}`).digest('hex');
   }
+  // Keep the reporting turn's evidence address with its head, including private reports.
+  if (!options.automatic && command?.review_context) await db.query(
+    `UPDATE agent_commands SET review_context=jsonb_set(review_context,'{reportIds}',
+       COALESCE(review_context->'reportIds','[]'::jsonb)||jsonb_build_array($2::text)) WHERE id=$1`,
+    [command.id,reportId]);
   if (!options.automatic && origin && (await db.query(
     'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
     if (/^(needs-decision|blocked):/.test(text)) {

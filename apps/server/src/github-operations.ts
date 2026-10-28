@@ -29,6 +29,7 @@ import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
   advanceCorner,
+  blockingReview,
   claimCornerMergeAttempt,
   lockCornerLifecycle,
   cornerMergeGate,
@@ -1082,7 +1083,7 @@ export class GitHubOperations {
       : configuredReviewerId && corner.reviewer_handle
         ? `@${corner.reviewer_handle}`
         : null;
-    const reviewerWake = listLabel
+    let reviewerWake = listLabel
       ? await this.listReviewerWake({
           parentId: corner.parent_id,
           candidates: listed,
@@ -1102,9 +1103,21 @@ export class GitHubOperations {
           checks,
           reviewWoken: corner.review_woken,
         });
+    if (reviewerWake.status === 'dispatched' && !gate.approved) {
+      const delivery = (await this.database.query<{ ended: boolean; live: boolean }>(
+        `SELECT bool_or(command.state='complete') ended,
+           bool_or(command.state='pending' OR (command.state='claimed' AND command.lease_expires_at>now())) live
+         FROM agent_commands command WHERE command.room_id=$1
+           AND command.review_context->>'headSha'=$2 AND command.review_context->'pullRequest'=$3::jsonb
+           AND command.review_context->>'purpose' IS NULL`,
+        [input.cornerId,pr.headSha,JSON.stringify(number)])).rows[0];
+      if (delivery?.ended && !delivery.live && !await blockingReview(this.database,input.cornerId,pr.headSha))
+        reviewerWake = {status:'waiting',detail:'The reviewer ended without a verdict; bounded recovery retries this head or reports the review blocker.'};
+    }
     const mergeDecision = cornerMergeability({
       checks,
       approved: gate.approved,
+      evidenceMissing: gate.evidenceMissing,
       held: gate.held,
       holds: gate.holds,
       archived: corner.archived,

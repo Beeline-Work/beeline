@@ -9111,7 +9111,7 @@ export class PhoneService {
     // Keep existing positions and visible copy; only the hidden connection choice changes.
     return enriched.map(row => {
       const original = base.get(rowKey(row))?.row;
-      return original ? { ...row, name: original.name, description: original.description, mark: original.mark } : row;
+      return original && !row.company?.registryServerName ? { ...row, name: original.name, description: original.description, mark: original.mark } : row;
     }).sort((a, b) => (base.get(rowKey(a))?.index ?? baseline.length + (a.registryServerName ? 0 : 1))
       - (base.get(rowKey(b))?.index ?? baseline.length + (b.registryServerName ? 0 : 1)));
   }

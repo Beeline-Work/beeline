@@ -1,6 +1,6 @@
 # Beeline Rooms connector
 
-Status: implementation and local reviewer fixture; not deployed or submitted by this change. This is a feature, not a defect report.
+Status: implementation and local reviewer fixture. The connector is live at `https://server.usebeeline.app/mcp`. It was submitted to the Meta Muse connector directory on 2026-10-28. It is not listed anywhere yet. This is a feature, not a defect report.
 
 ## Listing pack
 

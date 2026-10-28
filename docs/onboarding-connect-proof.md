@@ -1,6 +1,6 @@
 # Onboarding connect proof (28 October 2026)
 
-This work is incomplete: the hosted Squire install is not fixed. The pull request stays draft until the hosted install, phone sign-in, app connection, isolation and resource proofs pass.
+The hosted service-manager and cold-broker failures now pass an isolated Fly installation proof. This work remains incomplete: the PR stays draft until a fresh Beeline test account completes provider sign-in and a real Squire app connects.
 
 ## Reproduction onboarding-connect-1
 
@@ -12,7 +12,7 @@ After the change, the same HTTP path for Grok and Meta Muse returns the Beeline 
 
 The integration suites cover all assistant aliases, real app names, Shopify before and after a fixture Squire install and vault report, and hosted helper visibility. YouTube/Stripe official-publisher regressions remain in the app suite.
 
-## Reproduction hosted-squire-install-1 (still failing)
+## Reproduction hosted-squire-install-1
 
 Read-only production inspection found Luna's machine `185d270c3191e8` suspended with a shared CPU and (2048 MiB) memory. The Beeline machine ID is `1f633752-09ef-425d-875c-b958e5e51c6c`. Its Squire work generation (5) records helper reached, install failed, and `run_failed`; its broker report is `not-added`.
 
@@ -27,9 +27,23 @@ spawnSync systemctl ENOENT. A working systemctl user manager is required;
 no direct broker fallback was attempted
 ```
 
-The repository's hosted image installs neither systemd nor a user manager. The Squire package deliberately requires an OS-managed broker; changing Beeline routing cannot repair that requirement. A second disposable container installed systemd and dbus-user-session, but starting a user manager did not produce a usable session bus. Installing the binary alone is insufficient. This is the first locally reproduced blocker, not a claim that production exposed that exact exception.
+The original hosted image installed neither systemd nor a user manager. The Squire package deliberately requires an OS-managed broker. A Docker attempt with a read-only cgroup tree also failed; tracing showed the manager could not create its cgroup. A private writable cgroup tree supports the real manager. Fly already provides its own writable guest cgroup tree.
 
-The disposable containers and the derived dependency image were removed. No other user's Squire profile, cookies or vault was opened. A successful hosted Chrome run, its memory/disk footprint, fresh-account phone sign-in, Shopify connection and cross-owner isolation proof have not been obtained.
+### Passing hosted installation path
+
+The image now includes a real systemd user manager, dbus, Chrome, Xvfb, noVNC, cloudflared and the published Squire package (1.1.37). Boot starts only the user manager. When hosted installation is requested, Beeline starts the one image-owned broker and waits for both of its sockets before invoking connect. This also avoids Squire's shorter cold-start deadline. Owners' own computers keep their existing path.
+
+A disposable Fly VM (`8045e9c66232d8`, one shared CPU, 2048 MiB) started from the production image with no owner/bootstrap environment. Installing the new image dependencies and exact broker unit there, then running a bundle of the modified Beeline `installSquire`, returned `status: installing`, `hasSignIn: true`, `placement: virtual`. The streamed result exposed the provider sign-in in the hosted Chrome page. A local Squire session opened that remote page for human control. This is a real Fly install and browser handoff, but not a fresh Beeline test account or a completed provider login.
+
+Reproducible build: `docker build --target hosted-services -t hosted-squire-proof -f infra/free-agent/Dockerfile .`. Bundle `infra/free-agent/hosted-install-proof.mjs` with esbuild and copy it into a disposable VM/container. Start `/opt/beeline/hosted-services.sh` with the image's runtime environment, then run the bundle with `BEELINE_HOSTED_SERVICES=1`. Docker requires a private writable cgroup namespace; ordinary read-only Docker cgroups do not model Fly. The proof prints only status/step metadata, never the sign-in URL or browser password.
+
+### Isolation and resources
+
+Each free agent gets a separate Fly VM and private persistent rootfs (`FlyMachines.create`), without shared profile volumes. The image copies only executable packages and helper artifacts, never Squire accounts, cookies or sessions. A marker written inside the proof VM's Chrome profile was absent from a second fresh VM (`82e0d0a7e95658`) using the same base image. The peer VM was deleted after that assertion. This verifies guest filesystem separation, not a completed two-account vault exercise.
+
+During the hosted sign-in page: available memory (1061 MiB), anonymous pages (635 MiB), OOM kills (zero). Disk used (1635 MiB of 7964 MiB); Chrome (446 MiB), Squire package (135 MiB), browser/profile state (79 MiB), noVNC assets (2 MiB). The VM did not also run a free-agent model turn, so peak combined memory remains unverified.
+
+The main proof VM remains temporary while its provider sign-in awaits human completion; delete it when the handoff finishes. No production user machine or another user's profile/vault was opened. Fresh Beeline account setup, completed phone login, Shopify connection and full account-level isolation remain outstanding.
 
 ## Browser observation
 
@@ -42,3 +56,6 @@ Trusty Squire drove the live web app through Settings > Connectors > Trusty Squi
 - App connections and Workbench integration suites passed (160 tests; one pre-existing skip).
 - Built `scripts/prove-connect-flow.mjs` passed, including the phone-visible Squire offer.
 - `git diff --check` passed.
+
+- Hosted body connector tests passed (52), including real socket-readiness coverage.
+- Hosted-services image stage built successfully; shellcheck passed for both entrypoint scripts.

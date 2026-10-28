@@ -4,6 +4,7 @@ import { tmpdir, hostname } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import {
   connectBlockedLine,
   connectBrowserLocation,
@@ -12,6 +13,7 @@ import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
   installSquire,
+  prepareHostedSquire,
   isProcessAlive,
   parseConnectReport,
   readConnectionDetail,
@@ -30,6 +32,32 @@ import {
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
+
+describe('hosted broker readiness', () => {
+  it('waits for both real socket listeners before allowing connect', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hosted-squire-'));
+    const brokerSocket = join(root, 'broker.sock'), mcpSocket = join(root, 'mcp.sock');
+    const broker = createServer(socket => socket.destroy()), mcp = createServer(socket => socket.destroy());
+    try {
+      await new Promise<void>(resolve => broker.listen(brokerSocket, resolve));
+      let finished = false;
+      const run = vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }));
+      const pending = prepareHostedSquire(run, { brokerSocket, mcpSocket }, 2000).then(ready => { finished = true; return ready; });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(finished).toBe(false);
+      await new Promise<void>(resolve => mcp.listen(mcpSocket, resolve));
+      expect(await pending).toBe(true);
+      expect(run).toHaveBeenCalledWith('systemctl', ['--user', '--no-block', 'start', 'trusty-squire-broker.service']);
+    } finally {
+      broker.close(); mcp.close(); rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds a failed hosted service start without attempting sign-in', async () => {
+    const run = vi.fn(async () => ({ code: 1, stdout: '', stderr: 'manager unavailable' }));
+    expect(await prepareHostedSquire(run, { brokerSocket: '/absent/broker', mcpSocket: '/absent/mcp' }, 1)).toBe(false);
+  });
+});
 
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
 function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {

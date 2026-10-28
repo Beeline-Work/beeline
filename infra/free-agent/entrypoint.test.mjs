@@ -6,6 +6,30 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
+test('a failed hosted service manager stops boot before the helper or installer runs', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-hosted-services-'));
+  try {
+    await mkdir(resolve(root, '.local/bin'), { recursive: true });
+    await writeFile(resolve(root, '.local/bin/beeline'), '#!/bin/sh\necho unexpected-helper\n', { mode: 0o755 });
+    const service = resolve(root, 'services.sh');
+    const installer = resolve(root, 'install.sh');
+    await writeFile(service, '#!/bin/sh\necho manager-unavailable >&2\nexit 78\n');
+    await writeFile(installer, '#!/bin/sh\necho unexpected-installer\n');
+    const source = await readFile(new URL('./entrypoint.sh', import.meta.url), 'utf8');
+    const script = resolve(root, 'entrypoint.sh');
+    await writeFile(script, source.replaceAll('/opt/beeline/hosted-services.sh', service)
+      .replaceAll('/opt/beeline/install.sh', installer));
+    const child = spawn('/bin/sh', [script], { env: { ...process.env, HOME: root, BEELINE_HOSTED_SERVICES: '1' } });
+    let output = '', errors = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.stderr.on('data', chunk => { errors += chunk; });
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 78);
+    assert.equal(output, '');
+    assert.match(errors, /manager-unavailable/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 for (const outdated of [false, true, 'offline'])
   test(`cold boot reconciles installed helper (${outdated})`, async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-entrypoint-'));

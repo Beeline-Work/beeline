@@ -47,7 +47,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
-import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
+import { squireBrokerSocketReady, squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
   ConnectionDetail,
   ConnectionGrant,
@@ -662,6 +662,23 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
   };
 }
 
+/** The hosted broker can cold-start slower than Squire connect's own deadline. */
+export async function prepareHostedSquire(
+  run: ShellRunner,
+  sockets: { brokerSocket: string; mcpSocket: string },
+  timeoutMs = 60_000,
+): Promise<boolean> {
+  const started = await run('systemctl', ['--user', '--no-block', 'start', 'trusty-squire-broker.service']);
+  if (started.code !== 0) return false;
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await squireBrokerSocketReady(sockets.brokerSocket) && await squireBrokerSocketReady(sockets.mcpSocket))
+      return true;
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+  } while (Date.now() < deadline);
+  return false;
+}
+
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
@@ -697,13 +714,25 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
   emit();
 
+  const hostedEntry = process.env.BEELINE_HOSTED_SERVICES === '1'
+    ? '/opt/beeline/squire/node_modules/@trusty-squire/mcp/dist/bin.js' : undefined;
+  if (hostedEntry &&
+    !await prepareHostedSquire(run, squireHostPaths(homedir()))) {
+    const reason = 'The hosted browser service could not start. Retry the Trusty Squire connection.';
+    push(step('trusty-squire installed', 'failed', reason));
+    return fail(reason);
+  }
+
   // Stop only the connect ceremony this agent spawned. Squire alone decides
   // whether its profile is busy or connected in the next typed report.
   releaseSquireConnectSession(log, options.workspaceId);
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
   // one against the release this reader is written for.
-  const resolution = await resolveSquireConnectSpec(run);
+  const resolution: SquireConnectResolution = hostedEntry
+    ? { npxArgs: [], reResolved: false,
+        resolvedVersion: (await run(process.execPath, [hostedEntry, '--version'])).stdout.trim() }
+    : await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
     log(
       `trusty-squire stale copy ${resolution.resolvedVersion ?? 'unknown'} re-resolved against current release ${resolution.currentRelease}`,
@@ -721,9 +750,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // no second broker, no profile-lock contention. `--json` is what puts the
   // typed report on stdout.
   const install = await streamRun(
-    'npx',
+    hostedEntry ? process.execPath : 'npx',
     [
-      ...resolution.npxArgs,
+      ...(hostedEntry ? [hostedEntry] : resolution.npxArgs),
       'connect',
       '--target=codex',
       '--json',

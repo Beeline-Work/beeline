@@ -340,3 +340,7 @@ Normal subscribed membership notifications still apply to other agents.
 service, and phone-read welcome → explanation → game → invite path in isolation.
 PGlite, in-memory storage, and a minimal HTTP adapter stand in for production;
 this proof does not claim a native app or live model run.
+
+## Next-morning check-in
+
+The one-time outside-person check-in uses a normal starter-agent command, Room reply and push delivery. Configuration, email behavior and isolated proof: [next-morning check-in](next-day-checkin.md).

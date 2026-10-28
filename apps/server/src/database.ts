@@ -1,3 +1,4 @@
+import { NEXT_DAY_CHECKIN_SCHEMA } from './next-day-checkin.js';
 import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { backfillMcpMembers } from './rooms-mcp-members.js';
@@ -2483,7 +2484,7 @@ CREATE TABLE IF NOT EXISTS signin_funnel_installs (
 CREATE TABLE IF NOT EXISTS signin_funnel_events (
   install_id uuid NOT NULL,
   attempt_id uuid NOT NULL,
-  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown','welcome_shown','welcome_skipped','option_picked','user_answered','task_question','task_first_answer','task_review_requested','task_final_answer','game_posted','game_viewer_opened','game_viewer_closed','invite_created','invite_shared','invite_opened','invite_friend_signed_up','invite_friend_messaged','returned_day_1','returned_day_7')),
+  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown','welcome_shown','welcome_skipped','option_picked','user_answered','task_question','task_first_answer','task_review_requested','task_final_answer','game_posted','game_viewer_opened','game_viewer_closed','invite_created','invite_shared','invite_opened','invite_friend_signed_up','invite_friend_messaged','returned_day_1','returned_day_7','next_day_checkin_sent')),
   platform text NOT NULL CHECK (platform IN ('ios','android','web','macos','windows','linux')),
   version text NOT NULL,
   provider text NOT NULL DEFAULT '' CHECK (provider IN ('','github','google')),
@@ -2517,7 +2518,7 @@ DO $$ BEGIN
 END $$;
 ALTER TABLE signin_funnel_events DROP CONSTRAINT IF EXISTS signin_funnel_events_event_check;
 ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_event_check
-  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown','welcome_shown','welcome_skipped','option_picked','user_answered','task_question','task_first_answer','task_review_requested','task_final_answer','game_posted','game_viewer_opened','game_viewer_closed','invite_created','invite_shared','invite_opened','invite_friend_signed_up','invite_friend_messaged','returned_day_1','returned_day_7'));
+  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown','welcome_shown','welcome_skipped','option_picked','user_answered','task_question','task_first_answer','task_review_requested','task_final_answer','game_posted','game_viewer_opened','game_viewer_closed','invite_created','invite_shared','invite_opened','invite_friend_signed_up','invite_friend_messaged','returned_day_1','returned_day_7','next_day_checkin_sent'));
 CREATE TABLE IF NOT EXISTS signin_funnel_auth_flows (
   flow_hash text PRIMARY KEY,
   context jsonb NOT NULL,
@@ -3232,6 +3233,12 @@ export async function migrate(
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
+  await retryMigrationStep('checkin human history index', () => createIndexConcurrently(
+    database, 'messages_checkin_author_history',
+    `CREATE INDEX CONCURRENTLY messages_checkin_author_history ON messages(author_id,created_at,id)
+     WHERE presentation='message' AND system_event IS NULL`,
+  ));
+  await ddlScript('next day checkin schema', NEXT_DAY_CHECKIN_SCHEMA);
   await retryMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
     database, 'agent_commands_pending_renudge',
     `CREATE INDEX CONCURRENTLY agent_commands_pending_renudge ON agent_commands(created_at)

@@ -4,7 +4,7 @@ export const ONBOARDING_EVENTS = [
   'task_question', 'task_first_answer', 'task_review_requested', 'task_final_answer',
   'game_posted', 'game_viewer_opened', 'game_viewer_closed',
   'invite_created', 'invite_shared', 'invite_opened', 'invite_friend_signed_up', 'invite_friend_messaged',
-  'returned_day_1', 'returned_day_7',
+  'returned_day_1', 'returned_day_7', 'next_day_checkin_sent',
 ] as const;
 export type OnboardingEvent = (typeof ONBOARDING_EVENTS)[number];
 export const FUNNEL_EVENTS = [

@@ -1,3 +1,4 @@
+import { checkinOutputAllowed } from './next-day-checkin.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
 import { postStarterWelcome } from './starter-onboarding.js';
 import { visibleMessageSql } from './read-cursor.js';
@@ -4188,6 +4189,8 @@ export class DaemonService {
       }));
       steps = replySteps([...(input.steps ?? []), ...notes], notes.length);
     }
+    if (!await checkinOutputAllowed(this.database, input.roomId, agentId, input.requestId))
+      throw new ExpectedRefusalError('This one-time check-in is no longer due.');
     const messageId = id();
     const parent = input.replyToMessageId
       ? (

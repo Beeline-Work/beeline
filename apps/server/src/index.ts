@@ -1,3 +1,4 @@
+import { NextDayCheckin } from './next-day-checkin.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
@@ -449,6 +450,14 @@ async function main() {
   let reconciledPendingChecks = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const work = new BackgroundWork();
+  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app');
+  let nextDayCheckinRunning = false;
+  work.add('next-day-checkin', reconciliationMs, async () => {
+    if (nextDayCheckinRunning) return;
+    nextDayCheckinRunning = true;
+    void backgroundJobs.run('next-day-checkin', () => nextDayCheckin.runOnce())
+      .finally(() => { nextDayCheckinRunning = false; });
+  });
   if (push) work.add('push', reconciliationMs, async () => {
     await backgroundJobs.run('push', () => push.runOnce());
     const due = await backgroundJobs.run('push-next-due', () => push.nextDueAt());

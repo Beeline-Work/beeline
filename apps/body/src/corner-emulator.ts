@@ -404,7 +404,10 @@ export async function keepCornerEmulator(
     const record = recordFromLease(cornerId, started.lease, pid, startedAt, bound, leaseRoot);
     await writeRecord(record);
     started.child.once('error', () => undefined);
+    let bootPending = true;
     started.child.once('exit', () => {
+      // The boot attempt owns cleanup until it has consumed the diagnostic.
+      if (bootPending) return;
       void releaseRecord(record).catch((error) => {
         console.error(`[body] corner ${cornerId} emulator cleanup failed:`, error);
       });
@@ -412,9 +415,12 @@ export async function keepCornerEmulator(
     started.child.unref();
     const booted = await waitUntilBooted(bound, record.serial, pid);
     if (!booted) {
+      // Read before cleanup removes the instance directory and its log.
+      const diagnostic = await readFile(resolve(record.instanceRoot, 'emulator.log'), 'utf8').catch(() => '');
       await releaseRecord(record);
-      return { ok: false, exitCode: 1, error: `emulator ${record.serial} exited before Android finished booting` };
+      return { ok: false, exitCode: 1, error: `emulator ${record.serial} exited before Android finished booting${diagnostic ? `\n${diagnostic.slice(-8192).trim()}` : ''}` };
     }
+    bootPending = false;
     await adbConnect(bound, record.port);
     return { ok: true, serial: record.serial, port: record.port, alreadyRunning: false };
   });

@@ -373,7 +373,7 @@ export type WorkspaceMemberInput = WorkspaceInput & {
 };
 /** A manager removes a person from the Workspace and every live Room in it; agents use removeAgent. */
 export type RemoveWorkspaceMemberInput = WorkspaceInput & { readonly memberId: string };
-export type NamedWorkspaceInput = { readonly name: string; readonly workspaceId?: string };
+export type NamedWorkspaceInput = { readonly name: string; readonly workspaceId?: string; readonly timeZone?: string };
 export type IdResult = { readonly id: string };
 /** A new Workspace and the public `#general` Room created with it. */
 export type CreateWorkspaceResult = IdResult & { readonly roomId?: string };

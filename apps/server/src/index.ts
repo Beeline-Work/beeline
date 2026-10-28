@@ -1,3 +1,4 @@
+import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { RoomsMcp } from './rooms-mcp.js';
@@ -396,6 +397,9 @@ async function main() {
           : {}),
       }
     : undefined;
+  const starterOnboarding = new StarterOnboardingService(database, freeAgentModel);
+  phone.setStarterOnboarding(starterOnboarding);
+  daemon.setStarterOnboarding(starterOnboarding);
   const backgroundJobs = new BackgroundJobRunner();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({

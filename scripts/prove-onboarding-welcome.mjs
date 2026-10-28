@@ -1,3 +1,4 @@
+import { StarterOnboardingService } from '../apps/server/dist/starter-onboarding-run.js';
 import { spawnSync } from 'node:child_process';
 import { backfillLuna, LUNA_BACKFILL_SKIP, LUNA_BACKFILL_EXTRA_ROOM } from '../apps/server/dist/luna-backfill.js';
 import { strict as assert } from 'node:assert';
@@ -32,6 +33,7 @@ try {
   const roomId = workspace.roomId;
   const agent = (await db.query(`SELECT agent_id FROM free_agents WHERE workspace_id=$1 AND starter_role='beebee'`, [workspace.id])).rows[0].agent_id;
   const daemon = new DaemonService(db, live);
+  daemon.setStarterOnboarding(new StarterOnboardingService(db));
   server = createServer(async (req, res) => {
     try {
       let body = ''; for await (const bytes of req) body += bytes;
@@ -51,25 +53,20 @@ try {
   const discovery = JSON.parse(await callAgentTool('app_tool', { app: 'beeline:onboarding' }, 'discover'));
   assert(discovery.tools.some(tool => tool.name === 'welcome'));
   const posted = JSON.parse(await callAgentTool('app_tool', { app: 'beeline:onboarding', tool: 'welcome', args: {} }, 'welcome'));
+  assert.equal(posted.status, 'started');
   const read = () => phone.readRoom(roomId, owner);
-  const card = (await read()).messages.find(message => message.id === posted.messageId).choice;
-  assert.deepEqual(card.options.map(option => option.optionId), ['A', 'B', 'C', 'D']);
-  assert.equal(card.onboardingManual, true);
-  // An older client still sending signup welcome telemetry must not count this manual card.
-  await recordSigninFunnelEvent(db, { event: 'welcome_shown', installId: '11111111-1111-4111-8111-111111111111', attemptId: '22222222-2222-4222-8222-222222222222', platform: 'android', version: 'old-client', environment: 'production', timestamp: new Date().toISOString() }, 'client', owner);
-  await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'D' }, owner);
-  const follow = (await read()).messages.find(message => message.choice?.status === 'open').choice;
-  assert.equal(follow.onboardingManual, true);
-  await phone.execute('answerChoice', { choiceId: follow.choiceId, optionId: 'B' }, owner);
-  const game = (await read()).messages.flatMap(message => message.attachments ?? []).find(file => file.mimeType === 'application/vnd.beeline.game+html');
-  assert(game);
-  await recordSigninFunnelEvent(db, { event: 'game_viewer_opened', installId: '11111111-1111-4111-8111-111111111111', attemptId: '22222222-2222-4222-8222-222222222222', platform: 'android', version: 'test', environment: 'production', timestamp: new Date().toISOString(), artifactId: game.url.split('/').pop() }, 'client', owner);
-  assert.equal((await db.query(`SELECT 1 FROM signin_funnel_events WHERE event='game_viewer_opened' AND version='manual'`)).rowCount, 1);
-  const next = (await read()).messages.find(message => message.choice?.status === 'open').choice;
-  await phone.execute('answerChoice', { choiceId: next.choiceId, optionId: 'A' }, owner);
-  assert((await read()).messages.some(message => message.text.startsWith("Here's your invite link.")));
-  assert.equal((await db.query(`SELECT 1 FROM signin_funnel_events e JOIN signin_funnel_installs i USING(install_id) WHERE NOT i.internal`)).rowCount, 0);
-  assert.equal((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [roomId])).rowCount, 1);
+  let card;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    card = (await read()).messages.find(message => message.choice?.onboardingManual && message.choice.status === 'open')?.choice;
+    if (card) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert(card, 'Manual onboarding finishes after the initiating command commits');
+  assert.deepEqual(card.options.map(option => option.label), ['Write code in your repo', 'Post a video to your YouTube', 'Something else']);
+  assert((await read()).messages.some(message => message.text === "Hi Maya, I'm Beebee and that's Luna. We're your free agents. We run on different AI models, so one of us does the work and the other checks it. What should we start on?"));
+  await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'A' }, owner);
+  assert((await read()).messages.some(message => message.onboarding?.kind === 'repository'));
+  assert(!(await read()).messages.some(message => message.attachments?.some(file => file.name === 'Tic-tac-toe')));
   const backfillOwner = 'b'.repeat(64), backfillWorkspace = LUNA_BACKFILL_SKIP[0];
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','backfill-owner')`, [backfillOwner]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Tubing Crew fixture')`, [backfillWorkspace]);
@@ -89,7 +86,7 @@ try {
   assert.notEqual(cli.status, 0);
   assert(cli.stderr.includes('DATABASE_URL is required'));
   console.log('LUNA-1 demonstrated: built migration dry-run → fixture apply → phone-read Luna intro in the explicit excluded-workspace Room → repeat with no duplicate; approved production CLI still requires an explicit database environment. Fixture writes only.');
-  console.log('WELCOME-1 demonstrated: human mention → built MCP discovery/welcome → active-command HTTP adapter → built DaemonService → phone-read welcome → explanation → game → invite; manual telemetry only, no additional model turns. Isolated PGlite/storage and a minimal HTTP adapter stand in for production; no model or native Android run claimed.');
+  console.log('STARTER-3 demonstrated: human mention → built MCP welcome → active-command HTTP adapter → built DaemonService → queued playback → phone-read fixed hello and three jobs → repository card. Isolated PGlite/storage and model-unavailable fallback stand in for staging; no real sign-up, live upload or native Android proof claimed.');
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));
   await db.close(); await rm(home, { recursive: true, force: true });

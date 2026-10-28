@@ -1,3 +1,5 @@
+import { StarterOnboardingService } from './starter-onboarding-run.js';
+import { starterHello, consumeStarterVideoPost } from './starter-onboarding.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
@@ -31,8 +33,7 @@ import { LiveHub } from './live.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
-import { PgliteDatabase, MemoryObjectStorage } from './test-support.js';
-import { ObjectService } from './object-service.js';
+import { PgliteDatabase } from './test-support.js';
 import { recordSigninFunnelEvent, recordOnboardingEvent } from './signin-funnel.js';
 import { dashboardPeriods } from './operator-dashboard-periods.js';
 
@@ -160,8 +161,13 @@ describe('free starter agents', () => {
     await db.close();
   });
 
+  const finishWelcome = async (roomId: string, viewerId: string) => {
+    await new StarterOnboardingService(db).enter(roomId, viewerId);
+  };
+
   it('reruns welcome in the calling Room and keeps every manual step out of signup counts', async () => {
-    const workspace = await phone.execute('createWorkspace', { name: 'Manual welcome' }, FRIEND);
+    const workspace = await phone.execute('createWorkspace', { name: 'Manual welcome', timeZone: 'America/New_York' }, FRIEND);
+    await finishWelcome(workspace.roomId!, FRIEND);
     const roomId = workspace.roomId!;
     const beebee = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM free_agents WHERE workspace_id=$1 AND starter_role='beebee'`, [workspace.id])).rows[0]!.agent_id;
     const installId = '11111111-1111-4111-8111-111111111111', attemptId = '22222222-2222-4222-8222-222222222222';
@@ -170,13 +176,28 @@ describe('free starter agents', () => {
     // Run in another Room, proving the action does not silently target General.
     const other = await phone.execute('createRoom', { workspaceId: workspace.id, name: 'onboarding-test' }, FRIEND);
     await phone.execute('addRoomMember', { roomId: other.id, memberId: beebee }, FRIEND);
+    const luna = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM free_agents WHERE workspace_id=$1 AND starter_role='luna'`, [workspace.id])).rows[0]!.agent_id;
+    await phone.execute('addRoomMember', { roomId: other.id, memberId: luna }, FRIEND);
     const source = 'e'.repeat(64);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'run onboarding')`, [source, other.id, FRIEND]);
     const command = (await createAgentCommand(db, { roomId: other.id, agentId: beebee, sourceMessageId: source, reason: 'human_tag' }))!;
     await claimAgentCommand(db, other.id, beebee, command.id, 'welcome-generation');
     const daemon = new DaemonService(db, live);
-    const first = await daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'welcome-generation' } as never, beebee);
-    const welcome = await daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'welcome-generation' } as never, beebee);
+    daemon.setStarterOnboarding(new StarterOnboardingService(db));
+    const replay = async () => {
+      const before = (await db.query(`SELECT id FROM messages WHERE room_id=$1 AND card->>'starterOnboarding'='welcome'`, [other.id])).rowCount;
+      expect(await daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'welcome-generation' } as never, beebee)).toEqual({ status: 'started' });
+      let choice: { messageId: string } | undefined;
+      await vi.waitFor(async () => {
+        const rows = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND card->>'starterOnboarding'='welcome' ORDER BY created_at DESC,id DESC`, [other.id])).rows;
+        expect(rows.length).toBe(before + 1);
+        choice = { messageId: rows[0]!.id };
+      });
+      return choice!;
+    };
+    const first = await replay();
+    const welcome = await replay();
+    expect((await db.query<{ time_zone: string }>(`SELECT time_zone FROM starter_onboarding_runs WHERE room_id=$1 ORDER BY created_at DESC LIMIT 1`, [other.id])).rows[0]?.time_zone).toBe('America/New_York');
     expect((await phone.readRoom(other.id, FRIEND))!.messages.find(message => message.id === first.messageId)!.choice!.status).toBe('skipped');
     const view = (await phone.readRoom(other.id, FRIEND))!;
     const card = view.messages.find(message => message.id === welcome.messageId)!.choice!;
@@ -185,113 +206,79 @@ describe('free starter agents', () => {
     const ordered = (await db.query<{ id: string; author_id: string; text: string; created_at: Date }>(
       `SELECT id,author_id,text,created_at FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at,id`, [other.id, beebee])).rows;
     const cardIndex = ordered.findIndex(row => row.id === welcome.messageId);
-    expect(ordered[cardIndex - 1]!.text).toBe("Hi Friend, I'm Beebee. What should we do first?");
+    expect(ordered[cardIndex - 1]!.text).toBe(starterHello('Friend'));
     expect(ordered[cardIndex - 1]!.created_at.getTime()).toBeLessThanOrEqual(ordered[cardIndex]!.created_at.getTime());
     expect(ordered.slice(cardIndex + 1)).toEqual([]);
-    expect(card.options.map(option => option.optionId)).toEqual(['A', 'B', 'C', 'D']);
+    expect(card.options.map(option => option.optionId)).toEqual(['A', 'B', 'C']);
     expect((await phone.readRoom(roomId, FRIEND))!.messages.some(message => message.id === welcome.messageId)).toBe(false);
-    await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'D' }, FRIEND);
-    const next = (await phone.readRoom(other.id, FRIEND))!.messages.find(message => message.choice?.status === 'open')!.choice!;
-    expect(next.onboardingManual).toBe(true);
-    await phone.execute('answerChoice', { choiceId: next.choiceId, optionId: 'C' }, FRIEND);
+    await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'C' }, FRIEND);
     await phone.execute('sendRoomMessage', { roomId: other.id, text: 'Try the task' }, FRIEND);
     const signup = (await db.query(`SELECT event FROM signin_funnel_events WHERE install_id=$1 ORDER BY event`, [installId])).rows;
     expect(signup).toEqual([{ event: 'signed_in' }, { event: 'signup' }]);
     const manual = (await db.query<{ event: string }>(`SELECT e.event FROM signin_funnel_events e JOIN signin_funnel_installs i USING(install_id) WHERE i.internal AND e.version='manual'`)).rows.map(row => row.event);
-    expect(manual).toEqual(expect.arrayContaining(['welcome_shown', 'option_picked', 'invite_created', 'invite_shared', 'user_answered']));
+    expect(manual).toEqual(expect.arrayContaining(['welcome_shown', 'option_picked', 'other_job_chosen', 'user_answered']));
     const periods = await dashboardPeriods(db, new Date().toISOString());
     const funnel = periods['24h'].onboardingFunnel!;
     expect('steps' in funnel && funnel.steps[0]!.count).toBe(0);
     await expect(daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'wrong' } as never, beebee)).rejects.toThrow();
   });
 
-  it('welcome choices explain Beeline without model work, then offer A–C', async () => {
+  it('offers the three jobs and lets Something else await the composer', async () => {
     const workspace = await phone.execute('createWorkspace', { name: 'Welcome' }, OWNER);
-    const before = await phone.readRoom(workspace.roomId!, OWNER);
-    const welcome = before!.messages.find(message => message.choice?.prompt === 'What should we do first?')!.choice!;
-    expect(welcome.options.map(option => option.label)).toEqual([
-      'Give us a task', 'Play a quick game with us', 'Invite friends to this chat', 'Tell me what makes Beeline different',
-    ]);
-    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'D' }, OWNER);
-    const after = await phone.readRoom(workspace.roomId!, OWNER);
-    expect(after!.messages.find(message => message.text.startsWith('Most AI apps give you one assistant'))?.text)
-      .toContain("Luna and I run on different models and can check each other's work.");
-    const explanation = after!.messages.find(message => message.text.startsWith('Most AI apps'))!.text;
-    expect(explanation).toContain('**Big jobs get their own corner.**');
-    expect(explanation).not.toContain('side thread');
-    const followup = after!.messages.find(message => message.choice?.status === 'open')!.choice!;
-    expect(followup.options.map(option => option.optionId)).toEqual(['A', 'B', 'C']);
+    await finishWelcome(workspace.roomId!, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
+    const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
+    const welcome = room.messages.find(message => message.choice)!.choice!;
+    expect(welcome.options.map(option => option.label)).toEqual(['Write code in your repo', 'Post a video to your YouTube', 'Something else']);
+    expect(room.messages.some(message => message.attachments?.length)).toBe(false);
+    expect(room.messages.some(message => message.text.startsWith('Most AI apps'))).toBe(false);
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'C' }, OWNER);
     expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);
-    await phone.execute('skipChoice', { choiceId: followup.choiceId }, OWNER);
-    expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);
+    await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Plan a picnic' }, OWNER);
+    expect((await db.query(`SELECT agent_id FROM agent_commands`)).rowCount).toBe(1);
   });
 
-  it('posts the static personalized game and next-step invite with no model turn', async () => {
-    const storage = new MemoryObjectStorage();
-    const objects = new ObjectService(db, storage.asStorage(), 'https://server.test');
-    phone = new PhoneService(db, 'https://server.test', undefined, undefined, live, false, db, objects);
-    phone.setFreeAgents(freeAgents);
-    const workspace = await phone.execute('createWorkspace', { name: 'Game' }, OWNER);
+  it('starts the YouTube job with Beebee and requires a Post tap before upload', async () => {
+    const workspace = await phone.execute('createWorkspace', { name: 'YouTube' }, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
     const welcome = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.choice)!.choice!;
     await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'B' }, OWNER);
-    const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
-    const game = room.messages.find(message => message.attachments?.some(attachment => attachment.mimeType === 'application/vnd.beeline.game+html'))!;
-    expect(game.author.name).toBe('Luna');
-    const html = [...storage.blobs.values()][0]!.bytes.toString();
-    expect(html.match(/class="cell"/g)).toHaveLength(9);
-    expect(html).toContain('data:image/png;base64,');
-    expect(html).not.toMatch(/https?:\/\/|__GAME_DATA__|__USER_FACE__/);
-    const data = JSON.parse(html.match(/id="beeline-game-data" type="application\/json">(.*?)<\/script>/s)![1]!);
-    expect(data.user.name).toBe('Charles');
-    expect(data.ally.name).toBe('Beebee');
-    const next = room.messages.find(message => message.choice?.status === 'open')!.choice!;
-    expect(next.prompt).toBe('After your game, what next?');
-    const invite = await phone.execute('answerChoice', { choiceId: next.choiceId, optionId: 'A' }, OWNER);
-    expect(invite).not.toHaveProperty('share');
-    const invitedRoom = (await phone.readRoom(workspace.roomId!, OWNER))!;
-    const printed = invitedRoom.messages.find(message => message.text.startsWith("Here's your invite link."));
-    expect(printed?.author.name).toBe('Beebee');
-    expect(printed?.text).toContain('https://server.test/join/');
-    expect((await db.query(`SELECT 1 FROM invites WHERE onboarding_room_id=$1`, [workspace.roomId])).rowCount).toBe(1);
-    expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);
-    expect(machines.calls).toEqual([]);
-  });
-
-  it('option C prints an invite link as Beebee without returning a native share action', async () => {
-    const workspace = await phone.execute('createWorkspace', { name: 'Invite' }, OWNER);
-    const welcome = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.choice)!.choice!;
-    const result = await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'C' }, OWNER);
-    expect(result).not.toHaveProperty('share');
-    const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
-    const link = room.messages.find(message => message.text.startsWith("Here's your invite link."));
-    expect(link?.author.name).toBe('Beebee');
-    expect(link?.text).toContain('/join/');
-    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [workspace.roomId])).rowCount).toBe(0);
+    const commands = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM agent_commands`)).rows;
+    expect(commands).toHaveLength(1);
+    const agent = commands[0]!.agent_id;
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
+    const { postRoomChoice } = await import('./room-choice.js');
+    const preview = await db.transaction(tx => postRoomChoice(tx, { roomId: workspace.roomId!, agentId: agent,
+      mode: 'question', prompt: 'Clip preview: Picnic. Title: Picnic. Description: A picnic. Visibility: public.', options: [{ label: 'Post', consequence: 'Publish the preview' }, { label: 'Cancel', consequence: 'Do not upload' }] }));
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
+    await phone.execute('answerChoice', { choiceId: preview.choiceId, optionId: 'A' }, OWNER);
+    await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent));
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
   });
 
   it('routes an untagged first task to Beebee with the starter pair present', async () => {
     const workspace = await phone.execute('createWorkspace', { name: 'Task' }, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Help me plan a picnic' }, OWNER);
     const commands = (await db.query(`SELECT i.name FROM agent_commands c JOIN identities i ON i.id=c.agent_id WHERE c.room_id=$1`, [workspace.roomId])).rows;
     expect(commands).toEqual([{ name: 'Beebee' }]);
   });
 
-  it('option A wakes only Beebee and does not force a Luna review', async () => {
-    const workspace = await phone.execute('createWorkspace', { name: 'Task choice' }, OWNER);
-    const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
-    const welcome = room.messages.find(message => message.choice)!.choice!;
-    expect(welcome.options.map(option => option.label)).toEqual([
-      'Give us a task', 'Play a quick game with us', 'Invite friends to this chat', 'Tell me what makes Beeline different',
-    ]);
-    expect(welcome.options.every(option => !option.consequence || option.consequence === option.label)).toBe(true);
-    expect(room.messages.some(message => message.text === "Hi Charles, I'm Beebee. Luna is on your team too. We run on different AI models. What should we do first?")).toBe(true);
+  it('opens the existing repository card when the code job is chosen', async () => {
+    const workspace = await phone.execute('createWorkspace', { name: 'Repo choice' }, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
+    const welcome = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.choice)!.choice!;
     await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'A' }, OWNER);
-    const commands = (await db.query(`SELECT i.name FROM agent_commands c JOIN identities i ON i.id=c.agent_id WHERE c.room_id=$1`, [workspace.roomId])).rows;
-    expect(commands).toEqual([{ name: 'Beebee' }]);
+    const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
+    expect(room.messages.some(message => message.onboarding?.kind === 'repository')).toBe(true);
+    expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);
   });
 
   it('keeps starter agent mentions on the ordinary handoff path without a forced review limit', async () => {
     const workspace = await phone.execute('createWorkspace', { name: 'Review' }, OWNER);
+    await finishWelcome(workspace.roomId!, OWNER);
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Plan a picnic' }, OWNER);
     const root = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE room_id=$1`, [workspace.roomId])).rows[0]!;
     const peer = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM free_agents WHERE workspace_id=$1 AND starter_role='luna'`, [workspace.id])).rows[0]!.agent_id;
@@ -313,12 +300,13 @@ describe('free starter agents', () => {
     await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
       VALUES($1,$2,'signup','android','0.2.22','server',now())`, [installId, attemptId]);
     const workspace = await phone.execute('createWorkspace', { name: 'Answer after choosing' }, FRIEND);
+    await finishWelcome(workspace.roomId!, FRIEND);
     await recordOnboardingEvent(db, FRIEND, 'welcome_shown');
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Before I choose' }, FRIEND);
     expect((await db.query(`SELECT 1 FROM signin_funnel_events WHERE event='user_answered'`)).rowCount).toBe(0);
     const room = await phone.readRoom(workspace.roomId!, FRIEND);
     const welcome = room!.messages.find(message => message.choice?.status === 'open')!.choice!;
-    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'D' }, FRIEND);
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'C' }, FRIEND);
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Here is my answer' }, FRIEND);
     const firstAnswer = (await db.query(`SELECT occurred_at FROM signin_funnel_events WHERE event='user_answered'`)).rows;
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'And another answer' }, FRIEND);
@@ -336,6 +324,7 @@ describe('free starter agents', () => {
     await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
       VALUES($1,$2,'signup','android','0.2.22','server',now())`, [installId, attemptId]);
     const workspace = await phone.execute('createWorkspace', { name: 'Return' }, FRIEND);
+    await finishWelcome(workspace.roomId!, FRIEND);
     await recordOnboardingEvent(db, FRIEND, 'welcome_shown');
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'My first task' }, FRIEND);
     expect((await db.query(`SELECT 1 FROM signin_funnel_events WHERE event LIKE 'returned_%'`)).rowCount).toBe(0);
@@ -348,6 +337,7 @@ describe('free starter agents', () => {
   // Lifecycle tests start after the owner's first actual request, not the server hello.
   const createWorkspace = async (name = 'Fresh', viewer = OWNER) => {
     const result = await phone.execute('createWorkspace', { name }, viewer) as { id: string; roomId: string };
+    await finishWelcome(result.roomId!, viewer);
     const agent = (await db.query<{ agent_id: string }>(`SELECT f.agent_id FROM free_agents f JOIN identities i ON i.id=f.agent_id WHERE workspace_id=$1 ORDER BY i.name`, [result.id])).rows[0];
     if (agent) {
       await createAgentCommand(db, { roomId: result.roomId, agentId: agent.agent_id, sourceMessageId: null, reason: 'human_tag' });
@@ -366,6 +356,7 @@ describe('free starter agents', () => {
 
   it('adds the repository guide to a Google-only runtime without feature configuration', async () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Always on' }, OWNER) as { id:string;roomId:string };
+    await finishWelcome(roomId!, OWNER);
     const agent = await freeAgentOf(id);
     const daemon = new DaemonService(db, live);
     await db.query(`UPDATE agents SET soul=jsonb_set(soul,'{instructions}','"Original soul"'::jsonb)
@@ -379,6 +370,7 @@ describe('free starter agents', () => {
 
   it('onboarding-invite-1: an unlinked Room join does not presume coding intent', async () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Existing unlinked workspace' }, OWNER) as { id: string; roomId: string };
+    await finishWelcome(roomId!, OWNER);
     const agent = await freeAgentOf(id);
     const invite = await phone.execute('createInvite', { workspaceId: id }, OWNER);
     await phone.execute('redeemInvite', { token: invite.token }, FRIEND);
@@ -388,6 +380,7 @@ describe('free starter agents', () => {
 
   it('onboarding-invite-1: an eligible invitee selects a starter from an existing Beebee without repository-management rights', async () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Existing workspace' }, OWNER) as { id: string; roomId: string };
+    await finishWelcome(roomId!, OWNER);
     const agent = await freeAgentOf(id);
     await db.query(`UPDATE rooms SET repository_name='tester/existing',repository_key='github:42',
       repository_remote='git://github.com/tester/existing',repository_resolution='repository' WHERE id=$1`, [roomId]);
@@ -442,13 +435,14 @@ describe('free starter agents', () => {
       () => new Date(), async () => ({ subject: 'google-new-owner', name: 'Alex Chen', email: 'alex.chen@gmail.com', audience: 'google-client' }));
     const google = await auth.exchangeGoogleOidc('verified-fixture-ticket');
     const workspace = await phone.execute('createWorkspace', { name: 'Google onboarding' }, google.identityId);
+    await finishWelcome(workspace.roomId!, google.identityId);
     const beebee = await freeAgentOf(workspace.id);
     const hello = (await db.query<{ text: string }>(
       'SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL',
       [workspace.roomId, beebee.agent_id],
     )).rows;
     expect(hello).toHaveLength(1);
-    expect(hello[0]!.text).toContain("Hi Alex Chen, I'm Beebee. Luna is on your team too.");
+    expect(hello[0]!.text).toContain("Hi Alex, I'm Beebee and that's Luna.");
     expect(hello[0]!.text).not.toContain(google.identityId);
     const room = await phone.readRoom(workspace.roomId!, google.identityId);
     expect(room?.room.name).toBe('general');
@@ -462,6 +456,7 @@ describe('free starter agents', () => {
       VALUES('hello-owner-device-1234567890',$1,'android','physical',now()-interval '1 minute')`, [OWNER]);
     await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 minute')`);
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Fresh' }, OWNER) as { id: string; roomId: string };
+    await finishWelcome(roomId!, OWNER);
     const agent = await freeAgentOf(id);
     expect(agent.state).toMatch(/provisioning|waking/);
 
@@ -494,7 +489,7 @@ describe('free starter agents', () => {
     const hello = (await db.query<{ id: string; text: string }>(
       `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL`, [roomId, agent.agent_id],
     )).rows;
-    const expected = "Hi Charles, I'm Beebee. Luna is on your team too. We run on different AI models. What should we do first?";
+    const expected = starterHello('Charles');
     expect(hello).toHaveLength(1);
     expect(hello[0]!.text).toBe(expected);
     const team = (await db.query<{ name: string; model: string; owner_id: string; instructions: string }>(
@@ -551,7 +546,7 @@ describe('free starter agents', () => {
       `SELECT name,handle FROM identities WHERE id=$1`, [agent.agent_id],
     )).rows[0];
     expect(identity).toEqual({ name: 'Beebee', handle: 'beebee_2' });
-    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL`, [agent.agent_id])).rows[0]!.text).toBe("Hi Charles, I'm Beebee. Luna is on your team too. We run on different AI models. What should we do first?");
+    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL`, [agent.agent_id])).rows[0]!.text).toBe(starterHello('Charles'));
   });
 
   it('creates no duplicate team on a retried create, and admits only complete teams under the owner limit', async () => {
@@ -1164,6 +1159,7 @@ describe('free starter agents', () => {
     const finish = new Promise<void>(resolve => { release = resolve; });
     machines.beforeCreate = async () => { entered(); await finish; };
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Race' }, OWNER) as { id: string; roomId: string };
+    await finishWelcome(roomId!, OWNER);
     const pending = await freeAgentOf(id);
     await createAgentCommand(db, { roomId, agentId: pending.agent_id, sourceMessageId: null, reason: 'human_tag' });
     freeAgents.kick(pending.agent_id);

@@ -567,7 +567,7 @@ export type DaemonOperationMap = {
   >;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
-  postStarterWelcome: Operation<RoomInput, AskRoomChoiceResult>;
+  postStarterWelcome: Operation<RoomInput, { readonly status: 'started' }>;
   postRoomInvite: Operation<RoomInput, { readonly url: string; readonly message: string; readonly messageId: string }>;
   postRepositoryOnboarding: Operation<RoomInput & { readonly kind: 'repository' | 'starters' }, RepositoryOnboardingCard>;
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;

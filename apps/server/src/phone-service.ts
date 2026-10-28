@@ -1,6 +1,6 @@
 import { disconnectMcp } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
-import { postStarterExplanation, postStarterGame } from './starter-onboarding.js';
+import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { postStarterInviteOffer } from './starter-invite.js';
 import { recordOnboardingEvent, observeOnboardingMessage, observeOnboardingInvite } from './signin-funnel.js';
 import { waitForConnection } from './connection-wait.js';
@@ -1035,6 +1035,9 @@ export class PhoneService {
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
 
+  private starterOnboarding?: StarterOnboardingService;
+  setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
+
   private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>;
 
   /** Give every newly created Workspace a free starter agent. */
@@ -1056,6 +1059,7 @@ export class PhoneService {
     private readonly composio?: ComposioApps,
     private readonly linkWallet?: LinkAgentWallet,
   ) {
+    this.starterOnboarding = new StarterOnboardingService(database);
     this.connectorDiscovery = new ConnectorDiscoveryCache(database, mcpRegistry);
     this.database = new CornerAccessDatabase(database);
     this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
@@ -2138,6 +2142,7 @@ export class PhoneService {
     };
     const rows = await measured('data', this.roomRows(roomId, viewerId));
     if (!rows) return null;
+    this.starterOnboarding?.open(roomId, viewerId);
     const room = rows.room;
     const corner = rows.corner;
     const parent = corner?.parent ?? undefined;
@@ -6397,6 +6402,10 @@ export class PhoneService {
    * that returns the same Room.
    */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
+    if (input.timeZone !== undefined) {
+      if (typeof input.timeZone !== 'string' || input.timeZone.length > 100) throw new Error('Invalid time zone');
+      try { new Intl.DateTimeFormat('en', { timeZone: input.timeZone }); } catch { throw new Error('Invalid time zone'); }
+    }
     const id = input.workspaceId ?? randomUUID();
     const roomId = await this.database.transaction(async (db) => {
       const inserted = await db.query(
@@ -6425,9 +6434,11 @@ export class PhoneService {
           creatorId: viewerId,
           roomId: generalId,
           team: true,
+          timeZone: input.timeZone,
         });
       return generalId;
     });
+    void this.starterOnboarding?.prepare(roomId).catch(error => console.error('[onboarding] prepare failed', error));
     return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
@@ -7751,25 +7762,22 @@ export class PhoneService {
 
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
     return this.database.transaction(async database => {
-      const starter = (await database.query<{ room_id: string; agent_id: string; stage: string }>(
-        `SELECT c.room_id,c.agent_id,m.card->>'starterOnboarding' stage
+      const starter = (await database.query<{ room_id: string; agent_id: string; stage: string; first_label: string }>(
+        `SELECT c.room_id,c.agent_id,c.options->0->>'label' first_label,m.card->>'starterOnboarding' stage
          FROM room_choices c JOIN messages m ON m.id=c.message_id
          WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
       )).rows[0];
       if (starter) {
-        const game = starter.stage === 'welcome' && input.optionId === 'B';
-        const explanation = starter.stage === 'welcome' && input.optionId === 'D';
-        const invite = (starter.stage === 'welcome' && input.optionId === 'C') || (starter.stage === 'next' && input.optionId === 'A');
+        if (starter.first_label !== 'Write code in your repo')
+          throw new Error('This welcome has changed. Ask Beebee to run onboarding again for the current job choices.');
         const result = await answerRoomChoice(database, {
           choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
-        }, { wake: !(game || explanation || invite) });
-        if (starter.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C' | 'D', roomId: starter.room_id });
-        if (explanation) await postStarterExplanation(database, starter.room_id, starter.agent_id);
-        if (game) await postStarterGame(database, this.objects, starter.room_id, viewerId);
-        if (invite) {
-          await postStarterInviteOffer(database, starter.room_id, starter.agent_id, viewerId, this.publicOrigin);
-          return result;
-        }
+        }, { wake: input.optionId === 'B' });
+        await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C', roomId: starter.room_id });
+        await recordOnboardingEvent(database, viewerId, input.optionId === 'A' ? 'repo_job_chosen' : input.optionId === 'B' ? 'youtube_job_chosen' : 'other_job_chosen', { roomId: starter.room_id });
+        if (input.optionId === 'A') await postRepositoryOnboarding(database, this.github, {
+          roomId: starter.room_id, agentId: starter.agent_id, requesterId: viewerId, kind: 'repository',
+        });
         return result;
       }
       return (await settleWorkflowGate(database, {

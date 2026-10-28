@@ -20,10 +20,20 @@ soul. Existing free agents keep their names.
   row (harness `pi`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
   presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
-  New-workspace creation provisions the pair atomically, then posts the approved
-  welcome choice card. D posts the fixed explanation and A–C; B posts the stored
-  tic-tac-toe game as Luna and a next-step card as Beebee. Those paths use no
-  model turn. The single-agent operator path retains the legacy hello.
+  New-workspace creation provisions the pair atomically and queues a durable
+  starter onboarding run. After commit, `StarterOnboardingService` generates
+  Beebee/Luna/Beebee banter through the shared model proxy using each agent's
+  stored model and instructions. The phone supplies its timezone at creation.
+  Room entry starts playback: each accepted line follows a brief working state,
+  then Beebee posts the fixed first-name hello and the repository, YouTube and
+  Something else choices. Invalid lines get one retry; a failed exchange or the
+  Room-entry deadline (20 seconds) falls back to the hello and choices.
+  Repository choices reuse the repository/starters cards; YouTube uses the
+  existing multipart connector and requires a preview Post tap before upload;
+  Something else focuses the composer. Manual reruns queue the same flow after
+  the command commits and remain outside signup funnel counts. The game and
+  explanation welcome paths are retired. The single-agent operator path retains
+  the legacy hello.
   The legacy hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
   The hello tags the owner through the normal mention/push path and uses the
   agent's actual handle. It creates no model turn or Machine. The first real
@@ -157,11 +167,11 @@ call gives up when its caller disconnects or its turn reaches the 15-minute
 cap, refunds its reservation and gets HTTP 503. The limit is per process:
 production runs two machines, so the real ceiling is twice the setting.
 
-Model calls require a claimed `input`/`resume` command with a live lease and a
+Helper model calls require a claimed `input`/`resume` command with a live lease and a
 claim younger than the hard turn cap. Pending and completed commands do not
 permit calls, including copied model tokens used from outside Beeline. The
 helper retains the command claim through model retries and tool follow-ups;
-there is no post-completion grace that would authorize idle calls.
+there is no post-completion grace that would authorize idle calls. Server-owned starter banter is a separate internal entry: a recent generating onboarding run must bind the agent and owner to the current Room team. It shares the same allowance, dollar budget, queue and settlement code; the HTTP endpoint retains its live-turn requirement.
 
 A per-owner UTC minute counter defaults to 30 admitted calls, including failed
 upstream attempts. Reservations take a global advisory lock before the owner

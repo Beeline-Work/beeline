@@ -1,6 +1,7 @@
 /** Anonymous, allowlisted sign-in measurement. Never add identity or free-text fields. */
 export const ONBOARDING_EVENTS = [
-  'welcome_shown', 'welcome_skipped', 'option_picked', 'user_answered',
+  'repo_job_chosen', 'youtube_job_chosen', 'other_job_chosen',
+  'banter_shown', 'welcome_shown', 'welcome_skipped', 'option_picked', 'user_answered',
   'task_question', 'task_first_answer', 'task_review_requested', 'task_final_answer',
   'game_posted', 'game_viewer_opened', 'game_viewer_closed',
   'invite_created', 'invite_shared', 'invite_opened', 'invite_friend_signed_up', 'invite_friend_messaged',

@@ -7574,6 +7574,14 @@ export class DaemonService {
         const status = await squireWorkStatus(this.database, agentId);
         if (status.status === 'connected' && !input.reconnect && !input.switchGoogleAccount)
           return { status: 'ready', app: name, connectorId, next: `${name} is ready.` };
+        if (status.status !== 'connected') {
+          const offer = await this.offerConnector({ roomId: input.roomId,
+            connectorType: 'trusty-squire', reason }, agentId, true);
+          if (commandId && !offer.joined) await this.database.query(
+            'UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
+          return { status: 'needs_approval', app: name, connectorId,
+            next: 'The Trusty Squire connector card is ready. Tap it to install Squire on your agent’s machine, including its hosted machine; complete any sign-in on your phone, then this request resumes.' };
+        }
         await this.database.transaction(database => queueSquireWork(database, agentId,
           { install: true, ...(input.switchGoogleAccount ? { forceReloginProvider: 'google' } : {}) }));
       } else {

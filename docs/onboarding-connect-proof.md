@@ -1,6 +1,14 @@
 # Onboarding connect proof (28 October 2026)
 
-The hosted service-manager and cold-broker failures now pass an isolated Fly installation proof. This work remains incomplete: the PR stays draft until a fresh Beeline test account completes account pairing and a real Squire app connects in Beeline. Hosted API readiness does not require Google cookies in Chrome.
+The hosted service-manager and cold-broker failures pass the isolated Fly installation proof. Under brief revision four, the remaining live proof uses lunchboxfortwo's existing hosted agent: offer the Connect Squire card, finish sign-in on the phone, and show that helper connected. No test account, live isolation exercise, or resource measurement is required. Hosted API readiness does not require Google cookies in Chrome. Earlier proof notes below describe historical work, not the current acceptance gates.
+
+## Revision four: direct Squire offer and owner machine
+
+Reproduction `onboarding-connect-1`: Luna's direct `connect(mode:ensure, service:trusty-squire)` and retry returned "Trusty Squire could not connect. Reconnect to retry." without a card. The direct machine route queued installation immediately; the earlier fix offered approval only for dependent apps such as Shopify. Direct setup and retry now offer one Connect Squire card before queuing installation. The built HTTP proof checks the same route, the phone Room reader, no premature install work, and no app row; integration coverage also checks already-connected readiness.
+
+Luna's actual Fly VM (`28744394ad7538`) runs the PR helper built from `27442f2c9`, with SHA256 `3b0961dd9f5647a72bb815883fa538f89639868a369ca75730e1ab6c9394f4ba`. Its helper and broker run as root. The owner's agent row records the failed install reason: "The hosted browser service could not start. Retry the Trusty Squire connection." Chrome reports (156.0.8078.73); Squire is now installed at `/opt/beeline/squire/node_modules/@trusty-squire/mcp` and reports (1.1.38-rc.1). The helper invokes that absolute entry on hosted machines, rather than looking for a global CLI on PATH. Both `/root/.trusty-squire/broker.sock` and `mcp.sock` are ready. The image now pins the same Squire version.
+
+The direct-card correction is server code; changing the hosted helper does not deploy it. The live Room card, phone sign-in, and connected-state screenshots remain outstanding until the server correction is available. No completed phone proof is claimed. The temporary helper and longer idle interval remain for that proof; afterward restore `/opt/beeline/proof-original-settings.json`, resume normal supervision, and confirm temporary helper PID (4185) has exited.
 
 ## Reproduction onboarding-connect-1
 

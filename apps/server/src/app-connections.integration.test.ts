@@ -329,6 +329,24 @@ describe('connect_app', () => {
     expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'ready' });
   });
 
+  it('Reproduction onboarding-connect-1: direct Squire requests offer one card before install, including retry', async () => {
+    const daemon = daemonWith(fakeRegistry([]).client);
+    await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
+      [HELPER, JSON.stringify({ status: 'not-added', reportedAt: Date.now() / 1000 })]);
+    for (const input of [{ service: 'trusty-squire' }, { service: 'squire', reconnect: true },
+      { service: 'Trusty Squire' }]) {
+      expect(await daemon.execute('connect', { ...turn, ...input, reason: 'Use the hosted browser' }, HELPER))
+        .toMatchObject({ status: 'needs_approval', app: 'Trusty Squire' });
+    }
+    expect((await database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rowCount).toBe(1);
+    expect((await database.query('SELECT id FROM workspace_apps')).rowCount).toBe(0);
+    expect((await database.query('SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER]))
+      .rows[0]!.squire_work.install).not.toBe(true);
+    await connectSquire();
+    expect(await daemon.execute('connect', { ...turn, service: 'trusty-squire', reason: 'Use the browser' }, HELPER))
+      .toMatchObject({ status: 'ready', app: 'Trusty Squire' });
+  });
+
   it('keeps real app names out of the AI-assistant route', async () => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());

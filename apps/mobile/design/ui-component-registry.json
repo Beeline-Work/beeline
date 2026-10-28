@@ -2,6 +2,7 @@
   "version": 1,
   "fingerprintMode": "layout-shell-v2",
   "components": {
+    "components/buzz/PersonInviteSheet.tsx": ["PersonInviteSheet"],
     "components/buzz/ChoiceVideoPreview.tsx": ["ChoiceVideoPreview"],
     "components/buzz/AiClientsSection.tsx": ["AiClientsSection"],
     "components/buzz/SpeakingSpeedSetting.tsx": ["SpeakingSpeedSetting"],

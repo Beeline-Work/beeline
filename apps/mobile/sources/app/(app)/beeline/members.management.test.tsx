@@ -1,6 +1,7 @@
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 import { HumanProfile } from './human-profile';
 import AgentProfileRoute from './agent-profile';
 import * as React from 'react';

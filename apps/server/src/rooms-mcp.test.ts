@@ -75,6 +75,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const callback = await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     expect(callback.status).toBe(302);
     const page = await fetch(origin + consent, { headers: { cookie } });
+    expect(page.headers.get('referrer-policy')).toBe('same-origin');
+    expect(page.headers.get('content-security-policy')).toContain("form-action 'self' http://127.0.0.1:9876;");
     expect(await page.text()).toContain('Local MCP reviewer');
     const result = await post('/mcp/oauth/consent', { flow, decision }, { cookie, origin });
     expect(result.status).toBe(302);
@@ -184,8 +186,17 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain('JOINS AS'); expect(page).toContain('Grok Bot');
     expect(page).toContain('Read Rooms you add it to'); expect(page).toContain('Post as Grok Bot');
-    const edit = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}&edit=1`, { headers: { cookie } })).text();
+    const editPage = await fetch(`${origin}/mcp/oauth/consent?flow=${flow}&edit=1`, { headers: { cookie } });
+    expect(editPage.headers.get('referrer-policy')).toBe('same-origin');
+    expect(editPage.headers.get('content-security-policy')).toContain("form-action 'self';");
+    const edit = await editPage.text();
     expect(edit).toContain('name="joiner_name"');
+    for (const untrustedOrigin of ['https://evil.example', 'null', undefined]) {
+      for (const decision of ['save', 'allow', 'deny']) {
+        expect((await post('/mcp/oauth/consent', { flow, decision, joiner_name: 'Attacker', joiner_handle: 'attacker' },
+          { cookie, ...(untrustedOrigin ? { origin: untrustedOrigin } : {}) })).status).toBe(400);
+      }
+    }
     expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Firstmate', joiner_handle: 'firstmate' }, { cookie, origin })).status).toBe(302);
     const renamed = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(renamed).toContain('Firstmate'); expect(renamed).toContain('@firstmate');

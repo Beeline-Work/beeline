@@ -1,3 +1,4 @@
+// Job title and visual clip preview approved by Ruby, commander order ad993fe2b9b6053bc4a2bd2763f07a0e559c9b0bdac73c570686e29fdf0a6f95, brief revision 3; inherited mock v4 approval by lunchboxfortwo.
 // Starter banter, fixed hello and three job choices approved by lunchboxfortwo, message 8ab63112f3d3a70586d42f0d9b95642c14b7184f8b24268d6e69aba060c75edd (corner brief revision 2). Retire the game/explanation producers; add the approved welcome playback and Post gate metadata.
 // Startup backoff owner notice approved by lunchboxfortwo, DM e2ec4638, relayed by Ruby; this notice only.
 // Manual onboarding action and unchanged welcome wording approved by lunchboxfortwo, 708bd557; Luna intro and final backfill approved in ae9a4279 (relayed by Ruby). Only onboarding metadata/entry-point producer snapshots updated; no visible System wording changed.
@@ -4759,6 +4760,18 @@
     "template": "this.connectionUsage(input as Input<'postConnectionUsage'>, authenticatedAgentId)",
     "literals": [
       "\"postConnectionUsage\""
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:73ac7eaa0b65938b",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "postStarterVideoPreview(this.database, this.objects, { ...request, agentId: authenticatedAgentId })",
+    "literals": [
+      "\"postStarterVideoPreview\"",
+      ".database",
+      ".objects"
     ],
     "occurrences": 1
   },
@@ -9618,10 +9631,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:writeChoiceCard:message-write:a60b1a05630e7571",
+    "id": "src/room-choice.ts:writeChoiceCard:message-write:e02585cc3e872adf",
     "file": "apps/server/src/room-choice.ts",
     "kind": "message-write",
-    "template": "UPDATE messages card=jsonb_strip_nulls ( jsonb_build_object ( 'receiptHint' , card - > 'receiptHint' , 'runId' , card - > 'runId' , 'workflowSlug' , card - > 'workflowSlug' , 'attempt' , card - > 'attempt' , 'starterOnboarding' , card - > 'starterOnboarding' , 'onboardingManual' , card - > 'onboardingManual' , 'onboardingUserId' , card - > 'onboardingUserId' , 'onboardingRunId' , card - > 'onboardingRunId' ) ) | | JSON.stringify(card) :: jsonb",
+    "template": "UPDATE messages card=jsonb_strip_nulls ( jsonb_build_object ( 'receiptHint' , card - > 'receiptHint' , 'runId' , card - > 'runId' , 'workflowSlug' , card - > 'workflowSlug' , 'attempt' , card - > 'attempt' , 'starterOnboarding' , card - > 'starterOnboarding' , 'onboardingManual' , card - > 'onboardingManual' , 'onboardingUserId' , card - > 'onboardingUserId' , 'onboardingRunId' , card - > 'onboardingRunId' , 'videoPreview' , card - > 'videoPreview' , 'youtubeUploadUsed' , card - > 'youtubeUploadUsed' ) ) | | JSON.stringify(card) :: jsonb",
     "literals": [
       "'attempt'",
       "'onboardingManual'",
@@ -9630,7 +9643,9 @@
       "'receiptHint'",
       "'runId'",
       "'starterOnboarding'",
+      "'videoPreview'",
       "'workflowSlug'",
+      "'youtubeUploadUsed'",
       ".stringify",
       ".stringify()"
     ],
@@ -9824,6 +9839,83 @@
     "occurrences": 1
   },
   {
+    "id": "src/starter-onboarding.ts:postStarterVideoPreview:message-write:88b91d031bbfe484",
+    "file": "apps/server/src/starter-onboarding.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=card | | JSON.stringify({ videoPreview: { videoObjectId: input.videoObjectId, frameUrl: frame.url,\n        title: input.title.trim(), description: input.description, visibility: input.visibility } }) :: jsonb",
+    "literals": [
+      "\"GET\"",
+      "\"Room file is no longer stored\"",
+      "\"file\"",
+      ".#bucket",
+      ".#client",
+      ".#endpoint",
+      ".#fetchWithDeadline",
+      ".#fetchWithDeadline()",
+      ".#requireStorage",
+      ".#requireStorage()",
+      ".agentId",
+      ".arrayBuffer",
+      ".arrayBuffer()",
+      ".bind",
+      ".bind()",
+      ".description",
+      ".fetch",
+      ".frameObjectId",
+      ".getObject",
+      ".getObject()",
+      ".key",
+      ".mime",
+      ".objectUrl",
+      ".objectUrl()",
+      ".publicOrigin",
+      ".readRoomObject",
+      ".readRoomObject()",
+      ".roomId",
+      ".rows",
+      ".size",
+      ".storage",
+      ".stringify",
+      ".stringify()",
+      ".title",
+      ".toLowerCase",
+      ".toLowerCase()",
+      ".trim",
+      ".trim()",
+      ".url",
+      ".videoObjectId",
+      ".visibility",
+      "FirstLiteralToken:0",
+      "NullKeyword",
+      "Number()",
+      "[\"\",\"/\",\"/\",\"\"]",
+      "[\"\",\"/v1/media/\",\"\"]",
+      "binary:??",
+      "end:expression",
+      "externalFetch()",
+      "prefix:!"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/starter-onboarding.ts:postStarterVideoPreview:wrapper:f0da9b5e46f15a9c",
+    "file": "apps/server/src/starter-onboarding.ts",
+    "kind": "wrapper",
+    "template": "postRoomChoice(database, { roomId: input.roomId, agentId: input.agentId, mode: 'question',\n    prompt: input.title.trim(), constraint: `Visibility: ${input.visibility}`,\n    options: [{ label: 'Post', consequence: 'Post' }, { label: 'Cancel', consequence: 'Cancel' }] })",
+    "literals": [
+      "\"Cancel\"",
+      "\"Post\"",
+      "\"question\"",
+      ".agentId",
+      ".title",
+      ".trim",
+      ".trim()",
+      ".visibility",
+      "[\"Visibility: \",\"\"]"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/starter-onboarding.ts:postStarterWelcome:message-write:1b4de47742086727",
     "file": "apps/server/src/starter-onboarding.ts",
     "kind": "message-write",
@@ -9851,24 +9943,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/starter-onboarding.ts:postStarterWelcome:wrapper:b820e13b62c1a9b5",
-    "file": "apps/server/src/starter-onboarding.ts",
-    "kind": "wrapper",
-    "template": "postRoomChoice(database, {\n    roomId: input.roomId, agentId: input.agentId, mode: 'question',\n    prompt: 'What should we do first?',\n    options: STARTER_OPTIONS\n        .map(option => ({ ...option, consequence: option.label })),\n})",
-    "literals": [
-      "\"Post a video to your YouTube\"",
-      "\"Something else\"",
-      "\"What should we do first?\"",
-      "\"Write code in your repo\"",
-      "\"question\"",
-      ".agentId",
-      ".label",
-      ".map",
-      ".map()"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/starter-onboarding.ts:postStarterWelcome:wrapper:bf1e8ff1226b0d81",
     "file": "apps/server/src/starter-onboarding.ts",
     "kind": "wrapper",
@@ -9876,6 +9950,24 @@
     "literals": [
       ".id",
       ".manualUserId"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/starter-onboarding.ts:postStarterWelcome:wrapper:e34123c4e86a4ea8",
+    "file": "apps/server/src/starter-onboarding.ts",
+    "kind": "wrapper",
+    "template": "postRoomChoice(database, {\n    roomId: input.roomId, agentId: input.agentId, mode: 'question',\n    prompt: 'Pick a first job',\n    options: STARTER_OPTIONS\n        .map(option => ({ ...option, consequence: option.label })),\n})",
+    "literals": [
+      "\"Pick a first job\"",
+      "\"Post a video to your YouTube\"",
+      "\"Something else\"",
+      "\"Write code in your repo\"",
+      "\"question\"",
+      ".agentId",
+      ".label",
+      ".map",
+      ".map()"
     ],
     "occurrences": 1
   },

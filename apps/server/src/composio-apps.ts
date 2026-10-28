@@ -189,6 +189,8 @@ const APP_FILE_UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
 /** A Room object the calling agent may hand to an app tool; `read` fetches its bytes. */
 export interface AppFile {
+  /** Canonical Room media URL, when resolved from object storage. */
+  url?: string;
   name: string;
   mimeType: string;
   size: number;

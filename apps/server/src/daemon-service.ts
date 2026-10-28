@@ -1,4 +1,4 @@
-import { consumeStarterVideoPost } from './starter-onboarding.js';
+import { consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
@@ -581,6 +581,7 @@ export class DaemonService {
       'postRepositoryOnboarding',
       'postRoomInvite',
       'postStarterWelcome',
+      'postStarterVideoPreview',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -1864,6 +1865,13 @@ export class DaemonService {
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postStarterVideoPreview': {
+        const request = input as Input<'postStarterVideoPreview'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const result = await postStarterVideoPreview(this.database, this.objects, { ...request, agentId: authenticatedAgentId });
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message' });
+        return result as Output<Name>;
+      }
       case 'postStarterWelcome': {
         const request = input as Input<'postStarterWelcome'>;
         await this.access(request.roomId, authenticatedAgentId);
@@ -9227,6 +9235,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postRepositoryOnboarding: true,
   postRoomInvite: true,
   postStarterWelcome: true,
+  postStarterVideoPreview: true,
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,

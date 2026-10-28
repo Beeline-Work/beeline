@@ -8,7 +8,7 @@ import {
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
 export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
-  "onboarding": {"welcome": "post_starter_welcome", "invite": "post_room_invite", "repository": "post_repository_card", "starters": "post_starters_card"},
+  "onboarding": {"welcome": "post_starter_welcome", "video_preview": "post_starter_video_preview", "invite": "post_room_invite", "repository": "post_repository_card", "starters": "post_starters_card"},
   "workflow": {
     "save": "save_workflow",
     "start": "start_workflow",
@@ -48,6 +48,7 @@ export const REPOSITORY_ROUTES: Record<string, string> = {
 export const SCRATCH_ROUTES: Record<string, string> = {"write": "write_scratch_file", "image": "fetch_image", "quota": "scratch_status"};
 export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = {
   onboarding: {
+    video_preview: { name: 'video_preview', description: 'Show a Room clip frame, title, description and visibility above Post/Cancel. Upload the extracted frame as a Room image first. Nothing uploads to YouTube until Post is tapped.', inputSchema: { type: 'object', required: ['videoObjectId','frameObjectId','title','description','visibility'], properties: { videoObjectId: { type: 'string' }, frameObjectId: { type: 'string' }, title: { type: 'string', maxLength: 100 }, description: { type: 'string', maxLength: 5000 }, visibility: { enum: ['public','unlisted','private'] } }, additionalProperties: false } },
     welcome: { name: 'welcome', description: 'Post the signup welcome choices in this chat to rerun onboarding. Manual runs are excluded from signup funnel counts.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     invite: { name: 'invite', description: 'Create an invite for the requester\'s own Room and print the invite link in this chat. Workspace manager membership is required.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     repository: { name: 'repository', description: 'Post the Room repository card: create a private repo, link an installation repo, switch repos or add an organization. Returns install_missing, no_repo_linked or repo_linked. Use this instead of settings or CLI instructions.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },

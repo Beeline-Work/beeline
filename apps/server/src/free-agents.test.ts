@@ -1,5 +1,5 @@
 import { StarterOnboardingService } from './starter-onboarding-run.js';
-import { starterHello, consumeStarterVideoPost } from './starter-onboarding.js';
+import { starterHello, consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
@@ -33,7 +33,8 @@ import { LiveHub } from './live.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
-import { PgliteDatabase } from './test-support.js';
+import { ObjectService } from './object-service.js';
+import { PgliteDatabase, MemoryObjectStorage } from './test-support.js';
 import { recordSigninFunnelEvent, recordOnboardingEvent } from './signin-funnel.js';
 import { dashboardPeriods } from './operator-dashboard-periods.js';
 
@@ -229,6 +230,7 @@ describe('free starter agents', () => {
     await finishWelcome(workspace.roomId!, OWNER);
     const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
     const welcome = room.messages.find(message => message.choice)!.choice!;
+    expect(welcome.prompt).toBe('Pick a first job');
     expect(welcome.options.map(option => option.label)).toEqual(['Write code in your repo', 'Post a video to your YouTube', 'Something else']);
     expect(room.messages.some(message => message.attachments?.length)).toBe(false);
     expect(room.messages.some(message => message.text.startsWith('Most AI apps'))).toBe(false);
@@ -248,11 +250,20 @@ describe('free starter agents', () => {
     expect(commands).toHaveLength(1);
     const agent = commands[0]!.agent_id;
     await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
-    const { postRoomChoice } = await import('./room-choice.js');
-    const preview = await db.transaction(tx => postRoomChoice(tx, { roomId: workspace.roomId!, agentId: agent,
-      mode: 'question', prompt: 'Clip preview: Picnic. Title: Picnic. Description: A picnic. Visibility: public.', options: [{ label: 'Post', consequence: 'Publish the preview' }, { label: 'Cancel', consequence: 'Do not upload' }] }));
+    const objects = new ObjectService(db, new MemoryObjectStorage().asStorage(), 'https://server.test');
+    const clip = await objects.uploadArtifact(OWNER, Buffer.from('clip bytes'), 'video/mp4', 'clip.mp4');
+    const frame = await objects.uploadArtifact(OWNER, Buffer.from('frame bytes'), 'image/jpeg', 'frame.jpg');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'clip and frame',$4::jsonb)`,
+      ['f'.repeat(64), workspace.roomId, OWNER, JSON.stringify([clip,frame].map(file => ({url:file.url,name:file.title,mimeType:file.mimeType,size:file.size})))]);
+    await expect(db.transaction(tx => postStarterVideoPreview(tx, objects, { roomId: workspace.roomId!, agentId: agent,
+      videoObjectId: clip.objectId, frameObjectId: clip.objectId, title: 'Picnic', description: 'A picnic.', visibility: 'unlisted' }))).rejects.toThrow('video clip and an image frame');
+    const preview = await db.transaction(tx => postStarterVideoPreview(tx, objects, { roomId: workspace.roomId!, agentId: agent,
+      videoObjectId: clip.objectId, frameObjectId: frame.objectId, title: 'Picnic', description: 'A picnic.', visibility: 'unlisted' }));
+    const previewCard = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.id === preview.messageId)!.choice!;
+    expect(previewCard.videoPreview).toMatchObject({frameUrl:frame.url,title:'Picnic',visibility:'unlisted',videoObjectId:clip.objectId});
     await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
     await phone.execute('answerChoice', { choiceId: preview.choiceId, optionId: 'A' }, OWNER);
+    expect((await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.id === preview.messageId)!.choice!.videoPreview?.frameUrl).toBe(frame.url);
     await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent));
     await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent))).rejects.toThrow('tap Post');
   });

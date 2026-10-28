@@ -1,13 +1,13 @@
 /** Built service stand-in for staging: no Fly Machines, provider account or public upload is used. */
 import { strict as assert } from 'node:assert';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { PgliteDatabase, MemoryObjectStorage } from '../apps/server/src/test-support.js';
 import { migrate } from '../apps/server/dist/database.js';
 import { FreeAgentService, freeAgentConfigFromEnv } from '../apps/server/dist/free-agents.js';
 import { PhoneService } from '../apps/server/dist/phone-service.js';
 import { StarterOnboardingService } from '../apps/server/dist/starter-onboarding-run.js';
-import { consumeStarterVideoPost } from '../apps/server/dist/starter-onboarding.js';
-import { postRoomChoice } from '../apps/server/dist/room-choice.js';
+import { consumeStarterVideoPost, postStarterVideoPreview } from '../apps/server/dist/starter-onboarding.js';
+import { ObjectService } from '../apps/server/dist/object-service.js';
 
 const output = process.env.ONBOARDING_PROOF_OUTPUT ?? '/tmp/beeline-two-agent-proof';
 await mkdir(output, { recursive: true });
@@ -55,9 +55,18 @@ try {
   const youtube = await rerun();
   await phone.execute('answerChoice', { choiceId: youtube.choiceId, optionId: 'B' }, owner);
   await assert.rejects(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee)), /tap Post/);
-  const preview = await db.transaction(tx => postRoomChoice(tx, { roomId: workspace.roomId, agentId: beebee,
-    mode: 'question', prompt: 'Preview clip. Title: Picnic. Description: Our picnic. Visibility: public.',
-    options: [{ label: 'Post', consequence: 'Publish this preview' }, { label: 'Cancel', consequence: 'Do not upload' }] }));
+  const objects = new ObjectService(db, new MemoryObjectStorage().asStorage(), 'http://127.0.0.1:8127');
+  const clipBytes = await readFile('docs/evidence/starter-onboarding/test-clip.mp4');
+  const frameBytes = await readFile('docs/evidence/starter-onboarding/test-frame.jpg');
+  const clip = await objects.uploadArtifact(owner, clipBytes, 'video/mp4', 'test-clip.mp4');
+  const frame = await objects.uploadArtifact(owner, frameBytes, 'image/jpeg', 'test-frame.jpg');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'clip and frame',$4::jsonb)`,
+    ['f'.repeat(64), workspace.roomId, owner, JSON.stringify([clip,frame].map(file => ({url:file.url,name:file.title,mimeType:file.mimeType,size:file.size})))]);
+  const preview = await db.transaction(tx => postStarterVideoPreview(tx, objects, {roomId:workspace.roomId, agentId:beebee,
+    videoObjectId:clip.objectId, frameObjectId:frame.objectId, title:'Beeline onboarding upload test',
+    description:'A short clip to verify the upload flow.', visibility:'unlisted'}));
+  await mkdir(`${output}/v1/media`, {recursive:true});
+  await writeFile(`${output}/v1/media/${frame.objectId}`,frameBytes);
   await snapshot('youtube-preview');
   await phone.execute('answerChoice', { choiceId: preview.choiceId, optionId: 'A' }, owner);
   await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId, beebee));
@@ -69,5 +78,5 @@ try {
   await phone.execute('sendRoomMessage', { roomId: workspace.roomId, text: 'Plan a picnic' }, owner);
   assert.equal((await db.query(`SELECT 1 FROM agent_commands`)).rowCount, before + 1);
   await snapshot('something-else');
-  console.log(`STARTER-3 demonstrated: built workspace creation → model proxy/allowance (fixture replies) → timed Beebee/Luna/Beebee messages → fixed hello and jobs → repository card, YouTube preview/Post gate, and composer task routing. Snapshots: ${output}. Staging sign-up, Android and real public YouTube upload remain separate acceptance requirements.`);
+  console.log(`STARTER-3 demonstrated: built workspace creation → model proxy/allowance (fixture replies) → timed Beebee/Luna/Beebee messages → fixed hello and jobs → repository card, YouTube preview/Post gate, and composer task routing. Snapshots: ${output}. Built-service sign-up evidence is accepted by brief revision 3; the separate live unlisted upload and deletion are recorded in the acceptance evidence.`);
 } finally { await db.close(); }

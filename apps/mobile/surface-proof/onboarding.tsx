@@ -1,3 +1,4 @@
+import { ChoiceVideoPreview } from '../sources/components/buzz/ChoiceVideoPreview';
 import React from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { TranscriptCard } from '../sources/components/buzz/TranscriptCard';
@@ -27,7 +28,8 @@ export default function OnboardingProof() {
             <Text style={{ ...theme.type.meta, color: theme.textSecondary }}>{message.author.name}</Text>
           </View>
           {!message.choice && message.text ? <Text style={{ ...theme.type.body, color: theme.textPrimary }}>{message.text}</Text> : null}
-          {message.choice ? <TranscriptCard tier="ask" title={message.choice.starterOnboarding === 'welcome' ? null : message.choice.prompt}
+          {message.choice ? <TranscriptCard tier="ask" title={message.choice.prompt}
+            body={message.choice.videoPreview ? <ChoiceVideoPreview {...message.choice.videoPreview} /> : undefined}
             wrapTitle choices={message.choice.options.map((option: any) => ({ id: option.optionId, letter: option.letter, label: option.label,
               consequence: option.consequence === option.label ? '' : option.consequence,
               onPress: () => setStage(option.optionId === 'A' ? 'repo' : option.optionId === 'B' ? 'youtube-preview' : 'something-else') }))}

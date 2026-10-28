@@ -1,3 +1,4 @@
+import type { ObjectService } from './object-service.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { postRoomChoice, skipRoomChoice } from './room-choice.js';
@@ -34,7 +35,7 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
   ]);
   const choice = await postRoomChoice(database, {
     roomId: input.roomId, agentId: input.agentId, mode: 'question',
-    prompt: 'What should we do first?',
+    prompt: 'Pick a first job',
     options: STARTER_OPTIONS
       .map(option => ({ ...option, consequence: option.label })),
   });
@@ -63,4 +64,23 @@ export async function consumeStarterVideoPost(database: SqlDatabase, roomId: str
     card.options?.find(option => option.optionId === card.selectedOptionId)?.label !== 'Post')
     throw new Error('Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.');
   await database.query(`UPDATE messages SET card=card || '{"youtubeUploadUsed":true}'::jsonb WHERE id=$1`, [preview.id]);
+}
+
+
+export async function postStarterVideoPreview(database: SqlDatabase, objects: ObjectService | undefined,
+  input: { roomId: string; agentId: string; videoObjectId: string; frameObjectId: string; title: string; description: string; visibility: 'public' | 'unlisted' | 'private' }) {
+  if (!objects) throw new Error('Room files are unavailable');
+  if (!input.title?.trim() || input.title.length > 100 || typeof input.description !== 'string' || Buffer.byteLength(input.description) > 5000 || !['public','unlisted','private'].includes(input.visibility))
+    throw new Error('A title, description and valid visibility are required for the preview');
+  const video = await objects.readRoomObject(input.roomId, input.agentId, input.videoObjectId, database);
+  const frame = await objects.readRoomObject(input.roomId, input.agentId, input.frameObjectId, database);
+  if (!video?.mimeType.startsWith('video/') || !frame?.mimeType.startsWith('image/') || !frame.url)
+    throw new Error('The preview needs a video clip and an image frame from this Room');
+  const posted = await postRoomChoice(database, { roomId: input.roomId, agentId: input.agentId, mode: 'question',
+    prompt: input.title.trim(), constraint: `Visibility: ${input.visibility}`,
+    options: [{ label: 'Post', consequence: 'Post' }, { label: 'Cancel', consequence: 'Cancel' }] });
+  await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [posted.messageId,
+    JSON.stringify({ videoPreview: { videoObjectId: input.videoObjectId, frameUrl: frame.url,
+      title: input.title.trim(), description: input.description, visibility: input.visibility } })]);
+  return posted;
 }

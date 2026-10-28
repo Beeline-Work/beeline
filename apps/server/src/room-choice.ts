@@ -216,7 +216,7 @@ async function writeChoiceCard(
     'receiptHint',card->'receiptHint','runId',card->'runId','workflowSlug',card->'workflowSlug',
     'attempt',card->'attempt','starterOnboarding',card->'starterOnboarding',
     'onboardingManual',card->'onboardingManual','onboardingUserId',card->'onboardingUserId',
-    'onboardingRunId',card->'onboardingRunId'
+    'onboardingRunId',card->'onboardingRunId','videoPreview',card->'videoPreview','youtubeUploadUsed',card->'youtubeUploadUsed'
   )) || $2::jsonb WHERE id=$1`, [
     messageId,
     JSON.stringify(card),

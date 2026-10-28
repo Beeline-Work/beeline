@@ -2012,6 +2012,32 @@ describe('connect_app', () => {
     await expect(selection).resolves.toMatchObject({ transport: 'registry-mcp' });
   });
 
+  it.each(['https://fly.io/mcp/', 'https://mcp.fly.io'])('MCP-URL-1: resolves %s to the provider MCP with saved keys', async query => {
+    await connectSquire();
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+      reference: 'vault:fly', service: 'fly', label: 'Fly key', fieldNames: ['token'], allowedHosts: ['api.fly.io'],
+      createdAt: 1, stale: false, state: 'active',
+    }]);
+    const registry = fakeRegistry([]);
+    const discovery = new CompanyMcpDiscovery(async url => url.href === 'https://mcp.fly.io/.well-known/oauth-protected-resource'
+      ? { status: 200, body: JSON.stringify({ resource: 'https://mcp.fly.io', authorization_servers: ['https://fly.io/mcp/oauth'] }) }
+      : { status: 404, body: '' });
+    registry.client.companies.discover = discovery.discover.bind(discovery);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client);
+    await phone.execute('searchWorkbenchApps', { query }, OWNER);
+    await vi.waitFor(async () => expect(await phone.execute('searchWorkbenchApps', { query }, OWNER))
+      .toContainEqual(expect.objectContaining({ registryServerName: 'io.fly/company-mcp' })));
+    const results = await phone.execute('searchWorkbenchApps', { query }, OWNER);
+    const selected = results.find(row => row.registryServerName === 'io.fly/company-mcp')!;
+    const pending = phone.execute('connectWorkbenchApp', { app: selected.name, helperAgentId: HELPER,
+      registryServerName: selected.registryServerName, registryVersion: selected.registryVersion }, OWNER);
+    await publishFlySignIn();
+    await expect(pending).resolves.toMatchObject({ transport: 'registry-mcp', authorizationUrl: expect.stringContaining('https://fly.io/mcp/oauth/') });
+    expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).companies?.rows
+      .find(row => row.id === 'fly')?.items.some(item => item.kind === 'key')).toBe(true);
+  });
+
   it('MCP-DISCOVERY-1: cold results never wait for stalled providers; committed discovery is visible from another server', async () => {
     await connectSquire();
     await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{

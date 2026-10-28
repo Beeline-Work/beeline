@@ -2,6 +2,7 @@ import { Button } from './Button';
 import React from 'react';
 import { BackHandler, Platform, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
+import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
@@ -76,8 +77,14 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
   React.useEffect(setViewerMode, [setViewerMode]);
   const onStreamMessage = (event: { nativeEvent: { data: string } }) => {
     try {
-      const message = JSON.parse(event.nativeEvent.data) as { type?: string; id?: string; requestId?: number; image?: string };
+      const message = JSON.parse(event.nativeEvent.data) as { type?: string; id?: string; requestId?: number; image?: string; text?: string };
       if (message.id !== session.id) return;
+      // The viewer's paste button and copied page text use this device's clipboard.
+      if (message.type === 'computer-paste-request') void Clipboard.getStringAsync().then((text) => {
+        const paste = { type: 'viewer-paste', id: session.id, text };
+        webViewRef.current?.injectJavaScript(`window.postMessage(${JSON.stringify(paste)}, '*'); true;`);
+      }).catch(() => {});
+      if (message.type === 'computer-copy' && typeof message.text === 'string') void Clipboard.setStringAsync(message.text).catch(() => {});
       if (message.type === 'computer-ended') onEnded?.();
       if (message.type === 'computer-first-frame') onFirstFrame?.();
       if (message.type === 'computer-snapshot' && message.requestId !== undefined) {
@@ -98,6 +105,8 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
     ref: iframeRef,
     src: url,
     title: session.title,
+    // The viewer is cross-origin; paste and copy need the clipboard delegated.
+    allow: 'clipboard-read; clipboard-write',
     style: { width: '100%', height: '100%', border: 0, pointerEvents: preview ? 'none' : 'auto' },
     'data-testid': preview ? 'computer-session-preview-frame' : 'computer-session-view-frame',
   });
@@ -301,7 +310,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
         )}
         {!ended && !unavailable && previewFrame ? (
           <View pointerEvents="none" style={styles.previewFrame}>
-        <Image source={{ uri: `data:image/jpeg;base64,${previewFrame}` }} contentFit="cover" contentPosition="top left"
+        <Image source={{ uri: `data:image/jpeg;base64,${previewFrame}` }} contentFit="cover" contentPosition="top"
           style={styles.stream} testID="computer-session-opening-frame" />
       </View>
         ) : null}

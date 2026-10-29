@@ -55,17 +55,18 @@ export async function mcpBody(request: IncomingMessage, maxBytes = 32_768): Prom
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     size += Buffer.byteLength(chunk);
-    if (size > maxBytes) throw new Error('invalid_request');
+    if (size > maxBytes) throw new Refusal('invalid_request', 'body_too_large');
     chunks.push(Buffer.from(chunk));
   }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded') {
     const params = new URLSearchParams(raw);
-    if ([...params.keys()].some(key => params.getAll(key).length !== 1)) throw new Error('invalid_request');
+    const names = [...new Set(params.keys())];
+    if (names.some(key => params.getAll(key).length !== 1)) throw new Refusal('invalid_request', 'duplicate_parameter', names);
     return Object.fromEntries(params);
   }
   const value: unknown = JSON.parse(raw);
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_request');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Refusal('invalid_request', 'body_not_object');
   return value as Record<string, unknown>;
 }
 function string(value: unknown, max = 2048): string {
@@ -73,6 +74,13 @@ function string(value: unknown, max = 2048): string {
   return value;
 }
 const AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic'];
+/** An OAuth error with the branch that refused it, logged for token requests. */
+class Refusal extends Error {
+  // params carries body parameter names when the body is refused before it can be read as input.
+  constructor(error: string, readonly reason: string, readonly params?: string[]) { super(error); }
+}
+const RESOURCE_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'];
+const ISSUER_PATHS = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'];
 // Schemes a browser runs or reads locally instead of handing to an app.
 const BLOCKED_SCHEMES = ['javascript:', 'data:', 'file:', 'vbscript:', 'blob:', 'about:', 'filesystem:', 'ftp:', 'ftps:', 'ws:', 'wss:', 'mailto:', 'tel:', 'intent:'];
 function redirectUri(value: unknown): string {
@@ -162,28 +170,36 @@ export class RoomsMcpOAuth {
     let id = input.client_id, secret = input.client_secret;
     const authorization = request.headers.authorization;
     const basic = /^Basic\s+(\S+)$/i.exec(authorization ?? '');
-    if (authorization && !basic) throw new Error('invalid_client');
+    if (authorization && !basic) throw new Refusal('invalid_client', 'authorization_not_basic');
     if (basic) {
       const decoded = Buffer.from(basic[1]!, 'base64').toString('utf8');
       const colon = decoded.indexOf(':');
-      if (colon < 0 || secret !== undefined) throw new Error('invalid_client');
+      if (colon < 0 || secret !== undefined) throw new Refusal('invalid_client', 'basic_malformed');
       // OAuth Basic credentials use application/x-www-form-urlencoded components.
       const decode = (value: string) => decodeURIComponent(value.replace(/\+/g, ' '));
       let basicId: string;
       try { basicId = decode(decoded.slice(0, colon)); secret = decode(decoded.slice(colon + 1)); }
-      catch { throw new Error('invalid_client'); }
-      if (id !== undefined && id !== basicId) throw new Error('invalid_client');
+      catch { throw new Refusal('invalid_client', 'basic_malformed'); }
+      if (id !== undefined && id !== basicId) throw new Refusal('invalid_client', 'client_id_mismatch');
       id = basicId;
     }
-    const clientId = string(id, 100);
+    if (typeof id !== 'string' || !id || id.length > 100) throw new Refusal('invalid_request', 'client_id_missing');
+    const clientId = id;
     const row = (await this.database.query<{ secret_hash: string | null; auth_method: string }>(
       'SELECT secret_hash,auth_method FROM rooms_mcp_clients WHERE id=$1', [clientId])).rows[0];
     if (row?.secret_hash) {
       const method = basic ? 'client_secret_basic' : 'client_secret_post';
-      if (row.auth_method !== method || typeof secret !== 'string' ||
-          !timingSafeEqual(Buffer.from(tokenHash(secret)), Buffer.from(row.secret_hash))) throw new Error('invalid_client');
-    } else if (secret !== undefined || basic) throw new Error('invalid_client');
+      if (row.auth_method !== method) throw new Refusal('invalid_client', 'client_auth_method_mismatch');
+      if (typeof secret !== 'string' || !timingSafeEqual(Buffer.from(tokenHash(secret)), Buffer.from(row.secret_hash))) throw new Refusal('invalid_client', 'client_secret_invalid');
+    } else if (secret !== undefined || basic) throw new Refusal('invalid_client', 'client_secret_unexpected');
     return clientId;
+  }
+  /** RFC 8707 resource: optional, and either this MCP URL or the server origin, with or without a trailing slash. */
+  private isResource(value: unknown): boolean {
+    if (value === undefined) return true;
+    if (typeof value !== 'string') return false;
+    const trimmed = value.replace(/\/$/, '');
+    return trimmed === this.resource || trimmed === this.origin;
   }
   async audit(principal: McpPrincipal, operation: string, outcome: string): Promise<void> {
     await this.database.query(`INSERT INTO rooms_mcp_audit(client_id,identity_id,operation,outcome) VALUES($1,$2,$3,$4)`,
@@ -209,8 +225,7 @@ export class RoomsMcpOAuth {
   }
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
     const path = url.pathname;
-    if (!path.startsWith('/mcp/oauth/') && path !== '/.well-known/oauth-authorization-server' &&
-        path !== '/.well-known/oauth-protected-resource/mcp') return false;
+    if (!path.startsWith('/mcp/oauth/') && !ISSUER_PATHS.includes(path) && !RESOURCE_PATHS.includes(path)) return false;
     if (request.method === 'GET' && /^\/mcp\/oauth\/SpaceGrotesk-(Regular|Medium|SemiBold)\.ttf$/.test(path)) {
       response.writeHead(200, { 'content-type': 'font/ttf', 'cache-control': 'public, max-age=31536000' });
       response.end(readFileSync(new URL(`../assets/mcp/${path.split('/').at(-1)}`, import.meta.url))); return true;
@@ -222,11 +237,12 @@ export class RoomsMcpOAuth {
     }
     let registrationInput: Record<string, unknown> | undefined;
     const registration = request.method === 'POST' && path === '/mcp/oauth/register';
+    let tokenInput: Record<string, unknown> | undefined;
     try {
-      if (request.method === 'GET' && path === '/.well-known/oauth-protected-resource/mcp') {
+      if (request.method === 'GET' && RESOURCE_PATHS.includes(path)) {
         mcpJson(response, 200, { resource: this.resource, authorization_servers: [this.origin], scopes_supported: [MCP_READ, MCP_WRITE], bearer_methods_supported: ['header'] }); return true;
       }
-      if (request.method === 'GET' && path === '/.well-known/oauth-authorization-server') {
+      if (request.method === 'GET' && ISSUER_PATHS.includes(path)) {
         mcpJson(response, 200, { issuer: this.origin, authorization_endpoint: `${this.origin}/mcp/oauth/authorize`,
           token_endpoint: `${this.origin}/mcp/oauth/token`, registration_endpoint: `${this.origin}/mcp/oauth/register`,
           revocation_endpoint: `${this.origin}/mcp/oauth/revoke`, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
@@ -241,6 +257,9 @@ export class RoomsMcpOAuth {
         [tokenHash(request.socket.remoteAddress ?? 'unknown')]);
       if (!admitted.rowCount) {
         if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
+        // The rate-limited body is never read, so only the branch and header categories reach the log.
+        if (request.method === 'POST' && path === '/mcp/oauth/token')
+          console.warn('[rooms-mcp-oauth] token refused', JSON.stringify({ error: 'temporarily_unavailable', reason: 'rate_limited', ...tokenHeaders(request) }));
         mcpJson(response, 429, { error: 'temporarily_unavailable' }); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/register') {
@@ -352,7 +371,7 @@ export class RoomsMcpOAuth {
               await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined }, false);
             const code = opaque();
             await db.query(`INSERT INTO rooms_mcp_codes(hash,client_id,identity_id,redirect_uri,challenge,scope,expires_at)
-              VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute')`, [tokenHash(code), flow.client_id, flow.identity_id, flow.redirect_uri, flow.challenge, flow.scope]);
+              VALUES($1,$2,$3,$4,$5,$6,now()+interval '10 minutes')`, [tokenHash(code), flow.client_id, flow.identity_id, flow.redirect_uri, flow.challenge, flow.scope]);
             target.searchParams.set('code', code);
           } else target.searchParams.set('error', 'access_denied');
           await db.query('DELETE FROM rooms_mcp_flows WHERE id=$1', [flow.id]);
@@ -361,22 +380,34 @@ export class RoomsMcpOAuth {
         this.redirect(response, target); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/token') {
-        const input = await mcpBody(request);
+        const input = tokenInput = await mcpBody(request);
+        if (!this.isResource(input.resource)) throw new Refusal('invalid_grant', 'resource_mismatch');
         if (input.grant_type === 'refresh_token') {
-          if (input.resource !== undefined && input.resource !== this.resource) throw new Error('invalid_grant');
-          const token = await refreshMcp(this.database, string(input.refresh_token, 100), await this.client(request, input), input.scope === undefined ? undefined : string(input.scope, 100));
-          if (!token) throw new Error('invalid_grant');
+          const clientId = await this.client(request, input);
+          if (typeof input.refresh_token !== 'string' || !input.refresh_token || input.refresh_token.length > 100) throw new Refusal('invalid_request', 'refresh_token_missing');
+          if (input.scope !== undefined && (typeof input.scope !== 'string' || !input.scope || input.scope.length > 100)) throw new Refusal('invalid_request', 'scope_invalid');
+          const token = await refreshMcp(this.database, input.refresh_token, clientId, input.scope);
+          if (!token) throw new Refusal('invalid_grant', 'refresh_token_invalid');
           mcpJson(response, 200, token); return true;
         }
-        if (input.grant_type !== 'authorization_code' || input.resource !== this.resource ||
-            typeof input.code_verifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(input.code_verifier)) throw new Error('invalid_grant');
+        if (input.grant_type !== 'authorization_code') throw new Refusal('unsupported_grant_type', 'grant_type_unsupported');
+        if (typeof input.code_verifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(input.code_verifier)) throw new Refusal('invalid_grant', 'code_verifier_invalid');
+        if (input.redirect_uri !== undefined && typeof input.redirect_uri !== 'string') throw new Refusal('invalid_request', 'redirect_uri_invalid');
+        if (typeof input.code !== 'string' || !input.code || input.code.length > 100) throw new Refusal('invalid_request', 'code_missing');
         const clientId = await this.client(request, input);
         const challenge = createHash('sha256').update(input.code_verifier).digest('base64url');
+        const code = tokenHash(input.code), redirect = input.redirect_uri;
         const token = await this.database.transaction(async db => {
+          // OAuth 2.1 drops redirect_uri from the token request; the code stays bound to the stored one and to PKCE.
           const row = (await db.query<{ identity_id: string; client_id: string; scope: string }>(`DELETE FROM rooms_mcp_codes
-            WHERE hash=$1 AND client_id=$2 AND redirect_uri=$3 AND challenge=$4 AND expires_at>now() RETURNING identity_id,client_id,scope`,
-            [tokenHash(string(input.code, 100)), clientId, input.redirect_uri, challenge])).rows[0];
-          if (!row) throw new Error('invalid_grant');
+            WHERE hash=$1 AND client_id=$2 AND ($3::text IS NULL OR redirect_uri=$3) AND challenge=$4 AND expires_at>now() RETURNING identity_id,client_id,scope`,
+            [code, clientId, redirect ?? null, challenge])).rows[0];
+          if (!row) {
+            const stored = (await db.query<{ client_id: string; redirect_uri: string; challenge: string; expired: boolean }>(
+              'SELECT client_id,redirect_uri,challenge,expires_at<=now() expired FROM rooms_mcp_codes WHERE hash=$1', [code])).rows[0];
+            throw new Refusal('invalid_grant', !stored ? 'code_unknown_or_used' : stored.expired ? 'code_expired'
+              : stored.client_id !== clientId ? 'code_client_mismatch' : redirect !== undefined && stored.redirect_uri !== redirect ? 'redirect_uri_mismatch' : 'code_verifier_mismatch');
+          }
           return connectMcp(db, row);
         });
         mcpJson(response, 200, token); return true;
@@ -390,8 +421,15 @@ export class RoomsMcpOAuth {
       }
       mcpJson(response, 404, { error: 'not_found' });
     } catch (error) {
-      const known = ['invalid_request', 'invalid_scope', 'invalid_grant', 'invalid_client', 'invalid_client_metadata', 'invalid_redirect_uri'];
+      const known = ['invalid_request', 'invalid_scope', 'invalid_grant', 'invalid_client', 'invalid_client_metadata', 'invalid_redirect_uri', 'unsupported_grant_type'];
       const message = error instanceof Error && known.includes(error.message) ? error.message : 'invalid_request';
+      // Parameter names only: values such as code, verifier, secret and tokens never reach the log.
+      if (request.method === 'POST' && path === '/mcp/oauth/token') console.warn('[rooms-mcp-oauth] token refused', JSON.stringify({ error: message,
+        reason: error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : tokenInput ? 'invalid_parameter' : 'invalid_body',
+        // grant_type and content-type are client-chosen strings, so only fixed categories reach the log.
+        grant_type: tokenInput?.grant_type === undefined ? undefined : tokenInput.grant_type === 'authorization_code' || tokenInput.grant_type === 'refresh_token' ? tokenInput.grant_type : 'other',
+        params: (tokenInput ? Object.keys(tokenInput) : error instanceof Refusal ? error.params : undefined)?.slice(0, 20).map(key => key.slice(0, 40)).sort(),
+        ...tokenHeaders(request) }));
       if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,
         ...(error instanceof SyntaxError ? { reason: 'invalid_json' } : {}), ...registrationSummary(registrationInput) }));
       if (message === 'invalid_client' && request.headers.authorization) response.setHeader('www-authenticate', 'Basic realm="Beeline MCP"');
@@ -399,4 +437,11 @@ export class RoomsMcpOAuth {
     }
     return true;
   }
+}
+
+// Header values are client-chosen, so only fixed categories reach the token refusal log.
+function tokenHeaders(request: IncomingMessage): { client_auth: string; content_type?: string } {
+  const type = request.headers['content-type']?.split(';')[0]?.trim().toLowerCase();
+  return { client_auth: request.headers.authorization ? /^(basic|bearer)\s/i.exec(request.headers.authorization)?.[1]!.toLowerCase() ?? 'other' : 'none',
+    content_type: type === undefined ? undefined : ['application/json', 'application/x-www-form-urlencoded'].includes(type) ? type : 'other' };
 }

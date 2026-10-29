@@ -158,6 +158,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(unauthorized.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
     const metadata = await (await fetch(origin + '/.well-known/oauth-authorization-server')).json();
     expect(metadata).toMatchObject({ code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'] });
+    expect(await (await fetch(origin + '/.well-known/oauth-authorization-server/mcp')).json()).toEqual(metadata);
+    const resource = await (await fetch(origin + '/.well-known/oauth-protected-resource/mcp')).json();
+    expect(resource).toMatchObject({ resource: origin + '/mcp', authorization_servers: [origin] });
+    expect(await (await fetch(origin + '/.well-known/oauth-protected-resource')).json()).toEqual(resource);
   });
   it('logs each refused registration once with its reason and non-secret metadata', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -204,6 +208,13 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect([response.status, await response.json()]).toEqual([429, { error: 'temporarily_unavailable' }]);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
+      warn.mockClear();
+      const token = await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: 'Basic c2VjcmV0LWlkOnNlY3JldC12YWx1ZQ==' },
+        body: 'grant_type=authorization_code&code=code-never-log&code_verifier=verifier-never-log' });
+      expect([token.status, await token.json()]).toEqual([429, { error: 'temporarily_unavailable' }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('[rooms-mcp-oauth] token refused', JSON.stringify({ error: 'temporarily_unavailable', reason: 'rate_limited',
+        client_auth: 'basic', content_type: 'application/x-www-form-urlencoded' }));
     } finally { warn.mockRestore(); }
   });
   it.each(['https://example.com/cb', 'http://127.0.0.1:9876/cb', 'http://[::1]:9876/cb', 'http://localhost:9876/cb'])(
@@ -295,6 +306,84 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }
     expect((await exchange(grant)).status).toBe(200);
     expect((await exchange(grant)).status).toBe(400);
+  });
+  it('MCP-TOKEN-1: exchanges a code without resource or redirect_uri, as Cursor sends it', async () => {
+    const grant = await authorize();
+    const response = await exchange(grant, { resource: undefined, redirect_uri: undefined });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ token_type: 'Bearer' });
+  });
+  it('accepts the server origin or MCP URL as resource, with or without a trailing slash, and refuses other hosts', async () => {
+    for (const resource of [origin, origin + '/', origin + '/mcp/']) {
+      expect([resource, (await exchange(await authorize(), { resource })).status]).toEqual([resource, 200]);
+    }
+    const grant = await authorize();
+    for (const overrides of [{ resource: 'https://other.example/mcp' }, { resource: 'https://other.example' }, { redirect_uri: 'http://127.0.0.1:9876/other' }]) {
+      expect((await exchange(grant, overrides)).status).toBe(400);
+    }
+    expect((await exchange(grant)).status).toBe(200);
+  });
+  it('keeps an authorization code valid for ten minutes', async () => {
+    const grant = await authorize();
+    await db.query("UPDATE rooms_mcp_codes SET expires_at=expires_at-interval '5 minutes' WHERE hash=$1", [tokenHash(grant.code!)]);
+    expect((await exchange(grant)).status).toBe(200);
+    const late = await authorize();
+    await db.query("UPDATE rooms_mcp_codes SET expires_at=expires_at-interval '10 minutes' WHERE hash=$1", [tokenHash(late.code!)]);
+    expect((await exchange(late)).status).toBe(400);
+  });
+  it('logs each refused token request with parameter names and reason, never values', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const grant = await authorize();
+      const form = (input: Record<string, string>, headers: Record<string, string> = {}) => fetch(origin + '/mcp/oauth/token', { method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(input).toString() });
+      const base = { grant_type: 'authorization_code', client_id: grant.clientId, code: grant.code!, code_verifier: grant.verifier };
+      const cases: [Record<string, string>, Record<string, string>, string, string][] = [
+        [{ ...base, redirect_uri: 'http://127.0.0.1:9876/other' }, {}, 'invalid_grant', 'redirect_uri_mismatch'],
+        [{ ...base, resource: 'https://other.example/mcp' }, {}, 'invalid_grant', 'resource_mismatch'],
+        [{ ...base, code_verifier: opaque() }, {}, 'invalid_grant', 'code_verifier_mismatch'],
+        [{ ...base, code_verifier: 'short' }, {}, 'invalid_grant', 'code_verifier_invalid'],
+        [{ ...base, code: opaque() }, {}, 'invalid_grant', 'code_unknown_or_used'],
+        [{ ...base, client_secret: 'secret-value-123' }, {}, 'invalid_client', 'client_secret_unexpected'],
+        [{ grant_type: 'refresh_token', client_id: grant.clientId, refresh_token: 'refresh-value-123' }, {}, 'invalid_grant', 'refresh_token_invalid'],
+        [{ grant_type: 'password', client_id: grant.clientId }, {}, 'unsupported_grant_type', 'grant_type_unsupported'],
+        // A client-chosen grant_type or content-type never reaches the log verbatim.
+        [{ grant_type: 'grant-sentinel-123', client_id: grant.clientId, client_secret: 'grant-sentinel-123' }, { 'content-type': 'application/x-www-form-urlencoded; x=y', 'x-ignored': 'z' }, 'unsupported_grant_type', 'grant_type_unsupported'],
+      ];
+      for (const [input, headers, error, reason] of cases) {
+        warn.mockClear();
+        const response = await form(input, headers);
+        expect([reason, response.status, (await response.json() as { error: string }).error]).toEqual([reason, error === 'invalid_client' ? 401 : 400, error]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        const [label, line] = warn.mock.calls[0] as [string, string];
+        expect(label).toBe('[rooms-mcp-oauth] token refused');
+        const grantType = ['authorization_code', 'refresh_token'].includes(input.grant_type!) ? input.grant_type : 'other';
+        expect(JSON.parse(line)).toMatchObject({ error, reason, grant_type: grantType, params: Object.keys(input).sort(), content_type: 'application/x-www-form-urlencoded' });
+        for (const secret of [grant.code!, grant.verifier, 'secret-value-123', 'refresh-value-123', 'grant-sentinel-123', 'password', input.code_verifier!, input.code!].filter(Boolean))
+          expect(line).not.toContain(secret);
+      }
+      // A JSON grant_type that cannot become a string still gets an OAuth error and one log line.
+      warn.mockClear();
+      const odd = await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: { toString: null }, client_id: grant.clientId }) });
+      expect([odd.status, (await odd.json() as { error: string }).error]).toEqual([400, 'unsupported_grant_type']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(warn.mock.calls[0]![1] as string)).toMatchObject({ error: 'unsupported_grant_type', reason: 'grant_type_unsupported', grant_type: 'other',
+        params: ['client_id', 'grant_type'], content_type: 'application/json' });
+      // A body refused before parsing still logs its parameter names and the exact branch, never the values.
+      warn.mockClear();
+      const duplicate = await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=authorization_code&code=dup-one-123&code=dup-two-123&client_id=${grant.clientId}&code_verifier=dup-verifier-123` });
+      expect([duplicate.status, (await duplicate.json() as { error: string }).error]).toEqual([400, 'invalid_request']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const duplicateLine = warn.mock.calls[0]![1] as string;
+      expect(JSON.parse(duplicateLine)).toMatchObject({ error: 'invalid_request', reason: 'duplicate_parameter',
+        params: ['client_id', 'code', 'code_verifier', 'grant_type'], content_type: 'application/x-www-form-urlencoded' });
+      for (const value of ['dup-one-123', 'dup-two-123', 'dup-verifier-123', grant.clientId]) expect(duplicateLine).not.toContain(value);
+      warn.mockClear();
+      expect((await exchange(grant)).status).toBe(200);
+      expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
   });
   it('does not grant on denial, replayed consent or a missing browser binding', async () => {
     const grant = await authorize(undefined, 'deny');

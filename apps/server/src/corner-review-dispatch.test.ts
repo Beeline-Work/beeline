@@ -1332,6 +1332,58 @@ describe('corner message attribution', () => {
     expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1',[C])).rowCount).toBe(0);
   });
 
+  it.each(['order', 'subscribed_event'] as const)('Reproduction CAPACITY-COMMANDER-1: exhausted %s capacity retries deliver the failure to the corner commander', async reason => {
+    const opening = await createAgentCommand(db, {
+      roomId: C, agentId: B, sourceMessageId: null, reason: 'order',
+      privatePayload: { kind: 'order', text: 'Finish this work', authorId: A, fromRoomId: R },
+    });
+    if (reason !== 'order') await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [opening!.id]);
+    const command = reason === 'order' ? opening : await createAgentCommand(db, {
+      roomId: C, agentId: B, sourceMessageId: null, reason, parent: opening!,
+    });
+    for (const attempt of [1, 2, 3]) {
+      await db.query('UPDATE agent_commands SET wake_after=NULL WHERE id=$1', [command!.id]);
+      const pending = (await commands(B, C)).find(item => item.id === command!.id)!;
+      await claim(pending, `capacity-${attempt}`);
+      const receipt = await daemon.execute('postAgentTurnReceipt', {
+        roomId: C, requestId: pending.turnRequestId, generationId: `capacity-${attempt}`, status: 'failed',
+        reason: 'The model is at capacity; overloaded_error', reasonKind: 'hiccup',
+      }, B);
+      expect(Boolean(receipt.hiccupRestart)).toBe(attempt < 3);
+      if (attempt < 3) expect(await commands(A, R)).toEqual([]);
+    }
+    const reports = (await db.query<{ text: string }>(
+      `SELECT private_payload->>'text' text FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='report'`, [R,A])).rows;
+    expect(reports.some(report => report.text.startsWith('failed:') && report.text.includes('at capacity'))).toBe(true);
+  });
+
+  it.each(['FAIL: required evidence is missing.', 'blocked: waiting for required checks.'])(
+    'Reproduction REVIEW-STOP-1: %s suppresses every automatic wake until a new head', async verdict => {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      const head = 'd'.repeat(40);
+      await greenHead(95, head);
+      const [review] = await commands(B, C);
+      await claim(review!);
+      await daemon.execute('report', { roomId: C, requestId: review!.turnRequestId, generationId: 'g1',
+        status: verdict.startsWith('blocked:') ? 'blocked' : 'failed',
+        text: verdict.startsWith('blocked:') ? verdict : `failed: ${verdict}` }, B);
+      await daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: review!.turnRequestId, generationId: 'g1', status: 'failed', reasonKind: 'hiccup', reason: 'unreported_order: runtime failed after delivery' }, B);
+      const sourceId = (await db.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-passed' ORDER BY created_at DESC LIMIT 1`, [C])).rows[0]!.id;
+      for (const reason of REVIEWER_DISPATCH_REASONS.filter(reason => !['agent_tag','order'].includes(reason))) {
+        await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: sourceId, reason });
+      }
+      await routeSystemCommand(db, { roomId: C, sourceMessageId: sourceId, kind: 'check-passed', targets: [B] });
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','\"pending\"') WHERE corner_id=$1`, [C]);
+      await advanceCorner(db, C, { kind: 'checks-pending' });
+      await greenHead(95, head);
+      await reconcileConfiguredCornerReviewers(db, R);
+      await reassignFailedCornerReviewer(db, { roomId: C, requestId: review!.turnRequestId, agentId: B });
+      expect(await commands(B, C)).toEqual([]);
+      await greenHead(95, 'f'.repeat(40));
+      expect((await commands(B, C)).length).toBeGreaterThan(0);
+    });
+
   it('Reproduction review-redeliver: a verdict on a head is not delivered again by any review path', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     const head = 'e'.repeat(40);

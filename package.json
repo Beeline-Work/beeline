@@ -39,6 +39,7 @@
     "prove:no-self-review": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-no-self-review.mjs",
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:corner-review-loop": "npm run build -w @beeline/server && node --import tsx scripts/prove-corner-review-loop.mjs",
+    "prove:review-capacity": "npm run build -w @beeline/server && node --import tsx scripts/prove-review-capacity.mjs",
     "prove:failed-review-handoff": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-failed-review-handoff.mjs",
     "prove:next-day-checkin": "npm run build -w @beeline/server && node --import tsx scripts/prove-next-day-checkin.mjs",
     "prove:starter-video-approval": "npm run build -w @beeline/server && node --import tsx scripts/prove-starter-video-approval.mjs",

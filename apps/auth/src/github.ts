@@ -106,6 +106,9 @@ export class GitHubRequestError extends GitHubHttpError {
   }
 }
 
+/** An explicit integration permission refusal from a head-check registration read. */
+export class GitHubCheckPermissionError extends GitHubRequestError {}
+
 async function jsonResponseObject(
   response: Response,
   label: string,
@@ -1116,10 +1119,12 @@ export class GitHubAppClient {
         ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 500) || undefined
         : undefined;
       const details: string[] = [];
+      let providerMessage: unknown;
       try {
         const body: unknown = await response.json();
         if (body && typeof body === 'object' && !Array.isArray(body)) {
-          const message = diagnostic((body as { message?: unknown }).message);
+          providerMessage = (body as { message?: unknown }).message;
+          const message = diagnostic(providerMessage);
           if (message) details.push(message);
         }
       } catch {
@@ -1129,7 +1134,12 @@ export class GitHubAppClient {
       const permissions = diagnostic(response.headers.get('x-accepted-github-permissions'));
       if (requestId) details.push(`request ID: ${requestId}`);
       if (permissions) details.push(`accepted permissions: ${permissions}`);
-      throw new GitHubRequestError(
+      const checkPermission = path.startsWith('actions/runs?') ? 'actions=read'
+        : /^commits\/[a-f0-9]{40,64}\/check-suites\?/.test(path) ? 'checks=read' : undefined;
+      const ErrorType = response.status === 403 && providerMessage === 'Resource not accessible by integration' &&
+        checkPermission && permissions?.split(/[;,]/).some(value => value.trim() === checkPermission)
+        ? GitHubCheckPermissionError : GitHubRequestError;
+      throw new ErrorType(
         `GitHub PR checks GET /repos/${repositoryPath(fullName)}/${path}`,
         response.status, details.join('; ') || undefined, responseRetryAfter(response),
       );

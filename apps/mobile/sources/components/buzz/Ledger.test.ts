@@ -3,6 +3,8 @@ vi.mock('@/components/buzz/Button', async () => {
   return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
 });
 import * as React from 'react';
+import { useFonts } from 'expo-font';
+vi.mock('expo-font', () => ({ useFonts: vi.fn(() => [true, null]) }));
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1156,6 +1158,30 @@ describe('the ledger — the byline says who is talking', () => {
         Boolean,
       ),
     );
+
+  it('changes the requested face only after fonts are ready', () => {
+    vi.mocked(useFonts).mockReturnValue([false, null]);
+    const props = { itemId: 'font-race', byline: { name: 'Ruby', role: 'Opus 5.5', stamp: '22:45' }, bodyText: 'Hello', bodyTestID: 'body' };
+    const renderer = render(React.createElement(LedgerEntry, props));
+    expect(merged(renderer.root.findByProps({ testID: 'chat-byline-name' })).fontFamily).toBe('sans-serif');
+    expect(merged(renderer.root.findByProps({ testID: 'chat-byline-role' })).fontFamily).toBe('monospace');
+    expect(renderer.root.findByProps({ testID: 'chat-byline-name' }).props.children).toBe('Ruby');
+    vi.mocked(useFonts).mockReturnValue([true, null]);
+    act(() => renderer.update(React.createElement(LedgerEntry, props)));
+    expect(merged(renderer.root.findByProps({ testID: 'chat-byline-name' })).fontFamily).toBe('SpaceGrotesk-Medium');
+    expect(merged(renderer.root.findByProps({ testID: 'chat-byline-role' })).fontFamily).toBe('IBMPlexMono-Regular');
+  });
+
+  it('lets metadata shrink before the name, bounding only names that exhaust the row', () => {
+    const renderer = render(React.createElement(LedgerEntry, { itemId: 'long-name', byline: { name: 'A very long author name that fills a narrow phone', role: 'Opus 5.5', stamp: '22:45' }, bodyText: 'Hello', bodyTestID: 'body' }));
+    act(() => renderer.root.findByProps({ testID: 'chat-byline-words' }).props.onLayout({ nativeEvent: { layout: { width: 280 } } }));
+    const name = merged(renderer.root.findByProps({ testID: 'chat-byline-name' }));
+    expect(name.flexShrink).toBe(0);
+    expect(name.maxWidth).toBe(264);
+    expect(merged(renderer.root.findByProps({ testID: 'chat-byline-role' })).flexShrink).toBe(1);
+    expect(merged(renderer.root.findByProps({ testID: 'chat-byline-status' })).flexShrink).toBe(1);
+    expect(renderer.root.findByProps({ testID: 'chat-byline-stamp' }).props.numberOfLines).toBe(1);
+  });
 
   it('sets the name in the speaker’s hue at body size, beside the 26px tile', () => {
     const renderer = render(

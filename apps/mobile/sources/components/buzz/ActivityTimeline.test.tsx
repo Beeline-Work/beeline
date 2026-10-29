@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useFonts } from 'expo-font';
+vi.mock('expo-font', () => ({ useFonts: vi.fn(() => [true, null]) }));
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -691,6 +693,15 @@ describe('agent prose and drafts', () => {
     const role = renderer.root.findByProps({ testID: 'chat-byline-role' });
     expect(role.props.numberOfLines).toBe(1);
     expect(role.props.ellipsizeMode).toBe('tail');
+  });
+
+  it('keeps a streaming author readable while its real font loads', () => {
+    vi.mocked(useFonts).mockReturnValue([false, null]);
+    const renderer = render(<ActivityTimeline active handle="Ruby" role="Opus 5.5" stamp="22:45" items={[]} messageDraft="Working" />);
+    const name = renderer.root.findByProps({ testID: 'chat-byline-name' });
+    expect(Object.assign({}, ...name.props.style.filter(Boolean)).fontFamily).toBe('sans-serif');
+    expect(name.props.children).toBe('Ruby');
+    vi.mocked(useFonts).mockReturnValue([true, null]);
   });
 
   it('renders no identity mark when no byline handle is present', () => {

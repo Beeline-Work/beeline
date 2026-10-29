@@ -3,6 +3,8 @@ import React from 'react';
 import { beforeEach, vi } from 'vitest';
 import { completeTestTheme } from './test-theme';
 
+vi.mock('expo-font', () => ({ useFonts: () => [true, null] }));
+
 (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = false;
 
 vi.mock('expo-modules-core', () => ({

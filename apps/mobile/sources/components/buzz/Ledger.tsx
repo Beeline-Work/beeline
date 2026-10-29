@@ -22,6 +22,11 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
+// @ts-expect-error Metro resolves font assets to native asset modules.
+import spaceGroteskMedium from '@/assets/fonts/SpaceGrotesk-Medium.ttf';
+// @ts-expect-error Metro resolves font assets to native asset modules.
+import ibmPlexMonoRegular from '@/assets/fonts/IBMPlexMono-Regular.ttf';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
@@ -396,7 +401,27 @@ export function LedgerMarginalia({
  *  cross-fades into the upright, content-toned reply (C98, `SettleFade`). */
 export const LedgerBylineView = Byline;
 
+const bylineFonts = {
+  'SpaceGrotesk-Medium': spaceGroteskMedium,
+  'IBMPlexMono-Regular': ibmPlexMonoRegular,
+};
+
 function Byline({ byline }: { byline: LedgerByline }) {
+  const [fontsReady] = useFonts(bylineFonts);
+  const [wordsWidth, setWordsWidth] = useState<number>();
+  // Android caches the fallback's width if an unloaded family is requested.
+  // Changing the family explicitly when ready gives it a fresh measurement,
+  // while keeping text readable and navigation mounted during font loading.
+  const nameFont = fontsReady
+    ? 'SpaceGrotesk-Medium'
+    : Platform.OS === 'ios' ? 'System' : 'sans-serif';
+  const metadataFont = fontsReady
+    ? 'IBMPlexMono-Regular'
+    : Platform.OS === 'ios' ? 'Courier' : 'monospace';
+  const stampStyle = [styles.bylineStamp, { fontFamily: metadataFont }];
+  // Reserve only the inter-item gaps. Metadata may use the remaining space,
+  // but must never take it from a name that would otherwise fit.
+  const nameLimit = wordsWidth == null ? '100%' : Math.max(0, wordsWidth - (byline.role ? 16 : 8));
   const mark = byline.mark;
   // Generated portraits sit on a fixed brass plate; use the theme's readable
   // brass for their names. Drawn faces keep their seed hue.
@@ -453,11 +478,20 @@ function Byline({ byline }: { byline: LedgerByline }) {
        *  above the name's feet. Baseline alignment is the type rule; the mark
        *  is a picture, not a word, so it stays centred on the row — hence the
        *  nested row, which keeps `alignItems: 'center'` for the tile. */}
-      <View style={styles.bylineWords} testID="chat-byline-words">
+      <View
+        style={styles.bylineWords}
+        onLayout={(event) => setWordsWidth(event.nativeEvent.layout.width)}
+        testID="chat-byline-words"
+      >
         {byline.name ? (
           <Text
             numberOfLines={1}
-            style={[styles.bylineName, nameHue, byline.isViewer && styles.bylineNameViewer]}
+            style={[
+              styles.bylineName,
+              { fontFamily: nameFont, maxWidth: nameLimit },
+              nameHue,
+              byline.isViewer && styles.bylineNameViewer,
+            ]}
             testID="chat-byline-name"
           >
             {byline.name}
@@ -467,7 +501,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
           <Text
             ellipsizeMode="tail"
             numberOfLines={1}
-            style={styles.bylineTag}
+            style={[styles.bylineTag, { fontFamily: metadataFont }]}
             testID="chat-byline-role"
           >
             {byline.role}
@@ -477,7 +511,8 @@ function Byline({ byline }: { byline: LedgerByline }) {
           {byline.feedbackReported ? (
             <Text
               accessibilityLabel="Reported to Beeline"
-              style={styles.bylineStamp}
+              numberOfLines={1}
+              style={stampStyle}
               testID="chat-reported-marker"
             >
               Reported
@@ -492,7 +527,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
               testID="chat-bookmark-marker"
             />
           ) : null}
-          <Text style={styles.bylineStamp} testID="chat-byline-stamp">
+          <Text numberOfLines={1} style={stampStyle} testID="chat-byline-stamp">
             {byline.stamp}
           </Text>
         </View>
@@ -1118,7 +1153,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The words of the byline, on one baseline. `flex: 1` so the stamp's auto
   // margin still has the whole remaining row to push against, `minWidth: 0`
-  // so a long name shrinks here instead of shoving the clock off the edge.
+  // so metadata can give way, followed by names that exhaust the row.
   bylineWords: {
     flex: 1,
     minWidth: 0,
@@ -1140,12 +1175,13 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerBright,
     fontSize: theme.buzz.proseSize,
     lineHeight: theme.buzz.proseLineHeight,
-    flexShrink: 1,
+    flexShrink: 0,
   },
   bylineNameViewer: { color: theme.buzz.accent },
   // The quiet role tag and the clock stamp keep the mono metadata voice.
   bylineTag: {
     ...theme.buzz.type.machine,
+    minWidth: 0,
     maxWidth: '44%',
     flexShrink: 1,
     color: theme.buzz.ledgerQuiet,
@@ -1153,8 +1189,10 @@ const styles = StyleSheet.create((theme) => ({
   bylineStamp: {
     ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
+    minWidth: 0,
+    flexShrink: 1,
   },
-  bylineStatus: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
+  bylineStatus: { marginLeft: 'auto', minWidth: 0, flexShrink: 1, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
   bookmarkMark: { color: theme.buzz.accent },
   // One face and size throughout the turn; the lead differs only in brightness.
   ledgerLead: {

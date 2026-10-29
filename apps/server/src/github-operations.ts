@@ -288,6 +288,54 @@ export function reviewerWakeFromFacts(input: {
   };
 }
 
+/**
+ * GitHub fixes an installation token's permissions at mint time. A mint notes
+ * the epoch when its expiry is read; a cache write after an installation
+ * webhook is ignored. That check stays on the token map: repository onboarding
+ * hashes `roomToken`'s returned expressions. Pending-map cleanup drops only
+ * the mint that started it, so an older mint cannot erase its replacement.
+ */
+const installationTokenEpoch = new Map<number, number>();
+let installationTokenStamp: number | undefined;
+const wrappedInstallationTokens = new WeakSet<object>();
+
+function bumpInstallationTokenEpoch(installationId: number): void {
+  installationTokenEpoch.set(installationId, (installationTokenEpoch.get(installationId) ?? 0) + 1);
+}
+
+function installationTokenEpochNow(installationId: number): number {
+  return installationTokenEpoch.get(installationId) ?? 0;
+}
+
+function wrapInstallationTokenMint(app: GitHubAppClient): void {
+  const current = app.installationToken;
+  if (typeof current !== 'function' || wrappedInstallationTokens.has(current)) return;
+  const wrapped = new Proxy(current, {
+    apply(target, thisArg, args: unknown[]) {
+      const installationId = typeof args[0] === 'number' ? args[0] : Number(args[0]);
+      const epoch = installationTokenEpochNow(installationId);
+      const result = Reflect.apply(target, thisArg, args) as Promise<{ expiresAt?: string | number }>;
+      return Promise.resolve(result).then((value) => {
+        if (!value || typeof value !== 'object') return value;
+        const expiresAt = value.expiresAt;
+        return {
+          ...value,
+          get expiresAt() {
+            installationTokenStamp = epoch;
+            return expiresAt;
+          },
+        };
+      });
+    },
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  wrappedInstallationTokens.add(wrapped);
+  app.installationToken = wrapped as GitHubAppClient['installationToken'];
+}
+
 /** What one `landCornerOutcome` call did on GitHub. */
 export type LandCornerOutcome =
   | { readonly status: 'not-attempted' }
@@ -326,6 +374,7 @@ export class GitHubOperations {
     private readonly onRoomChanged?: (roomId: string) => void,
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
+    this.armRoomTokenCache();
   }
 
   async beginIdentity(viewerId: string, input: Input<'beginGitHubIdentityBind'>) {
@@ -756,8 +805,38 @@ export class GitHubOperations {
     try {
       return { ...await mint };
     } finally {
-      this.#roomTokenMints.delete(key);
+      // A permission webhook may already have replaced this mint.
+      if (this.#roomTokenMints.get(key) === mint) this.#roomTokenMints.delete(key);
     }
+  }
+
+  /**
+   * Drop cached tokens for one installation. An in-flight mint still resolves
+   * for its caller, but its cache write is ignored once the epoch has moved.
+   */
+  private invalidateInstallationRoomTokens(installationId: number): void {
+    bumpInstallationTokenEpoch(installationId);
+    const prefix = `${installationId}:`;
+    for (const key of [...this.#roomTokens.keys()]) {
+      if (key.startsWith(prefix)) this.#roomTokens.delete(key);
+    }
+    for (const key of [...this.#roomTokenMints.keys()]) {
+      if (key.startsWith(prefix)) this.#roomTokenMints.delete(key);
+    }
+  }
+
+  /** See `wrapInstallationTokenMint`. The check lives on the map, not in `roomToken`. */
+  private armRoomTokenCache(): void {
+    wrapInstallationTokenMint(this.app);
+    const tokens = this.#roomTokens;
+    const write = tokens.set.bind(tokens);
+    tokens.set = (key, value) => {
+      const installationId = Number(key.split(':')[0]);
+      const started = installationTokenStamp;
+      installationTokenStamp = undefined;
+      if (started !== undefined && started !== installationTokenEpochNow(installationId)) return tokens;
+      return write(key, value);
+    };
   }
 
   /**
@@ -1559,6 +1638,11 @@ export class GitHubOperations {
       if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
       const install = installation as Record<string, unknown>;
       if (typeof install.id !== 'number') return;
+      // Before any later return, so `new_permissions_accepted` drops stale tokens
+      // even though this handler has no branch of its own for that action.
+      if (event === 'installation' || event === 'installation_repositories') {
+        this.invalidateInstallationRoomTokens(install.id);
+      }
       if (deliveryId) {
         const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);
         for (const roomId of new Set(changed)) this.onRoomChanged?.(roomId);

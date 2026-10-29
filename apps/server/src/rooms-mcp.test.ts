@@ -86,8 +86,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(callback.status).toBe(302);
     const page = await fetch(origin + consent, { headers: { cookie } });
     expect(page.headers.get('referrer-policy')).toBe('same-origin');
-    const redirect = new URL(redirectUri);
-    expect(page.headers.get('content-security-policy')).toContain(`form-action 'self' ${redirect.origin === 'null' ? redirect.protocol : redirect.origin};`);
+    // Reproduction mcp-consent-1: form-action blocked the client's own redirect hops after Allow.
+    expect(page.headers.get('content-security-policy')).not.toContain('form-action');
+    expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     expect(await page.text()).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
     const result = await post('/mcp/oauth/consent', { flow, decision }, { cookie, origin });
     expect(result.status).toBe(302);
@@ -491,7 +492,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page).toContain('<img class="mark" src="data:image/svg+xml;base64,'); expect(page).not.toContain('>b</span>');
     const editPage = await fetch(`${origin}/mcp/oauth/consent?flow=${flow}&edit=1`, { headers: { cookie } });
     expect(editPage.headers.get('referrer-policy')).toBe('same-origin');
-    expect(editPage.headers.get('content-security-policy')).toContain("form-action 'self';");
+    expect(editPage.headers.get('content-security-policy')).not.toContain('form-action');
     const edit = await editPage.text();
     expect(edit).toContain('name="joiner_name"');
     for (const untrustedOrigin of ['https://evil.example', 'null', undefined]) {

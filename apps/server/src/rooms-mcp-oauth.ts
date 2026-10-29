@@ -134,15 +134,13 @@ export class RoomsMcpOAuth {
   private cookie(request: IncomingMessage): string {
     return (request.headers.cookie ?? '').split(';').map(part => part.trim()).find(part => part.startsWith('beeline_mcp='))?.slice(12) ?? '';
   }
-  private page(response: ServerResponse, title: string, content: string, formRedirect?: string): void {
-    // Chrome also applies form-action to the redirect after a form POST.
-    // A private-use scheme has an opaque origin, so allow that scheme instead.
-    const target = formRedirect ? new URL(formRedirect) : undefined;
-    const formAction = target ? `'self' ${target.origin === 'null' ? target.protocol : target.origin}` : "'self'";
+  private page(response: ServerResponse, title: string, content: string): void {
+    // No form-action: Chrome applies it to every redirect after a form POST, so
+    // a client callback that redirects again (www.cursor.com to cursor.com) stalls.
     response.writeHead(200, {
       // Preserve Origin on same-origin form POSTs without sending referrers to other sites.
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
-      'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; form-action ${formAction}; frame-ancestors 'none'`,
+      'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
       'x-content-type-options': 'nosniff',
     });
     response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main></html>`);
@@ -350,7 +348,7 @@ export class RoomsMcpOAuth {
           const plate = flow.logo ? `<img class="plate" src="${escape(flow.logo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms">${flow.scope.includes(MCP_READ) ? '<div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div>' : ''}${flow.scope.includes(MCP_WRITE) ? `<div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div>` : ''}</div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`, flow.redirect_uri);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms">${flow.scope.includes(MCP_READ) ? '<div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div>' : ''}${flow.scope.includes(MCP_WRITE) ? `<div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div>` : ''}</div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
         }
         return true;
       }

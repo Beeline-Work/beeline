@@ -118,6 +118,9 @@ describe('background shutdown', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const shutdown = source.slice(source.indexOf('const stop = async () =>'));
     expect(shutdown).toContain('await leader.stop();');
+    const refreshDrain = shutdown.indexOf('await Promise.all([github?.stopCheckRefreshes(), githubJobs?.stopCheckRefreshes()]);');
+    expect(refreshDrain).toBeGreaterThan(shutdown.indexOf('server.close('));
+    expect(refreshDrain).toBeLessThan(shutdown.indexOf('database.close()'));
     expect(shutdown.indexOf('await leader.stop();')).toBeLessThan(shutdown.indexOf('database.close()'));
   });
 

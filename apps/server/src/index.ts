@@ -633,6 +633,7 @@ async function main() {
     await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await mountedAuth.close();
+    await Promise.all([github?.stopCheckRefreshes(), githubJobs?.stopCheckRefreshes()]);
     await Promise.all([
       database.close(),
       enrichmentDatabase.close(),

@@ -126,6 +126,33 @@ main().catch((error) => {
   document.getElementById('result')!.textContent = `FAIL: ${error.message}`;
 });
 
+// The toggle word sits on the given line, beside the glyph before it.
+function assertWordOnLine(id: string, line: number) {
+  const box = get(`system-line-text-${id}`);
+  const rects = get(`system-line-toggle-word-${id}`).getClientRects();
+  assert(rects.length === 1, `${id}: toggle word split across lines`);
+  const lineHeight = parseFloat(getComputedStyle(box).lineHeight);
+  const top = box.getBoundingClientRect().top;
+  assert(
+    Math.abs(rects[0]!.top - top - lineHeight * (line - 1)) < lineHeight / 2,
+    `${id}: toggle word not on line ${line}`,
+  );
+  assert(rects[0]!.right <= box.getBoundingClientRect().right + 0.5, `${id}: toggle word clipped`);
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  let previous: Text | null = null;
+  while (walker.nextNode()) {
+    if (get(`system-line-toggle-word-${id}`).contains(walker.currentNode)) break;
+    if ((walker.currentNode as Text).data.length) previous = walker.currentNode as Text;
+  }
+  const range = document.createRange();
+  range.setStart(previous!, previous!.data.length - 1);
+  range.setEnd(previous!, previous!.data.length);
+  assert(
+    Math.abs(range.getBoundingClientRect().top - rects[0]!.top) < lineHeight / 2,
+    `${id}: toggle word alone on a new line`,
+  );
+}
+
 async function systemRows() {
   const baseline = location.search.includes('baseline');
   const short = get('system-line-short-proof').getBoundingClientRect();
@@ -137,55 +164,63 @@ async function systemRows() {
     textX: shortText.x,
     textY: shortText.y,
   };
-  assert(!get('system-line-toggle-short-proof'), 'short row gained a chevron');
-  for (const id of ['long-proof', 'link-proof']) {
+  assert(!get('system-line-toggle-short-proof'), 'short row gained a toggle');
+  assert(!get('system-line-toggle-word-short-proof'), 'short row gained more');
+  // Main's rows only record short-row geometry, opened on request for screenshots.
+  if (baseline && location.search.includes('opened'))
+    for (const id of ['long-proof', 'link-proof']) get(`system-line-toggle-${id}`).click();
+  if (baseline) await pause();
+  for (const id of baseline ? [] : ['long-proof', 'link-proof']) {
     const control = () => get(`system-line-toggle-${id}`);
     const text = () => get(`system-line-text-${id}`);
-    assert(control(), `${id}: no disclosure`);
-    const checkAlignment = () => {
-      const mark = control().querySelector('svg')!.getBoundingClientRect();
-      const box = text().getBoundingClientRect();
-      const centre = mark.y + mark.height / 2;
-      const onFirstLine =
-        centre >= box.y && centre <= box.y + parseFloat(getComputedStyle(text()).lineHeight);
-      assert(baseline ? !onFirstLine : onFirstLine, `${id}: chevron is not on first line`);
-      if (!baseline) {
-        assert(control().contains(text()), `${id}: separate chevron-only row`);
-        assert(
-          Math.abs(box.x - control().getBoundingClientRect().x - 22) < 1,
-          `${id}: wrong text indent`,
-        );
-      }
-      assert(control().getBoundingClientRect().height >= 44, `${id}: tap height`);
-    };
-    checkAlignment();
+    const lineHeight = parseFloat(getComputedStyle(text()).lineHeight);
+    assert(control(), `${id}: no toggle`);
+    assert(!control().querySelector('svg'), `${id}: chevron`);
+    assert(
+      Math.abs(text().getBoundingClientRect().x - shortText.x) < 0.5,
+      `${id}: text starts at ${text().getBoundingClientRect().x}, short line at ${shortText.x}`,
+    );
+    assert(control().getBoundingClientRect().height >= 44, `${id}: tap height`);
     assert(getComputedStyle(text()).webkitLineClamp === '2', `${id}: not clamped`);
+    assert(text().getBoundingClientRect().height <= lineHeight * 2 + 1, `${id}: taller than two lines`);
+    assert(text().textContent!.endsWith('…\u00A0more'), `${id}: does not end in "… more"`);
+    assertWordOnLine(id, 2);
+    assert(
+      control().getAttribute('aria-label') === 'Show full system message',
+      `${id}: closed label`,
+    );
     const measuredWidth = get(`system-line-measurement-${id}`).getBoundingClientRect().width;
-    if (!baseline)
-      assert(
-        Math.abs(measuredWidth - control().getBoundingClientRect().width) < 1,
-        `${id}: measurement lost full width`,
-      );
+    assert(
+      Math.abs(measuredWidth - control().getBoundingClientRect().width) < 1,
+      `${id}: measurement lost full width`,
+    );
     const closedHeight = text().getBoundingClientRect().height;
-    const closedText = text().textContent;
-    if (baseline) control().click();
-    else {
-      const box = control().getBoundingClientRect();
-      document
-        .elementFromPoint(box.right - 2, box.top + 2)!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    }
+    const closedText = text().textContent!;
+    const box = control().getBoundingClientRect();
+    document
+      .elementFromPoint(box.right - 2, box.top + 2)!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await pause();
-    assert(text().textContent === closedText, `${id}: original text changed`);
+    const openText = text().textContent!;
+    assert(openText.endsWith('\u00A0less'), `${id}: open line does not end in less`);
+    assert(
+      openText.startsWith(closedText.slice(0, -'…\u00A0more'.length)),
+      `${id}: original text changed`,
+    );
     assert(text().getBoundingClientRect().height > closedHeight, `${id}: did not expand`);
     assert(control().getAttribute('aria-expanded') === 'true', `${id}: expanded state`);
     assert(
-      control().querySelector('polyline')?.getAttribute('points') === '6 9 12 15 18 9',
-      `${id}: down chevron`,
+      control().getAttribute('aria-label') === 'Show less of system message',
+      `${id}: open label`,
     );
-    checkAlignment();
+    assertWordOnLine(id, Math.round(text().getBoundingClientRect().height / lineHeight));
+    assert(
+      Math.abs(text().getBoundingClientRect().x - shortText.x) < 0.5,
+      `${id}: open text moved`,
+    );
     control().click();
     await pause();
+    assert(text().textContent === closedText, `${id}: did not close to the same cut`);
     const target = get(
       id === 'long-proof' ? 'system-line-name-long-proof-0' : 'system-line-object-link-proof',
     );
@@ -197,10 +232,6 @@ async function systemRows() {
       `${id}: nested action lost`,
     );
     assert(control().getAttribute('aria-expanded') === 'false', `${id}: nested action toggled row`);
-    assert(
-      control().querySelector('polyline')?.getAttribute('points') === '9 6 15 12 9 18',
-      `${id}: right chevron`,
-    );
     assert(
       get(`system-line-measurement-${id}`).getBoundingClientRect().width === measuredWidth,
       `${id}: measurement width changed`,

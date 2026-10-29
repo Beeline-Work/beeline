@@ -62,7 +62,7 @@ it('Reproduction sign-in-notice-1: the @agent login command shows on a collapsed
       setTimeout(() => {
         const more = id => Boolean(document.querySelector('[data-testid="system-line-toggle-' + id + '"]'));
         document.getElementById('result').textContent = JSON.stringify({
-          afterText: document.querySelector('[data-testid="system-line-text-after"]')?.textContent,
+          afterText: document.querySelector('[data-testid="system-line-measurement-after"]')?.textContent,
           beforeShowsCommand: shows('before', '@ruby /login'), beforeHasMore: more('before'),
           afterShowsCommand: shows('after', '@ruby login'), afterHasMore: more('after'),
           width: document.querySelector('[data-testid="system-line-after"]').getBoundingClientRect().right });

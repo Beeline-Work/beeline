@@ -3,7 +3,7 @@ import { Pressable, Text, View, type PressableProps, type ViewProps } from 'reac
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
-/** Shared steps and repository-event disclosure row. */
+/** Shared steps, repository-event and system-line disclosure row. */
 export function LedgerDisclosure({
   expanded,
   onPress,
@@ -11,10 +11,10 @@ export function LedgerDisclosure({
   rowTestID,
   accessibilityLabel,
   accessibilityState,
-  firstLine = false,
+  textToggle = false,
 }: {
-  /** Render rich system text beside a chevron aligned to its first line. */
-  firstLine?: boolean;
+  /** Rich system text that ends in its own more/less word, so no chevron. */
+  textToggle?: boolean;
   expanded: boolean;
   onPress: NonNullable<PressableProps['onPress']>;
   children: React.ReactNode;
@@ -30,20 +30,22 @@ export function LedgerDisclosure({
       accessibilityState={accessibilityState}
       aria-expanded={expanded}
       onPress={onPress}
-      style={firstLine ? styles.firstLineRow : styles.row}
+      style={textToggle ? styles.textToggleRow : styles.row}
       testID={rowTestID}
     >
-      <View style={firstLine ? styles.firstLineChevron : styles.chevron}>
-        <ChevronGlyph
-          color={theme.buzz.textMuted}
-          direction={expanded ? 'down' : 'right'}
-          size={CHEVRON_ROW_SIZE}
-        />
-      </View>
-      {firstLine ? (
-        <View style={styles.content}>{children}</View>
+      {textToggle ? (
+        children
       ) : (
-        <Text style={styles.label}>{children}</Text>
+        <>
+          <View style={styles.chevron}>
+            <ChevronGlyph
+              color={theme.buzz.textMuted}
+              direction={expanded ? 'down' : 'right'}
+              size={CHEVRON_ROW_SIZE}
+            />
+          </View>
+          <Text style={styles.label}>{children}</Text>
+        </>
       )}
     </Pressable>
   );
@@ -62,20 +64,7 @@ const styles = StyleSheet.create(({ buzz }) => ({
     alignItems: 'center',
     gap: buzz.space.sm,
   },
-  firstLineRow: {
-    minHeight: 44,
-    minWidth: 44,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: buzz.space.sm,
-  },
-  firstLineChevron: {
-    width: CHEVRON_ROW_SIZE,
-    height: buzz.type.meta.lineHeight,
-    flexShrink: 0,
-    justifyContent: 'center',
-  },
-  content: { flex: 1, minWidth: 0 },
+  textToggleRow: { minHeight: 44, minWidth: 44 },
   chevron: { width: CHEVRON_ROW_SIZE, flexShrink: 0, justifyContent: 'center' },
   label: { ...buzz.type.meta, flex: 1, minWidth: 0, color: buzz.textSecondary },
 }));

@@ -283,9 +283,9 @@
     "line": 27,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "ea713bdc5c0346ad0526",
-    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} accessibilityState={accessibilityState} aria-expanded={expanded} onPress={onPress} style={firstLine ? styles.firstLineRow : styles.row} testID={rowTestID} > <View style={firstLine ? styles.firstLineChevron : styles.chevron}> <ChevronGlyph color={theme.buzz.textMuted} direction={expanded ? 'down' : 'right'} size={CHEVRON_",
-    "reason": "Shared expandable row primitive owns the existing disclosure target and the approved first-line system-message layout."
+    "id": "a06f5a7bb1a0fe51465e",
+    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} accessibilityState={accessibilityState} aria-expanded={expanded} onPress={onPress} style={textToggle ? styles.textToggleRow : styles.row} testID={rowTestID} > {textToggle ? ( children ) : ( <> <View style={styles.chevron}> <ChevronGlyph color={theme.buzz.textMuted} direction={expanded ? 'down' : 'right'} size={CHEVRON_RO",
+    "reason": "Shared expandable row primitive owns the existing disclosure target and the system line whose text ends in its own more/less word."
   },
   {
     "file": "components/buzz/MemberPickerSheet.tsx",

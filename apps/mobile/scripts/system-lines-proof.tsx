@@ -19,6 +19,18 @@ const messages = ['first', 'second'].map((id, index) => ({
     consequence,
   },
 }));
+const edgeEvent = {
+  subject: { kind: 'agent' as const, id: 'jellybean', name: '@jellybean' },
+  verb: 'reported to',
+  object: { id: 'lunchboxfortwo', text: '@lunchboxfortwo' },
+  consequence:
+    'failed: the nightly release stopped because the android-build check failed and nothing shipped. It retries tomorrow',
+};
+// Large type sweeps wider boxes so the longest word still fits one line.
+const sweep = Array.from(
+  { length: 81 },
+  (_, step) => (location.search.includes('large') ? 300 : 200) + step,
+);
 const caller = ('**bold** [link](https://example.test) @ruby https://example.test ' + 'x'.repeat(1000)).slice(0, 1000);
 const assert = (ok: boolean, why: string) => {
   if (!ok) throw new Error(why);
@@ -34,7 +46,36 @@ const checkCollapsed = (id: string) => {
     element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) * 2 + 1,
     `${id} taller than two lines`,
   );
-  assert(toggle(id)?.querySelector('polyline')?.getAttribute('points') === '9 6 15 12 9 18', `${id} missing closed chevron`);
+  assert(!toggle(id)?.querySelector('svg'), `${id} has a chevron`);
+  assert(element.textContent!.endsWith('…\u00A0more'), `${id} does not end in "… more"`);
+  assertWordOnLine(id, 2);
+};
+// The toggle word shares a line with the glyph before it and sits on the given line.
+const assertWordOnLine = (id: string, line: number) => {
+  const box = row(id);
+  const word = get(`system-line-toggle-word-${id}`);
+  const rects = word.getClientRects();
+  assert(rects.length === 1, `${id}: toggle word split across lines`);
+  const lineHeight = parseFloat(getComputedStyle(box).lineHeight);
+  const top = box.getBoundingClientRect().top;
+  assert(
+    Math.abs(rects[0]!.top - top - lineHeight * (line - 1)) < lineHeight / 2,
+    `${id}: toggle word not on line ${line}`,
+  );
+  assert(rects[0]!.right <= box.getBoundingClientRect().right + 0.5, `${id}: toggle word clipped`);
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  let previous: Text | null = null;
+  while (walker.nextNode()) {
+    if (word.contains(walker.currentNode)) break;
+    if ((walker.currentNode as Text).data.length) previous = walker.currentNode as Text;
+  }
+  const range = document.createRange();
+  range.setStart(previous!, previous!.data.length - 1);
+  range.setEnd(previous!, previous!.data.length);
+  assert(
+    Math.abs(range.getBoundingClientRect().top - rects[0]!.top) < lineHeight / 2,
+    `${id}: toggle word alone on a new line`,
+  );
 };
 async function measure() {
   const root = document.getElementById('root')!;
@@ -59,7 +100,7 @@ async function measure() {
   if (location.search.includes('large')) {
     const style = document.createElement('style');
     style.textContent =
-      '[data-testid^="system-line-text-"],[data-testid^="system-line-measurement-"], [data-testid^="system-line-toggle-"] > *{font-size:26px!important;line-height:38px!important}';
+      '[data-testid^="system-line-text-"],[data-testid^="system-line-measurement-"],[data-testid^="system-line-probe-"], [data-testid^="system-line-toggle-"] > *{font-size:26px!important;line-height:38px!important}';
     document.head.appendChild(style);
   }
   createRoot(root).render(
@@ -82,6 +123,12 @@ async function measure() {
         onOpenIdentity={() => (root.dataset.callerAction = 'identity')}
         onOpenUrl={() => (root.dataset.callerAction = 'url')} />
       <LedgerSystemLine id="short" text="Ruby joined" stamp="3" />
+      {/* One long line at every width in a range, so the last word meets the edge. */}
+      {sweep.map((width) => (
+        <div key={width} style={{ width }}>
+          <LedgerSystemLine id={`sweep-${width}`} text="" event={edgeEvent} stamp="09:03" />
+        </div>
+      ))}
       <LedgerSystemLine id="legacy" text={'Legacy notice\nSecond line\nThird line'} stamp="4" />
     </>,
   );
@@ -108,21 +155,26 @@ async function measure() {
     'collapsed accessibility state missing',
   );
   assert(control.clientHeight >= 44 && control.clientWidth >= 44, 'small toggle target');
-  const chevron = control.querySelector('polyline')!;
-  const muted = location.search.includes('bone') ? '#8B7F6E' : '#83838d';
-  assert(chevron.getAttribute('stroke') === muted, 'system disclosure must be muted');
-  assert(chevron.getAttribute('points') === '9 6 15 12 9 18', 'closed chevron must point right');
+  const accent = location.search.includes('bone') ? beelineThemes.bone.accent : beelineThemes.obsidian.accent;
+  const more = get('system-line-toggle-word-first');
+  assert(more.textContent === '\u00A0more', 'closed word is not more');
+  assert(getComputedStyle(more).fontFamily.includes('SpaceGrotesk-Medium'), 'more is not weight 500');
+  const swatch = document.body.appendChild(document.createElement('span'));
+  swatch.style.color = accent;
+  assert(getComputedStyle(more).color === getComputedStyle(swatch).color, 'more is not the accent colour');
+  swatch.remove();
   assert(control.getAttribute('tabindex') === '0', 'control is not keyboard reachable');
   control.click();
   await settle();
-  assert(toggle('first').querySelector('polyline')?.getAttribute('points') === '6 9 12 15 18 9', 'open chevron must point down');
+  assert(!toggle('first').querySelector('svg'), 'open line has a chevron');
+  assert(get('system-line-toggle-word-first').textContent === '\u00A0less', 'open word is not less');
   assert(
     toggle('first').getAttribute('aria-expanded') === 'true',
     'expanded accessibility state missing',
   );
   assert(row('first').scrollHeight <= row('first').clientHeight + 1, 'expanded text clipped');
-  assert(row('first').textContent === messages[0].text, 'original message changed');
-  assert(row('first').textContent!.endsWith('Original message ends here.'), 'suffix lost');
+  assert(row('first').textContent === `${messages[0].text}\u00A0less`, 'original message changed');
+  assertWordOnLine('first', Math.round(row('first').clientHeight / parseFloat(getComputedStyle(row('first')).lineHeight)));
   checkCollapsed('second');
   get('system-line-name-first-0').click();
   get('system-line-object-first').click();
@@ -149,10 +201,21 @@ async function measure() {
     root.style.width = '';
     await settle();
   }
+  for (const width of sweep) checkCollapsed(`sweep-${width}`);
+  for (const width of sweep) toggle(`sweep-${width}`).click();
+  await settle();
+  for (const width of sweep) {
+    const id = `sweep-${width}`;
+    const lines = Math.round(row(id).clientHeight / parseFloat(getComputedStyle(row(id)).lineHeight));
+    assert(row(id).textContent!.endsWith('tomorrow\u00A0less'), `${id}: less does not follow the text`);
+    assertWordOnLine(id, lines);
+  }
+  for (const width of sweep) toggle(`sweep-${width}`).click();
+  await settle();
   toggle('second').click();
   await settle();
   get('system-line-second').scrollIntoView();
   document.getElementById('result')!.textContent =
-    'PASS: two-line previews, muted right/down chevrons, full original text, short and legacy messages, independent expansion, accessible controls, stamps and links; caller words labelled, capped at 280 characters and rendered as inert plain text';
+    `PASS: two-line previews ending in "… more", no chevrons, "less" after the full original text, short and legacy messages, independent expansion, accessible controls, stamps and links; caller words labelled, capped at 280 characters and rendered as inert plain text; "more" and "less" never alone on a line at ${sweep.length} widths`;
 }
 measure().catch((error) => (document.getElementById('result')!.textContent = String(error)));

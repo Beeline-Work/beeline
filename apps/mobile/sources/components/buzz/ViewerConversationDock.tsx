@@ -186,7 +186,7 @@ export function ViewerConversationDock({
           )}
         </View>
       ) : null}
-      <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
+      <Animated.View style={[styles.pill, { width, bottom }, kind === 'computer' && styles.computerRadius]} testID="viewer-conversation-pill"
       onLayout={(event) => setPillHeight(event.nativeEvent.layout.height)}>
         <Button label="" variant="secondary" icon={<ConversationGlyph color={open ? theme.buzz.accent : theme.buzz.textPrimary} />}
         accessibilityRole="button" accessibilityLabel={open ? 'Collapse conversation' : 'Talk to agent'}
@@ -195,7 +195,7 @@ export function ViewerConversationDock({
           if (open) setTickerVisible(false);
           setOpen((value) => !value);
         }}
-        style={[styles.control, open && styles.controlOpen]}
+        style={[styles.control, open && styles.controlOpen, kind === 'computer' && !open && styles.computerRadius]}
         testID="viewer-conversation-toggle"
       />
         {open ? (
@@ -248,6 +248,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  computerRadius: { borderRadius: 14 },
   controlOpen: { width: 44, minWidth: 44, height: 'auto', alignSelf: 'stretch', borderRightWidth: 1, borderRightColor: theme.buzz.borderStrong, borderRadius: 0,
     backgroundColor: 'transparent' },
   composerWrap: { flex: 1, minWidth: 0 },

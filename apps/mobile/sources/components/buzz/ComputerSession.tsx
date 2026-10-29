@@ -151,6 +151,17 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
     await openComputerSessionViewer({ ...session, access,
       previewFrame: captureRef.current?.() }, isDesktop, currentViewerConversation()?.roomId, agentHandle);
   };
+  const openInBrowser = async () => {
+    if (!access || session.status !== 'live') return;
+    try {
+      const { access: freshAccess } = await monolithPhoneOperation('openComputerSession', { id: session.id });
+      const url = new URL(session.url);
+      url.searchParams.set('access', freshAccess);
+      await openExternalUrl(url.toString());
+    } catch {
+      Modal.alert('Could not open browser', 'The live browser is unavailable. Try again.');
+    }
+  };
   return (
     <View style={styles.card} testID={`computer-session-card-${session.status}`}>
       {session.status === 'live' && access ? (
@@ -164,17 +175,17 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
       <Text style={styles.kind}>{session.status === 'ended' ? 'Session ended' : 'Live browser'}</Text></View>
       )}
       {session.status === 'live' && access ? (
-        <View style={styles.footer}>
-      <Button
-        onPress={() => void open()}
-        accessibilityRole="link"
-        accessibilityLabel="Open live browser"
-        testID="computer-session-open"
-        label={'Open live browser'}
-        variant="secondary"
-        size="inline"
-      />
-    </View>
+        <InlineRow style={styles.footer}>
+          <Button label="Open in browser" destination="external" variant="quiet"
+            appearance={{ control: undefined, label: styles.footerQuiet }}
+            accessibilityRole="link" accessibilityLabel="Open in browser"
+            testID="computer-session-card-open-browser" onPress={() => void openInBrowser()} />
+          <View style={styles.footerSpacer} />
+          <Button label="Open" destination="screen" variant="quiet"
+            appearance={{ control: undefined, label: styles.footerPrimary }}
+            accessibilityRole="link" accessibilityLabel="Open live browser"
+            testID="computer-session-open" onPress={() => void open()} />
+        </InlineRow>
       ) : null}
     </View>
   );
@@ -332,7 +343,10 @@ const styles = StyleSheet.create((theme) => ({
   caption: { paddingHorizontal: theme.buzz.transcriptCard.side, paddingVertical: theme.buzz.space.sm, gap: theme.buzz.space.xs },
   title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   kind: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
-  footer: { minHeight: theme.buzz.transcriptCard.footerMinHeight, paddingHorizontal: theme.buzz.transcriptCard.side, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: theme.buzz.border },
+  footerSpacer: { flex: 1 },
+  footerQuiet: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  footerPrimary: { ...theme.buzz.type.body, color: theme.buzz.accent },
+  footer: { paddingVertical: theme.buzz.transcriptCard.footerVertical, minHeight: theme.buzz.transcriptCard.footerMinHeight, paddingHorizontal: theme.buzz.transcriptCard.side, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: theme.buzz.border },
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   viewerStream: { flex: 1, minHeight: 0 },
   previewFrame: { position: 'absolute', inset: 0, width: '100%', height: '100%' },

@@ -1,0 +1,29 @@
+import '../sources/unistyles';
+import React from 'react';
+import { registerRootComponent } from 'expo';
+import { useFonts } from 'expo-font';
+import { View, Text, Pressable } from 'react-native';
+import { UnistylesRuntime } from 'react-native-unistyles';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ComputerSessionCard } from '../sources/components/buzz/ComputerSession';
+import { ComputerSessionCard as BeforeCard } from './browser-controls-before-ComputerSession';
+import { ViewerConversationDock } from '../sources/components/buzz/ViewerConversationDock';
+import { ViewerConversationDock as BeforeDock } from './browser-controls-before-ViewerConversationDock';
+import { publishViewerConversation } from '../sources/buzz/viewer-conversation';
+UnistylesRuntime.setTheme('obsidian');
+publishViewerConversation({roomId:'proof',messages:[],send:async()=>true});
+const session={id:'proof',title:'Shared browser',url:'http://10.0.2.2:8768/',status:'live' as const,access:'fixture'};
+function Proof(){
+ const [before,setBefore]=React.useState(true),[bone,setBone]=React.useState(false),[card,setCard]=React.useState(true);
+ const [WebView,setWebView]=React.useState<React.ComponentType<any>|null>(null);
+ React.useEffect(()=>{void import('react-native-webview').then(m=>setWebView(()=>m.WebView));},[]);
+ const [loaded]=useFonts({'SpaceGrotesk-Regular':require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),'SpaceGrotesk-SemiBold':require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),'IBMPlexMono-Regular':require('../sources/assets/fonts/IBMPlexMono-Regular.ttf')});
+ if(!loaded)return null;
+ const Card=before?BeforeCard:ComputerSessionCard,Dock=before?BeforeDock:ViewerConversationDock;
+ return <SafeAreaProvider><KeyboardProvider><View style={{flex:1,backgroundColor:bone?'#F3EEE4':'#14091A',paddingTop:50}}>
+ <View style={{flexDirection:'row'}}>{[['Stage',()=>setBefore(!before),before?'Before':'After'],['Theme',()=>{UnistylesRuntime.setTheme(bone?'obsidian':'bone');setBone(!bone)},bone?'Bone':'Obsidian'],['Surface',()=>setCard(!card),card?'Card':'Viewer']].map(([name,fn,value])=><Pressable key={String(name)} accessibilityLabel={String(name)} onPress={fn as ()=>void} style={{padding:16}}><Text style={{color:bone?'#171310':'#f0f0f3'}}>{String(value)}</Text></Pressable>)}</View>
+ {card?<Card key={String(before)} session={session}/>:<View style={{flex:1}}>{WebView?<WebView source={{uri:'http://10.0.2.2:8768/'}} style={{flex:1}}/>:null}<Dock key={String(before)} kind="computer" title="Shared browser" roomId="proof"/></View>}
+ </View></KeyboardProvider></SafeAreaProvider>;
+}
+registerRootComponent(Proof);

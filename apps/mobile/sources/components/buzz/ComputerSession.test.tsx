@@ -54,7 +54,7 @@ const session = {
 
 afterEach(() => {
   phoneOperation.mockReset().mockResolvedValue({ access: 'fresh-token' });
-  openExternalUrl.mockClear(); injectJavaScript.mockClear(); vi.mocked(Modal.show).mockClear();
+  openExternalUrl.mockClear(); injectJavaScript.mockClear(); vi.mocked(Modal.show).mockClear(); vi.mocked(Modal.alert).mockClear();
 });
 
 for (const isDesktop of [false, true]) {
@@ -72,6 +72,7 @@ for (const isDesktop of [false, true]) {
     await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
     expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
     expect(tree!.root.findAllByProps({ testID: 'computer-session-open' })).toHaveLength(0);
+    expect(tree!.root.findAllByProps({ testID: 'computer-session-card-open-browser' })).toHaveLength(0);
     await act(async () => tree!.unmount());
   });
 }
@@ -81,6 +82,7 @@ it('shows an ended card without an open button', async () => {
   await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, status: 'ended' }} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-card-ended' }).length).toBeGreaterThan(0);
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open' })).toHaveLength(0);
+    expect(tree!.root.findAllByProps({ testID: 'computer-session-card-open-browser' })).toHaveLength(0);
   await act(async () => tree!.unmount());
 });
 
@@ -333,5 +335,31 @@ it.each([false, true])('assigns keyboard avoidance to the correct computer viewe
   let tree: ReturnType<typeof create>;
   await act(async () => { tree = create(<ComputerSessionViewer session={session} warm={warm} onClose={() => {}} />); });
   expect(tree!.root.findByType(ViewerConversationDock).props.keyboardAvoidedByParent).toBe(!warm);
+  await act(async () => tree!.unmount());
+});
+
+it('matches artifact footer destinations and refreshes access for external opening', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard session={session} />); });
+  const external = tree!.root.findByProps({ testID: 'computer-session-card-open-browser' });
+  const internal = tree!.root.findByProps({ testID: 'computer-session-open' });
+  expect(external.props.label).toBe('Open in browser');
+  expect(external.props.destination).toBe('external');
+  expect(internal.props.label).toBe('Open');
+  expect(internal.props.destination).toBe('screen');
+  await act(async () => { external.props.onPress(); });
+  expect(openExternalUrl).toHaveBeenCalledWith('https://server.usebeeline.app/s/session-1/?access=fresh-token');
+  expect(Modal.show).not.toHaveBeenCalled();
+  await act(async () => { tree!.unmount(); });
+});
+
+
+it('does not open an external browser when fresh card access is refused', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard session={session} />); });
+  phoneOperation.mockRejectedValueOnce(new Error('access denied'));
+  await act(async () => { tree!.root.findByProps({ testID: 'computer-session-card-open-browser' }).props.onPress(); });
+  expect(openExternalUrl).not.toHaveBeenCalled();
+  expect(Modal.alert).toHaveBeenCalledWith('Could not open browser', 'The live browser is unavailable. Try again.');
   await act(async () => tree!.unmount());
 });

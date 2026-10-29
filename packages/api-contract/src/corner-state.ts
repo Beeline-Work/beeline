@@ -32,9 +32,13 @@ export type CornerStateFacts = {
    * agent commander, taken from that report's recipient. Pending checks on
    * the current head stay review until a final result or a new push. A
    * human-owed blocker leaves this unset, including when an agent-commander
-   * report is also open.
+   * report is also open. A human merge hold does not count as human-owed.
    */
   readonly agentCommanderReport?: boolean;
+  /**
+   * The selected blocker. Merge holds are selected only when no other blocker
+   * is open, so a `merge-hold` blocker means the hold is all that remains.
+   */
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
 };
 
@@ -91,7 +95,8 @@ export function cornerRunFromLifecycle(input: {
  * 2. `review` — a reviewer turn is active and checks are not failing.
  * 3. `working` — a worker turn is running. A queued worker is not running.
  * 4. `waiting` — an unresolved blocker, unless checks are pending on the
- *    current head and every blocker is an agent-commander report.
+ *    current head and every blocker is an agent-commander report or a merge
+ *    hold. A hold blocks the merge, not the checks or review before it.
  * 5. `review` — pending or not-yet-reported checks, until a final result or push.
  * 6. `working` — the last turn ended within 30 seconds.
  * 7. `idle` — the fall-through, including failing checks without work or a blocker.
@@ -107,7 +112,8 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
   if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
   if (facts.turnRunning) return { state: 'working' };
-  if ((facts.blocker || facts.owed === true) && !(facts.agentCommanderReport && pendingCi))
+  const deferredByCi = facts.agentCommanderReport || facts.blocker?.blocker?.kind === 'merge-hold';
+  if ((facts.blocker || facts.owed === true) && !(deferredByCi && pendingCi))
     return { state: 'waiting', ...facts.blocker };
   if (pendingCi) return { state: 'review' };
   if (facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)

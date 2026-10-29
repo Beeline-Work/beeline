@@ -7,12 +7,13 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  *
  * 1. `archived` iff the corner, its run, or its lifecycle is landed or closed.
  * 2. `review` iff a reviewer turn is active and checks are not failing, or
- *    checks are pending on the current head with no human-owed blocker and
- *    no worker turn running.
+ *    checks are pending on the current head with no human-owed blocker other
+ *    than a merge hold and no worker turn running.
  * 3. `working` is a running worker turn or the existing 30-second post-turn
  *    grace. It never overrides archived or an explicit wait. A live reviewer
  *    beats worker work while checks are not failing.
- * 4. `waiting` is a blocker, except agent-only reports during pending CI.
+ * 4. `waiting` is a blocker, except agent-only reports or a lone merge hold
+ *    during pending CI.
  * 5. Everything else is `idle`; failing checks alone establish no activity.
  *
  * Queued work alone must not change the result.
@@ -173,14 +174,14 @@ function scan(
                       const closed = isClosed(facts);
                       const pending = pendingOnHead(facts);
                       const anyBlocker = blocker !== 'none';
-                      const agentOnly = blocker === 'agent';
+                      const deferred = blocker === 'agent' || blocker === 'merge-hold';
                       const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
                       const failing = checks === 'failing';
                       let expected: CornerState;
                       if (closed) expected = 'archived';
                       else if (reviewerActive && !failing) expected = 'review';
                       else if (turnRunning) expected = 'working';
-                      else if (anyBlocker && !(pending && agentOnly)) expected = 'waiting';
+                      else if (anyBlocker && !(pending && deferred)) expected = 'waiting';
                       else if (pending) expected = 'review';
                       else if (
                         facts.lastTurnEndedAt !== undefined &&

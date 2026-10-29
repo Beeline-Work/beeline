@@ -9393,7 +9393,7 @@ export class PhoneService {
         // machine_id are grouped into one row. An agent without a machine_id
         // (pre-migration helper) is its own machine; remote MCP members are excluded.
         // Work reports older than machine health cannot poison sibling status.
-        // Legacy work keeps its own reporting agent authoritative.
+        // Untimestamped legacy work follows its Squire report, never general agent updates.
         // Online is true when ANY
         // agent on that machine has recent durable presence evidence (the
         // same 90-second window readers use). Name is the machine_name if set,
@@ -9429,8 +9429,7 @@ export class PhoneService {
          ) latest ON true
          CROSS JOIN LATERAL (
            SELECT CASE WHEN COALESCE((a.squire_work->>'reportedAt')::double precision,
-             CASE WHEN COALESCE((a.squire_report->>'reportedAt')::double precision,0) < latest.connected_at
-               THEN EXTRACT(EPOCH FROM a.updated_at) END) < latest.connected_at
+             (a.squire_report->>'reportedAt')::double precision,0) < latest.connected_at
              THEN '{}'::jsonb ELSE a.squire_work END current
          ) work
          WHERE a.owner_id=$1

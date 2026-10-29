@@ -383,6 +383,9 @@ describe('workbench connectors', () => {
     await database.query("UPDATE agents SET squire_work=squire_work-'reportedAt',updated_at=to_timestamp(100) WHERE agent_id=$1", [OTHER_HELPER]);
     const legacy = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
     expect(legacy.helpers[0].squire.status).toBe('connected');
+    await database.query('UPDATE agents SET updated_at=to_timestamp(300) WHERE agent_id=$1', [OTHER_HELPER]);
+    const unrelatedUpdate = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(unrelatedUpdate.helpers[0].squire.status).toBe('connected');
     await database.query("UPDATE agents SET squire_report='{\"status\":\"error\",\"reportedAt\":400,\"errorMessage\":\"Broker unavailable\"}'::jsonb");
     const broken = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
     expect(broken.helpers[0].squire.status).toBe('error');

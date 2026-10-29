@@ -364,22 +364,6 @@ export type ConnectorSignIn = {
   browserLocation?: ConnectorBrowserLocation;
 };
 
-/** One quiet line naming where the sign-in page opened; '' when the report
- *  did not say. */
-export function connectorSignInLocationLine(
-  location: ConnectorBrowserLocation | undefined,
-): string {
-  if (!location) return '';
-  switch (location.kind) {
-    case 'host_screen':
-      return "Sign-in page opened on this machine's screen";
-    case 'virtual':
-      return 'The page streams a private browser from your computer';
-    default:
-      return '';
-  }
-}
-
 /** One stage of the Trusty Squire pairing, in the order the person lives it. */
 type SquirePairingStage = {
   key: 'reach' | 'install' | 'pair' | 'sign-in' | 'other';
@@ -401,11 +385,6 @@ const SQUIRE_STAGE_MATCH: readonly [SquireStageKey, RegExp][] = [
 
 const squireStageKey = (label: string) =>
   SQUIRE_STAGE_MATCH.find(([, pattern]) => pattern.test(label.trim()))?.[0];
-
-/** True for a step label the Trusty Squire helper or server writes. */
-export function isSquireStageLabel(label: string): boolean {
-  return squireStageKey(label) !== undefined;
-}
 
 /**
  * The helper reports steps in the order it reaches them, and the server seeds

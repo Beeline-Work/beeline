@@ -898,6 +898,20 @@ function scan(files: Map<string, string>): Entry[] {
   }
 
   const entries = new Map<string, Entry>();
+  // Parameters can carry local phrase arrays through several forwarding helpers.
+  // Resolve actual callers rather than treating every typed array as opaque data.
+  const parameterInputs = new Map<ts.ParameterDeclaration, ts.Node[]>();
+  for (const call of calls) {
+    const args = invocationArguments(call);
+    for (const target of callableDeclarations(call.expression)) {
+      const declaration = functions.get(target) ?? target;
+      if (!ts.isFunctionLike(declaration)) continue;
+      declaration.parameters.forEach((parameter, index) => {
+        const inputs = parameter.dotDotDotToken ? args.slice(index) : args.slice(index, index + 1);
+        parameterInputs.set(parameter, [...(parameterInputs.get(parameter) ?? []), ...inputs]);
+      });
+    }
+  }
   // Follow phrase arrays through aliases, spreads and helper returns. A return
   // annotation alone cannot turn locally supplied wording into opaque data.
   const literalArray = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
@@ -923,6 +937,9 @@ function scan(files: Map<string, string>): Entry[] {
     }
     if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
       for (const declaration of declarations(node)) {
+        if (ts.isParameter(declaration) &&
+          [...(parameterInputs.get(declaration) ?? []), ...(declaration.initializer ? [declaration.initializer] : [])]
+            .some((input) => literalArray(input, seen))) return true;
         if ((ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) &&
           declaration.initializer && literalArray(declaration.initializer, seen)) return true;
         if (ts.isVariableDeclaration(declaration) && symbol(declaration.name) &&
@@ -1984,4 +2001,15 @@ it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks selec
     const source = `${setup} line(db,{verb:words.${method}(${original})});`;
     expect(() => enforce(scan(fixture(source.replace(original, changed))), scan(fixture(source)))).toThrow(failure);
   }
+});
+
+it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks on helper-forwarded phrase arrays', (method) => {
+  const original = method === 'sort' ? "(a,b)=>a==='hello'?-1:1" : "word=>word==='hello'";
+  const changed = original.replace('hello', 'world');
+  const source = `
+    function forward(words: string[]): string[] { return words; }
+    function select(words: string[]) { return forward(words).${method}(${original}); }
+    line(db,{verb:select(['hello','world'])});
+  `;
+  expect(() => enforce(scan(fixture(source.replace(original, changed))), scan(fixture(source)))).toThrow(failure);
 });

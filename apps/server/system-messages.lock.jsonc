@@ -1,4 +1,4 @@
-// Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays; no producer source or displayed wording changed.
+// Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays through helper parameters; no producer source or displayed wording changed.
 // Save to vault card and saved receipt approved by lunchboxfortwo, brief revision 2, message 2df3e0f5a54cd95512707fd11e51f20cc7c399f4bedf1934adf7f9bfdfd4634e; vault producers and their transitive wrappers only.
 // MCP send_message threaded-reply wrapper approved by lunchboxfortwo, Room request 7fd0f8d926c4f91c53dac705cb0735248ae1a6ea2630fb053e4c5e78c2810888 (brief revision 5, criterion 10); client-authored text, no System wording changes.
 // Transport-only System input projection, approved in corner brief revision 1; producer source and visible wording unchanged.
@@ -2710,30 +2710,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:4ae3d33b3cb1e1b1",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
-    "literals": [
-      "\"\"",
-      "$local()",
-      ".headSha",
-      ".id",
-      ".lifecycle",
-      ".pr",
-      ".rows",
-      ".text",
-      "FirstLiteralToken:0",
-      "[\"\",\":\",\"\"]",
-      "[\"; prior verdict and evidence: \",\"\"]",
-      "[\"the reviewer completed its review of the current head\",\"\"]",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:55ac20d448441804",
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:1f9f867e02653861",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, reason)",
@@ -2952,6 +2929,29 @@
       "randomBytes()",
       "shortenAsk()",
       "write()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:4ae3d33b3cb1e1b1",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
+    "literals": [
+      "\"\"",
+      "$local()",
+      ".headSha",
+      ".id",
+      ".lifecycle",
+      ".pr",
+      ".rows",
+      ".text",
+      "FirstLiteralToken:0",
+      "[\"\",\":\",\"\"]",
+      "[\"; prior verdict and evidence: \",\"\"]",
+      "[\"the reviewer completed its review of the current head\",\"\"]",
+      "conditional:?:",
+      "end:expression"
     ],
     "occurrences": 1
   },
@@ -4943,7 +4943,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.report:wrapper:168e592a80c73810",
+    "id": "src/daemon-service.ts:DaemonService.report:wrapper:866bd0077c1f0456",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "reportToCommander(database, command.room_id, agentId, text, command, createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask })",
@@ -4962,6 +4962,8 @@
       ".digest()",
       ".filter",
       ".filter()",
+      ".findIndex",
+      ".findIndex()",
       ".generation_id",
       ".has",
       ".has()",
@@ -4993,6 +4995,7 @@
       "RegularExpressionLiteral:/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i",
       "TrueKeyword",
       "[\"report:\",\":\",\":\",\":\",\":\",\"\"]",
+      "binary:===",
       "binary:??",
       "conditional:?:",
       "createHash()",

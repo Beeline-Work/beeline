@@ -81,3 +81,14 @@ the same scanner and enforcer, while the four archived refactor fixtures must
 continue to pass. The inventory is regenerated for the stricter callback dependencies
 from unchanged producer source. Opaque provider/row arrays retain their data-only
 treatment; request arguments do not become returned phrase-array dependencies.
+
+The next review follow-up reproduced the same false pass through typed forwarding
+parameters: `select(['hello','world'])` calls `forward(words).find(...)`,
+`filter(...)`, or `sort(...)`. Each new regression failed on the previous head
+because `enforce` did not throw for the changed callback. The scanner now follows
+parameter inputs from resolved callers, including forwarding chains, before
+classifying an array as opaque. These cases exercise the exact scanner/enforcer
+path used by CI; no running application is involved in this check.
+The stronger dependency tracking mechanically changes two wrapper fingerprints
+(`ensureReviewDispatch` and `DaemonService.report`); the regenerated inventory
+retains all producer source and visible wording unchanged.

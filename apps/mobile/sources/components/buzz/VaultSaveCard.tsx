@@ -5,7 +5,6 @@ import { readVaultSaveCard, type VaultSaveCard as Card } from '@beeline/api-cont
 import { TranscriptCard } from './TranscriptCard';
 import { HullDialogInput } from './HullDialog';
 import { Button } from './Button';
-import { ErrorBanner } from './ErrorBanner';
 import { IdentityMark } from './IdentityMark';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -158,6 +157,10 @@ export function VaultSaveCard({
             : []
       }
       testID="vault-save-card"
+      inlineError={error ? {
+        title: 'Your vault could not save this entry.',
+        description: 'Values were cleared. Check the helper is online, enter them again and retry.',
+      } : undefined}
     >
       {canType && (
         <View style={styles.fields}>
@@ -201,12 +204,6 @@ export function VaultSaveCard({
             learn that it was saved.
           </Text>
         </View>
-      )}
-      {error && (
-        <ErrorBanner
-          inline
-          title="Your vault could not save this entry. Values were cleared. Check the helper is online, enter them again and retry."
-        />
       )}
     </TranscriptCard>
   );

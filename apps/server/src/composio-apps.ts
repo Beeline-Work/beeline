@@ -83,15 +83,23 @@ function providerErrorDetail(value: unknown): string | undefined {
   return found ? boundedDetail(found) : undefined;
 }
 
-/** Tool providers sometimes encode an upstream HTTP error as a JSON string. */
-function isMissingAppResource(value: unknown): boolean {
+/** Decode only the provider's error envelope; never infer refusals from prose. */
+function appRefusalStatus(value: unknown, depth = 0): 403 | 404 | undefined {
+  if (depth > 4) return undefined;
   if (typeof value === 'string') {
-    try { value = JSON.parse(value); } catch { return value === 'Not Found'; }
+    try { value = JSON.parse(value); } catch { return value === 'Not Found' ? 404 : undefined; }
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const error = value as Json;
-  const status = error.status_code ?? error.status ?? error.http_status_code;
-  return status === 404 || status === '404' || (status === undefined && error.message === 'Not Found');
+  const status = error.status_code ?? error.http_status_code ?? error.code ?? error.status;
+  if (status !== undefined) {
+    if (status === 404 || status === '404' || status === 'NOT_FOUND') return 404;
+    if (status === 403 || status === '403' || status === 'PERMISSION_DENIED') return 403;
+    // An explicit unexpected status dominates nested causes and message text.
+    return undefined;
+  }
+  if (error.error !== undefined) return appRefusalStatus(error.error, depth + 1);
+  return error.message === 'Not Found' ? 404 : undefined;
 }
 
 /** Read a response body bounded so a huge error dump cannot blow memory. */
@@ -697,8 +705,8 @@ export class ComposioApps {
     if (result.error || result.successfull === false || result.successful === false) {
       const detail = providerErrorDetail(result.error);
       const message = detail ? `App tool execution failed: ${detail}` : 'App tool execution failed';
-      if (isMissingAppResource(result.error) || isMissingAppResource(result))
-        throw new CommandRefusalError(message, 404);
+      const refusalStatus = appRefusalStatus(result);
+      if (refusalStatus) throw new CommandRefusalError(message, refusalStatus);
       throw new Error(message);
     }
     return stripSecrets(result.data);

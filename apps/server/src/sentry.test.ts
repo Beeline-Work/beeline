@@ -89,6 +89,102 @@ it('R-GH-403: actual PR and discussion rate limits send no Sentry event; plain 4
 });
 
 
+it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks merge without a Sentry event', async () => {
+  const envelopes: string[] = [];
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    envelopes.push(Buffer.concat(chunks).toString());
+    response.writeHead(200); response.end('{}');
+  });
+  await new Promise<void>(r => collector.listen(0, '127.0.0.1', r));
+  try {
+    const port = (collector.address() as AddressInfo).port;
+    const source = `
+      import assert from 'node:assert/strict';
+      import { PgliteDatabase } from './src/test-support.ts';
+      import { migrate } from './dist/database.js';
+      import { GitHubOperations } from './dist/github-operations.js';
+      import { captureServerError, flushServerErrors } from './dist/sentry.js';
+      import { GitHubAppClient, GitHubHttpError } from '@beeline/auth/github';
+      const db = new PgliteDatabase();
+      await migrate(db);
+      const human = 'a'.repeat(64), head = '1'.repeat(40);
+      const workspace='11111111-1111-4111-8111-111111111111';
+      const room='22222222-2222-4222-8222-222222222222';
+      const corner='33333333-3333-4333-8333-333333333333';
+      await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')",[human]);
+      await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Fixture')",[workspace]);
+      await db.query("INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')",[human]);
+      await db.query("INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')");
+      await db.query("INSERT INTO rooms(id,workspace_id,created_by,name,repository_key,repository_remote,repository_resolution,github_installation_id) VALUES($1,$2,$3,'Fixture','owner/widgets','https://github.com/owner/widgets.git','repository',77)",[room,workspace,human]);
+      await db.query("INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Checks')",[corner,workspace,room,human]);
+      await db.query("INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle) VALUES($1,'Check refusal','feature/fixture',$2::jsonb)",[corner,JSON.stringify({checks:'passing',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
+      await db.query("INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id) VALUES($1,1,'Fixture','Fixture',$2,$3)",[corner,human,room]);
+      const client = new GitHubAppClient({appId:'42',privateKey:'unused',slug:'beeline'});
+      client.installationToken = async () => ({token:'fixture',expiresAt:'2030-01-01T00:00:00Z'});
+      let merges=0, actionsReads=0;
+      client.mergePullRequest = async () => { merges++; };
+      globalThis.fetch = async (url) => {
+        const path = String(url);
+        if (path.endsWith('/graphql')) return Response.json({data:{repository:{object:{oid:head,statusCheckRollup:null}}}});
+        if (path.includes('/check-suites')) return Response.json({total_count:0,check_suites:[]});
+        if (path.includes('/actions/runs?')) {
+          actionsReads++;
+          return Response.json({message:'Resource not accessible by integration'},{status:403,headers:{'x-accepted-github-permissions':'actions=read','x-github-request-id':'fixture-request'}});
+        }
+        if (path.endsWith('/pulls/1')) return Response.json({number:1,head:{sha:head},html_url:'https://github.com/owner/widgets/pull/1',mergeable_state:'clean',state:'open',draft:false});
+        throw new Error('Unexpected fixture route: '+path);
+      };
+      const operations = new GitHubOperations(db, {}, client, 'fixture');
+      const checkFailure = error => {
+        assert.ok(error instanceof GitHubHttpError);
+        assert.equal(error.status,403);
+        assert.equal(error.rateLimited,false);
+        assert.match(error.message,/GET \\/repos\\/owner\\/widgets\\/actions\\/runs\\?head_sha=/);
+        assert.match(error.message,/Resource not accessible by integration/);
+        assert.match(error.message,/accepted permissions: actions=read/);
+        assert.match(error.message,/request ID: fixture-request/);
+        return true;
+      };
+      try {
+        const payload={action:'completed',installation:{id:77},repository:{full_name:'owner/widgets'},check_run:{name:'lint',status:'completed',conclusion:'success',head_sha:head,check_suite:{head_branch:'feature/fixture',head_sha:head}}};
+        await assert.rejects(operations.processWebhook('check_run',payload),error=>{checkFailure(error);captureServerError(error);return true;});
+        await assert.rejects(operations.prChecksStatus({cornerId:corner}),checkFailure);
+        assert.equal(await operations.landCorner(corner),false);
+        assert.equal(merges,0);
+        assert.equal(actionsReads,3);
+        // Queue recovery uses the same real error and capture boundary.
+        await db.query("UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',$2::jsonb) WHERE corner_id=$1",[corner,JSON.stringify({headSha:head,after:0})]);
+        await operations.refreshQueuedChecks();
+        const stored=(await db.query("SELECT lifecycle FROM corner_facts WHERE corner_id=$1",[corner])).rows[0].lifecycle;
+        assert.equal(stored.checks,'passing'); // Historical evidence never bypasses the live merge read.
+        assert.equal(stored.checkRefreshRetry,undefined);
+        // Text alone, an unexplained 403, and unexpected server failures still report.
+        captureServerError(new Error('Resource not accessible by integration'));
+        captureServerError(new GitHubHttpError('Unexplained refusal',403));
+        captureServerError(new GitHubHttpError('Provider outage',500));
+        await flushServerErrors();
+      } finally { await db.close(); }
+    `;
+    const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let error = ''; child.stderr.on('data', value => { error += String(value); });
+      child.on('error', reject); child.on('exit', code => done({ code, error }));
+    });
+    expect(result, result.error).toMatchObject({ code: 0 });
+    const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
+      .filter(item => item.exception);
+    expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
+      'Provider outage failed: HTTP 500', 'Resource not accessible by integration', 'Unexplained refusal failed: HTTP 403',
+    ]);
+  } finally { await new Promise<void>(r => collector.close(() => r())); }
+}, 30_000);
+
+
 it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {

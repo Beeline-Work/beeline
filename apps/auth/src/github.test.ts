@@ -3,6 +3,7 @@ import { generateKeyPair, exportPKCS8 } from 'jose';
 import {
   GitHubAppClient,
   GitHubHttpError,
+  GitHubCheckPermissionError,
   GitHubOAuthClient,
   githubMergeability,
   transientGitHubError,
@@ -150,6 +151,29 @@ it.each(['check-suites', 'actions/runs'])('Reproduction SENTRY-1D: names the ref
   expect(error.message).not.toContain('do not retain');
   expect(transientGitHubError(error)).toBe(false);
   expect(fetchMock.mock.calls.filter(([input]) => String(input).includes(`/${probe}?`))).toHaveLength(1);
+});
+
+it.each([
+  ['actions/runs', 403, 'Resource not accessible by integration', 'actions=read', true],
+  ['check-suites', 403, 'Resource not accessible by integration', 'checks=read', true],
+  ['actions/runs', 403, 'Resource not accessible by integration', '', false],
+  ['actions/runs', 403, 'Resource not accessible by integration', 'contents=read', false],
+  ['actions/runs', 403, 'Unexpected provider refusal', 'actions=read', false],
+  ['actions/runs', 500, 'Resource not accessible by integration', 'actions=read', false],
+  ['pulls/1', 403, 'Resource not accessible by integration', 'actions=read', false],
+] as const)('GH-CHECK-REFUSAL: classifies only confirmed check permissions (%s %s %s %s)', async (probe, status, message, permissions, expected) => {
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    if (String(input).includes('/' + probe)) return Response.json({ message }, {
+      status, headers: { 'x-accepted-github-permissions': permissions, 'retry-after': status === 500 ? '120' : '' },
+    });
+    return passingRollupResponse(input);
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  const error = await (probe === 'pulls/1'
+    ? app.readPullRequest('fixture', 'owner/widgets', 1)
+    : app.readCommitCheckRollup('fixture', 'owner/widgets', retryHead)).catch(error => error);
+  expect(error).toBeInstanceOf(GitHubHttpError);
+  expect(error instanceof GitHubCheckPermissionError).toBe(expected);
 });
 
 it('CHECK-HEAD-1: fails closed if workflow registration cannot be read', async () => {

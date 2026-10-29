@@ -74,7 +74,7 @@ function string(value: unknown, max = 2048): string {
   return value;
 }
 const AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic'];
-/** An OAuth error with the branch that refused it, logged for token requests. */
+/** An OAuth error with the branch that refused it, logged for token and browser sign-in requests. */
 class Refusal extends Error {
   // params carries body parameter names when the body is refused before it can be read as input.
   constructor(error: string, readonly reason: string, readonly params?: string[]) { super(error); }
@@ -161,8 +161,8 @@ export class RoomsMcpOAuth {
     const result = await db.query<Flow>(`SELECT f.*,c.name,c.logo,i.name identity_name FROM rooms_mcp_flows f
       JOIN rooms_mcp_clients c ON c.id=f.client_id LEFT JOIN identities i ON i.id=f.identity_id
       WHERE f.id=$1 AND f.browser_hash=$2 AND f.expires_at>now() FOR UPDATE OF f`,
-      [string(id, 100), tokenHash(this.cookie(request))]);
-    if (!result.rows[0]) throw new Error('invalid_request');
+      [typeof id === 'string' && id && id.length <= 100 ? id : '', tokenHash(this.cookie(request))]);
+    if (!result.rows[0]) throw new Refusal('invalid_request', 'flow_missing_or_expired');
     return result.rows[0];
   }
   /** Require the registered authentication method before consuming any grant. */
@@ -288,13 +288,18 @@ export class RoomsMcpOAuth {
       }
       if (request.method === 'GET' && path === '/mcp/oauth/authorize') {
         const q = url.searchParams;
-        if (url.search.length > 8192 || (q.get('state')?.length ?? 0) > 2048) throw new Error('invalid_request');
-        if ([...q.keys()].some(key => q.getAll(key).length !== 1) || q.get('response_type') !== 'code' ||
-            q.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(q.get('code_challenge') ?? '') || q.get('resource') !== this.resource) throw new Error('invalid_request');
+        if (url.search.length > 8192) throw new Refusal('invalid_request', 'query_too_long');
+        if ((q.get('state')?.length ?? 0) > 2048) throw new Refusal('invalid_request', 'state_too_long');
+        if ([...q.keys()].some(key => q.getAll(key).length !== 1)) throw new Refusal('invalid_request', 'duplicate_parameter');
+        if (q.get('response_type') !== 'code') throw new Refusal('invalid_request', 'response_type_invalid');
+        if (q.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(q.get('code_challenge') ?? '')) throw new Refusal('invalid_request', 'pkce_invalid');
+        // Cursor may omit resource or send the origin; the token step accepts the same values.
+        if (!this.isResource(q.get('resource') ?? undefined)) throw new Refusal('invalid_request', 'resource_mismatch');
         const client = (await this.database.query<{ redirects: string[] }>('SELECT redirects FROM rooms_mcp_clients WHERE id=$1', [q.get('client_id')])).rows[0];
-        if (!client || !client.redirects.includes(q.get('redirect_uri') ?? '')) throw new Error('invalid_request');
+        if (!client) throw new Refusal('invalid_request', 'client_unknown');
+        if (!client.redirects.includes(q.get('redirect_uri') ?? '')) throw new Refusal('invalid_request', 'redirect_uri_unregistered');
         const scopes = [...new Set((q.get('scope') ?? MCP_READ).split(' '))];
-        if (!scopes.length || scopes.some(scope => ![MCP_READ, MCP_WRITE].includes(scope))) throw new Error('invalid_scope');
+        if (!scopes.length || scopes.some(scope => ![MCP_READ, MCP_WRITE].includes(scope))) throw new Refusal('invalid_scope', 'scope_invalid');
         const id = opaque(), browser = opaque();
         await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at)
           VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes')`,
@@ -305,7 +310,7 @@ export class RoomsMcpOAuth {
       if (request.method === 'GET' && path === '/mcp/oauth/login') {
         const flow = await this.flow(url.searchParams.get('flow'), request);
         const provider = url.searchParams.get('provider');
-        if (!['google', 'github'].includes(provider ?? '')) throw new Error('invalid_request');
+        if (!['google', 'github'].includes(provider ?? '')) throw new Refusal('invalid_request', 'provider_invalid');
         await this.database.query('UPDATE rooms_mcp_flows SET provider=$2,identity_id=NULL WHERE id=$1', [flow.id, provider]);
         const target = new URL(provider === 'google' ? '/auth/oidc/start' : '/auth/github/start', this.origin);
         target.searchParams.set('app_redirect', `${this.origin}/mcp/oauth/callback/${provider}`);
@@ -314,9 +319,13 @@ export class RoomsMcpOAuth {
       }
       if (request.method === 'GET' && /^\/mcp\/oauth\/callback\/(google|github)$/.test(path)) {
         const flow = await this.flow(url.searchParams.get('state'), request);
-        if (flow.provider !== path.split('/').at(-1) || flow.identity_id) throw new Error('invalid_request');
-        const ticket = string(url.searchParams.get('ticket'), 100);
-        const tokens = flow.provider === 'google' ? await this.auth.exchangeGoogleOidc(ticket) : await this.auth.exchangeGitHubOidc(ticket);
+        if (flow.provider !== path.split('/').at(-1)) throw new Refusal('invalid_request', 'provider_mismatch');
+        if (flow.identity_id) throw new Refusal('invalid_request', 'flow_already_signed_in');
+        const ticket = url.searchParams.get('ticket');
+        if (!ticket || ticket.length > 100) throw new Refusal('invalid_request', 'ticket_missing');
+        const tokens = await (flow.provider === 'google' ? this.auth.exchangeGoogleOidc(ticket) : this.auth.exchangeGitHubOidc(ticket)).catch((error: unknown) => {
+          throw new Refusal(error instanceof Error ? error.message : 'invalid_request', 'ticket_exchange_failed');
+        });
         // Sign-in establishes identity, but no phone credentials reach the external client or browser.
         await this.auth.revokePhoneSession(tokens.refreshToken);
         await this.database.query('UPDATE rooms_mcp_flows SET identity_id=$2 WHERE id=$1 AND expires_at>now()', [flow.id, tokens.identityId]);
@@ -346,22 +355,23 @@ export class RoomsMcpOAuth {
         return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/consent') {
-        if (request.headers.origin !== this.origin) throw new Error('invalid_request');
+        if (request.headers.origin !== this.origin) throw new Refusal('invalid_request', 'origin_mismatch');
         const input = await mcpBody(request);
         if (input.decision === 'save') {
           const name = typeof input.joiner_name === 'string' ? input.joiner_name.trim().replace(/\s+/g, ' ') : '';
           const handle = typeof input.joiner_handle === 'string' ? input.joiner_handle.trim().replace(/^@+/, '').toLowerCase() : '';
-          if (!name || name.length > 60 || !/^[a-z0-9_]{1,40}$/.test(handle)) throw new Error('invalid_request');
+          if (!name || name.length > 60 || !/^[a-z0-9_]{1,40}$/.test(handle)) throw new Refusal('invalid_request', 'joiner_invalid');
           await this.database.transaction(async db => {
             const flow = await this.flow(input.flow, request, db);
-            if (!flow.identity_id) throw new Error('invalid_request');
+            if (!flow.identity_id) throw new Refusal('invalid_request', 'flow_not_signed_in');
             await db.query('UPDATE rooms_mcp_flows SET joiner_name=$2,joiner_handle=$3 WHERE id=$1', [flow.id, name, handle]);
           });
           this.redirect(response, `/mcp/oauth/consent?flow=${encodeURIComponent(String(input.flow))}`); return true;
         }
         const target = await this.database.transaction(async db => {
           const flow = await this.flow(input.flow, request, db);
-          if (!flow.identity_id || !['allow', 'deny'].includes(String(input.decision))) throw new Error('invalid_request');
+          if (!flow.identity_id) throw new Refusal('invalid_request', 'flow_not_signed_in');
+          if (!['allow', 'deny'].includes(String(input.decision))) throw new Refusal('invalid_request', 'decision_invalid');
           const target = new URL(flow.redirect_uri);
           target.searchParams.set('state', flow.state); target.searchParams.set('iss', this.origin);
           if (input.decision === 'allow') {
@@ -430,6 +440,11 @@ export class RoomsMcpOAuth {
         grant_type: tokenInput?.grant_type === undefined ? undefined : tokenInput.grant_type === 'authorization_code' || tokenInput.grant_type === 'refresh_token' ? tokenInput.grant_type : 'other',
         params: (tokenInput ? Object.keys(tokenInput) : error instanceof Refusal ? error.params : undefined)?.slice(0, 20).map(key => key.slice(0, 40)).sort(),
         ...tokenHeaders(request) }));
+      // A browser sign-in step logs its fixed reason, plus authorize's parameter names; never state, PKCE, client or redirect values.
+      const step = browserStep(request.method, path);
+      if (step) console.warn(`[rooms-mcp-oauth] ${step} refused`, JSON.stringify({ error: message,
+        reason: error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : 'invalid_parameter',
+        ...(step === 'authorize' ? { params: [...new Set(url.searchParams.keys())].slice(0, 30).map(key => key.slice(0, 40)).sort() } : {}) }));
       if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,
         ...(error instanceof SyntaxError ? { reason: 'invalid_json' } : {}), ...registrationSummary(registrationInput) }));
       if (message === 'invalid_client' && request.headers.authorization) response.setHeader('www-authenticate', 'Basic realm="Beeline MCP"');
@@ -437,6 +452,15 @@ export class RoomsMcpOAuth {
     }
     return true;
   }
+}
+
+function browserStep(method: string | undefined, path: string): string | undefined {
+  if (method === 'GET' && path === '/mcp/oauth/authorize') return 'authorize';
+  if (method === 'GET' && path === '/mcp/oauth/login') return 'login';
+  if (method === 'GET' && /^\/mcp\/oauth\/callback\/(google|github)$/.test(path)) return 'callback';
+  if (method === 'GET' && path === '/mcp/oauth/consent') return 'consent';
+  if (method === 'POST' && path === '/mcp/oauth/consent') return 'consent submit';
+  return undefined;
 }
 
 // Header values are client-chosen, so only fixed categories reach the token refusal log.

@@ -1,0 +1,20 @@
+{
+  "commit": "8b8a701c505def36732cfe37175a9ac69a99814f",
+  "aab_bytes": 151959730,
+  "aab_sha256": "ea9dd18e22d57bd96770ff81ba3f3b1b1fd266dad476b4f6e08abb64eb65b0f5",
+  "build": "Production NODE_ENV and Expo production channel/server; release bundleRelease, four ABIs; debug-signed universal APK via bundletool. No EAS upload or Play upload. VersionCode27/versionName0.2.22 from selected commit.",
+  "google": "Methoxine signed in on production with #general open; native picker then browser fallback (local signing).",
+  "voice": "Connected; screenshot shows elapsed call and active waveform. Ended normally after 33 seconds. Nonfatal publisher DATA_TRACK_LOSSY closed unexpectedly was logged during join.",
+  "notification": "Firebase receiver broadcast on rooted emulator displayed Beeline title/body/icon; not proof of Google FCM transport.",
+  "sharing": "Invite a person opened Android share sheet with minted invite link; no invite sent.",
+  "github": "Provider opened. Desktop test account auth reached callback but cross-browser session failed; device sign-in pending passkey-approved saved test login entry.",
+  "grep_counts": {
+    "ClassNotFound": 0,
+    "NoSuchMethod": 0,
+    "NoSuchField": 0,
+    "R8": 5,
+    "FATAL EXCEPTION": 0
+  },
+  "grep_interpretation": "No ClassNotFound/NoSuchMethod/NoSuchField/FATAL EXCEPTION. R8 only matches one random ART temp filename and four Android system BluetoothPowerStatsCollector synthetic-class frames; no Beeline R8 crash.",
+  "crash_buffer": "empty"
+}

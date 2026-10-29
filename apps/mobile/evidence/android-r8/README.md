@@ -1,6 +1,6 @@
 # Android release shrinking
 
-This is an optimization feature, not a defect report. Internal Play proof and the human merge hold remain prerequisites for landing.
+This is an optimization feature, not a defect report. Acceptance follows brief revision 8.
 
 ## Build configuration
 
@@ -22,15 +22,26 @@ The release job extracts `BUNDLE-METADATA/com.android.tools.build.obfuscation/pr
 
 For a server native-crash receipt, identify the installed Android version code, download that artifact and run Android R8 Retrace against its `mapping.txt` and the receipt's stack. Do not use a map from another build. No native Sentry capture or Sentry map upload is added.
 
+## Production device proof (brief revision 8)
+
+Jellybean tested commit `8b8a701c505def36732cfe37175a9ac69a99814f` on emulator-5574. The production-configured four-ABI release AAB was installed using a bundletool universal APK signed with a local debug key. Google authentication completed through the browser fallback, not the native account picker.
+
+- Google: Methoxine signed in against production with #general open (`production-google-signed-in.png`, `production-google-account.png`).
+- Voice: connected and ended normally after 33 seconds (`production-voice-connected.png`). A nonfatal DATA_TRACK_LOSSY publisher warning occurred during join.
+- Notification: Beeline title/body/icon appeared in the shade (`production-notification-shade.png`). A Firebase receiver broadcast on the rooted emulator exercised display; this does not prove real FCM delivery.
+- Invite a person: Android's share sheet opened with the invite link (`production-invite-share.png`); no invite was sent.
+- GitHub: provider page opened (`production-github-provider.png`). Device sign-in was not completed because using the saved test login needs the owner's passkey approval. Brief revision 8 accepts provider handoff.
+- Logs: no ClassNotFound, NoSuchMethod, NoSuchField or FATAL EXCEPTION; crash buffer empty. The five R8 matches are Android system frames and an ART temporary filename, not Beeline failures. See `production-logcat-grep.txt`, `production-logcat.txt.gz`, and `production-run-details.json`.
+
+This production run supersedes the local reviewer-bypass Android proof. No Android build config, keep rules or native code changed during evidence import.
+
+## Historical local web check
+
+The earlier local reviewer-bypass web check passed: this branch's server ran against isolated PostgreSQL with a throwaway review secret, and this branch's Expo web export targeted that server. Opening `/review/<secret>` signed in as Play Review, opened #general with its composer, and opened Settings showing `@play-review`. This is historical and local, not production web proof. The superseded screenshots have been removed. Brief revision 8 accepts this check; this PR changes no web code.
+
 ## Validation status
 
-- Generated Android prebuild has release minification/resource shrinking enabled and optimized default rules.
-- Plugin and Play script tests pass, including repeated prebuild, preservation of adjacent rules, version-code archive, mapping upload and missing-map failure.
-- Root typecheck, release workflow tests (59), OTA tests (75), branding tests (13), splash tests (5), and native fingerprint gate tests (12) passed.
-- Local release AAB built. The first shrunk build crashed on cold launch with `ClassNotFoundException: livekit.org.jni_zero.JniInit` followed by native SIGILL. The unshrunk control installed from its AAB reaches the sign-in screen with an empty crash buffer. The shaded-JNI rule removed that failure, revealing an Expo `SplashScreenOptions` record-conversion NPE. The next build also preserves the `expo.modules.kotlin.records.Field` annotation, the narrow upstream fix in https://github.com/expo/expo/pull/51206. The final build passes the same cold-launch path and reaches both provider login pages with an empty crash buffer. Both comparison builds use the same source, runtime 43 and x86_64 ABI; this is not a Play download-size estimate.
-- Local reviewer-bypass web check passed, per Ruby’s updated instruction: this branch’s `apps/server` ran against an isolated PostgreSQL database with a throwaway `BEELINE_REVIEW_SECRET`; this branch’s Expo web export targeted that server. Opening `/review/<secret>` signed in as Play Review, rendered the Beeline Review workspace, opened #general with its composer, and opened Settings showing `@play-review`. See `local-reviewer-room.png` and `local-reviewer-settings.png`. The browser’s notification permission was not granted; this check does not claim notification delivery. Production reviewer browsing is deferred until after release and does not block merge under Ruby’s instruction.
-- Emulator criterion 2 passes under brief revision 5: provider pages open, reviewer-bypass sign-in succeeds, a LiveKit call connects and publishes its microphone track, a notification received by the app’s Firebase receiver appears in the shade, and Invite a person opens the Android share sheet with its link. Full Google/GitHub sign-ins and real FCM delivery remain internal-track proof.
-- Internal-track Play installation/proof belongs to the release owner and is pending. Nothing has been published from this corner.
+Previously passed: generated release prebuild configuration; plugin and Play mapping tests; root typecheck; release workflow, OTA, branding, splash and fingerprint tests. Mapping validation covers upload under the returned version code, retained artifacts, and missing-map failure. This update imports evidence only.
 
 ## Measured artifacts
 
@@ -40,16 +51,6 @@ The build hashes are in `build-sha256.txt`. The local AABs and full maps remain 
 
 Reproduction R8-STARTUP (implementation regression): install the shrunk AAB via bundletool, force-stop, then cold-launch → first missing shaded JNI class, then Expo record conversion failure. With both narrow keep rules, repeat the same path → sign-in screen; tap Google/GitHub → provider login pages, no crash-buffer entries. Screenshots are attached in this directory. This proves startup and provider handoff, not completed authentication or the authenticated flows.
 
-## Authenticated emulator proof (revision 5)
+## Four-ABI production artifact
 
-Reproduction R8-REFLECTION: cold-launch the shrunk release, sign in through `beeline://review/<throwaway-secret>`, connect a voice call, receive a notification, and open Invite a person. The first run logged `NoSuchMethodException` for the install-referrer builder and `ClassNotFoundException` for Expo’s manifest-named `RNHeadlessAppLoader`, despite no fatal crash. Explicit keep rules now preserve both reflection surfaces. Repeat the same path: no ClassNotFound, NoSuchMethod or fatal exception anywhere in the final logcat capture; the crash buffer is empty. See `native-reflection-before.txt`, `device-logcat-scan.json`, `device-crash-buffer.txt` and the native screenshots.
-
-The local reviewer AAB uses the same release/R8 configuration and has byte-identical DEX to the final production-configured AAB (`sizes.json`). Its only test transport adaptations were a local server URL and cleartext permission in the ignored generated manifest. Those adaptations are absent from the final AAB and committed source. The final production-configured AAB retains the unshrunk control’s exact JS hash. Android runtime stays at the already-unreleased 43 while the keep rules are completed; the fingerprint baseline was refreshed for those rules after restoring masked-view’s clean-install manifest.
-
-The reviewer signed into an isolated real branch server/PostgreSQL database. A local fixture agent allowed the normal call UI to connect through the real VoiceService and LiveKit server (1.13.11). The server’s external speech/brain/transcription providers were stand-ins; no external voice credentials or production data were used. `voice-connection.json` records the Android participant becoming active over UDP and publishing its microphone track. This proves native connection/publication, not speech-provider quality or production call delivery.
-
-For notifications, the rooted API 36 emulator injected a test `com.google.android.c2dm.intent.RECEIVE` broadcast into the installed app’s Firebase receiver while the app was in the background. The shrunk Firebase/Expo path received it and displayed the title, body and Beeline icon. This is native receipt/display proof, not Google transport proof. Internal-track testing must use actual notification delivery.
-
-For sharing, Room actions → Members → Add → Invite a person opened Android’s share sheet carrying the minted invite link (`native-outgoing-share.png`). No message was sent to anyone. Incoming ACTION_SEND is unsupported, as confirmed by `inbound-share-result.txt`; revision 5 explicitly excludes adding that feature.
-
-All local proof services were stopped after capture. Internal-track Play installation, completed Google/GitHub sign-ins and the human merge hold remain outstanding.
+The production device run used a separate four-ABI AAB of 151,959,730 bytes, SHA-256 `ea9dd18e22d57bd96770ff81ba3f3b1b1fd266dad476b4f6e08abb64eb65b0f5`. It is recorded separately in `sizes.json` and `production-run-details.json`; do not compare it to the historical x86_64-only control above. No release was dispatched from this corner.

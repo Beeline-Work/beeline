@@ -1,22 +1,30 @@
 {
-  "unshrunk": {
-    "aab_bytes": 68321867,
-    "js_sha256": "fb47b023d1f8e559d1af96aad02f1b77f79d3f151baf870fc7bd6b57a320452b",
-    "dex_bytes": 58263020,
-    "dex_sha256": "de04c3936191b0c9d95067b555ef96db368b2f59ec999552ed4150791a366c9a"
+  "historical_x86_64_comparison": {
+    "unshrunk": {
+      "aab_bytes": 68321867,
+      "js_sha256": "fb47b023d1f8e559d1af96aad02f1b77f79d3f151baf870fc7bd6b57a320452b",
+      "dex_bytes": 58263020,
+      "dex_sha256": "de04c3936191b0c9d95067b555ef96db368b2f59ec999552ed4150791a366c9a"
+    },
+    "final": {
+      "aab_bytes": 61281477,
+      "js_sha256": "fb47b023d1f8e559d1af96aad02f1b77f79d3f151baf870fc7bd6b57a320452b",
+      "dex_bytes": 12046100,
+      "dex_sha256": "92c741bf61fd2f6695322831cc2aa7fdab76258851ed47700188191ff72b75f4"
+    },
+    "localReviewer": {
+      "aab_bytes": 61282259,
+      "js_sha256": "8966e91c3edb9b16e698e3e8db055b39c44f038be98c857be8ee36628d4e2104",
+      "dex_bytes": 12046100,
+      "dex_sha256": "92c741bf61fd2f6695322831cc2aa7fdab76258851ed47700188191ff72b75f4"
+    },
+    "saved_bytes": 7040390,
+    "saved_percent": 10.3
   },
-  "final": {
-    "aab_bytes": 61281477,
-    "js_sha256": "fb47b023d1f8e559d1af96aad02f1b77f79d3f151baf870fc7bd6b57a320452b",
-    "dex_bytes": 12046100,
-    "dex_sha256": "92c741bf61fd2f6695322831cc2aa7fdab76258851ed47700188191ff72b75f4"
+  "production_four_abi": {
+    "commit": "8b8a701c505def36732cfe37175a9ac69a99814f",
+    "aab_bytes": 151959730,
+    "aab_sha256": "ea9dd18e22d57bd96770ff81ba3f3b1b1fd266dad476b4f6e08abb64eb65b0f5"
   },
-  "localReviewer": {
-    "aab_bytes": 61282259,
-    "js_sha256": "8966e91c3edb9b16e698e3e8db055b39c44f038be98c857be8ee36628d4e2104",
-    "dex_bytes": 12046100,
-    "dex_sha256": "92c741bf61fd2f6695322831cc2aa7fdab76258851ed47700188191ff72b75f4"
-  },
-  "saved_bytes": 7040390,
-  "saved_percent": 10.3
+  "note": "The historical x86_64 comparison is not comparable to the four-ABI production AAB or a Play download estimate."
 }

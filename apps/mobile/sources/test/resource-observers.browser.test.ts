@@ -57,7 +57,7 @@ describe('resource observers in the desktop web renderer', () => {
           document.querySelector('[data-testid="signin-retry"]')?.click();
           globalThis.__recover = true;
           globalThis.__roomListeners.broken?.({ monolithLive: { type: 'invalidate', roomId: 'broken', reason: 'message' } });
-          document.querySelector('[data-testid="connect-pair-retry"]')?.click(); }, 8500);
+          document.querySelector('[data-testid="connect-retry"]')?.click(); }, 8500);
         setTimeout(() => { output.retryReads = globalThis.__installReads; output.repaired = globalThis.__repaired; output.returnedToInstaller = globalThis.__backs;
           output.recoveredTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           output.workflowReads = globalThis.__workflowReads;

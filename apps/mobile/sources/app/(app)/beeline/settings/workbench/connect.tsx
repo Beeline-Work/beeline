@@ -289,7 +289,9 @@ function ConnectToolFlow() {
     const timer = setTimeout(() => setError('This step has not finished. Try again.'), 120_000);
     return () => clearTimeout(timer);
   }, [squire, activeIndex, shown[activeIndex]?.state, shown[activeIndex]?.key]);
-  const failed = failedIndex >= 0;
+  // An error with no step to stop (no steps reported yet) still ends the run visibly.
+  const errorUnplaced = Boolean(error) && !shown.some((step) => step.error);
+  const failed = failedIndex >= 0 || errorUnplaced;
   const signInReady = !failed && Boolean(install?.signIn);
   const openSignIn = () => {
     const signIn = install?.signIn;
@@ -386,7 +388,7 @@ function ConnectToolFlow() {
             ))}
           </View>
         ) : null}
-        {error && !showSteps ? <Text style={styles.failure} testID="connect-error">{error}</Text> : null}
+        {errorUnplaced ? <Text style={styles.failure} testID="connect-error">{error}</Text> : null}
         {helperLoadError && !helpers ? <Text style={styles.failure} testID="connect-error">Helpers are unavailable right now</Text> : null}
       </ScrollView>
       {showSteps ? (

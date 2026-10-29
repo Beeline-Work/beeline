@@ -74,9 +74,12 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
       for (const name of ['Machine A', 'Machine B', 'Machine C']) expect(proof.service).toContain(name);
       expect(proof.service).toContain('owner@example.com');
       expect(proof.service).not.toContain('Ready');
-      expect(proof.service).toContain('Google reconnect failed');
-      expect(proof.service).toContain('Google sign-in expired');
-      expect(proof.service).toContain('Google sign-in needed');
+      // Mock v3: every computer that is not signed in reads the same need and offers Connect.
+      expect(proof.service).toContain('2 need sign-in');
+      expect(proof.service).not.toContain('Google reconnect failed');
+      expect(proof.service).not.toContain('Google sign-in expired');
+      expect(proof.service.match(/Google sign-in needed/g)).toHaveLength(2);
+      expect(proof.service).toContain('Signed in as owner@example.com');
       expect(proof.service).not.toContain('Production API');
       expect(proof.sheet).not.toContain('Disconnect');
       expect(proof.destination).toMatchObject({ pathname: '/beeline/settings/workbench/connect',

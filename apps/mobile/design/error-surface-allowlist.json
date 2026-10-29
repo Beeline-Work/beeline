@@ -2,7 +2,7 @@
   {
     "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
-    "line": 1638,
+    "line": 1677,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline\n            title=\"Delivery failed\"\n            retryLabel=\"Retry\"\n            onRetry={() => onRetry(message.id)}\n            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}\n            testID={`outbox-delivery-failed-${message.id}`}\n            />",
     "ancestors": [
@@ -14,7 +14,7 @@
   {
     "layoutHash": "986bb68ae2c9cc0b62de89c1511233de88cb8d7af3d474c39cc349b6f7e174bc",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 6691,
+    "line": 6701,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}\n                        description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}\n                        retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]}`}\n                        retryDestination=\"external\"\n                        onRetry={() => void handleReconnectRoomRepository()} retryTestID=\"corner-open-repo-connect\"\n                        secondaryAction={{ label: 'Dismiss', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID=\"corner-open-repo-prompt\" />",
     "ancestors": [
@@ -30,7 +30,7 @@
   {
     "layoutHash": "7e27798b43bbeb36321a3cf6b672e812634dc958cdeee9e7b07750f766013593",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7283,
+    "line": 7294,
     "tag": "Text",
     "source": "<Text style={styles.membershipErrorText}>",
     "ancestors": [
@@ -44,7 +44,7 @@
   {
     "layoutHash": "7e27798b43bbeb36321a3cf6b672e812634dc958cdeee9e7b07750f766013593",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7326,
+    "line": 7337,
     "tag": "Text",
     "source": "<Text style={styles.membershipErrorText}>",
     "ancestors": [
@@ -58,7 +58,7 @@
   {
     "layoutHash": "8c09edac98eb5633727c6b999bc9b58629122b9578dfb7a936ce974bcdef1123",
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7408,
+    "line": 7419,
     "tag": "Text",
     "source": "<Text accessibilityRole=\"alert\" style={styles.membershipErrorText}>",
     "ancestors": [
@@ -111,7 +111,7 @@
   {
     "layoutHash": "9410f021b25773c0aefe141445438714218f22b6af583d818d58b54bda5ce22f",
     "file": "app/(app)/beeline/members.tsx",
-    "line": 1181,
+    "line": 1189,
     "tag": "Text",
     "source": "<Text style={styles.axisError} testID={`model-axis-error-${kind}`}>",
     "ancestors": [
@@ -124,7 +124,7 @@
   {
     "layoutHash": "3eaa59cc2c3745820e13d4848e117a97fd7b7d7121f468a326ee6ff25d9d09a4",
     "file": "app/(app)/beeline/members.tsx",
-    "line": 1244,
+    "line": 1252,
     "tag": "Text",
     "source": "<Text style={styles.switchError} testID=\"agent-access-error\">",
     "ancestors": [
@@ -137,7 +137,7 @@
   {
     "layoutHash": "3eaa59cc2c3745820e13d4848e117a97fd7b7d7121f468a326ee6ff25d9d09a4",
     "file": "app/(app)/beeline/members.tsx",
-    "line": 1284,
+    "line": 1292,
     "tag": "Text",
     "source": "<Text style={styles.switchError} testID=\"agent-yolo-error\">",
     "ancestors": [
@@ -150,7 +150,7 @@
   {
     "layoutHash": "d5517cc8d6b9f633f91ef4348a4e6669c92e0bbbe892a00d28df037473778207",
     "file": "app/(app)/beeline/onboarding.tsx",
-    "line": 592,
+    "line": 598,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={notice.title} description={notice.message} />",
     "ancestors": [
@@ -162,7 +162,7 @@
   {
     "layoutHash": "db2800bd9b78ccbaf9b983f7c2401e57a38f7c4ce28f9eb2d6690ba917b964cc",
     "file": "app/(app)/beeline/onboarding.tsx",
-    "line": 622,
+    "line": 628,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={notice.title} description={notice.message} />",
     "ancestors": [
@@ -199,42 +199,17 @@
     "reason": "kept, already inset: identity error panel supplies its content inset."
   },
   {
-    "layoutHash": "f420655f6ffe095b79db918e6edc3de0a185cf21eb1c9e2028bd20374ed81059",
-    "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
-    "line": 141,
-    "tag": "ErrorBanner",
-    "source": "<ErrorBanner\n              title={errorTitle}\n              description={!observed.error && signIn.url ? 'Retry, or open it in your browser.' : undefined}\n              onRetry={observed.installMissing ? () => router.back() : () => void retry()}\n              retryLabel={observed.installMissing ? 'Go back' : 'Retry'}\n              retryTestID=\"signin-retry\"\n              secondaryAction={!observed.installMissing && signIn.url\n                ? { label: 'Open in browser', onPress: () => void openBrowser(), testID: 'signin-open-external' } : undefined}\n              testID=\"signin-error\"\n            />",
-    "ancestors": [
-      "<View style={styles.errorBlock}>",
-      "<View style={[styles.column, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]} testID=\"signin-card\">",
-      "<View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID=\"signin-overlay\">"
-    ],
-    "reason": "kept, already inset: the sign-in error block adds 8 to the banner's own 16 side margin, matching the 24 page inset."
-  },
-  {
-    "layoutHash": "8853babc9fa4e40ac5d9810da8e4f7e96f1b903402d5a0d878ee56e343f3b0ce",
+    "layoutHash": "096c9720717f6f3dee00b8dafeccee589c2f709bf75643a2ee0dcf97d691fd73",
     "file": "app/(app)/beeline/settings/workbench/connect.tsx",
-    "line": 390,
-    "tag": "ErrorBanner",
-    "source": "<ErrorBanner inline title=\"Connection failed\" onRetry={retry} retryTestID=\"connect-retry\" />",
+    "line": 389,
+    "tag": "Text",
+    "source": "<Text style={styles.failure} testID=\"connect-error\">",
     "ancestors": [
-      "<View testID=\"connect-install-progress\">",
-      "<ScrollView\n        style={styles.content}\n        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}\n        testID=\"connect-scroll\"\n      >",
+      "<Text style={styles.failure} testID=\"connect-error\">",
+      "<ScrollView style={styles.content} testID=\"connect-scroll\"\n        contentContainerStyle={[styles.contentInner, !showSteps && { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>",
       "<View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>"
     ],
-    "reason": "kept, already inset: install detail block and scroll content supply the inset."
-  },
-  {
-    "layoutHash": "8853babc9fa4e40ac5d9810da8e4f7e96f1b903402d5a0d878ee56e343f3b0ce",
-    "file": "app/(app)/beeline/settings/workbench/connect.tsx",
-    "line": 410,
-    "tag": "ErrorBanner",
-    "source": "<ErrorBanner inline title={error ?? 'Helpers are unavailable right now'} titleTestID=\"connect-error\"\n            onRetry={pairedHelperRef.current || observedId ? retry : undefined} retryTestID=\"connect-pair-retry\" />",
-    "ancestors": [
-      "<ScrollView\n        style={styles.content}\n        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}\n        testID=\"connect-scroll\"\n      >",
-      "<View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>"
-    ],
-    "reason": "kept, already inset: install detail block and scroll content supply the inset."
+    "reason": "kept, already inset: the pairing page scroll content supplies the 24 pt page inset."
   },
   {
     "layoutHash": "6f6c51d9b397aea6c562bcd6080dce938d46b2b306a423e2f4bb8b9b84ed8085",
@@ -249,22 +224,9 @@
     "reason": "kept, already inset: connection detail scroll content supplies the inset."
   },
   {
-    "layoutHash": "dbd03d402e54814cf9e4560758b06035f9adc1121c0f4c02d915c775782fab37",
-    "file": "app/(app)/beeline/settings/workbench/service.tsx",
-    "line": 175,
-    "tag": "Text",
-    "source": "<Text style={styles.error} testID=\"squire-computer-offline\">",
-    "ancestors": [
-      "<Text style={styles.error} testID=\"squire-computer-offline\">",
-      "<HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>",
-      "<View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID=\"connector-service-screen\">"
-    ],
-    "reason": "kept, already inset: computer offline explanation belongs to its action sheet."
-  },
-  {
     "layoutHash": "66170278634acfc57d9ad02ffc1cfd2b93b9b4b74dae048274c04c8c288d0f13",
     "file": "app/(app)/beeline/tray.tsx",
-    "line": 837,
+    "line": 843,
     "tag": "Text",
     "source": "<Text style={styles.empty}>",
     "ancestors": [
@@ -301,7 +263,7 @@
   {
     "layoutHash": "65813716cc959b8cd98d427bf2ba9ed4a6448e51cbd167641cb79895ddf51cb7",
     "file": "components/DesktopRoomInspector.tsx",
-    "line": 642,
+    "line": 651,
     "tag": "Text",
     "source": "<Text style={styles.error}>",
     "ancestors": [
@@ -314,7 +276,7 @@
   {
     "layoutHash": "0ced32308678388d08cc42d5f8b67dc0fd813ad6e986e7b6f28844fc1ca2f8d2",
     "file": "components/buzz/AgentProfileView.tsx",
-    "line": 156,
+    "line": 157,
     "tag": "Text",
     "source": "<Text style={styles.copy} accessibilityRole=\"alert\">",
     "ancestors": [
@@ -328,7 +290,7 @@
   {
     "layoutHash": "f64aafc50f9efe01b182ef520865c14b8047c9206d0251043a714f98354d1516",
     "file": "components/buzz/AgentProfileView.tsx",
-    "line": 337,
+    "line": 341,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title=\"Could not load older work. Your current list is still available.\" onRetry={() => void moreWork()} retrying={workLoading} retryTestID=\"load-more-agent-work\" />",
     "ancestors": [
@@ -362,7 +324,7 @@
   {
     "layoutHash": "1457aa205aef10d1de5120408b61b27bf92e9a88fd680f92e4543b7c1b298b68",
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 705,
+    "line": 697,
     "tag": "Text",
     "source": "<Text style={styles.statusText} accessibilityRole=\"alert\" testID=\"voice-connection-error\">",
     "ancestors": [
@@ -399,7 +361,7 @@
   {
     "layoutHash": "ee1b919b31745fd1b156f8e4cc9c591a32e7678b2dcbd5adf9a07d0ff3aaa02c",
     "file": "components/buzz/MemberPickerSheet.tsx",
-    "line": 117,
+    "line": 120,
     "tag": "Text",
     "source": "<Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\">",
     "ancestors": [
@@ -519,7 +481,7 @@
   {
     "layoutHash": "33f1d02d3cf84bd2e01e5ede88d4a63482836a1a9074470c2219a0ec14776cf6",
     "file": "components/buzz/RoomRosterSheet.tsx",
-    "line": 275,
+    "line": 267,
     "tag": "Text",
     "source": "<Text style={styles.membershipErrorText}>",
     "ancestors": [
@@ -533,7 +495,7 @@
   {
     "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "file": "components/buzz/RuntimeErrorBoundary.tsx",
-    "line": 25,
+    "line": 24,
     "tag": "Text",
     "source": "<Text selectable style={{ ...theme.type.body, color: theme.textPrimary }} testID=\"runtime-error-message\">",
     "ancestors": [
@@ -558,7 +520,7 @@
   {
     "layoutHash": "3bc372657e16dbb3af7a518f52c010637722e97dab98260022441899915d8114",
     "file": "components/buzz/TranscriptCard.tsx",
-    "line": 467,
+    "line": 465,
     "tag": "Text",
     "source": "<Text style={styles.errorTitle}>",
     "ancestors": [
@@ -574,7 +536,7 @@
   {
     "layoutHash": "2dd3c40ba5a2af6bf3c2cc6542b23003cb2d83d3309f74319c6d4fdead761b0c",
     "file": "components/buzz/TranscriptCard.tsx",
-    "line": 468,
+    "line": 466,
     "tag": "Text",
     "source": "<Text style={styles.errorDescription}>",
     "ancestors": [

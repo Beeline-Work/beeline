@@ -158,7 +158,7 @@ function ConnectorSignInOverlay() {
   }, [fallback, observed.retry]);
 
   const failure = observed.error ?? pageError;
-  const failureLine = failure === PAGE_LOAD_ERROR
+  const errorLine = failure === PAGE_LOAD_ERROR
     ? `${machineName}’s browser didn’t answer within 15 seconds. Try again, or finish sign-in in your phone’s browser.`
     : failure;
   const streamed = signIn.method !== 'oauth';
@@ -182,7 +182,7 @@ function ConnectorSignInOverlay() {
           ) : failure ? (
             <View style={styles.center} accessibilityLiveRegion="polite" testID="signin-error">
               <Text style={styles.centerTitle}>{squire ? 'Google sign-in didn’t load' : `${connectorName} sign-in didn’t load`}</Text>
-              <Text style={styles.centerLine}>{failureLine}</Text>
+              <Text style={styles.centerLine}>{errorLine}</Text>
             </View>
           ) : fallback ? (
             <View style={[styles.center, styles.centerBare]} testID="signin-finishing">

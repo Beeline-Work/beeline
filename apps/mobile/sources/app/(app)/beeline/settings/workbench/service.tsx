@@ -136,7 +136,10 @@ export default function ConnectorServiceScreen() {
         <Text style={styles.note} testID="connector-info-agents">{agents}</Text>
         {row.attention && row.kind !== 'sign-in-service' ? <SettingsRow title={row.attention} /> : null}
         {row.kind === 'sign-in-service' ? <View>
-          <Text style={styles.section} testID="squire-computers-head">Your computers<Text style={styles.sectionCount}>{`  ${row.machines.length}`}</Text></Text>
+          <InlineRow style={styles.sectionLine} testID="squire-computers-head">
+            <Text accessibilityRole="header" style={styles.section}>YOUR COMPUTERS</Text>
+            <Text style={[styles.section, styles.sectionCount]}>{row.machines.length}</Text>
+          </InlineRow>
           {row.machines.map(item => signedIn(item)
             // A signed-in computer opens its own sheet; every other one connects in one tap.
             ? <SettingsRow appBoard key={item.id} title={item.name} description={item.statusText ?? signedInLine(item)}
@@ -194,6 +197,7 @@ const styles = StyleSheet.create(theme => ({
   note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet },
   section: { ...theme.buzz.squireConnect.sectionType, textTransform: 'uppercase', color: theme.buzz.textMuted, marginBottom: theme.buzz.space.xs },
   sectionCount: { color: theme.buzz.textDisabled },
+  sectionLine: { gap: theme.buzz.squireConnect.dotGap },
   signedIn: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.squireConnect.dotGap },
   signedInDot: { width: 7, height: 7, borderRadius: 7 / 2, backgroundColor: theme.buzz.diffAdded },
   signedInText: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, flexShrink: 1 }, error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },

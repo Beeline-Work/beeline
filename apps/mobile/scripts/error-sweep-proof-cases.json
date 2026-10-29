@@ -646,7 +646,7 @@
     {
       "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
       "beforeLine": 124,
-      "afterLine": 141,
+      "afterLine": 185,
       "id": "sweep-23",
       "label": "app/(app)/beeline/settings/workbench/connect-signin.tsx:124",
       "before": {
@@ -667,12 +667,12 @@
       "after": {
         "selectors": [
           {
-            "tag": "ErrorBanner",
-            "hash": "adbfe02895594fa8df9371ed2ea484f72d53830dbe8c08a8558439655cee284c",
+            "tag": "Text",
+            "hash": "d47a6a4e117c0b43df4cb1fb241a25491827c0acf499ead4b6aeade3d10c98b6",
             "occurrence": 0
           }
         ],
-        "sourceLine": 141
+        "sourceLine": 185
       }
     },
     {

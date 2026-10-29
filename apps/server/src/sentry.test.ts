@@ -295,7 +295,7 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
 
-it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', async () => {
+it('BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5: real agent handlers keep refusals out of Sentry', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -308,6 +308,7 @@ it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', a
     const port = (collector.address() as AddressInfo).port;
     const source = `
       import assert from 'node:assert/strict';
+      import { createServer } from 'node:http';
       import { reserveServiceReviewWorkspaces } from './src/service-review.ts';
       import { saveWorkflow, startWorkflow } from './src/workflow-runs.ts';
       import { ComposioApps } from './src/composio-apps.ts';
@@ -333,16 +334,28 @@ it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', a
       await db.query("INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at) VALUES($1,$2,'artifact','test/key','text/plain','File',10,repeat('d',64),'ready',now()+interval '24 hours')", [media,agent]);
       const live = new LiveHub();
       let providerFault = 'flagged404';
-      const provider = new ComposioApps('fixture-only', async (url) => {
+      const providerResponse = async (url) => {
         const path = new URL(String(url)).pathname;
+        if (path.endsWith('/toolkits')) return Response.json({items:[]});
         if (path.includes('/connected_accounts/')) return Response.json({id:'fixture-account',user_id:human,status:'ACTIVE',toolkit:{slug:'slack'}});
         if (path.endsWith('/tools/SLACK_FETCH')) return Response.json({version:'fixture',toolkit:{slug:'slack'}});
         if (path.endsWith('/tools/execute/SLACK_FETCH')) {
+          if (providerFault === 'permission') return Response.json({successful:false,error:JSON.stringify({error:{code:403,message:'Request had insufficient authentication scopes.',status:'PERMISSION_DENIED'}})});
+          if (providerFault === 'nested404') return Response.json({successful:false,error:JSON.stringify({error:{code:404,message:'Not Found',status:'NOT_FOUND'}})});
+          if (providerFault === 'unexpected') return Response.json({successful:false,error:JSON.stringify({error:{code:500,message:'Insufficient Permission',status:'INTERNAL'}})});
           if (providerFault === 'flagged404') return Response.json({successful:false,error:JSON.stringify({message:'Not Found',status_code:404})});
           return Response.json({message:'upstream broken'}, {status:providerFault === 'http404' ? 404 : 500});
         }
-        throw new Error('unexpected provider path');
+        throw new Error('unexpected provider path: '+path);
+      };
+      const upstream = createServer(async (request,response) => {
+        const fixture = await providerResponse('http://fixture'+request.url);
+        response.writeHead(fixture.status,{'content-type':'application/json'});
+        response.end(await fixture.text());
       });
+      await new Promise(r => upstream.listen(0,'127.0.0.1',r));
+      const provider = new ComposioApps('fixture-only', (url,init) =>
+        fetch('http://127.0.0.1:'+upstream.address().port+new URL(String(url)).pathname,init));
       const daemon = new DaemonService(db, live, undefined, 10);
       Object.assign(daemon,{composio:provider});
       await db.query("INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route,composio_account_id) VALUES('44444444-4444-4444-8444-444444444444',$1,$2,'slack','Slack','composio','composio','fixture-account')",[workspace,human]);
@@ -394,13 +407,19 @@ it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', a
           const result = await call({...input,runId,outcome:'reviewed',contents},'handoff');
           assert.match(result.body.error,name === 'workspace-walk' ? /workspace receipt must match/ : /contents exceeds 16 KB/);
         }
-        for (const failure of ['flagged404','http404']) {
+        for (const failure of ['flagged404','http404','permission','nested404']) {
           providerFault = failure;
           const result = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
-          assert.ok(result.body.error.includes(failure === 'flagged404' ? 'App tool execution failed:' : 'App provider request failed (404)'));
+          assert.ok(result.body.error.includes(failure !== 'http404' ? 'App tool execution failed:' : 'App provider request failed (404)'));
+          assert.equal(result.status,failure === 'permission' ? 403 : 404);
+          if (failure === 'permission') assert.equal(result.body.error,'App tool execution failed: '+JSON.stringify({error:{code:403,message:'Request had insufficient authentication scopes.',status:'PERMISSION_DENIED'}}));
           if (failure === 'flagged404') assert.ok(result.body.error.includes('Not Found'));
         }
         await flushServerErrors();
+        providerFault = 'unexpected';
+        const unexpected = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
+        assert.equal(unexpected.status,503);
+        assert.ok(unexpected.body.error.includes('Insufficient Permission'));
         providerFault = 'http500';
         const outage = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
         assert.equal(outage.status,503);
@@ -411,6 +430,7 @@ it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', a
         await flushServerErrors();
       } finally {
         await new Promise(r => server.close(r));
+        await new Promise(r => upstream.close(r));
         await db.close();
       }
       process.exit(0);`;
@@ -425,9 +445,11 @@ it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', a
     expect(result, result.error).toMatchObject({ code: 0 });
     const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
       .filter(item => item.exception);
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
     expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
-      'App provider request failed (500): upstream broken', 'queued attachments exceed the size cap',
+      'App provider request failed (500): upstream broken',
+      'App tool execution failed: '+JSON.stringify({error:{code:500,message:'Insufficient Permission',status:'INTERNAL'}}),
+      'queued attachments exceed the size cap',
     ]);
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);

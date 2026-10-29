@@ -762,6 +762,36 @@ describe('managed app provider boundary', () => {
     expect(failure).toMatchObject({ status: 404 });
   });
 
+  it.each([
+    [403, { error: { code: 403, message: 'Request had insufficient authentication scopes.', status: 'PERMISSION_DENIED' } }],
+    [404, { error: { code: 404, message: 'Not Found', status: 'NOT_FOUND' } }],
+    [undefined, { error: { code: 500, message: 'Insufficient Permission', status: 'INTERNAL' } }],
+    [undefined, { message: 'Insufficient Permission' }],
+    [undefined, { status_code: 503, error: { code: 404, status: 'NOT_FOUND' } }],
+    [undefined, { status_code: 500, error: { code: 403, status: 'PERMISSION_DENIED' } }],
+    [undefined, { error: { code: 503, message: 'Not Found', status: 'UNAVAILABLE' } }],
+  ])('APP-REFUSAL-5: structured provider error has refusal status %s', async (status, detail) => {
+    const transport = vi.fn(async (url: URL | string) => {
+      const path = new URL(String(url)).pathname;
+      if (path.includes('/connected_accounts/')) return json({
+        id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/SLACK_POST_MESSAGE')) return json({
+        version: 'fixture', toolkit: { slug: 'slack' },
+      });
+      return json({ successful: false, error: JSON.stringify(detail) });
+    });
+    const failure = await new ComposioApps('fixture-only', transport as typeof fetch).execute({
+      accountId: ACCOUNT, userId: PERSON, toolkit: 'slack', tool: 'SLACK_POST_MESSAGE', arguments: {},
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe('App tool execution failed: ' + JSON.stringify(detail));
+    if (status) {
+      expect(failure).toBeInstanceOf(CommandRefusalError);
+      expect(failure).toMatchObject({ status });
+    } else expect(failure).not.toBeInstanceOf(CommandRefusalError);
+  });
+
   it('keeps the fixed execution message when a flag is set without an error detail', async () => {
     const transport = vi.fn(async (url: URL | string) => {
       const path = new URL(String(url)).pathname;

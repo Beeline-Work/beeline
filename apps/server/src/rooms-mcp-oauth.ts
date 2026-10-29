@@ -421,10 +421,11 @@ export class RoomsMcpOAuth {
       // Parameter names only: values such as code, verifier, secret and tokens never reach the log.
       if (request.method === 'POST' && path === '/mcp/oauth/token') console.warn('[rooms-mcp-oauth] token refused', JSON.stringify({ error: message,
         reason: error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : tokenInput ? 'invalid_parameter' : 'invalid_body',
-        grant_type: typeof tokenInput?.grant_type === 'string' ? tokenInput.grant_type.slice(0, 60) : undefined,
+        // grant_type and content-type are client-chosen strings, so only fixed categories reach the log.
+        grant_type: tokenInput?.grant_type === undefined ? undefined : ['authorization_code', 'refresh_token'].includes(String(tokenInput.grant_type)) ? tokenInput.grant_type : 'other',
         params: tokenInput ? Object.keys(tokenInput).slice(0, 20).map(key => key.slice(0, 40)).sort() : undefined,
         client_auth: request.headers.authorization ? /^(basic|bearer)\s/i.exec(request.headers.authorization)?.[1]!.toLowerCase() ?? 'other' : 'none',
-        content_type: request.headers['content-type']?.split(';')[0]?.slice(0, 60) }));
+        content_type: ((type?: string) => type === undefined ? undefined : ['application/json', 'application/x-www-form-urlencoded'].includes(type) ? type : 'other')(request.headers['content-type']?.split(';')[0]?.trim().toLowerCase()) }));
       if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,
         ...(error instanceof SyntaxError ? { reason: 'invalid_json' } : {}), ...registrationSummary(registrationInput) }));
       if (message === 'invalid_client' && request.headers.authorization) response.setHeader('www-authenticate', 'Basic realm="Beeline MCP"');

@@ -340,6 +340,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         [{ ...base, client_secret: 'secret-value-123' }, {}, 'invalid_client', 'client_secret_unexpected'],
         [{ grant_type: 'refresh_token', client_id: grant.clientId, refresh_token: 'refresh-value-123' }, {}, 'invalid_grant', 'refresh_token_invalid'],
         [{ grant_type: 'password', client_id: grant.clientId }, {}, 'unsupported_grant_type', 'grant_type_unsupported'],
+        // A client-chosen grant_type or content-type never reaches the log verbatim.
+        [{ grant_type: 'grant-sentinel-123', client_id: grant.clientId, client_secret: 'grant-sentinel-123' }, { 'content-type': 'application/x-www-form-urlencoded; x=y', 'x-ignored': 'z' }, 'unsupported_grant_type', 'grant_type_unsupported'],
       ];
       for (const [input, headers, error, reason] of cases) {
         warn.mockClear();
@@ -348,8 +350,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         expect(warn).toHaveBeenCalledTimes(1);
         const [label, line] = warn.mock.calls[0] as [string, string];
         expect(label).toBe('[rooms-mcp-oauth] token refused');
-        expect(JSON.parse(line)).toMatchObject({ error, reason, grant_type: input.grant_type, params: Object.keys(input).sort() });
-        for (const secret of [grant.code!, grant.verifier, 'secret-value-123', 'refresh-value-123', input.code_verifier!, input.code!].filter(Boolean))
+        const grantType = ['authorization_code', 'refresh_token'].includes(input.grant_type!) ? input.grant_type : 'other';
+        expect(JSON.parse(line)).toMatchObject({ error, reason, grant_type: grantType, params: Object.keys(input).sort(), content_type: 'application/x-www-form-urlencoded' });
+        for (const secret of [grant.code!, grant.verifier, 'secret-value-123', 'refresh-value-123', 'grant-sentinel-123', 'password', input.code_verifier!, input.code!].filter(Boolean))
           expect(line).not.toContain(secret);
       }
       warn.mockClear();

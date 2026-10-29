@@ -15,7 +15,7 @@ import {
 import { resolveCurrentMemberMentions, tagsKnownIdentitySql } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
-import { systemLine } from './system-line.js';
+import { systemIdentityMention, systemLine } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 export { CommandRefusalError } from './command-refusal.js';
 
@@ -229,7 +229,6 @@ export async function stopCommandedTurn(
        AND turn.generation_id NOT LIKE 'pending:%'
      ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1 FOR UPDATE OF command`,
     [address, worker.id])).rows[0];
-  const subject = { kind: 'agent' as const, id: worker.id, name: worker.handle ? `@${worker.handle}` : worker.name };
   if (!running)
     return { stopped: false, address, agent: worker.id, receipt: 'No running turn to stop. Send an order; it runs now.' };
   const order = await commandOrder(db, running);
@@ -256,13 +255,12 @@ export async function stopCommandedTurn(
      WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
        AND action IN ('input','resume') AND state IN ('pending','claimed')`,
     [address, worker.id, running.turn_request_id]);
-  const stopper = (await db.query<{ name: string; handle: string | null }>(
-    'SELECT name,handle FROM identities WHERE id=$1', [agentId])).rows[0];
+  // Approved by lunchboxfortwo: "@commander stopped @worker's running turn".
   await systemLine(db, {
     id: createHash('sha256').update(`agent-stop-line:${command.id}:${running.id}`).digest('hex'),
-    roomId: address, authorId: worker.id, subject, verb: 'stopped its running turn',
-    consequence: [`for ${stopper?.handle ? `@${stopper.handle}` : stopper?.name ?? agentId}`,
-      ...(dropped ? [`${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`] : [])].join(' · '),
+    roomId: address, authorId: worker.id, subject: { kind: 'agent', id: agentId, name: agentId }, verb: 'stopped',
+    object: `${systemIdentityMention({ ...worker, kind: 'agent' })}'s running turn`,
+    ...(dropped ? { consequence: `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` } : {}),
   });
   return { stopped: true, address, agent: worker.id, droppedOrders: dropped,
     receipt: 'Running turn stopped. Send a new order; it runs next.' };

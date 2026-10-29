@@ -1595,8 +1595,8 @@ it('AGENT-STOP-1: a commander stops its worker\'s running turn, then its new ord
     expect(result).toMatchObject({ stopped: true, agent: WORKER });
     expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
       [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('cancelled');
-    expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%stopped its running turn%'`,
-      [opened.cornerId])).rows).toHaveLength(1);
+    expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%stopped @%''s running turn%'`,
+      [opened.cornerId])).rows.map((row) => row.text)).toEqual([expect.stringMatching(/^@\S+ stopped @\S+'s running turn$/)]);
     await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'New plan: paint it green' }, RUBY);
     pushed?.((await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER)).commands);
     await vi.waitFor(() => expect(prompts).toHaveLength(2));

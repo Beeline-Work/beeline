@@ -395,6 +395,7 @@ export function HullDialogActions({
 export const HullDialogInput = React.forwardRef<
   TextInput,
   TextInputProps & {
+    accessory?: React.ReactNode;
     ruleStyle?: StyleProp<ViewStyle>;
     // Search cells share the page or sheet row geometry; dialog fields keep
     // their original underline. Room search matches the compact filter row.
@@ -402,7 +403,7 @@ export const HullDialogInput = React.forwardRef<
     // Read-only tap target, e.g. Connectors search that opens the search sheet.
     onPress?: () => void;
   }
->(function HullDialogInput({ style, ruleStyle, variant = 'dialog', onPress, ...props }, ref) {
+>(function HullDialogInput({ style, ruleStyle, variant = 'dialog', onPress, accessory, ...props }, ref) {
   const { theme } = useUnistyles();
   // Layout belongs to the wrapper; the native field owns only its shared type
   // and underline geometry. Keep flex/margins at existing row/search callers.
@@ -434,6 +435,7 @@ export const HullDialogInput = React.forwardRef<
   const searchCell = variant === 'search' || variant === 'sheetSearch' || variant === 'roomSearch';
   const boxStyle = [
     styles.inputRule,
+    accessory ? { flexDirection: 'row' as const, alignItems: 'center' as const } : undefined,
     variant === 'boxed' && styles.inputRuleBoxed,
     searchCell && styles.searchCell,
     variant === 'sheetSearch' && styles.sheetSearchCell,
@@ -443,6 +445,7 @@ export const HullDialogInput = React.forwardRef<
     focused && (variant === 'boxed' ? styles.inputFocusedBoxed : styles.inputFocused),
   ];
   const inputStyle = [
+    accessory ? { flex: 1, minWidth: 0 } : undefined,
     innerStyle,
     styles.input,
     variant === 'boxed' && styles.inputBoxed,
@@ -502,6 +505,7 @@ export const HullDialogInput = React.forwardRef<
         placeholderTextColor={props.placeholderTextColor ?? theme.buzz.textDisabled}
         style={inputStyle}
       />
+      {accessory}
     </View>
   );
 });

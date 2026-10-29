@@ -29,6 +29,7 @@ import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscriptio
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
+import { vaultSaveRequest, type VaultSaveCard } from '@beeline/api-contract/daemon';
 import { FIRST_PARTY_INTEGRATIONS, firstPartyIntegration, settleFirstPartySignIn } from './first-party-integrations.js';
 import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
@@ -538,6 +539,7 @@ export class DaemonService {
     if (name === 'postRoomMessage' && candidate.relay !== undefined)
       throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     const turnWrites = new Set([
+      'postVaultSaveCard',
       'postAgentAvatar',
       'postRoomMessage',
       'postCornerMessage',
@@ -2036,6 +2038,19 @@ export class DaemonService {
       case 'executeAppTool':
         return (await this.executeAppTool(input as Input<'executeAppTool'>,
           authenticatedAgentId)) as Output<Name>;
+      case 'postVaultSaveCard': {
+        const cardInput = input as Input<'postVaultSaveCard'>;
+        const metadata = vaultSaveRequest(cardInput);
+        const context = await this.offerContext(cardInput.roomId, authenticatedAgentId);
+        const card: VaultSaveCard = { ...metadata, agentId: authenticatedAgentId,
+          ownerId: context.owner.pubkey, ownerName: context.owner.name, status: 'pending' };
+        const line = await systemLine(this.database, { roomId: cardInput.roomId,
+          subject: { kind: 'agent', id: authenticatedAgentId, name: context.agent.name },
+          verb: 'wants a vault entry', object: `${metadata.service} / ${metadata.label}`,
+          consequence: metadata.purpose, presentation: 'card', cardType: 'vault-save',
+          card: { ...card, originCommandId: this.authorizedCommand!.id } as unknown as Record<string, unknown> });
+        return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
+      }
       case 'offerConnector':
         return (await this.offerConnector(
           input as Input<'offerConnector'>,
@@ -9296,6 +9311,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAppTools: true,
   executeAppTool: true,
   offerConnector: true,
+  postVaultSaveCard: true,
   createCorner: true,
   setCornerHold: true,
   orderCornerMerge: true,

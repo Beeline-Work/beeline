@@ -256,6 +256,7 @@ import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
 import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
+import { readVaultSaveCard } from '@beeline/api-contract/phone';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
@@ -859,6 +860,10 @@ function projectedMessage(
   };
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
+    case 'vault-save': {
+      const card = readVaultSaveCard(row.card);
+      return card ? { ...base, vaultSave: card } : base;
+    }
     case 'voice-call':
       return { ...base, voiceCall: row.card as NonNullable<RoomViewMessage['voiceCall']> };
     case 'permission':

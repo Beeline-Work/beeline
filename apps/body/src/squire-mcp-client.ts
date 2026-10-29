@@ -197,7 +197,7 @@ export class StdioSquireMcpClient {
       // Vault operations return pending instead of waiting for a person. A
       // hung transport must fail before the turn's liveness deadline.
       const vaultCall = toolName !== undefined &&
-        ['fetch_credential', 'edit_credential', 'delete_credential', 'edit_payment_card'].includes(toolName);
+        ['store_credential', 'fetch_credential', 'edit_credential', 'delete_credential', 'edit_payment_card'].includes(toolName);
       const timeoutMs = method === 'initialize' || vaultCall ? INITIALIZE_TIMEOUT_MS : CALL_TIMEOUT_MS;
       const timer = setTimeout(
         () => {

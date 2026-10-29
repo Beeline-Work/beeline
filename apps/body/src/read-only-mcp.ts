@@ -3745,6 +3745,8 @@ async function executeAgentOperation(
       return fetchImage(args);
     case 'post_artifact':
       return postArtifact(args);
+    case 'post_vault_save_card':
+      return JSON.stringify(await daemonExecute('postVaultSaveCard', { ...args, roomId: agentScheduleRoomId() } as never));
     case 'share_browser':
       return shareBrowser(args);
     case 'end_browser_share': {

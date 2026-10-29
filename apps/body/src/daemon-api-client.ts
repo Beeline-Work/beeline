@@ -137,6 +137,7 @@ export type DaemonClientMetrics = {
 
 const REQUEST_DEADLINE_MS = 30_000;
 const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
+  'vault-save',
   'helper-release',
   'rooms-changed',
   'discovery-wake',
@@ -184,6 +185,7 @@ export class DaemonApiClient {
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
   private usageRefreshListener?: (requestId?: string) => void;
+  private vaultSaveListener?: (frame: Record<string, unknown>) => void;
   private agentSignInListener?: (frame: AgentSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
@@ -350,6 +352,18 @@ export class DaemonApiClient {
     this.usageRefreshListener = listener;
   }
 
+  setVaultSaveListener(listener: (frame: Record<string, unknown>) => void): void {
+    this.vaultSaveListener = listener;
+  }
+
+  async answerVaultSave(attemptId: string, answer: object): Promise<void> {
+    // Only whitelisted metadata reaches this endpoint; upstream text never does.
+    await this.fetchImpl(endpoint(this.baseUrl, '/v1/vault-save/answer'), {
+      method: 'POST', headers: { authorization: `Bearer ${this.daemonToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ attemptId, answer }), signal: AbortSignal.timeout(10_000),
+    });
+  }
+
   setAgentSignInListener(listener: (frame: AgentSignInFrame) => void): void {
     this.agentSignInListener = listener;
   }
@@ -464,6 +478,10 @@ export class DaemonApiClient {
   }
 
   private liveMessage(event: Record<string, unknown>): void {
+    if (event.type === 'vault-save') {
+      this.vaultSaveListener?.(event);
+      return;
+    }
     if (
       event.type === 'helper-release' &&
       typeof event.version === 'string' &&

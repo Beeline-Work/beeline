@@ -10,6 +10,7 @@ export * from './invite-token.js';
 export * from './agent-pairing-code.js';
 export * from './agent-grants.js';
 export * from './connector-offers.js';
+export * from './vault-save.js';
 export * from './room-choices.js';
 export * from './agent-access.js';
 export * from './faces.js';

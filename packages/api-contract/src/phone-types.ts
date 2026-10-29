@@ -310,6 +310,7 @@ export type RoomViewMessage = {
   };
   /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
   readonly connectorOffer?: ConnectorOfferCardView;
+  readonly vaultSave?: import('./vault-save.js').VaultSaveCard;
   /** A connected app is needed to finish the Room request. Route details stay server-side. */
   readonly appSignIn?: {
     readonly appId: string;

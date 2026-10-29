@@ -1,4 +1,5 @@
 export * from './daemon-operations.js';
+export * from './vault-save.js';
 export * from './reply-context.js';
 export * from './artifacts.js';
 export * from './corner-apps.js';

@@ -1,4 +1,6 @@
 import { createUsageRefresh } from './agent-usage-refresh.js';
+import { storeVaultSubmission, type VaultSaveSubmission } from './vault-save.js';
+import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { requireInstalledAgentProgram } from './agent-command.js';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -241,6 +243,19 @@ export async function runAgentRuntime(
   const refreshUsage = createUsageRefresh({ api: daemonApi, agentId,
     kind: config.agentKind, env: config.agentEnv, free: host.freeAgent });
   daemonApi.setUsageRefreshListener((requestId) => { void refreshUsage(requestId); });
+  const savingVaultCards = new Set<string>();
+  daemonApi.setVaultSaveListener(frame => {
+    if (typeof frame.attemptId !== 'string' || typeof frame.roomId !== 'string' ||
+        typeof frame.cardId !== 'string' || !frame.values || typeof frame.values !== 'object' ||
+        Array.isArray(frame.values) || savingVaultCards.has(frame.cardId)) return;
+    const submission = frame as unknown as VaultSaveSubmission;
+    savingVaultCards.add(submission.cardId);
+    const client = new StdioSquireMcpClient({ scope: { agentId, roomId: submission.roomId }, log: () => {} });
+    void storeVaultSubmission(submission, (tool, args) => client.call(tool, args))
+      .then(answer => daemonApi.answerVaultSave(submission.attemptId, answer))
+      .catch(() => {})
+      .finally(() => { client.close(); savingVaultCards.delete(submission.cardId); });
+  });
   // Join this agent to its plan account now, so it shows its siblings' reads while idle.
   void refreshUsage.attach();
   let connectorLoop: ConnectorAssignmentLoop | undefined;

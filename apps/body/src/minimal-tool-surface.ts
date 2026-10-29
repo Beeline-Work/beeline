@@ -9,6 +9,7 @@ import {
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
 export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
+  vault: { request: 'post_vault_save_card' },
   "onboarding": {"welcome": "post_starter_welcome", "video_preview": "post_starter_video_preview", "invite": "post_room_invite", "repository": "post_repository_card", "starters": "post_starters_card"},
   "workflow": {
     "save": "save_workflow",
@@ -48,6 +49,14 @@ export const REPOSITORY_ROUTES: Record<string, string> = {
 };
 export const SCRATCH_ROUTES: Record<string, string> = {"write": "write_scratch_file", "image": "fetch_image", "quota": "scratch_status"};
 export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = {
+  vault: { request: { name: 'request', description: 'Ask your owner to type secrets directly into a Save to vault card. Never ask for values in chat. This tool accepts names and purpose only. The saved card exposes reference and field names; values never reach you. No payment cards.', inputSchema: {
+    type: 'object', required: ['service', 'label', 'purpose', 'fields', 'allowedHosts', 'authStrategy'], additionalProperties: false,
+    properties: { service: { type: 'string', minLength: 1, maxLength: 80 }, label: { type: 'string', minLength: 1, maxLength: 80 },
+      purpose: { type: 'string', minLength: 1, maxLength: 240 }, authStrategy: { enum: ['api_key', 'username_password'] },
+      allowedHosts: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string' } },
+      fields: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'object', required: ['name', 'label', 'secret'], additionalProperties: false,
+        properties: { name: { type: 'string', pattern: '^[a-z][a-z0-9_]*$' }, label: { type: 'string' }, secret: { type: 'boolean' } } } } }
+  } } },
   onboarding: {
     video_preview: { name: 'video_preview', description: 'Show a Room clip frame, title, description and visibility above Post/Cancel. Upload the extracted frame as a Room image first. Nothing uploads to YouTube until Post is tapped.', inputSchema: { type: 'object', required: ['videoObjectId','frameObjectId','title','description','visibility'], properties: { videoObjectId: { type: 'string' }, frameObjectId: { type: 'string' }, title: { type: 'string', maxLength: 100 }, description: { type: 'string', maxLength: 5000 }, visibility: { enum: ['public','unlisted','private'] } }, additionalProperties: false } },
     welcome: { name: 'welcome', description: 'Post the signup welcome choices in this chat to rerun onboarding. Manual runs are excluded from signup funnel counts.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },

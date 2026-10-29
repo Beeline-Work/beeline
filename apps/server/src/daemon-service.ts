@@ -1538,11 +1538,43 @@ export class DaemonService {
           input as Input<'getRequestCompletion'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'postRoomMessage':
-        return (await this.postRoomMessage(
+      case 'markAgentTurnSilent':
+      case 'postRoomMessage': {
+        if (name === 'markAgentTurnSilent') {
+          const command = this.authorizedCommand;
+          if (!command) throw new CommandRefusalError('silence requires an active turn', 409);
+          if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
+            'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
+            'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
+            'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
+            'corner_background_tool', 'corner_brief_revision'].includes(command.reason))
+            throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
+          if (!(await this.database.query(`SELECT 1 FROM agent_pending_attachments
+            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 LIMIT 1`,
+            [command.room_id, authenticatedAgentId, command.turn_request_id, command.generation_id])).rowCount) {
+            await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
+              WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+              [command.room_id, authenticatedAgentId, command.turn_request_id]);
+            return this.writeResult() as Output<Name>;
+          }
+          // Drain promised files through the same ordinary reply path before
+          // recording silence; the reply writer never receives System prose.
+          input = { roomId: command.room_id, requestId: command.turn_request_id!,
+            generationId: command.generation_id!, text: '' } as Input<Name>;
+        }
+        const output = await this.postRoomMessage(
           input as Input<'postRoomMessage'>,
           authenticatedAgentId,
-        )) as Output<Name>;
+        );
+        if (name === 'markAgentTurnSilent') {
+          const command = this.authorizedCommand!;
+          await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
+            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+            [command.room_id, authenticatedAgentId, command.turn_request_id]);
+          return this.writeResult() as Output<Name>;
+        }
+        return output as Output<Name>;
+      }
       case 'reactToRoomMessage':
         return (await this.reactToRoomMessage(
           input as Input<'reactToRoomMessage'>,
@@ -1570,28 +1602,6 @@ export class DaemonService {
           input as Input<'retractAgentLiveOutput'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'markAgentTurnSilent': {
-        const command = this.authorizedCommand;
-        if (!command) throw new CommandRefusalError('silence requires an active turn', 409);
-        if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
-          'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
-          'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
-          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
-          'corner_background_tool', 'corner_brief_revision'].includes(command.reason))
-          throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
-        // Silence suppresses prose, never files already promised to the Room.
-        // The ordinary reply writer drains them once and folds them onto an
-        // earlier same-place post when one exists, inside this transaction.
-        if ((await this.database.query(`SELECT 1 FROM agent_pending_attachments
-          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 LIMIT 1`,
-          [command.room_id, authenticatedAgentId, command.turn_request_id, command.generation_id])).rowCount)
-          await this.postRoomMessage({ roomId: command.room_id, requestId: command.turn_request_id!,
-            generationId: command.generation_id!, text: '', presentation: 'message' }, authenticatedAgentId);
-        await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
-          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
-          [command.room_id, authenticatedAgentId, command.turn_request_id]);
-        return this.writeResult() as Output<Name>;
-      }
       case 'postAgentTurnReceipt':
         return (await this.turnReceipt(
           input as Input<'postAgentTurnReceipt'>,

@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
 import { unknownServerEventLogger } from './unknown-server-event.js';
-import { LiveLink, type LiveLinkTiming, type LiveSocketFactory } from './live-link.js';
+import { LIVE_LINK_TIMING, LiveLink, type LiveLinkTiming, type LiveSocketFactory } from './live-link.js';
 
 /** Subprotocol of the one socket a helper machine holds for all of its agents. */
 export const MACHINE_SOCKET_PROTOCOL = 'beeline.machine.1';
@@ -40,6 +40,8 @@ export class AgentChannel {
   #failures = 0;
   #retry: ReturnType<typeof setTimeout> | undefined;
   #registrations = 0;
+  #intakeHeartbeat = false;
+  #intakeDeadline: ReturnType<typeof setTimeout> | undefined;
   readonly #openListeners = new Set<() => void>();
 
   constructor(
@@ -73,6 +75,7 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.#clearIntakeDeadline();
     clearTimeout(this.#retry);
     this.#retry = undefined;
     if (this.#registered) this.send({ type: 'unregister' });
@@ -104,8 +107,9 @@ export class AgentChannel {
     this.#retry = undefined;
     // Pending before the send: an answer can arrive before send() returns.
     this.#pending = true;
+    this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true,
     }))) this.#pending = false;
   }
 
@@ -115,6 +119,11 @@ export class AgentChannel {
       this.#pending = false;
       if (!this.#wanted || this.#registered) return;
       this.#registered = true;
+      this.#intakeHeartbeat = Boolean(
+        (event.capabilities as { intakeHeartbeat?: unknown } | undefined)?.intakeHeartbeat === true,
+      );
+      this.#clearIntakeDeadline();
+      if (this.#intakeHeartbeat) this.#armIntakeDeadline();
       this.#registeredAt = Date.now();
       this.#registrations += 1;
       this.handlers.onOpen();
@@ -128,9 +137,14 @@ export class AgentChannel {
       }
       return;
     }
+    if (event.type === 'intake-ready') {
+      if (this.#registered && this.#intakeHeartbeat) this.#armIntakeDeadline();
+      return;
+    }
     if (event.type === 'register-refused') {
       if (this.#refused) return;
       this.#pending = false;
+      this.#clearIntakeDeadline();
       const code = typeof event.code === 'string' ? event.code : 'refused';
       console.warn(`[machine-link] server refused agent ${this.agentId}: ${code}`);
       this.#refused = ['daemon_token_required', 'agent_removed', 'too_many_agents'].includes(code);
@@ -157,6 +171,7 @@ export class AgentChannel {
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.#clearIntakeDeadline();
     clearTimeout(this.#retry);
     this.#retry = undefined;
     this.#pending = false;
@@ -170,12 +185,30 @@ export class AgentChannel {
 
   /** @internal */
   updateRequired(minVersion: string): void {
+    this.#clearIntakeDeadline();
     this.handlers.onUpdateRequired(minVersion);
+  }
+
+  #clearIntakeDeadline(): void {
+    clearTimeout(this.#intakeDeadline);
+    this.#intakeDeadline = undefined;
+  }
+
+  #armIntakeDeadline(): void {
+    this.#clearIntakeDeadline();
+    this.#intakeDeadline = setTimeout(() => {
+      this.#intakeDeadline = undefined;
+      if (!this.#wanted) return;
+      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; reconnecting`);
+      this.machine.reconnectNow();
+    }, this.machine.intakeTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs);
+    this.#intakeDeadline.unref?.();
   }
 
   #ended(): void {
     const registeredAt = this.#registeredAt;
     this.#registered = false;
+    this.#clearIntakeDeadline();
     this.#registeredAt = undefined;
     if (registeredAt !== undefined && Date.now() - registeredAt >= STABLE_REGISTRATION_MS)
       this.#failures = 0;
@@ -210,6 +243,7 @@ export class MachineLink {
   #reconciledOnSocket = false;
   #pendingRelease: Record<string, unknown> | undefined;
   readonly random: () => number;
+  readonly intakeTimeoutMs: number;
 
   constructor(
     private readonly options: {
@@ -221,6 +255,7 @@ export class MachineLink {
     },
   ) {
     this.random = options.random ?? Math.random;
+    this.intakeTimeoutMs = options.timing?.heartbeatTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs;
     this.link = new LiveLink({
       url: () => this.#url(),
       protocols: () => [MACHINE_SOCKET_PROTOCOL],
@@ -290,6 +325,7 @@ export class MachineLink {
   }
 
   stop(forUpdate = false): void {
+    for (const channel of this.#channels.values()) channel.socketClosed();
     this.#channels.clear();
     this.link.stop(forUpdate);
   }

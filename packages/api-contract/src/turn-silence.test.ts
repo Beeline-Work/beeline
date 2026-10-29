@@ -107,6 +107,7 @@ describe('turn silence classification', () => {
       'helper-out-of-date',
     );
     expect(classifyTurnSilence("Candy is offline - her helper isn't running").kind).toBe('offline');
+    expect(classifyTurnSilence('the helper is unreachable').kind).toBe('offline');
     expect(classifyTurnSilence('old process stopped', 'update-interrupted').kind).toBe(
       'update-interrupted',
     );
@@ -143,7 +144,7 @@ describe('turn silence phrasing', () => {
       "Candy could not answer · the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       "Candy could not answer · the helper couldn't get a working copy of acme/widgets. Check the repository is reachable.",
       "Candy could not answer · the helper is out of date. Run `beeline start` on the helper's machine.",
-      "Candy is offline · the helper isn't running. Run `beeline start` on the helper's machine.",
+      "Candy is offline · the helper is unreachable. If it stays offline, run `beeline start` on its machine.",
       'Candy was interrupted by an update · the request is queued to resume.',
     ]);
     for (const line of lines) {

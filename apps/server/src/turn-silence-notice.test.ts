@@ -704,7 +704,7 @@ describe('90-second first silence from presence', () => {
     await presence.observe(ROOM);
     await vi.advanceTimersByTimeAsync(100);
     expect(await failureLine(database, requestId)).toEqual({
-      text: "@candy is offline · the helper isn't running. Run `beeline start` on the helper's machine.",
+      text: "@candy is offline · the helper is unreachable. If it stays offline, run `beeline start` on its machine.",
       silence: 'offline',
       state: 'failed',
     });

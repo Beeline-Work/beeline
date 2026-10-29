@@ -566,17 +566,20 @@ export function createBeelineServer(options: ServerOptions): Server {
   // the helper drops a socket that stops pinging it and reconnects.
   const heartbeatMs = options.liveHeartbeatMs ?? LIVE_HEARTBEAT_MS;
   const heartbeatSockets = new Map<WebSocket, boolean>();
+  const intakeCheckpoints = new Map<WebSocket, () => void>();
   const heartbeat = setInterval(() => {
     for (const [client, answered] of heartbeatSockets) {
       if (!answered) {
         liveCounters.heartbeatTerminations++;
         heartbeatSockets.delete(client);
+        intakeCheckpoints.delete(client);
         client.terminate();
         continue;
       }
       heartbeatSockets.set(client, false);
       try {
         client.ping();
+        intakeCheckpoints.get(client)?.();
       } catch {
         // A socket that cannot queue a ping misses the next tick.
       }
@@ -901,6 +904,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
         client.on('close', () => {
           heartbeatSockets.delete(client);
+          intakeCheckpoints.delete(client);
           socketSubscriptions.delete(client);
         });
         if (principal.kind === 'machine')
@@ -911,6 +915,7 @@ export function createBeelineServer(options: ServerOptions): Server {
             sendLive,
             trackSubscriptions,
             heartbeatMs,
+            checkpoint => intakeCheckpoints.set(client, checkpoint),
           );
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;

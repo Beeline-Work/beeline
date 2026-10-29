@@ -418,6 +418,7 @@ describe('DaemonApiClient', () => {
     expect(first.sent.map((value) => JSON.parse(value))).toEqual([
       {
         type: 'register',
+        intakeHeartbeat: true,
         agentId: 'b'.repeat(64),
         token: `bdt_${'y'.repeat(43)}`,
         lifecycleId: expect.any(String),

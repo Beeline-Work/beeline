@@ -226,7 +226,7 @@ export function classifyTurnSilence(
     return { kind: 'workspace-failure', repo: repoFromReason(text) };
   }
 
-  if (/helper isn't running/i.test(text) || /helper is offline/i.test(text)) {
+  if (/helper isn't running/i.test(text) || /helper is offline/i.test(text) || /helper is unreachable/i.test(text)) {
     return { kind: 'offline' };
   }
 
@@ -375,7 +375,7 @@ export function phraseTurnSilence(
       return capLine(
         agent,
         'is offline',
-        "the helper isn't running. Run `beeline start` on the helper's machine.",
+        "the helper is unreachable. If it stays offline, run `beeline start` on its machine.",
       );
     case 'context-overflow':
       return capLine(

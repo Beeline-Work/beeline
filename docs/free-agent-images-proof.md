@@ -21,10 +21,10 @@ Running the new regressions against the original production source at
 
 ## Built handler demonstration
 
-Build the server, then run:
+Run the registered proof command:
 
 ```
-node --import tsx scripts/prove-free-agent-images.mjs
+npm run prove:free-agent-images
 ```
 
 The script prints a loopback relay address. GET that address to obtain the

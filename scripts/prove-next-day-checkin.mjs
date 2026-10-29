@@ -60,8 +60,13 @@ try {
   assert.ok(command); assert.match(command.source.body,/only this Room's visible messages/); assert.ok(!command.private);
   assert.equal(emails.length,0);
   await claimAgentCommand(db,R,A,command.id,'proof');
+  const daemon=new DaemonService(db,live);
+  // R-CHECKIN-ACTIVITY: real trigger must accept telemetry without consuming the reply.
+  await daemon.execute('postAgentActivity',{roomId:R,requestId:command.turnRequestId,generationId:'proof',
+    activity:[{kind:'thinking',title:'Planning the next step',status:'in_progress'}]},A);
+  assert.equal((await db.query(`SELECT sent_at FROM next_day_checkins`)).rows[0].sent_at,null);
   const text='@outside We were planning your pottery class. Shall we pick the first project?';
-  await new DaemonService(db,live).execute('postRoomMessage',{roomId:R,requestId:command.turnRequestId,generationId:'proof',text},A);
+  await daemon.execute('postRoomMessage',{roomId:R,requestId:command.turnRequestId,generationId:'proof',text},A);
   await worker().runOnce();
   const view=await phone.readRoom(R,U); assert.match(JSON.stringify(view),/pick the first project/);
   const push=[];
@@ -73,10 +78,11 @@ try {
   assert.equal(push.length,1);
   assert.equal(records[0].push_outcomes[0].status,'delivered');
   assert.equal(records.length,1); assert.equal(records[0].email_status,'sent'); assert.equal(emails.length,1);
-  assert.equal((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2`,[command.turnRequestId,A])).rowCount,1);
+  assert.equal((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2 AND presentation='message'`,[command.turnRequestId,A])).rowCount,1);
+  assert.equal((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2 AND presentation='activity'`,[command.turnRequestId,A])).rowCount,1);
   await mkdir(out,{recursive:true});
   await writeFile(new URL('email.html',out),emails[0].body.html);
-  await writeFile(new URL('proof.json',out),JSON.stringify({feature:'next-day-checkin',classification:'not a defect report',
+  await writeFile(new URL('proof.json',out),JSON.stringify({feature:'next-day-checkin',reproduction:'R-CHECKIN-ACTIVITY',
     standIns:['PGlite database','deterministic helper reply instead of live model','captured email and push providers'],
     visibleMessage:text,command:{reason:command.reason,prompt:command.source.body},records,emails,push},null,2)+'\n');
   console.log(JSON.stringify({roomMessage:text,records,emails:emails.length,pushes:push.length}));

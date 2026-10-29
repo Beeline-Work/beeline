@@ -7,6 +7,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { claimAgentCommand, readAgentCommands } from './agent-command.js';
+import { ExpectedRefusalError } from './command-refusal.js';
 
 const W='11111111-1111-4111-8111-111111111111', R='22222222-2222-4222-8222-222222222222';
 const U='a'.repeat(64), A='b'.repeat(64), M='c'.repeat(64);
@@ -50,6 +51,47 @@ beforeEach(async()=>{
 afterEach(async()=>{ await db.close(); vi.unstubAllEnvs(); });
 
 describe('next morning check-in (not a defect report)',()=>{
+  it('R-CHECKIN-ACTIVITY: accepts daemon activity without settling, then exposes exactly one plain reply',async()=>{
+    await first(); await runner().runOnce();
+    const command=(await db.query<{id:string;turn_request_id:string}>(`SELECT id,turn_request_id FROM agent_commands WHERE reason='free_agent_checkin'`)).rows[0]!;
+    await claimAgentCommand(db,R,A,command.id,'checkin-proof');
+    const daemon=new DaemonService(db,new LiveHub());
+    const input={roomId:R,requestId:command.turn_request_id,generationId:'checkin-proof'};
+    const activity={...input,activity:[{kind:'thinking' as const,title:'Planning the next step',status:'in_progress' as const}]};
+    await expect(daemon.execute('postAgentActivity',activity,A)).resolves.toHaveProperty('id');
+    expect((await record())?.sent_at).toBeNull();
+    expect((await record())?.message_id).toBeNull();
+    expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`,[command.id])).rows[0]?.state).toBe('claimed');
+    await expect(daemon.execute('postAgentActivity',{...activity,generationId:'stale'},A)).rejects.toThrow();
+    for (const output of [{text:'   '},{text:'A card',presentation:'card' as const}]) {
+      await expect(daemon.execute('postRoomMessage',{...input,...output},A)).rejects.toBeInstanceOf(ExpectedRefusalError);
+      expect((await record())?.sent_at).toBeNull();
+      expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`,[command.id])).rows[0]?.state).toBe('claimed');
+    }
+    const text='We were planning your pottery class. Shall we pick the first project?';
+    const result=await daemon.execute('postRoomMessage',{...input,text},A);
+    expect((await record())?.message_id).toBe(result.id);
+    expect(JSON.stringify(await phone.readRoom(R,U))).toContain(text);
+    await expect(daemon.execute('postRoomMessage',{...input,text:'A second check-in'},A)).rejects.toThrow('Do not post another check-in message');
+    await expect(daemon.execute('postRoomMessage',{...input,text},A)).rejects.toBeInstanceOf(ExpectedRefusalError);
+    await expect(daemon.execute('postAgentActivity',activity,A)).rejects.toThrow();
+    expect((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND presentation='message'`,[command.turn_request_id])).rowCount).toBe(1);
+    expect((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND presentation='activity'`,[command.turn_request_id])).rowCount).toBe(1);
+  });
+  it('R-CHECKIN-ACTIVITY: the trigger preserves invalid-output rollback and settlement fences',async()=>{
+    await first(); await runner().runOnce();
+    const command=(await db.query<{id:string;turn_request_id:string}>(`SELECT id,turn_request_id FROM agent_commands WHERE reason='free_agent_checkin'`)).rows[0]!;
+    for (const [presentation,text] of [['message',''],['card','A card'],['activity','Disguised reply']]) {
+      await expect(db.query(`INSERT INTO messages(id,room_id,author_id,request_id,presentation,text) VALUES('invalid-checkin',$1,$2,$3,$4,$5)`,
+        [R,A,command.turn_request_id,presentation,text])).rejects.toThrow('one plain Room message');
+      expect((await record())?.sent_at).toBeNull();
+      expect((await db.query(`SELECT 1 FROM messages WHERE id='invalid-checkin'`)).rowCount).toBe(0);
+    }
+    await db.query(`UPDATE next_day_checkins SET skip_reason='returned' WHERE identity_id=$1`,[U]);
+    await expect(db.query(`INSERT INTO messages(id,room_id,author_id,request_id,presentation,text) VALUES('late-activity',$1,$2,$3,'activity','')`,
+      [R,A,command.turn_request_id])).rejects.toThrow('already settled');
+    expect((await db.query(`SELECT 1 FROM messages WHERE id='late-activity'`)).rowCount).toBe(0);
+  });
   it('chooses the next morning with at least twelve hours, including DST and known zones',()=>{
     expect(checkinDueAt(new Date('2026-10-27T02:00:00Z')).toISOString()).toBe('2026-10-28T13:00:00.000Z');
     expect(checkinDueAt(new Date('2026-10-27T01:00:00Z')).toISOString()).toBe('2026-10-27T13:00:00.000Z');

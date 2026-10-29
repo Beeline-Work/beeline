@@ -4275,8 +4275,8 @@ export class DaemonService {
       }));
       steps = replySteps([...(input.steps ?? []), ...notes], notes.length);
     }
-    if (!await checkinOutputAllowed(this.database, input.roomId, agentId, input.requestId))
-      throw new ExpectedRefusalError('This one-time check-in is no longer due.');
+    if (!await checkinOutputAllowed(this.database, input.roomId, agentId, input.requestId, input))
+      throw new ExpectedRefusalError('This one-time check-in is no longer due. Do not post another check-in message.');
     const messageId = id();
     const parent = input.replyToMessageId
       ? (

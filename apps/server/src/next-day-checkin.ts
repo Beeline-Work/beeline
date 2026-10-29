@@ -4,6 +4,7 @@ import { externalFetch } from '@beeline/auth/external-fetch';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand } from './agent-command.js';
 import { recordOnboardingEvent } from './signin-funnel.js';
+import { ExpectedRefusalError } from './command-refusal.js';
 
 /** No identity time zone is stored today; use the approved Eastern fallback. */
 export function checkinDueAt(first: Date, timeZone = 'America/New_York'): Date {
@@ -66,6 +67,9 @@ BEGIN
   IF checkin.skip_reason IS NOT NULL OR checkin.sent_at IS NOT NULL THEN
     RAISE EXCEPTION 'This one-time check-in is already settled';
   END IF;
+  -- Daemon telemetry is intermediate output, never the check-in reply.
+  -- Keep it behind the same command lock and settlement fence as final output.
+  IF NEW.presentation='activity' AND NEW.system_event IS NULL AND NEW.text='' THEN RETURN NEW; END IF;
   IF NEW.presentation<>'message' OR NEW.system_event IS NOT NULL OR btrim(NEW.text)='' THEN
     RAISE EXCEPTION 'A check-in must be one plain Room message';
   END IF;
@@ -105,7 +109,8 @@ async function target(db: SqlDatabase, identity: string, first: Date): Promise<T
 const enabled = () => process.env.BEELINE_NEXT_DAY_CHECKIN !== 'off';
 
 /** Called before a generated reply is accepted, so switching off also fences in-flight turns. */
-export async function checkinOutputAllowed(db: SqlDatabase, roomId: string, agentId: string, requestId: unknown): Promise<boolean> {
+export async function checkinOutputAllowed(db: SqlDatabase, roomId: string, agentId: string, requestId: unknown,
+  output?: { text: string; presentation?: string }): Promise<boolean> {
   if (typeof requestId !== 'string') return true;
   const row = (await db.query<{ identity_id: string; first_at: Date; skip_reason: string | null; sent_at: Date | null }>(
     `SELECT n.identity_id,p.first_at,n.skip_reason,n.sent_at FROM next_day_checkins n
@@ -113,6 +118,8 @@ export async function checkinOutputAllowed(db: SqlDatabase, roomId: string, agen
      WHERE c.turn_request_id=$1 AND n.room_id=$2 AND n.agent_id=$3`, [requestId,roomId,agentId])).rows[0];
   if (!row) return true;
   if (row.sent_at || row.skip_reason) return false;
+  if (output && (!output.text.trim() || (output.presentation !== undefined && output.presentation !== 'message')))
+    throw new ExpectedRefusalError('A check-in must be one plain Room message. Post nonempty text with message presentation.');
   const current = await target(db,row.identity_id,new Date(row.first_at));
   return enabled() && !current.skip_reason && current.room_id===roomId && current.agent_id===agentId;
 }

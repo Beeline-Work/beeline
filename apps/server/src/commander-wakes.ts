@@ -6,7 +6,6 @@ import {
   expiredWakeDigestSources,
   lockAgentCommandQueue,
   readAgentCommands,
-  createAgentCommand,
   type CommandRow,
 } from './agent-command.js';
 
@@ -148,19 +147,25 @@ export async function refreshWakeDigests(
       );
       await flushCommanderWakes(tx, roomId, agentId, ids);
     }
-    await interruptForSteers(tx, roomId, agentId);
+    await queueSteersBehindTurn(tx, roomId, agentId);
   });
 }
 
-/** Queue and wake locks are held. Only newly delivered instructions interrupt work. */
-async function interruptForSteers(db: SqlDatabase, roomId: string, agentId: string): Promise<void> {
-  const busy = (await db.query<CommandRow>(
-    `SELECT command.* FROM agent_commands command JOIN agent_turns turn
+/**
+ * Queue and wake locks are held. Instructions that arrive during a working
+ * turn wait behind it and join one inbox digest, so the next turn reads them
+ * all in arrival order. Nothing here stops the running turn; only an explicit
+ * Stop does.
+ */
+async function queueSteersBehindTurn(db: SqlDatabase, roomId: string, agentId: string): Promise<void> {
+  const busy = (await db.query<Pick<CommandRow, 'wake_context'> & { claimed_at: Date }>(
+    `SELECT command.claimed_at,command.wake_context FROM agent_commands command JOIN agent_turns turn
        ON turn.room_id=command.room_id AND turn.agent_id=command.agent_id
        AND turn.request_id=command.turn_request_id AND turn.generation_id=command.generation_id
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='claimed'
        AND command.action IN ('input','resume') AND turn.status='working'
-     ORDER BY command.claimed_at DESC LIMIT 1 FOR UPDATE OF command`, [roomId, agentId])).rows[0];
+     ORDER BY command.claimed_at DESC LIMIT 1`, [roomId, agentId])).rows[0];
+  if (!busy) return;
   const pending = (await db.query<{ id: string }>(
     `SELECT command.id FROM agent_commands command
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'
@@ -173,37 +178,16 @@ async function interruptForSteers(db: SqlDatabase, roomId: string, agentId: stri
          OR EXISTS(SELECT 1 FROM agent_commands absorbed
            WHERE absorbed.cancellation_reason='coalesced_into:'||command.id
              AND absorbed.reason IN ('order','corner_brief_revision','human_tag','direct_message')))
-       AND command.created_at>COALESCE((SELECT claimed_at FROM agent_commands WHERE id=$3),(
-         SELECT min(interrupted.claimed_at) FROM agent_commands interrupted
-         JOIN agent_commands replacement ON interrupted.cancellation_reason='steered_into:'||replacement.id
-         WHERE interrupted.room_id=$1 AND interrupted.agent_id=$2 AND replacement.state='pending'))
+       AND command.created_at>$3::timestamptz
      ORDER BY command.inbox_sequence FOR UPDATE`,
-    [roomId, agentId, busy?.id ?? null, JSON.stringify(busy?.wake_context ?? null)])).rows;
-  if (!pending.length) return;
+    [roomId, agentId, busy.claimed_at, JSON.stringify(busy.wake_context ?? null)])).rows;
+  if (pending.length < 2) return;
   // Render through the same stale brief/head/workflow fences as delivery. A
   // duplicate snapshot, old revision or delayed inbox is never a new steer.
   const valid = (await readAgentCommands(db, roomId, agentId, pending.map(row => row.id))).commands;
-  if (!valid.length) return;
   const ids = pending.map(row => row.id).filter(id => valid.some(command => command.id === id));
+  if (ids.length < 2) return;
   await flushCommanderWakes(db, roomId, agentId, ids, true);
-  const head = ids[0]!;
-  await db.query(`UPDATE agent_commands SET cancellation_reason=$3
-    WHERE room_id=$1 AND agent_id=$2 AND cancellation_reason=ANY($4::text[])`,
-    [roomId, agentId, `steered_into:${head}`, pending.map(row => `steered_into:${row.id}`)]);
-  if (!busy) return;
-  await createAgentCommand(db, {
-    id: `steer-stop:${busy.id}:${busy.generation_id}`,
-    roomId, agentId, sourceMessageId: null, turnRequestId: busy.turn_request_id,
-    action: 'stop', reason: 'new_steer', parent: busy, retainDepth: true,
-    privatePayload: { text: 'Stop the previous turn for newly delivered instructions.',
-      authorId: agentId, fromRoomId: roomId, kind: 'lifecycle' },
-  });
-  await db.query(`UPDATE agent_turns SET status='cancelled',failure_reason='Interrupted by new steer',created_at=now()
-    WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
-    [roomId, agentId, busy.turn_request_id]);
-  await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason=$4
-    WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND state='claimed' AND action IN ('input','resume')`,
-    [roomId, agentId, busy.turn_request_id, `steered_into:${head}`]);
 }
 
 /** Durable deadlines are recovered on startup and serviced by the server's existing tick. */

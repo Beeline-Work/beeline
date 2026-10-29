@@ -488,7 +488,7 @@ describe('institutional context prefetch, proven against the real server', () =>
     }, { timeout: 10_000, interval: 25 });
   }, 30_000);
 
-  it('serves the SECOND requester\'s own fact when their steer interrupts a running turn in the same Room', async () => {
+  it('serves the SECOND requester\'s own fact when their turn is queued behind a still-running first turn in the same Room', async () => {
     const roomId = randomUUID();
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [roomId, WORKSPACE]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [
@@ -557,7 +557,9 @@ describe('institutional context prefetch, proven against the real server', () =>
       },
     } as unknown as DaemonApiClient;
     const prompts: string[] = [];
-    // Hold the first prompt until the real helper Stop path cancels it.
+    // The first turn blocks here until the test releases it, so the second
+    // message is genuinely queued behind a still-running turn, not merely
+    // sent-and-forgotten before the first one starts.
     let releaseFirstTurn: (() => void) | undefined;
     const firstTurnBlocked = new Promise<void>((resolve) => {
       releaseFirstTurn = resolve;
@@ -569,11 +571,10 @@ describe('institutional context prefetch, proven against the real server', () =>
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
     vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
     vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
-    const cancel = vi.spyOn(acp, 'sessionCancel').mockImplementation(() => releaseFirstTurn?.());
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_sessionId, prompt) => {
       promptCount += 1;
-      prompts.push(typeof prompt === 'string' ? prompt : JSON.stringify(prompt));
       if (promptCount === 1) await firstTurnBlocked;
+      prompts.push(typeof prompt === 'string' ? prompt : JSON.stringify(prompt));
       return { stopReason: 'end_turn', updates: [], agentText: `Answer ${promptCount}.`, toolCalls: [] };
     });
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
@@ -601,23 +602,27 @@ describe('institutional context prefetch, proven against the real server', () =>
 
       await phone.execute('sendRoomMessage', { roomId, text: '@bee where does Priya work from?' }, second);
       pushCommands?.((await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands);
-      await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('room-session'));
+      // The second command is real and claimed-pending, but the loop is busy —
+      // give it a beat to prove it does NOT start a second concurrent prompt.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(promptCount).toBe(1);
+
+      releaseFirstTurn?.();
       await vi.waitFor(() => expect(promptCount).toBe(2), { timeout: 10_000, interval: 25 });
       await vi.waitFor(
         async () =>
           expect(
             (
               await db.query(
-                `SELECT status FROM agent_turns WHERE room_id=$1 ORDER BY started_at`,
+                `SELECT count(*)::text n FROM agent_turns WHERE room_id=$1 AND status IN ('complete','failed')`,
                 [roomId],
               )
-            ).rows.map((row) => row.status),
-          ).toEqual(['cancelled', 'complete']),
+            ).rows[0]!.n,
+          ).toBe('2'),
         { timeout: 10_000, interval: 25 },
       );
     } finally {
       abort.abort();
-      releaseFirstTurn?.();
       await running.catch(() => undefined);
       await scheduler.dispose();
     }
@@ -625,13 +630,11 @@ describe('institutional context prefetch, proven against the real server', () =>
     expect(prompts).toHaveLength(2);
     expect(prompts[0]).toContain('Amir works from the Austin office.');
     expect(prompts[0]).not.toContain('Berlin');
-    // The replacement turn is served with the SECOND requester's own
+    // The second, queued turn is served with the SECOND requester's own
     // fact — not empty, not the first requester's, not a leftover from the
     // still-settling first turn's command context.
     expect(prompts[1]).toContain('Priya works from the Berlin office.');
     expect(prompts[1]).not.toContain('Austin');
-    expect(prompts[1]).toContain('where does Priya work from?');
-    expect(prompts[1]).toContain('interrupted');
 
     await vi.waitFor(async () => {
       const files = await readdir(traceDir);
@@ -641,12 +644,9 @@ describe('institutional context prefetch, proven against the real server', () =>
         for (const line of text.trim().split('\n').filter(Boolean)) records.push(JSON.parse(line));
       }
       const outcomes = records
-        .filter((entry) => entry.roomId === roomId && ['cancelled', 'complete'].includes(entry.outcome ?? ''))
-        .map((entry) => ({ outcome: entry.outcome, memory: entry.attempts[entry.attempts.length - 1]?.institutionalMemory }));
-      expect(outcomes).toEqual([
-        { outcome: 'cancelled', memory: 'served' },
-        { outcome: 'complete', memory: 'served' },
-      ]);
+        .filter((entry) => entry.roomId === roomId && entry.outcome === 'complete')
+        .map((entry) => entry.attempts[entry.attempts.length - 1]?.institutionalMemory);
+      expect(outcomes).toEqual(['served', 'served']);
     }, { timeout: 10_000, interval: 25 });
   }, 30_000);
 });

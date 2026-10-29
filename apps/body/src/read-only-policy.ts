@@ -262,7 +262,7 @@ export function isMountedMcpToolPermissionRequest(
 }
 
 const AGENT_SURFACE_TOOL_NAMES = [
-  'read', 'search', 'remember', 'revise_corner', 'order', 'report',
+  'read', 'search', 'remember', 'revise_corner', 'order', 'stop', 'report',
   'approve_merge', 'merge_corner', 'set_corner_hold', 'close_corner',
   'post', 'request_grant', 'app_tool', 'wake', 'react_to_message',
   'run_granted_command', 'no_reply_needed', 'scratch_io',

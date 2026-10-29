@@ -919,6 +919,28 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    "name": "stop",
+    "description": "Stop the running turn of an agent you command: you ordered the work it is running, or it runs in a corner you opened. Anyone else is refused and nothing stops. A corner defaults to its implementer. Order it again after the stop; that order runs next.",
+    "inputSchema": {
+      "type": "object",
+      "required": ["address"],
+      "properties": {
+        "address": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Room, DM or corner address where the turn runs; current membership is required."
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Handle or id of the agent to stop. Required at a Room address with several agents."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "report",
     "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion.",
     "inputSchema": {

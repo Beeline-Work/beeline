@@ -1662,7 +1662,6 @@ export async function readAgentCommands(
       watched_corner_id: string;
       watched_corner_name: string;
       watched_merge_commit: string | null;
-      interrupted: boolean;
       created_at: Date;
     }
   >(
@@ -1709,10 +1708,7 @@ export async function readAgentCommands(
    ))
  ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,CASE WHEN ${ordinaryWakeSql('c')} THEN 0 ELSE 1 END,c.created_at,c.id
  LIMIT CASE WHEN $3::text[] IS NULL THEN 100 ELSE NULL END
-     ) SELECT delivery.*,EXISTS(SELECT 1 FROM agent_commands interrupted
-       WHERE interrupted.room_id=$1 AND interrupted.agent_id=$2
-         AND interrupted.cancellation_reason='steered_into:'||delivery.id) interrupted,
-       wake_drop_log.drops FROM wake_drop_log LEFT JOIN delivery ON true
+     ) SELECT delivery.*,wake_drop_log.drops FROM wake_drop_log LEFT JOIN delivery ON true
      ORDER BY CASE delivery.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,
        CASE WHEN ${ordinaryWakeSql('delivery')} THEN 0 ELSE 1 END,delivery.created_at,delivery.id`,
     [roomId, agentId, digestIds ?? null],
@@ -1739,7 +1735,7 @@ export async function readAgentCommands(
       source: {
         id: r.private_payload ? r.id : r.source_message_id ?? r.id,
         authorId: r.private_payload?.authorId ?? (r.reason === 'free_agent_checkin' ? SYSTEM_IDENTITY_ID : r.author_id),
-        body: (r.interrupted ? 'The previous turn was interrupted by newly delivered instructions. Resume from the current workspace state and follow the steer below.\n' : '') + (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + (r.voice_origin ? '\n' + voiceDateContext(Date.now()) + ' Never start your reply with your name.\nThis is a separate request from a live voice call. Answer this request in this turn, even if it appeared as background context while you were busy. Start your report with a spoken answer sized to the question: one line for a status, a few sentences for a real answer, at most about 150 words. Then a blank line, then the full report.' : '') + checkFailureLogBody(r.system_event ?? null) + reportedHeadBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
+        body: (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + (r.voice_origin ? '\n' + voiceDateContext(Date.now()) + ' Never start your reply with your name.\nThis is a separate request from a live voice call. Answer this request in this turn, even if it appeared as background context while you were busy. Start your report with a spoken answer sized to the question: one line for a status, a few sentences for a real answer, at most about 150 words. Then a blank line, then the full report.' : '') + checkFailureLogBody(r.system_event ?? null) + reportedHeadBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
         attachments: r.coalesced_attachments ?? r.private_payload?.attachments ?? r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.private_payload ? 'private' : r.reason === 'free_agent_checkin' ? 'system' : r.presentation,

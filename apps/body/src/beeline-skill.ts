@@ -139,6 +139,11 @@ export function beelineCornersSkillMarkdown(releaseId: string): string {
 - If you cannot settle a choice, report one step up.
 - When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
 
+## Stopping an agent you commanded
+
+- To redirect an agent mid-turn, call stop(address, agent), then send the new order. The new order runs next.
+- stop works only on a turn you ordered or a turn in a corner you opened. New messages never stop a turn by themselves; they queue.
+
 ## Closing
 
 - To drop a pull request but keep the corner and branch for another attempt, call close_corner_pr(address).

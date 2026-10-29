@@ -1480,103 +1480,186 @@ it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits
   }
 });
 
-for (const kind of ['order', 'brief', 'human'] as const) {
-  it(`STEER-1: ${kind} cancels a running daemon turn and reaches the replacement prompt`, async () => {
-    const opened = await open();
-    await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
-    const root = await mkdtemp(join(tmpdir(), 'steer-proof-'));
-    const abort = new AbortController();
-    const ctx = new CommandExecutionContext(root);
-    const prompts: AgentCommand[] = [];
-    const promptBodies: string[] = [];
-    const stops: string[] = [];
-    const errors: unknown[] = [];
-    let pushed: ((rows: readonly AgentCommand[]) => void) | undefined;
-    let finishOld!: () => void;
-    const oldRun = new Promise<void>((resolve) => { finishOld = resolve; });
-    const api = {
-      execute: (name: string, input: object) => daemon.execute(name as never, input as never, WORKER),
-      liveSubscribe: (_room: unknown, _cursor: unknown, _items: unknown, _state: unknown,
-        _presence: unknown, onCommands: typeof pushed) => { pushed = onCommands; return () => {}; },
-    } as unknown as DaemonApiClient;
-    const running = runServerCommandIntake({ api, roomId: opened.cornerId, agentId: WORKER,
-      context: ctx, signal: abort.signal, onError: (error) => errors.push(error),
-      stop: (id) => { stops.push(id); finishOld(); },
-      run: async (command) => {
-        const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER);
-        promptBodies.push((restored.brief?.spec ?? '') + '\n' + command.source.body);
-        prompts.push(command);
-        if (prompts.length === 1) await oldRun;
-        else abort.abort();
-      },
-    });
-    try {
-      await vi.waitFor(() => expect(prompts).toHaveLength(1));
-      const old = prompts[0]!;
-      // Replayed snapshots and routine observations carry no new instructions.
-      pushed?.([old]);
-      await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
-        sourceMessageId: null, reason: 'computer_activity',
-        privatePayload: { text: 'Browser observation', authorId: RUBY, fromRoomId: DM, kind: 'lifecycle' } });
-      pushed?.((await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER)).commands);
-      expect(stops).toEqual([]);
-      const steer = 'Use the newly approved blue widget';
-      if (kind === 'order') {
-        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: steer }, RUBY);
-      } else if (kind === 'brief') {
-        await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
-          expectedRevision: 1, brief: { spec: steer, repositoryWork: false,
-            approval: { sourceMessageId: order.sourceMessageId }, change: steer } }, RUBY);
-      } else {
-        await phone.execute('sendRoomMessage', { roomId: opened.cornerId,
-          messageId: randomBytes(32).toString('hex'), text: `@worker ${steer}` }, HUMAN);
-      }
-      let delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
-      if (kind === 'order') {
-        // More instructions arrive while the stop is still in flight. They
-        // must join the same replacement, preserving order provenance.
-        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Also use rounded edges' }, RUBY);
-        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Keep the approved width' }, RUBY);
-        delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
-        expect(delivered.commands.filter(command => command.action === 'stop')).toHaveLength(1);
-      }
-      expect(delivered.commands.some((command) => command.action === 'stop')).toBe(true);
-      pushed?.(delivered.commands);
-      await vi.waitFor(() => expect(prompts).toHaveLength(2));
-      await running;
-      expect(stops).toContain(old.turnRequestId);
-      expect(promptBodies[1]).toContain(steer);
-      if (kind === 'order') {
-        expect(promptBodies[1]).toContain('Also use rounded edges');
-        expect(promptBodies[1]).toContain('Keep the approved width');
-      }
-      expect(prompts[1]!.source.body).toContain('interrupted');
-      expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
-        [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('cancelled');
-      expect(errors).toEqual([]);
-      console.log(`STEER-1 ${kind}: old turn cancelled; replacement prompt contains steer and interruption context`);
-    } finally {
-      abort.abort(); finishOld(); await running; await rm(root, { recursive: true, force: true });
-    }
-  });
-}
-
-it('STEER-1: a repeated wake for the running brief revision does not interrupt it', async () => {
+it('QUEUE-1: a tag, order and brief revision during a running corner turn queue into the next prompt', async () => {
   const opened = await open();
-  // Retire the initial assignment before starting the revision under test.
-  const initial = await worker(opened.cornerId);
-  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
-  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-    VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
-  await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
-    expectedRevision: 1, brief: { spec: 'Use blue', repositoryWork: false,
-      approval: { sourceMessageId: order.sourceMessageId }, change: 'Use blue' } }, RUBY);
-  const current = await worker(opened.cornerId);
-  const line = await systemLine(db, { roomId: opened.cornerId,
-    subject: { kind: 'agent', id: RUBY, name: 'Ruby' }, verb: 'revised the corner brief', object: { text: 'Revision 2', id: opened.cornerId } });
-  await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
-    sourceMessageId: line.id, reason: 'corner_brief_revision' });
-  expect((await commands(opened.cornerId, WORKER)).some(command => command.action === 'stop')).toBe(false);
-  expect((await db.query('SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2',
-    [opened.cornerId, current.turnRequestId])).rows[0]?.status).toBe('working');
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
+  const root = await mkdtemp(join(tmpdir(), 'queue-proof-'));
+  const abort = new AbortController();
+  const ctx = new CommandExecutionContext(root);
+  const prompts: AgentCommand[] = [];
+  const stops: string[] = [];
+  const errors: unknown[] = [];
+  let pushed: ((rows: readonly AgentCommand[]) => void) | undefined;
+  let finishOld!: () => void;
+  const oldRun = new Promise<void>((resolve) => { finishOld = resolve; });
+  const api = {
+    execute: (name: string, input: object) => daemon.execute(name as never, input as never, WORKER),
+    liveSubscribe: (_room: unknown, _cursor: unknown, _items: unknown, _state: unknown,
+      _presence: unknown, onCommands: typeof pushed) => { pushed = onCommands; return () => {}; },
+  } as unknown as DaemonApiClient;
+  const running = runServerCommandIntake({ api, roomId: opened.cornerId, agentId: WORKER,
+    context: ctx, signal: abort.signal, onError: (error) => errors.push(error),
+    stop: (id) => { stops.push(id); },
+    run: async (command) => {
+      prompts.push(command);
+      if (prompts.length > 1) { abort.abort(); return; }
+      await oldRun;
+      await daemon.execute('postAgentTurnReceipt', { roomId: opened.cornerId, requestId: command.turnRequestId,
+        generationId: ctx.generationId, agentId: WORKER, status: 'complete' }, WORKER);
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(prompts).toHaveLength(1));
+    const old = prompts[0]!;
+    await phone.execute('sendRoomMessage', { roomId: opened.cornerId,
+      messageId: randomBytes(32).toString('hex'), text: '@worker First: use the blue widget' }, HUMAN);
+    await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Second: add rounded edges' }, RUBY);
+    await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+      expectedRevision: 1, brief: { spec: 'Third: keep the approved width', repositoryWork: false,
+        approval: { sourceMessageId: order.sourceMessageId }, change: 'Third: keep the approved width' } }, RUBY);
+    const delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
+    pushed?.(delivered.commands);
+    // The running turn keeps working; no message is an implicit Stop.
+    expect(delivered.commands.filter(command => command.action === 'stop')).toEqual([]);
+    expect((await db.query(`SELECT count(*)::int n FROM agent_commands WHERE room_id=$1 AND action='stop'`,
+      [opened.cornerId])).rows[0]?.n).toBe(0);
+    expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+      [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('working');
+    expect(delivered.commands.filter(command => command.action === 'input')).toHaveLength(1);
+    finishOld();
+    await vi.waitFor(() => expect(prompts).toHaveLength(2));
+    await running;
+    // The test's own abort ends the intake after the second prompt.
+    expect(stops).not.toContain(old.turnRequestId);
+    expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+      [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('complete');
+    const body = prompts[1]!.source.body;
+    const at = ['First: use the blue widget', 'Second: add rounded edges', 'revised the corner brief'].map(text => body.indexOf(text));
+    expect(at.every(index => index >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(body).not.toContain('interrupted');
+    expect(errors).toEqual([]);
+    console.log('QUEUE-1 corner: running turn completed; next prompt holds tag, order and brief revision in arrival order');
+  } finally {
+    abort.abort(); finishOld(); await running; await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('QUEUE-1: direct messages sent during a running turn reach one next prompt in order', async () => {
+  // beforeEach leaves Ruby working on the first DM.
+  for (const text of ['Second question', 'Third question'])
+    await phone.execute('sendRoomMessage', { roomId: DM, messageId: randomBytes(32).toString('hex'), text }, HUMAN);
+  const queued = await commands(DM, RUBY);
+  expect(queued.some(command => command.action === 'stop')).toBe(false);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [DM, order.turnRequestId])).rows[0]?.status).toBe('working');
+  await daemon.execute('postAgentTurnReceipt', { ...authority(order), agentId: RUBY, status: 'complete' }, RUBY);
+  const next = (await commands(DM, RUBY)).filter(command => command.action === 'input');
+  expect(next).toHaveLength(1);
+  const claimed = await claim(next[0]!);
+  const body = (claimed.source?.body ?? next[0]!.source.body) + (claimed.coalescedContext ?? '');
+  expect(body.indexOf('Second question')).toBeGreaterThanOrEqual(0);
+  expect(body.indexOf('Third question')).toBeGreaterThan(body.indexOf('Second question'));
+});
+
+it('AGENT-STOP-1: a commander stops its worker\'s running turn, then its new order runs next', async () => {
+  const opened = await open();
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
+  const root = await mkdtemp(join(tmpdir(), 'agent-stop-proof-'));
+  const abort = new AbortController();
+  const ctx = new CommandExecutionContext(root);
+  const prompts: AgentCommand[] = [];
+  const stops: string[] = [];
+  const errors: unknown[] = [];
+  let pushed: ((rows: readonly AgentCommand[]) => void) | undefined;
+  let finishOld!: () => void;
+  const oldRun = new Promise<void>((resolve) => { finishOld = resolve; });
+  const api = {
+    execute: (name: string, input: object) => daemon.execute(name as never, input as never, WORKER),
+    liveSubscribe: (_room: unknown, _cursor: unknown, _items: unknown, _state: unknown,
+      _presence: unknown, onCommands: typeof pushed) => { pushed = onCommands; return () => {}; },
+  } as unknown as DaemonApiClient;
+  const running = runServerCommandIntake({ api, roomId: opened.cornerId, agentId: WORKER,
+    context: ctx, signal: abort.signal, onError: (error) => errors.push(error),
+    stop: (id) => { stops.push(id); finishOld(); },
+    run: async (command) => {
+      prompts.push(command);
+      if (prompts.length === 1) await oldRun;
+      else abort.abort();
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(prompts).toHaveLength(1));
+    const old = prompts[0]!;
+    const result = await daemon.execute('stopAgentTurn', { ...authority(order), address: opened.cornerId }, RUBY);
+    expect(result).toMatchObject({ stopped: true, agent: WORKER });
+    expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+      [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('cancelled');
+    expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%stopped @%''s running turn%'`,
+      [opened.cornerId])).rows.map((row) => row.text)).toEqual([expect.stringMatching(/^@\S+ stopped @\S+'s running turn$/)]);
+    await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'New plan: paint it green' }, RUBY);
+    pushed?.((await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER)).commands);
+    await vi.waitFor(() => expect(prompts).toHaveLength(2));
+    await running;
+    expect(stops).toContain(old.turnRequestId);
+    expect(prompts[1]!.source.body).toContain('New plan: paint it green');
+    expect(errors).toEqual([]);
+    console.log('AGENT-STOP-1: commander stop cancelled the running turn; the follow-up order ran next');
+  } finally {
+    abort.abort(); finishOld(); await running; await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('AGENT-STOP-3: an orderer stops a turn whose digest folded its order behind a human tag', async () => {
+  const OTHER = 'd'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other') ON CONFLICT DO NOTHING`, [OTHER]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [OTHER, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`, [WS, OTHER, ROOM]);
+  const send = (text: string) => phone.execute('sendRoomMessage', { roomId: ROOM, messageId: randomBytes(32).toString('hex'), text }, HUMAN);
+  await send('@worker First: look at the widget');
+  const first = (await commands(ROOM, WORKER))[0]!;
+  await claim(first);
+  await send('@worker Second: check the hinge');
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'worker', text: 'Third: sand the edges' }, RUBY);
+  await commands(ROOM, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(first), agentId: WORKER, status: 'complete' }, WORKER);
+  const next = (await commands(ROOM, WORKER)).filter(command => command.action === 'input');
+  expect(next).toHaveLength(1);
+  const digest = await claim(next[0]!);
+  expect((digest.source?.body ?? next[0]!.source.body) + (digest.coalescedContext ?? '')).toContain('Third: sand the edges');
+  await send('@other Look at the widget');
+  const otherTurn = (await commands(ROOM, OTHER))[0]!;
+  await claim(otherTurn);
+  await expect(daemon.execute('stopAgentTurn', { ...authority(otherTurn), address: ROOM, agent: 'worker' }, OTHER))
+    .rejects.toThrow(/you did not order this turn and you do not command this corner/);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [ROOM, next[0]!.turnRequestId])).rows[0]?.status).toBe('working');
+  const result = await daemon.execute('stopAgentTurn', { ...authority(order), address: ROOM, agent: 'worker' }, RUBY);
+  expect(result).toMatchObject({ stopped: true, agent: WORKER });
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [ROOM, next[0]!.turnRequestId])).rows[0]?.status).toBe('cancelled');
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'worker', text: 'New plan: paint it green' }, RUBY);
+  const followUp = (await commands(ROOM, WORKER)).filter(command => command.action === 'input');
+  expect(followUp).toHaveLength(1);
+  const claimed = await claim(followUp[0]!);
+  expect((claimed.source?.body ?? followUp[0]!.source.body) + (claimed.coalescedContext ?? '')).toContain('New plan: paint it green');
+  console.log('AGENT-STOP-3: orderer stopped the human-led digest turn; unrelated agent refused; follow-up order runs next');
+});
+
+it('AGENT-STOP-2: an agent with no command over the running turn is refused and nothing stops', async () => {
+  const OTHER = 'd'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other') ON CONFLICT DO NOTHING`, [OTHER]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [OTHER, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`, [WS, OTHER, ROOM]);
+  const opened = await open();
+  const running = await worker(opened.cornerId);
+  await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: randomBytes(32).toString('hex'), text: '@other Look at the widget' }, HUMAN);
+  const otherTurn = (await commands(ROOM, OTHER))[0]!;
+  await claim(otherTurn);
+  await expect(daemon.execute('stopAgentTurn', { ...authority(otherTurn), address: opened.cornerId, agent: 'worker' }, OTHER))
+    .rejects.toThrow(/you did not order this turn and you do not command this corner/);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, running.turnRequestId])).rows[0]?.status).toBe('working');
+  expect((await db.query(`SELECT count(*)::int n FROM agent_commands WHERE room_id=$1 AND action='stop'`,
+    [opened.cornerId])).rows[0]?.n).toBe(0);
 });

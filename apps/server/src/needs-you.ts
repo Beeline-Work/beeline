@@ -549,7 +549,8 @@ export async function needsYouItems(
     roomName: row.room_name,
     roomKind: row.room_kind,
     ...(row.parent_room_name ? { parentRoomName: row.parent_room_name } : {}),
-    text: approval && ['grant', 'write-access', 'connector', 'squire'].includes(approval.kind)
+    // A sign-in's cell already says "needs you to sign in to", so its text is the service alone.
+    text: approval && ['grant', 'write-access', 'connector', 'squire', 'sign-in'].includes(approval.kind)
       ? approval.subject
       : approval
       ? approvalAsk(approval.kind === 'sign-in' && row.card?.harness ? 'agent-sign-in' : approvalTypes[approval.kind],

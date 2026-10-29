@@ -15,21 +15,31 @@ const state = 's'.repeat(43);
 const recoveryToken = 'r'.repeat(43);
 const pending = () => storage.set('beeline.google-sign-in.v1', JSON.stringify({ state, recoveryToken, startedAt: Date.now() }));
 describe('Google sign-in continuation', () => {
-  it('R-signin-dismiss: recovers a delayed ticket after Android dismisses the browser on redirect', async () => {
+  it.each(['dismiss', 'cancel'])('Reproduction 6c548392: %s checks pending server state and promptly cancels', async (type) => {
     vi.useFakeTimers();
-    const started = Date.now();
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', {
-      status: Date.now() - started < 4_000 ? 202 : 200,
-    })));
+    const fetcher = vi.fn(async (url: string) => new Response('{}', {
+      status: url.endsWith('/cancel') ? 200 : 202,
+    }));
+    vi.stubGlobal('fetch', fetcher);
     try {
       const result = runGoogleSignIn({ state, recoveryToken,
-        openAuthSession: async () => ({ type: 'dismiss' }),
+        openAuthSession: async () => ({ type }),
         subscribeToUrls: () => ({ remove() {} }),
       });
-      const assertion = expect(result).resolves.toBe(recoveryToken);
-      await vi.runAllTimersAsync();
+      const assertion = expect(result).rejects.toMatchObject({ code: 'browser_canceled' });
+      await vi.advanceTimersByTimeAsync(3_000);
       await assertion;
+      expect(fetcher.mock.calls.some(([url]) => url.endsWith('/completion'))).toBe(true);
+      expect(fetcher.mock.calls.some(([url]) => url.endsWith('/cancel'))).toBe(true);
+      expect(storage.size).toBe(0);
     } finally { vi.useRealTimers(); }
+  });
+  it('Reproduction 6c548392: dismiss with completed server state signs in', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')));
+    await expect(runGoogleSignIn({ state, recoveryToken,
+      openAuthSession: async () => ({ type: 'dismiss' }),
+      subscribeToUrls: () => ({ remove() {} }),
+    })).resolves.toBe(recoveryToken);
   });
   beforeEach(() => { storage.clear(); picker.enabled = false; picker.signIn.mockReset(); });
   afterEach(() => { vi.unstubAllGlobals(); });
@@ -181,7 +191,7 @@ describe('Google sign-in continuation', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(remove).toHaveBeenCalledOnce();
   });
-  it('R-onb-1: recovers on the first attempt after a browser handoff interrupts completion reads', async () => {
+  it.each(['opened', 'dismiss'])('R-onb-1: recovers after interrupted completion reads with browser %s', async (type) => {
     vi.useFakeTimers();
     const fetcher = vi.fn()
       .mockRejectedValueOnce(new TypeError('Network request failed'))
@@ -194,7 +204,7 @@ describe('Google sign-in continuation', () => {
     vi.stubGlobal('fetch', fetcher);
     try {
       const result = runGoogleSignIn({ state, recoveryToken,
-        openAuthSession: async () => ({ type: 'opened' }),
+        openAuthSession: async () => ({ type }),
         subscribeToUrls: () => ({ remove() {} }),
       });
       const assertion = expect(result).resolves.toBe(recoveryToken);

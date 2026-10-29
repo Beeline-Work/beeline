@@ -12,6 +12,15 @@ describe('auth browser session', () => {
     });
   });
 
+  it('Reproduction 6c548392: restores Google above Beeline from the Android launcher', () => {
+    expect(authSessionOptions('android', 'beeline://beeline/google-callback', 'google')).toEqual({
+      preferUniversalLinks: false,
+      createTask: false,
+      showInRecents: true,
+      useProxyActivity: false,
+    });
+  });
+
   it('keeps the native browser defaults on non-Android platforms', () => {
     expect(authSessionOptions('ios', 'beeline://beeline/github-callback')).toEqual({
       preferUniversalLinks: false,

@@ -43,7 +43,7 @@ describe('provider onboarding error states', () => {
   it('keeps a genuine GitHub error on its own message', () => {
     const notice = noticeForAuthError(new OidcBindError('github_denied', 'denied'));
     expect(notice.status).toBe('browser_canceled');
-    expect(notice.title).toBe('Sign-in did not finish');
+    expect(notice.title).toBe('Sign-in did not finish.');
   });
 
   it.each(['invalid_redirect', 'invalid_configuration', 'invalid_state'])(
@@ -78,7 +78,7 @@ describe('provider onboarding error states', () => {
     const notice = noticeForAuthError(new OidcBindError('invalid_callback', 'Bad callback'));
     expect(notice).toEqual({
       status: 'bind_retry',
-      title: 'Sign-in did not finish',
+      title: 'Sign-in did not finish.',
       message: 'Continue with GitHub again to finish signing in.',
       retryable: false,
     });

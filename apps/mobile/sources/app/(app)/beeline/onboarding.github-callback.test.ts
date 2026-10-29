@@ -300,15 +300,39 @@ describe('GitHub callback delivery into onboarding', () => {
   });
 
   it.each(['browser_canceled', 'ticket_expired', 'offline'])(
-    'shows one primary recovery action for %s on the full screen', async (code) => {
+    'Reproduction 6c548392: keeps both providers available after %s', async (code) => {
       const tree = await render();
       await act(async () => { publishOnboardingNotice(noticeForAuthError(new OidcBindError(code, code))); });
       const buttons = tree.root.findAll((node: any) => node.type === 'Button');
-      expect(buttons).toHaveLength(1);
+      expect(buttons).toHaveLength(2);
+      expect(buttons[1].props.label).toBe('Continue with Google');
+      expect(buttons[1].props.disabled).toBe(false);
       expect(buttons[0].props.variant).toBe('primary');
       expect(buttons[0].props.label).toBe(code === 'offline' ? 'Try again' : 'Continue with GitHub');
     },
   );
+
+  it('Reproduction 6c548392: Google back press shows punctuated cancel and permits immediate retry', async () => {
+    vi.useFakeTimers();
+    browser.open.mockResolvedValue({ type: 'dismiss' });
+    network.fetch.mockImplementation(async (url: string) => new Response('{}', {
+      status: url.endsWith('/completion') ? 202 : 200,
+    }));
+    try {
+      const tree = await render();
+      const google = () => tree.root.find((node: any) =>
+        node.type === 'Button' && node.props.testID === 'onboarding-google-sign-in');
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let press!: Promise<void>;
+        await act(async () => { press = google().props.onPress(); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(3_000); await press; });
+        expect(noticeText(tree)).toContain('Sign-in did not finish.');
+        expect(google().props.disabled).toBe(false);
+        expect(google().props.loading).toBe(false);
+      }
+      expect(browser.open).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
 
   it('opens monolith sign-in on server.usebeeline.app and exchanges its callback there', async () => {
     phoneOperation.mockImplementation(async (name: string) =>
@@ -475,7 +499,7 @@ describe('GitHub callback delivery into onboarding', () => {
       expect(noticeText(tree)).toContain('No connection');
       expect(noticeText(tree)).toContain("You're offline.");
       expect(signIn().props.label).toBe('Try again');
-      expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(1);
+      expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(2);
       expect(signIn().props.variant).toBe('primary');
       expect(signIn().props.loading).toBe(false);
       expect(signIn().props.disabled).toBe(false);
@@ -487,7 +511,7 @@ describe('GitHub callback delivery into onboarding', () => {
       });
       expect(network.fetch).toHaveBeenCalledTimes(requestsAfterPress);
       expect(browser.open).not.toHaveBeenCalled();
-      expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(1);
+      expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(2);
       expect(signIn().props.label).toBe('Try again');
       expect(signIn().props.loading).toBe(false);
 
@@ -616,8 +640,8 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).not.toHaveBeenCalled();
     expect(noticeText(tree)).toContain('Sign-in expired');
-    expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(1);
-    expect(tree.root.findByType('Button' as never).props.variant).toBe('primary');
+    expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(2);
+    expect(tree.root.findAll((node: any) => node.type === 'Button')[0].props.variant).toBe('primary');
     expect(
       tree.root.findAll(
         (node: any) => node.type === 'Button' && node.props.label === 'Continue with GitHub',

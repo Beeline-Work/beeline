@@ -38,12 +38,12 @@ jobs:
           assert phones, 'No iPhone simulator available'
           print('PROOF_SIMULATOR=' + phones[0]['udid'])
           PY
-      - name: Generate and build the native Debug simulator app
+      - name: Generate and build the native bundled simulator app
         working-directory: apps/mobile
         run: |
           npx expo prebuild --platform ios --clean
           xcodebuild -workspace ios/Beeline.xcworkspace -scheme Beeline \
-            -configuration Debug -sdk iphonesimulator \
+            -configuration Release -sdk iphonesimulator \
             -destination "id=$PROOF_SIMULATOR" \
             -derivedDataPath "$RUNNER_TEMP/store-update-build" \
             -jobs 2 CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/iphone-build.log" 2>&1 || {
@@ -69,21 +69,11 @@ jobs:
           PY
           echo '{}' > "$RUNNER_TEMP/store-update-policy.json"
           python3 "$RUNNER_TEMP/store-update-policy-server.py" > "$RUNNER_TEMP/policy-server.log" 2>&1 &
-          (cd apps/mobile && npx expo start --dev-client --localhost --port 8081) > "$RUNNER_TEMP/iphone-metro.log" 2>&1 &
           xcrun simctl boot "$PROOF_SIMULATOR" || true
           xcrun simctl bootstatus "$PROOF_SIMULATOR" -b
           cat > "$RUNNER_TEMP/store-update-required.yaml" <<'YAML'
           appId: app.usebeeline.mobile
           ---
-          - extendedWaitUntil:
-              visible: "^(Continue|Update Beeline to keep going)$"
-              timeout: 180000
-          - tapOn:
-              text: Continue
-              optional: true
-          - tapOn:
-              text: Close
-              optional: true
           - extendedWaitUntil:
               visible: "Update Beeline to keep going"
               timeout: 180000
@@ -92,24 +82,18 @@ jobs:
           cat > "$RUNNER_TEMP/store-update-normal.yaml" <<'YAML'
           appId: app.usebeeline.mobile
           ---
-          - tapOn:
-              text: Continue
-              optional: true
-          - tapOn:
-              text: Close
-              optional: true
           - extendedWaitUntil:
               visible: "Continue with GitHub"
               timeout: 180000
           - assertNotVisible: "Update Beeline to keep going"
           YAML
-          app="$RUNNER_TEMP/store-update-build/Build/Products/Debug-iphonesimulator/Beeline.app"
+          app="$RUNNER_TEMP/store-update-build/Build/Products/Release-iphonesimulator/Beeline.app"
           for appearance in light dark; do
             xcrun simctl ui "$PROOF_SIMULATOR" appearance "$appearance"
             xcrun simctl uninstall "$PROOF_SIMULATOR" app.usebeeline.mobile || true
             xcrun simctl install "$PROOF_SIMULATOR" "$app"
             echo '{"ios":{"minVersion":"0.2.24","reason":"This version can no longer sign in. The update takes about a minute."}}' > "$RUNNER_TEMP/store-update-policy.json"
-            xcrun simctl openurl "$PROOF_SIMULATOR" 'beeline://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081'
+            xcrun simctl launch "$PROOF_SIMULATOR" app.usebeeline.mobile
             maestro --udid "$PROOF_SIMULATOR" test "$RUNNER_TEMP/store-update-required.yaml"
             theme=bone
             if [ "$appearance" = dark ]; then theme=obsidian; fi
@@ -118,12 +102,12 @@ jobs:
           version=$(node -p "require('./apps/mobile/package.json').version")
           printf '{"ios":{"minVersion":"%s","reason":"Equal-version proof"}}' "$version" > "$RUNNER_TEMP/store-update-policy.json"
           xcrun simctl terminate "$PROOF_SIMULATOR" app.usebeeline.mobile
-          xcrun simctl openurl "$PROOF_SIMULATOR" 'beeline://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081'
+          xcrun simctl launch "$PROOF_SIMULATOR" app.usebeeline.mobile
           maestro --udid "$PROOF_SIMULATOR" test "$RUNNER_TEMP/store-update-normal.yaml"
           xcrun simctl io "$PROOF_SIMULATOR" screenshot "$RUNNER_TEMP/store-update-proof/ios-equal-minimum.png"
           echo '{}' > "$RUNNER_TEMP/store-update-policy.json"
           xcrun simctl terminate "$PROOF_SIMULATOR" app.usebeeline.mobile
-          xcrun simctl openurl "$PROOF_SIMULATOR" 'beeline://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081'
+          xcrun simctl launch "$PROOF_SIMULATOR" app.usebeeline.mobile
           maestro --udid "$PROOF_SIMULATOR" test "$RUNNER_TEMP/store-update-normal.yaml"
           xcrun simctl io "$PROOF_SIMULATOR" screenshot "$RUNNER_TEMP/store-update-proof/ios-unset-minimum.png"
       - uses: actions/upload-artifact@v4
@@ -133,5 +117,5 @@ jobs:
           path: |
             ${{ runner.temp }}/store-update-proof/
             ${{ runner.temp }}/iphone-build.log
-            ${{ runner.temp }}/iphone-metro.log
+            ~/.maestro/tests/
           retention-days: 7

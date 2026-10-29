@@ -355,6 +355,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         for (const secret of [grant.code!, grant.verifier, 'secret-value-123', 'refresh-value-123', 'grant-sentinel-123', 'password', input.code_verifier!, input.code!].filter(Boolean))
           expect(line).not.toContain(secret);
       }
+      // A JSON grant_type that cannot become a string still gets an OAuth error and one log line.
+      warn.mockClear();
+      const odd = await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: { toString: null }, client_id: grant.clientId }) });
+      expect([odd.status, (await odd.json() as { error: string }).error]).toEqual([400, 'unsupported_grant_type']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(warn.mock.calls[0]![1] as string)).toMatchObject({ error: 'unsupported_grant_type', reason: 'grant_type_unsupported', grant_type: 'other',
+        params: ['client_id', 'grant_type'], content_type: 'application/json' });
       warn.mockClear();
       expect((await exchange(grant)).status).toBe(200);
       expect(warn).not.toHaveBeenCalled();

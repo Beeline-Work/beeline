@@ -422,7 +422,7 @@ export class RoomsMcpOAuth {
       if (request.method === 'POST' && path === '/mcp/oauth/token') console.warn('[rooms-mcp-oauth] token refused', JSON.stringify({ error: message,
         reason: error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : tokenInput ? 'invalid_parameter' : 'invalid_body',
         // grant_type and content-type are client-chosen strings, so only fixed categories reach the log.
-        grant_type: tokenInput?.grant_type === undefined ? undefined : ['authorization_code', 'refresh_token'].includes(String(tokenInput.grant_type)) ? tokenInput.grant_type : 'other',
+        grant_type: tokenInput?.grant_type === undefined ? undefined : tokenInput.grant_type === 'authorization_code' || tokenInput.grant_type === 'refresh_token' ? tokenInput.grant_type : 'other',
         params: tokenInput ? Object.keys(tokenInput).slice(0, 20).map(key => key.slice(0, 40)).sort() : undefined,
         client_auth: request.headers.authorization ? /^(basic|bearer)\s/i.exec(request.headers.authorization)?.[1]!.toLowerCase() ?? 'other' : 'none',
         content_type: ((type?: string) => type === undefined ? undefined : ['application/json', 'application/x-www-form-urlencoded'].includes(type) ? type : 'other')(request.headers['content-type']?.split(';')[0]?.trim().toLowerCase()) }));

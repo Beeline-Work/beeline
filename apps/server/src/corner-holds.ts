@@ -10,8 +10,8 @@ export async function activeCornerHolds(
 ): Promise<CornerMergeHold[]> {
   return (
     await db.query<CornerMergeHold>(
-      `SELECT id::text,actor_id "actorId",actor_id "holderId",
-       (SELECT name FROM identities WHERE identities.id=actor_id) "holderName",standing,set_at::text "setAt"
+      `SELECT id::text,actor_id "actorId",COALESCE(set_by_agent_id,actor_id) "holderId",
+       (SELECT name FROM identities WHERE identities.id=COALESCE(set_by_agent_id,actor_id)) "holderName",standing,set_at::text "setAt"
      FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL ORDER BY set_at,id`,
       [cornerId],
     )
@@ -19,7 +19,7 @@ export async function activeCornerHolds(
 }
 
 /** Called in the caller's transaction, including corner creation. */
-export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, actorId: string) {
+export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, actorId: string, agentId?: string) {
   await lockCornerLifecycle(db, input.cornerId);
   const actor = (
     await db.query<{ role: CornerMergeHold['standing'] }>(
@@ -38,31 +38,33 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
   if (!actor) throw new Error('hold access denied: current human Room membership required');
   if (input.releaseHoldId !== undefined) {
     const hold = (
-      await db.query<{ actor_id: string; standing: CornerMergeHold['standing'] }>(
-        `SELECT actor_id,standing FROM corner_merge_holds WHERE id=$1 AND corner_id=$2 AND released_at IS NULL FOR UPDATE`,
+      await db.query<{ actor_id: string; set_by_agent_id: string | null; holder_name: string; standing: CornerMergeHold['standing'] }>(
+        `SELECT actor_id,set_by_agent_id,(SELECT name FROM identities WHERE id=COALESCE(set_by_agent_id,actor_id)) holder_name,standing FROM corner_merge_holds WHERE id=$1 AND corner_id=$2 AND released_at IS NULL FOR UPDATE`,
         [input.releaseHoldId, input.cornerId],
       )
     ).rows[0];
     if (!hold) throw new Error('active hold not found');
     const rank = { member: 0, admin: 1, owner: 2 };
-    if (hold.actor_id !== actorId && rank[actor.role] <= rank[hold.standing])
+    if (agentId && hold.set_by_agent_id !== agentId)
+      throw new Error(`hold release denied: only ${hold.holder_name} can release this hold through an agent turn`);
+    if (!agentId && !hold.set_by_agent_id && hold.actor_id !== actorId && rank[actor.role] <= rank[hold.standing])
       throw new Error(
         `hold release denied: only the holder or someone above their ${hold.standing} standing can release it`,
       );
     await db.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2 WHERE id=$1`, [
       input.releaseHoldId,
-      actorId,
+      agentId ?? actorId,
     ]);
     return { holdId: input.releaseHoldId, roomId: input.cornerId };
   }
   const row = (
     await db.query<{ id: string }>(
-      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,$3)
-     ON CONFLICT(corner_id,actor_id) WHERE released_at IS NULL DO UPDATE SET actor_id=EXCLUDED.actor_id RETURNING id`,
-      [input.cornerId, actorId, actor.role],
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id) VALUES($1,$2,$3,$4)
+     ON CONFLICT(corner_id,(COALESCE(set_by_agent_id,actor_id))) WHERE released_at IS NULL DO UPDATE SET actor_id=EXCLUDED.actor_id RETURNING id`,
+      [input.cornerId, actorId, actor.role, agentId ?? null],
     )
   ).rows[0]!;
-  await writeHoldMessage(db, input.cornerId, row.id, actorId);
+  await writeHoldMessage(db, input.cornerId, row.id, agentId ?? actorId);
   return { holdId: row.id, roomId: input.cornerId };
 }
 
@@ -73,13 +75,13 @@ async function writeHoldMessage(
   actorId: string,
 ) {
   const actor = (
-    await db.query<{ name: string }>('SELECT name FROM identities WHERE id=$1', [actorId])
+    await db.query<{ name: string; kind: string }>('SELECT name,kind FROM identities WHERE id=$1', [actorId])
   ).rows[0];
   await systemLine(db, {
     id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),
     roomId: cornerId,
     authorId: actorId,
-    subject: { kind: 'person', id: actorId, name: actor?.name ?? actorId },
+    subject: { kind: actor?.kind === 'agent' ? 'agent' : 'person', id: actorId, name: actor?.name ?? actorId },
     verb: 'set a merge hold',
   });
 }
@@ -88,7 +90,7 @@ async function writeHoldMessage(
 export async function backfillCornerHoldMessages(db: SqlDatabase): Promise<void> {
   const rows = (
     await db.query<{ corner_id: string; id: string; actor_id: string }>(
-      `SELECT hold.corner_id,hold.id,hold.actor_id FROM corner_merge_holds hold
+      `SELECT hold.corner_id,hold.id,COALESCE(hold.set_by_agent_id,hold.actor_id) actor_id FROM corner_merge_holds hold
      JOIN rooms room ON room.id=hold.corner_id WHERE hold.released_at IS NULL AND room.archived_at IS NULL`,
     )
   ).rows;

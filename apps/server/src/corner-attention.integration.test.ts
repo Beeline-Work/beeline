@@ -259,7 +259,36 @@ it.each([
     );
   },
 );
-it('Reproduction R1: a human hold still waits when an older agent-commander report sits under pending CI', async () => {
+it.each(['pending', 'unreported'] as const)(
+  'Reproduction R1: a lone human merge hold shows review during %s checks and waits once they pass',
+  async (checks) => {
+    if (checks === 'pending') await ci('pending');
+    else await unreportedHead();
+    await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
+    const shown = async () => ({
+      state: await state(),
+      row: (await phone.readCorners(ROOM, HUMAN))!.corners[0]!,
+      chat: (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0],
+      deck: (await phone.liveChatCornerStatus(ROOM, HUMAN))!,
+    });
+    const during = await shown();
+    expect(during.state).toBe('review');
+    expect(during.row).toMatchObject({ state: 'review' });
+    expect(during.row.blocker).toBeUndefined();
+    expect(during.chat?.state).toBe('review');
+    expect(during.deck).toMatchObject({ waitingCornerCount: 0 });
+    await ci('passing');
+    const after = await shown();
+    expect(after.state).toBe('waiting');
+    expect(after.row).toMatchObject({ state: 'waiting', blocker: { kind: 'merge-hold', personId: HUMAN } });
+    expect(after.chat?.state).toBe('waiting');
+    expect(after.deck).toMatchObject({ waitingCornerCount: 1 });
+    console.info(
+      `Demonstrated Reproduction R1: a held corner reads ${during.row.state} during ${checks} checks and ${after.row.state} on the hold once they pass`,
+    );
+  },
+);
+it('Reproduction R1: a human hold beside an older agent-commander report stays review under pending CI', async () => {
   await ci('pending');
   const { reportToCommander } = await import('./commander.js');
   await reportToCommander(db, C, WORKER, 'blocked: awaiting CI and review');
@@ -268,16 +297,12 @@ it('Reproduction R1: a human hold still waits when an older agent-commander repo
     [C],
   );
   await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
-  expect(await state()).toBe('waiting');
-  const row = (await phone.readCorners(ROOM, HUMAN))!.corners[0]!;
-  expect(row).toMatchObject({ state: 'waiting' });
+  expect(await state()).toBe('review');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'review' });
   expect(
     (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]
       ?.state,
-  ).toBe('waiting');
-  console.info(
-    'Demonstrated Reproduction R1: human hold stays waiting while an older agent-commander report sits under pending CI',
-  );
+  ).toBe('review');
 });
 it('single-use gap deadlines survive restart and a resume inside the gap sends no alert', async () => {
   await turn();

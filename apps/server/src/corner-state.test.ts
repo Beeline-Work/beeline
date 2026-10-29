@@ -155,12 +155,6 @@ it('Reproduction R1: an agent-commander report stays review while checks run, an
     state: 'waiting', reason: 'question', blocker: { kind: 'report', personId: 'human' },
   });
   expect(deriveCornerState({
-    ...facts, owed: true, lifecycle: pending,
-    blocker: { reason: 'approve', blocker: { kind: 'merge-hold', personId: 'human' } },
-  })).toEqual({
-    state: 'waiting', reason: 'approve', blocker: { kind: 'merge-hold', personId: 'human' },
-  });
-  expect(deriveCornerState({
     ...facts, owed: true, agentCommanderReport: true,
     lifecycle: { lifecycle: 'in-review', checks: 'passing' }, blocker: agentReport,
   })).toEqual({ state: 'waiting', ...agentReport });
@@ -172,4 +166,30 @@ it('Reproduction R1: an agent-commander report stays review while checks run, an
     ...facts, owed: true, agentCommanderReport: true,
     lifecycle: pending, blocker: agentReport,
   })).toEqual({ state: 'review' });
+});
+
+describe('Reproduction R1: a merge hold blocks only the merge', () => {
+  const hold = { reason: 'approve' as const, blocker: { kind: 'merge-hold' as const, personId: 'human' } };
+  const held = { ...facts, owed: true, blocker: hold };
+  it.each([
+    ['checks pending', 'review', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }],
+    ['checks not yet reported after a push', 'review', { lifecycle: { ...pushed, checksSummary: emptySummary } }],
+    ['a reviewer turn running', 'review', { reviewerActive: true, lifecycle: { ...pushed, checks: 'passing' } }],
+    ['a worker turn running', 'working', { turnRunning: true, lifecycle: { lifecycle: 'in-review', checks: 'pending' } }],
+  ] as const)('a held corner with %s is %s', (_name, state, extra) => {
+    expect(deriveCornerState({ ...held, ...extra })).toEqual({ state });
+  });
+  it.each(['passing', 'failing'] as const)('a held corner with %s checks waits on the hold', (checks) => {
+    expect(deriveCornerState({ ...held, lifecycle: { ...pushed, checks } }))
+      .toEqual({ state: 'waiting', ...hold });
+  });
+  it('a held corner without a pull request waits on the hold', () => {
+    expect(deriveCornerState(held)).toEqual({ state: 'waiting', ...hold });
+  });
+  it('a held corner with a human question still waits on the question while checks run', () => {
+    const question = { reason: 'question' as const, blocker: { kind: 'message' as const, personId: 'human' } };
+    expect(deriveCornerState({
+      ...held, blocker: question, lifecycle: { lifecycle: 'in-review', checks: 'pending' },
+    })).toEqual({ state: 'waiting', ...question });
+  });
 });

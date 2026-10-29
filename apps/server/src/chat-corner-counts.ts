@@ -34,7 +34,7 @@ export type CornerStateRow = {
   waiting_since?: Date | null;
   /** Selected blocker is a report addressed to the agent commander. */
   agent_commander?: boolean | null;
-  /** Another blocker in the same corner is addressed to a person. */
+  /** Another blocker in the same corner is addressed to a person; merge holds do not count. */
   human_blocker?: boolean | null;
   /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
   owed?: boolean | null;
@@ -151,13 +151,16 @@ export function cornerWorkSql(ignoreCommander = false): string {
     ) activity ON true`;
 }
 
-/** Blocking people and recorded commanders. Display picks the oldest; reminders retain newest-first selection. */
+/**
+ * Blocking people and recorded commanders. Display picks the oldest; reminders retain newest-first selection.
+ * Merge holds rank after every other blocker, so a hold is selected only when nothing else is open.
+ */
 export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false): string {
   const direction = newestFirst ? 'DESC' : 'ASC';
   return `LEFT JOIN LATERAL (
     SELECT ranked.* FROM (
       SELECT blockers.*,person.name person_name,
-        bool_or(NOT blockers.agent_commander) OVER () human_blocker
+        bool_or(NOT blockers.agent_commander AND blockers.kind<>'merge-hold') OVER () human_blocker
       FROM (
       SELECT owed.message_id item_id,owed.person_id,owed.created_at,
         CASE WHEN item.card_type IN ('squire-approval','permission','grant-request') THEN 'approve'
@@ -182,7 +185,7 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
     ) blockers LEFT JOIN identities person ON person.id=blockers.person_id
     WHERE ${sourcePredicate}
-    ) ranked ORDER BY ranked.created_at ${direction},ranked.item_id ${direction},ranked.person_id LIMIT 1
+    ) ranked ORDER BY ranked.kind='merge-hold',ranked.created_at ${direction},ranked.item_id ${direction},ranked.person_id LIMIT 1
   ) blocker ON true`;
 }
 

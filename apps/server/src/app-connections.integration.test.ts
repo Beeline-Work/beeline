@@ -278,6 +278,40 @@ describe('connect_app', () => {
 
   afterEach(async () => database.close());
 
+  it.each(['registry-mcp', 'trusty-squire'])(
+    'R-STALE-SIGN-IN: %s stale card returns reconnect guidance through HTTP', async connectKind => {
+      const appId = '33333333-3333-4333-8333-333333333333';
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+         VALUES('stale-sign-in',$1,$2,'','app-sign-in',$3::jsonb)`,
+        [ROOM, HELPER, JSON.stringify({ appId, ownerId: OWNER, agentId: HELPER,
+          connectorId: '55555555-5555-4555-8555-555555555555', connectKind, status: 'pending' })],
+      );
+      const provider = fakeComposio();
+      const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+        undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+      const server = createBeelineServer({ database, phone, daemon: {} as DaemonService,
+        live: new LiveHub(), mediaMaximumBytes: 1,
+        auth: { authenticatePhone: async () => OWNER } as unknown as TokenAuth });
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      vi.mocked(captureServerError).mockClear();
+      try {
+        const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/operations/beginAppSignIn`, {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-phone-token-0001' },
+          body: JSON.stringify({ appId }),
+        });
+        const result = await response.json();
+        console.log(`Reproduction R-STALE-SIGN-IN: ${connectKind} stale card → HTTP ${response.status} ${JSON.stringify(result)}`);
+        expect(response.status).toBe(409);
+        expect(result).toEqual({ error: 'This sign-in is no longer pending. Reconnect to retry.' });
+        expect(captureServerError).not.toHaveBeenCalled();
+        expect(provider.link).not.toHaveBeenCalled();
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    },
+  );
+
   async function connectSquire(): Promise<string> {
     await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
       [HELPER, JSON.stringify({ status: 'connected', reportedAt: Date.now() / 1000 })]);

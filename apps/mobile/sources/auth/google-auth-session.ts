@@ -153,18 +153,21 @@ export async function runGoogleSignIn(input: {
   try {
     void input.openAuthSession(url.toString(), redirect).then((result) => {
       if (result.url) callbackUrl = result.url;
-      // Android can dismiss the Custom Tab while delivering a successful
-      // redirect. Only an explicit cancel establishes user cancellation.
-      browserClosed = result.type === 'cancel';
+      // A dismissed tab can also have completed sign-in. Check the server
+      // before treating either close result as cancellation.
+      browserClosed = result.type === 'cancel' || result.type === 'dismiss';
     }, (error: unknown) => { browserFailure = error; browserClosed = true; });
     const deadline = Date.now() + 120_000;
     let closedAt: number | undefined;
     let connectionInterrupted = false;
     while (Date.now() < deadline) {
       if (browserFailure) throw browserFailure;
+      const checkingClosedBrowser = browserClosed;
+      let serverPending = false;
       try {
         const ticket = await resumeGoogleSignIn(callbackUrl);
         if (ticket) return ticket;
+        serverPending = true;
         connectionInterrupted = false;
       } catch (error) {
         if (error instanceof OidcBindError) throw error;
@@ -172,7 +175,7 @@ export async function runGoogleSignIn(input: {
         // the device is offline. Keep recovering the same proof until expiry.
         connectionInterrupted = true;
       }
-      if (browserClosed) {
+      if (checkingClosedBrowser && serverPending) {
         closedAt ??= Date.now();
         if (Date.now() - closedAt >= 1_500) throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
       }

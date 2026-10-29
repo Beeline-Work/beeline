@@ -490,19 +490,27 @@ it('does not fall back to a second visible reply when a handoff fails', async ()
   } finally { await runtime.close(); }
 });
 
-it('demonstrates spoken acknowledgements and completed replies once through the phone read', async () => {
+it('Reproduction voice-lost-1 stand-in: mixed request dispatch and failure follow-up reach the phone once', async () => {
   const db = new PgliteDatabase();
   const live = new LiveHub();
   const human = 'a'.repeat(64), agent = 'b'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111';
   const room = '22222222-2222-4222-8222-222222222222';
   const config = conversationService(1).service.config;
-  config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
-    onText('You’re right to question it.');
-    return { text: 'You’re right to question it.', order: true };
+  const request = 'Introduce yourself. Connect my Shopify';
+  const failure = 'Shopify could not connect because Trusty Squire is unavailable.';
+  const brain = new OpenRouterVoiceBrain('test', async (_url, options) => {
+    const body = JSON.parse(options!.body as string);
+    expect(body.messages.at(-1)).toEqual({ role: 'user', content: request });
+    expect(body.messages[0].content).toContain('For a request that mixes conversation with work, call order for the whole request');
+    return new Response('data: ' + JSON.stringify({ choices: [{ delta: {
+      tool_calls: [{ index: 0, function: { name: 'order', arguments: '{}' } }],
+    } }] }) + '\n\ndata: [DONE]\n\n');
   });
+  config.brain.answer.mockImplementation((...args) => brain.answer(...args));
+  const synthesized: string[] = [];
   const voice = new RealVoiceService(db, live, { ...config,
-    speech: { synthesize: async function* () { yield new Uint8Array([200, 1]); } } });
+    speech: { synthesize: async function* (text) { synthesized.push(text); yield new Uint8Array([200, 1]); } } });
   try {
     await migrate(db);
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
@@ -514,16 +522,22 @@ it('demonstrates spoken acknowledgements and completed replies once through the 
     const joined = await voice.join(room, human);
     const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
     const runtime = await voice.ensureRuntime(call);
-    await runtime!.utterance(human, 'Ruby reproduce the bug');
+    state.room.remoteParticipants.set(human, { identity: human });
+    await runtime!.utterance(human, request);
     const command = (await db.query<{ id: string; source_message_id: string }>(`SELECT id,source_message_id FROM agent_commands WHERE room_id=$1`, [room])).rows;
     expect(command).toHaveLength(1);
+    expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [command[0]!.source_message_id])).rows[0]!.text).toBe('@ruby ' + request);
     await claimAgentCommand(db, room, agent, command[0]!.id, 'proof-generation');
     await new DaemonService(db, live).execute('postRoomMessage', {
-      roomId: room, requestId: command[0]!.source_message_id, generationId: 'proof-generation', text: 'The cause is confirmed.',
+      roomId: room, requestId: command[0]!.source_message_id, generationId: 'proof-generation', text: failure,
     }, agent);
     const phone = new PhoneService(db, 'http://proof');
     const replies = (await phone.readRoom(room, human))!.messages.filter(message => message.author.pubkey === agent && message.presentation === 'message');
-    expect(replies.map(reply => reply.text)).toEqual(['You’re right to question it.', 'The cause is confirmed.']);
+    expect(replies.map(reply => reply.text)).toEqual(['Checking. I’ll tell you when I have it.', failure]);
+    await runtime!.refresh(); await (runtime as any).reportQueue;
+    await runtime!.refresh(); await (runtime as any).reportQueue;
+    expect(synthesized.filter(text => text === failure)).toHaveLength(1);
+    expect((await db.query(`SELECT id FROM agent_commands WHERE room_id=$1`, [room])).rowCount).toBe(1);
     // A conversation-only answer remains owned by the voice path.
     config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
       const answer = '**I’m listening.**\nWhat were you going to say?\n\nI’m listening. What were you going to say?';

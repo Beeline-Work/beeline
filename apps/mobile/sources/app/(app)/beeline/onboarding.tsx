@@ -399,7 +399,7 @@ export default function BuzzOnboarding() {
         state: randomState(),
         recoveryToken: randomState(),
         openAuthSession: (url, redirect) =>
-          openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect)),
+          openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect, 'google')),
         subscribeToUrls: subscribeToAuthUrls,
       });
       void funnelCallback('success');
@@ -665,14 +665,14 @@ export default function BuzzOnboarding() {
               />
               {!notice && <Text style={styles.recommended}>Recommended</Text>}
             </View>
-            {!notice && <Button
+            <Button
               label="Continue with Google"
               variant="provider"
               testID="onboarding-google-sign-in"
               loading={loadingAction === 'google'}
               disabled={loading || status === 'checking_device' || status === 'binding'}
               onPress={() => void handleGoogleSignIn()}
-            />}
+            />
           </>
         ) : null}
       </View>

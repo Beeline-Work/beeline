@@ -210,7 +210,7 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (code === 'state_mismatch') {
     return {
       status: 'bind_retry',
-      title: 'Sign-in did not finish',
+      title: 'Sign-in did not finish.',
       message:
         'Continue with GitHub again to finish signing in.',
       retryable: false,
@@ -219,7 +219,7 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (code === 'oidc_denied' || code === 'github_denied' || code === 'browser_canceled') {
     return {
       status: 'browser_canceled',
-      title: 'Sign-in did not finish',
+      title: 'Sign-in did not finish.',
       message: 'Nothing changed on this device. Sign in again when you are ready.',
       retryable: false,
     };
@@ -246,7 +246,7 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   }
   return {
     status: 'bind_retry',
-    title: 'Sign-in did not finish',
+    title: 'Sign-in did not finish.',
     message: 'Continue with GitHub again to finish signing in.',
     retryable: false,
   };

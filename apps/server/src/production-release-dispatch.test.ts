@@ -2,6 +2,13 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
+import * as Sentry from '@sentry/node';
+import { captureServerError } from './sentry.js';
+
+vi.mock('@sentry/node', async importOriginal => ({
+  ...await importOriginal<typeof import('@sentry/node')>(),
+  captureException: vi.fn(() => 'fixture-event'),
+}));
 
 const db = new PgliteDatabase();
 const room = '22222222-2222-4222-8222-222222222222';
@@ -19,6 +26,46 @@ beforeAll(async () => {
     VALUES('command',$1,$2,'human-command','request','input','human','command','human-command',0,'claimed','generation')`, [room, agent]);
 });
 afterAll(() => db.close());
+
+it('R-RELEASE-PROVENANCE: capture boundary excludes missing human provenance but captures database and provider failures', async () => {
+  const capture = vi.mocked(Sentry.captureException);
+  const dispatch = vi.fn(async () => {});
+  const refusal = 'Production release requires a cited human command message from a workspace owner or admin';
+  const receipts = async () => (await db.query(`SELECT id FROM messages WHERE text LIKE 'Production release dispatch requested:%'`)).rows;
+  const throughBoundary = async () => {
+    try { return await productionReleaseDispatch(db, agent, input, dispatch); }
+    catch (error) { captureServerError(error); throw error; }
+  };
+  const before = await receipts();
+  try {
+    await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
+    await expect(throughBoundary()).rejects.toThrow(refusal);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(await receipts()).toEqual(before);
+    expect(capture).not.toHaveBeenCalled();
+    await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
+
+    const databaseError = new Error('release database unavailable');
+    vi.spyOn(db, 'transaction').mockRejectedValueOnce(databaseError);
+    await expect(throughBoundary()).rejects.toBe(databaseError);
+    expect(capture).toHaveBeenLastCalledWith(databaseError, expect.anything());
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(await receipts()).toEqual(before);
+
+    // Identical wording on an unexpected provider error must remain observable.
+    const providerError = new Error(refusal);
+    dispatch.mockRejectedValueOnce(providerError);
+    await expect(throughBoundary()).rejects.toBe(providerError);
+    expect(capture).toHaveBeenLastCalledWith(providerError, expect.anything());
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect((await receipts()).length).toBe(before.length + 1);
+  } finally {
+    await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
+    await db.query(`DELETE FROM messages WHERE text LIKE 'Production release dispatch requested:%' AND NOT (id = ANY($1::text[]))`, [before.map(row => row.id)]);
+    vi.restoreAllMocks();
+  }
+});
 
 it('release-dispatch-attribution: commits readable server provenance before dispatch and preserves recovery inputs', async () => {
   const dispatch = vi.fn(async (inputs: Record<string, string>) => {
@@ -129,6 +176,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
 });
 
 it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt and zero grants or cards', async () => {
+  vi.mocked(Sentry.captureException).mockClear();
   const { createServer } = await import('node:http');
   const { spawn } = await import('node:child_process');
   const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
@@ -152,6 +200,7 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
       const result = await service.execute('dispatchRoomWorkflow', JSON.parse(body), agent);
       response.writeHead(200).end(JSON.stringify(result));
     } catch (error) {
+      captureServerError(error);
       response.writeHead(403).end(JSON.stringify({ error: String(error) }));
     }
   });
@@ -193,6 +242,8 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
     await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
     const refused = await run();
     expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0].text).toContain('Production release requires a cited human command message from a workspace owner or admin');
+    expect(Sentry.captureException).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledOnce();
     expect(operations).toHaveLength(2);
     expect(await grantCount()).toBe(before.grants);

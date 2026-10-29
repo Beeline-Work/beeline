@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { authorizeCommandOutput } from './agent-command.js';
+import { ExpectedRefusalError } from './command-refusal.js';
 
 type ReleaseDispatchInput = {
   roomId: string;
@@ -38,7 +39,7 @@ export async function productionReleaseDispatch(
          AND manager.removed_at IS NULL AND manager.role IN ('owner','admin')
        WHERE m.id=$1 AND m.deleted_at IS NULL`, [command.root_source_message_id, input.roomId],
     )).rows[0];
-    if (!human) throw new Error('Production release requires a cited human command message from a workspace owner or admin');
+    if (!human) throw new ExpectedRefusalError('Production release requires a cited human command message from a workspace owner or admin');
     const provenance = JSON.stringify({
       agentId: agent.id, handle: agent.handle, place: input.roomId,
       humanCommandMessageId: human.id, auditMessageId,

@@ -8,13 +8,16 @@ import type { AuthSessionOpenOptions } from 'expo-web-browser';
 export function authSessionOptions(
   platform: string,
   redirectUri: string,
+  provider?: 'google' | 'github',
 ): AuthSessionOpenOptions {
   return {
     preferUniversalLinks: redirectUri.startsWith('https://'),
     ...(platform === 'android'
       ? {
-          createTask: true,
-          showInRecents: true,
+          // The launcher must restore Google's unfinished tab above Beeline.
+          // A separate task would foreground Beeline and report a dismissal.
+          createTask: provider !== 'google',
+          ...(provider === 'google' ? { showInRecents: true } : {}),
           useProxyActivity: false,
         }
       : {}),

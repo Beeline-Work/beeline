@@ -8,6 +8,14 @@ describe('auth browser session', () => {
     ).toEqual({
       preferUniversalLinks: true,
       createTask: true,
+      useProxyActivity: false,
+    });
+  });
+
+  it('Reproduction 6c548392: restores Google above Beeline from the Android launcher', () => {
+    expect(authSessionOptions('android', 'beeline://beeline/google-callback', 'google')).toEqual({
+      preferUniversalLinks: false,
+      createTask: false,
       showInRecents: true,
       useProxyActivity: false,
     });

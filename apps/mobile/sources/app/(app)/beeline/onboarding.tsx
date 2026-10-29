@@ -399,7 +399,7 @@ export default function BuzzOnboarding() {
         state: randomState(),
         recoveryToken: randomState(),
         openAuthSession: (url, redirect) =>
-          openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect)),
+          openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect, 'google')),
         subscribeToUrls: subscribeToAuthUrls,
       });
       void funnelCallback('success');

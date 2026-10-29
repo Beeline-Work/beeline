@@ -421,7 +421,7 @@ export function squirePairingStages(
   const labels: Record<SquireStageKey, string> = {
     reach: `Reach ${machineName ?? 'your computer'}`,
     install: 'Install Trusty Squire',
-    pair: 'Pair with this workspace',
+    pair: 'Pair to this workspace',
     'sign-in': 'Sign in to Google',
   };
   const found = new Map<SquireStageKey, ConnectorInstallStep>();

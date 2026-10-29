@@ -81,6 +81,13 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
+vi.mock('@/components/buzz/ConnectProgress', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) => ReactModule.createElement(name, props);
+  return { RingSpinner: host('RingSpinner'), ConnectStepDot: host('ConnectStepDot'),
+    ConnectStepBar: host('ConnectStepBar'), LoadingBar: host('LoadingBar') };
+});
+
 vi.mock('@/components/buzz/PageHeader', async () => {
   const ReactModule = await import('react');
   return {
@@ -164,6 +171,25 @@ describe('ConnectorSignInScreen', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
     } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
+  });
+
+  it('refreshes on return from Chrome and lands on the signed-in Squire page', async () => {
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [] });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+      expect(renderer.root.findByProps({ testID: 'signin-finishing' })).toBeDefined();
+      readInstallState.mockResolvedValue({ connected: true, steps: [] });
+      await act(async () => {
+        for (const listener of appStateListeners) listener('active');
+        await Promise.resolve();
+      });
+      expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/service',
+        params: { workspaceId: 'workspace-1', viewerId: '', service: 'trusty-squire' } });
+    } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; }
   });
 
   it('Reproduction tunnel-dns: a page that fails while its name is new reloads itself before failing', async () => {

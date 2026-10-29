@@ -35,13 +35,15 @@ const virtual = (url: string) => ({ method: 'streamed' as const, url, browserLoc
 const INSTALLS: Record<string, (url: string) => Omit<ConnectorInstallState, 'connectorId'>> = {
   'pair-start': () => ({ helperName: 'squire', steps: [pending('Install on helper'), pending('Connect provider account')], signIn: null, connected: false }),
   'pair-installing': () => ({ helperName: 'squire', steps: [done('helper reached')], signIn: null, connected: false }),
+  'pair-pairing': () => ({ helperName: 'squire', steps: [done('helper reached'), done('trusty-squire 1.1.38 installed')], signIn: null, connected: false }),
   'pair-signin': (url) => ({ helperName: 'squire', connected: false, signIn: virtual(url),
     steps: [done('helper reached'), done('trusty-squire 1.1.38 installed'), pending('waiting for sign-in'), done('paired to workspace')] }),
   'pair-failed': () => ({ helperName: 'squire', signIn: null, connected: false,
     steps: [{ label: 'waiting for sign-in', status: 'failed', reason: 'the Trusty Squire sign-in page expired before it was used · tap Retry to open a new one' }] }),
 };
 
-function workbench(waiting: boolean): WorkbenchView {
+function workbench(screen: string): WorkbenchView {
+  const signedIn = screen === 'service-signed-in';
   const machine = (id: string, name: string, extra: object) => ({ id, name, online: true, status: 'not-added' as const, statusText: 'Google sign-in needed', ...extra });
   return {
     helpers: [{ id: SQUIRE, name: 'squire', online: true }], connectors: [], connections: [], apps: [],
@@ -49,11 +51,13 @@ function workbench(waiting: boolean): WorkbenchView {
       id: 'squire-signin', name: 'Trusty Squire', domain: 'trustysquire.ai', kind: 'sign-in-service', section: 'signin',
       logo: { kind: 'image', uri: 'https://server.usebeeline.app/v1/company-logos/squire', plate: 'dark' },
       subtitle: '3 computers', items: [], alsoAvailable: [],
-      status: waiting ? 'Waiting for sign-in' : 'Google sign-in needed',
+      status: 'Google sign-in needed',
       machines: [
         machine('muse', 'Muse', { online: false }),
         machine('pidoong', 'Pidoong', { online: false }),
-        machine(SQUIRE, 'squire', waiting ? { status: 'connected', reconnecting: true, statusText: 'Waiting for sign-in' } : {}),
+        machine(SQUIRE, 'squire', signedIn
+          ? { status: 'connected', signedInAs: 'lunchboxfortwo@gmail.com', statusText: 'lunchboxfortwo@gmail.com' }
+          : { status: 'error', error: 'the Trusty Squire sign-in page expired before it was used · tap Retry to open a new one', statusText: 'Sign-in unavailable' }),
       ],
     }] },
   } as unknown as WorkbenchView;
@@ -62,20 +66,20 @@ function workbench(waiting: boolean): WorkbenchView {
 function source(screen: string, url: string) {
   const mock = new MockWorkbenchSource();
   return Object.assign(mock, {
-    readWorkbench: async () => workbench(screen === 'service-waiting'),
+    readWorkbench: async () => workbench(screen),
     readInstallState: async ({ connectorId }: { connectorId: string }) =>
       ({ connectorId, ...(INSTALLS[screen] ?? INSTALLS['pair-signin']!)(url) }),
   });
 }
 
 function Proof() {
-  const [route, setRoute] = useState<{ screen: string; url: string }>({ screen: 'service-waiting', url: 'https://example.invalid/' });
+  const [route, setRoute] = useState<{ screen: string; url: string }>({ screen: 'service', url: 'https://example.invalid/' });
   useEffect(() => {
     const read = (link: string | null) => {
       if (!link) return;
       const query = new Map((link.split('?')[1] ?? '').split('&').filter(Boolean)
         .map((pair) => pair.split('=').map(decodeURIComponent) as [string, string]));
-      setRoute({ screen: query.get('screen') ?? 'service-waiting', url: query.get('url') ?? 'https://example.invalid/' });
+      setRoute({ screen: query.get('screen') ?? 'service', url: query.get('url') ?? 'https://example.invalid/' });
     };
     void Linking.getInitialURL().then(read);
     const subscription = Linking.addEventListener('url', ({ url }) => read(url));
@@ -83,9 +87,9 @@ function Proof() {
   }, []);
   const { screen, url } = route;
   setWorkbenchSource(source(screen, url));
-  if (screen === 'service-waiting' || screen === 'service') setProofParams({ ...scope, service: 'trusty-squire' });
+  if (screen.startsWith('service')) setProofParams({ ...scope, service: 'trusty-squire' });
   else if (screen.startsWith('pair-')) setProofParams({ ...scope, connectorId: 'trusty-squire', pairedConnectorId: `squire:${SQUIRE}` });
-  else setProofParams({ ...scope, connectorId: `squire:${SQUIRE}`, connectorName: 'Trusty Squire', url, method: 'streamed-page' });
+  else setProofParams({ ...scope, connectorId: `squire:${SQUIRE}`, connectorName: 'Trusty Squire', machineName: 'squire', url, method: 'streamed-page' });
   const Screen = screen.startsWith('service') ? ConnectorServiceScreen : screen.startsWith('pair-') ? ConnectTrustySquireScreen : ConnectorSignInScreen;
   return <Screen key={`${screen}:${url}`} />;
 }

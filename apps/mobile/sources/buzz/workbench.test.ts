@@ -542,7 +542,7 @@ describe('squirePairingStages', () => {
     // The exact list production showed: sign-in pending above a finished pairing.
     const stages = squirePairingStages([done('helper reached'), done('trusty-squire 1.1.38 installed'),
       pending('waiting for sign-in'), done('paired to workspace')], 'squire');
-    expect(stages.map(stage => stage.label)).toEqual(['Reach squire', 'Install Trusty Squire', 'Pair with this workspace', 'Sign in to Google']);
+    expect(stages.map(stage => stage.label)).toEqual(['Reach squire', 'Install Trusty Squire', 'Pair to this workspace', 'Sign in to Google']);
     expect(statuses(stages)).toEqual(['done', 'done', 'done', 'current']);
   });
 

@@ -23,6 +23,14 @@ const ROOM_LIST_ICON_CENTRE =
 const roomListIconEnd = (box: number) => ROOM_LIST_ICON_CENTRE - box / 2;
 
 const shared = {
+  // Dimensions and type from the owner-approved Trusty Squire mock v3.
+  squireConnect: {
+    sectionType: { fontFamily: 'SpaceGrotesk-Medium', fontSize: 12, lineHeight: 22, letterSpacing: 2 },
+    titleType: { fontFamily: 'SpaceGrotesk-Medium', fontSize: 18, lineHeight: 26 },
+    detailType: { fontFamily: 'SpaceGrotesk-Regular', fontSize: 14, lineHeight: 21 },
+    contentGap: 10, dotGap: 6, progressBottom: 28, stepBottom: 26, copyTop: 2,
+    centerSide: 40, centerBottom: 64, bareBottom: 152, railRadius: 1, barRadius: 2,
+  },
   brandMark: brand.mark,
   // The one box radius, shared by every theme (DESIGN.md → Shape).
   radius: 3,

@@ -378,9 +378,13 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
       testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`} wrapTitle
       askingAgent={offer.agent} agent={agent}
       title={`@${agentName.replace(/^@/, '')} wants to ${offer.intent === 'reconnect' ? 'reconnect' : offer.intent === 'switch' ? 'switch' : 'add'} ${offer.connectorName}`}
-      subline={`Connectors · ${approvalAudience(offer.addressee, viewerPubkey)}`}
+      subline={offer.addressee.pubkey === viewerPubkey ? undefined : approvalAudience(offer.addressee, viewerPubkey)}
       sublineTestID={`connector-offer-${offer.offerId}-line`} body={offer.reason}
-      facts={[{ label: 'Can', value: offer.connectorType === 'trusty-squire' ? 'Sign in to sites · use vault keys' : offer.connectorType === 'wallet' ? 'Sign transactions with your wallet' : 'Use the connected service' }, { label: 'Changes', value: 'Your Connectors' }]}
+      facts={offer.connectorType === 'trusty-squire'
+        ? [{ label: 'Can', value: 'Sign in to sites · use vault keys' }]
+        : offer.connectorType === 'wallet'
+          ? [{ label: 'Can', value: 'Sign transactions with your wallet' }]
+          : undefined}
       decisionNote={!pending && !connecting}
       stamp={ledgerStamp(message.timestamp)}
       footerNote={

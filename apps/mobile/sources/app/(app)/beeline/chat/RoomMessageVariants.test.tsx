@@ -3004,7 +3004,7 @@ describe('Room message variant components', () => {
       expect(letter.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === 'W')).toBe(true);
     });
 
-    it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {
+    it('keeps the Squire capability without a redundant audience or Changes row', () => {
       const onAccept = vi.fn();
       const card = render(
         <ConnectorOfferCard
@@ -3022,11 +3022,8 @@ describe('Room message variant components', () => {
         card.root.findByProps({ testID: 'connector-offer-pending-title' }).props.numberOfLines,
       ).toBeUndefined();
       expect(json).toContain('@Otter wants to add Trusty Squire');
-      // ONE subtitle: the server-owned consequence + boundary, including the
-      // agent's reason. Not a second line of agent prose.
-      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children).toBe(
-        'Connectors · for you',
-      );
+      expect(card.root.findAllByProps({ testID: 'connector-offer-offer-1-line' })).toHaveLength(0);
+      expect(json).not.toContain('Changes');
       expect(json).toContain('Sign in to sites · use vault keys');
       expect(json).toContain('to provision the 1inch API key into its vault');
       // One action, with the check glyph; no menu, no second button.
@@ -3042,6 +3039,33 @@ describe('Room message variant components', () => {
       ).toHaveLength(0);
       act(() => accept.props.onPress());
       expect(onAccept).toHaveBeenCalledWith('offer-1', 'trusty-squire');
+    });
+
+    it.each([
+      ['tailscale' as const, 'Tailscale', undefined],
+      ['wallet' as const, 'Wallet', 'Sign transactions with your wallet'],
+    ])('shows only the useful capability for %s', (connectorType, connectorName, capability) => {
+      const card = render(<ConnectorOfferCard
+        message={message({ connectorOffer: { ...pending.connectorOffer!, connectorType, connectorName } })}
+        viewerIsAgent={false} viewerPubkey="zeke" actionId={null}
+        onAccept={vi.fn()} onOpenWorkbench={vi.fn()} />);
+      const text = card.root.findAllByType('Text').map((node: ReactTestInstance) => node.props.children);
+      expect(text).not.toContain('Changes');
+      expect(text).not.toContain('Use the connected service');
+      if (capability) {
+        expect(text).toContain('Can');
+        expect(text).toContain(capability);
+      } else {
+        expect(text).not.toContain('Can');
+      }
+      expect(card.root.findAllByProps({ testID: 'connector-offer-offer-1-line' })).toHaveLength(0);
+    });
+
+    it('keeps the other addressee under the title without the Connectors prefix', () => {
+      const card = render(<ConnectorOfferCard message={pending}
+        viewerIsAgent={false} viewerPubkey="bystander" actionId={null}
+        onAccept={vi.fn()} onOpenWorkbench={vi.fn()} />);
+      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children).toBe('for @zeke');
     });
 
     it('keeps an in-progress ceremony resumable without claiming the tool was added', () => {

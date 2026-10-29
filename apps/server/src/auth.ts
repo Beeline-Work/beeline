@@ -1,4 +1,5 @@
 import { recordXSignup } from './x-ads.js';
+import { recordSigninAttempt } from './signin-attempts.js';
 import { externalFetch } from '@beeline/auth/external-fetch';
 import {
   createDecipheriv,
@@ -149,7 +150,9 @@ export class TokenAuth {
       );
       return identity;
     });
-    return { ...await this.issuePhoneTokens(id, randomUUID()), ...(xSignup ? { xSignup } : {}) };
+    const tokens = await this.issuePhoneTokens(id, randomUUID());
+    await recordSigninAttempt(this.database, { stage: 'ticket_exchanged', ticketHash: tokenHash(ticket), at: this.now() });
+    return { ...tokens, ...(xSignup ? { xSignup } : {}) };
   }
 
   async linkGoogleOidc(viewerId: string, ticket: string): Promise<void> {
@@ -207,7 +210,9 @@ export class TokenAuth {
       await this.persistGitHubCredential(database, github);
       return id;
     });
-    return { ...await this.issuePhoneTokens(id, randomUUID()), ...(xSignup ? { xSignup } : {}) };
+    const tokens = await this.issuePhoneTokens(id, randomUUID());
+    await recordSigninAttempt(this.database, { stage: 'ticket_exchanged', ticketHash: tokenHash(oidcToken), at: this.now() });
+    return { ...tokens, ...(xSignup ? { xSignup } : {}) };
   }
 
   private async allocateHandle(database: SqlDatabase, id: string, input: string): Promise<string> {

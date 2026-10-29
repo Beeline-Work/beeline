@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, migrateData } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash, verifierFromEnvironment, type PhoneTokens } from './auth.js';
+import { compactSigninAttempts, recordSigninAttempt } from './signin-attempts.js';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
@@ -11,6 +12,27 @@ describe('opaque token ceremony', () => {
     await migrate(db);
   });
   afterEach(() => db.close());
+  it.each(['google', 'github'] as const)('R-MCP-SIGNIN-LEDGER: %s exchange outside the phone route cannot expire after issuing a session', async provider => {
+    const auth = new TokenAuth(db,
+      async () => ({ subject: 'ledger-github', login: 'ledger', name: 'Ledger' }),
+      () => new Date(),
+      async () => ({ subject: 'ledger-google', name: 'Ledger', audience: 'client' }));
+    const ticket = randomBytes(32).toString('base64url');
+    const flowHash = tokenHash('mcp-flow');
+    const at = new Date();
+    const expiresAt = new Date(at.getTime() + 120_000);
+    await recordSigninAttempt(db, { stage: 'started', provider, flowHash, at, expiresAt });
+    await recordSigninAttempt(db, { stage: 'provider_returned', flowHash, at });
+    await recordSigninAttempt(db, { stage: 'ticket_issued', flowHash, ticketHash: tokenHash(ticket), at, expiresAt });
+    // MCP calls TokenAuth directly, without /v1/auth/{provider}/exchange.
+    const tokens = await (provider === 'google' ? auth.exchangeGoogleOidc(ticket) : auth.exchangeGitHubOidc(ticket));
+    expect(await auth.authenticatePhone(tokens.accessToken)).toBe(tokens.identityId);
+    expect((await db.query('SELECT stage FROM signin_attempt_events')).rows.map(row => row.stage).sort())
+      .toEqual(['provider_returned', 'started', 'ticket_exchanged', 'ticket_issued']);
+    await db.query("UPDATE signin_attempt_correlations SET expires_at=now()-interval '1 second'");
+    await compactSigninAttempts(db);
+    expect((await db.query("SELECT 1 FROM signin_attempt_events WHERE stage='expired'")).rowCount).toBe(0);
+  });
   it('E3/E14/E16: Google resumes its subject, preserves edits and allocates an untaken handle', async () => {
     const auth = new TokenAuth(
       db,

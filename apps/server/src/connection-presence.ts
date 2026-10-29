@@ -485,7 +485,7 @@ export class ConnectionPresence {
       roomId: delivery.room_id,
       requestId: delivery.message_id,
       agentId: delivery.agent_id,
-      reason: "the helper isn't running",
+      reason: 'the helper is unreachable',
       reasonKind: 'offline',
     }).catch(this.report);
   }

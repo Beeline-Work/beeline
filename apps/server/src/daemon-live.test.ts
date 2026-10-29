@@ -230,6 +230,33 @@ describe('one machine socket for every agent on a helper machine', () => {
 });
 
 describe('protocol heartbeat on helper sockets', () => {
+  it.each(['getAgentCommands', 'getRoomInbox'])(
+    'drops a session after %s rejects so its helper can reconcile missed work', async operation => {
+      const live = new LiveHub();
+      const daemon = daemonStub();
+      const { port } = await start({ live, daemon });
+      const client = await machine(port);
+      await register(client, AGENT_A, 'bdt_a');
+      client.send({ type: 'subscribe', agentId: AGENT_A, roomId: 'room-a' });
+      await client.next(frame => frame.type === 'commands');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        vi.mocked(daemon.execute).mockRejectedValueOnce(new Error('transient read failure'));
+        live.publish({ type: 'invalidate', roomId: 'room-a',
+          reason: operation === 'getAgentCommands' ? 'postgres:agent_commands' : 'postgres:messages',
+          targetAgentId: AGENT_A });
+        expect(await client.next(frame => frame.type === 'unregistered')).toMatchObject({ agentId: AGENT_A });
+        // The machine and other agents can stay connected. A new registration
+        // gets a new subscription and the authoritative command snapshot.
+        expect(await register(client, AGENT_A, 'bdt_a')).toMatchObject({ type: 'registered' });
+        const before = client.frames.length;
+        client.send({ type: 'subscribe', agentId: AGENT_A, roomId: 'room-a' });
+        await client.next(frame => client.frames.indexOf(frame) >= before && frame.type === 'commands');
+        expect(client.socket.readyState).toBe(WebSocket.OPEN);
+      } finally { error.mockRestore(); }
+    },
+  );
+
   it('terminates a machine socket that stops answering pings while idle, and keeps one that answers', async () => {
     const { port } = await start({ liveHeartbeatMs: 100 });
     const silent = await machine(port, { autoPong: false });

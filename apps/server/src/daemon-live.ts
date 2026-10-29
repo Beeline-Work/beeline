@@ -119,6 +119,8 @@ export class DaemonAgentSession {
   #closed = false;
   #claimed = false;
   #forUpdate = false;
+  readonly #projections = new Set<Promise<unknown>>();
+  #checkpointPending = false;
 
   constructor(
     private readonly deps: DaemonLiveDependencies,
@@ -211,6 +213,26 @@ export class DaemonAgentSession {
 
   get closed(): boolean {
     return this.#closed;
+  }
+
+  /** A push-only application checkpoint, behind work already admitted here.
+   * Transport pongs alone cannot prove a subscription or command read finished.
+   * Idle checkpoints perform no database work. Only one can wait per session. */
+  checkpoint(): void {
+    if (this.#closed || this.#checkpointPending) return;
+    this.#checkpointPending = true;
+    void Promise.all([this.#tail, ...this.#projections]).then(() => {
+      if (!this.#closed && this.transport.isOpen()) this.transport.send({ type: 'intake-ready' });
+    }).catch(() => this.evict('intake checkpoint failed')).finally(() => {
+      this.#checkpointPending = false;
+    });
+  }
+
+  async #projection<T>(read: () => Promise<T>): Promise<T> {
+    const pending = read();
+    this.#projections.add(pending);
+    try { return await pending; }
+    finally { this.#projections.delete(pending); }
   }
 
   /**
@@ -368,6 +390,7 @@ export class DaemonAgentSession {
             },
             agentId,
           );
+          if (this.#closed || !transport.isOpen()) return;
           cursor = inbox.cursor ?? cursor;
           const currentTrigger = replayTrigger;
           replayTrigger = undefined;
@@ -384,6 +407,7 @@ export class DaemonAgentSession {
           '[live] daemon replay failed',
           error instanceof Error ? error.message : String(error),
         );
+        this.evict('inbox replay failed');
       } finally {
         replaying = false;
       }
@@ -397,6 +421,7 @@ export class DaemonAgentSession {
         while (commandsRequested && transport.isOpen() && !this.#closed) {
           commandsRequested = false;
           const page = await daemon.execute('getAgentCommands', { roomId }, agentId);
+          if (this.#closed || !transport.isOpen()) return;
           const currentTrigger = commandTrigger;
           commandTrigger = undefined;
           transport.send({
@@ -412,6 +437,7 @@ export class DaemonAgentSession {
           '[live] daemon command push failed',
           error instanceof Error ? error.message : String(error),
         );
+        this.evict('command push failed');
       } finally {
         commandsPushing = false;
       }
@@ -445,7 +471,8 @@ export class DaemonAgentSession {
           // A review wake is held while another agent in the corner holds a
           // live lease. That agent's command ending writes no row for this
           // agent, so its release is the wake.
-          if (event.targetAgentId === agentId || event.commandReleased) void pushCommands(trigger);
+          if (event.targetAgentId === agentId || event.commandReleased)
+            void this.#projection(() => pushCommands(trigger));
           return;
         }
         if (event.reason === 'postgres:rooms' && event.repositoryChanged) {
@@ -457,7 +484,7 @@ export class DaemonAgentSession {
           if (transport.isOpen()) transport.send({ type: 'corner-complete', roomId });
           return;
         }
-        void replay(trigger);
+        void this.#projection(() => replay(trigger));
       }),
     );
     const lifecycleId =
@@ -637,8 +664,13 @@ export function serveMachineSocket(
   sendLive: SendLive,
   trackSubscriptions: (count: () => number) => void,
   heartbeatMs: number,
+  trackCheckpoint: (checkpoint: () => void) => void = () => undefined,
 ): void {
   const sessions = new Map<string, DaemonAgentSession>();
+  const checkpointAgents = new Set<string>();
+  trackCheckpoint(() => {
+    for (const agentId of checkpointAgents) sessions.get(agentId)?.checkpoint();
+  });
   const registering = new Set<string>();
   const guard = new HelperVersionGuard(
     deps, principal.helperVersion, sendLive, (code, reason) => client.close(code, reason),
@@ -716,6 +748,7 @@ export function serveMachineSocket(
           drop: (code, reason) => {
             if (sessions.get(agentId) !== session) return;
             sessions.delete(agentId);
+            checkpointAgents.delete(agentId);
             unregistered(agentId, reason, code);
           },
           admit: () => guard.admit(),
@@ -732,10 +765,14 @@ export function serveMachineSocket(
       registrationStage = 'presence-claim';
       await session.claim();
       if (session.closed || sessions.get(agentId) !== session) return;
+      // Older helpers need only the protocol heartbeat. New helpers explicitly
+      // opt in, so rolling server/helper releases stay compatible both ways.
+      if (item.intakeHeartbeat === true) checkpointAgents.add(agentId);
+      else checkpointAgents.delete(agentId);
       send({
         type: 'registered',
         agentId,
-        capabilities: { discoveryWake: true, pushIntake: true },
+        capabilities: { discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true },
       });
     } catch (error) {
       deps.errors.internal++;
@@ -769,6 +806,7 @@ export function serveMachineSocket(
     }
     if (item.type === 'unregister') {
       sessions.delete(session.agentId);
+      checkpointAgents.delete(session.agentId);
       session.close();
       return;
     }
@@ -781,5 +819,6 @@ export function serveMachineSocket(
     const forUpdate = code === HELPER_UPDATE_CLOSE_CODE && reason.toString() === HELPER_UPDATE_CLOSE_REASON;
     for (const session of sessions.values()) session.close(forUpdate);
     sessions.clear();
+    checkpointAgents.clear();
   });
 }

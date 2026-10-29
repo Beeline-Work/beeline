@@ -327,7 +327,7 @@ function ConnectToolFlow() {
       />
       <ScrollView style={styles.content} testID="connect-scroll"
         contentContainerStyle={[styles.contentInner, !showSteps && { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
-        {helpers === null && !offerCeremony && !showSteps ? (
+        {helpers === null && !helperLoadError && !offerCeremony && !showSteps ? (
           <View style={styles.loading} testID="connect-loading">
             <SurfaceGlyphLoader testID="connect-loader" />
             <Text style={styles.note}>Looking for your machine…</Text>

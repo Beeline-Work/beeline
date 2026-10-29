@@ -144,10 +144,16 @@ function ConnectorSignInOverlay() {
 
   const openBrowser = useCallback(async () => {
     if (!signIn.url) return;
-    await WebBrowser.openBrowserAsync(signIn.url);
+    // Every browser attempt owns a fresh completion deadline, including retries
+    // after the previous deadline has already fired.
+    clearTimeout(reloadTimer.current);
+    setLoadRound(value => value + 1);
     setPageError(null);
     setFallback(true);
-    void observed.retry();
+    try {
+      await WebBrowser.openBrowserAsync(signIn.url);
+      void observed.retry();
+    } catch { setPageError('Google sign-in could not open. Try again.'); }
   }, [signIn.url, observed.retry]);
   useEffect(() => {
     if (!fallback) return;

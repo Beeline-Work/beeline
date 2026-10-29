@@ -509,6 +509,17 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       throw new Error('connect-error never appeared');
     }
 
+    it('stops helper discovery when its bounded read fails', async () => {
+      setWorkbenchSource(Object.assign(new MockWorkbenchSource(), {
+        readWorkbench: () => new Promise(() => {}),
+      }));
+      const renderer = await render();
+      expect(renderer.root.findAllByProps({ testID: 'connect-loader' }).length).toBeGreaterThan(0);
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+      expect(renderer.root.findAllByProps({ testID: 'connect-loader' })).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toBe('Helpers are unavailable right now');
+    });
+
     it('surfaces a pair POST that never settles, and still follows a late resolve', async () => {
       let resolvePair: () => void = () => {};
       const base = new MockWorkbenchSource();

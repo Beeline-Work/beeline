@@ -59,3 +59,34 @@ changes are temporary and are restored before delivery.
 - Shared UI registry policy against the PR base: passed.
 - Android release fixture build: passed.
 - No iOS verification or real Google sign-in.
+
+## Reproduction squire-browser-fallback
+
+The reviewer found a second timeout path on head `b6565aea`: let the completion
+deadline expire, choose Open in browser, and return with `connected=false`.
+The error cleared but the completion timer did not restart, leaving Finishing
+sign-in visible indefinitely.
+
+Recreated against the production screen in headless Chrome because the reviewer's
+temporary proof files were absent here. The checked-in browser proof uses a pending
+install response and compresses the two-minute completion timer to 1.2 seconds;
+it does not perform a real Google sign-in. Before the fix its output showed
+`initialTimeout=true`, `firstFinishing=true`, `firstRecovered=false`.
+After the fix both `firstRecovered` and `secondRecovered` are true, with Try again
+and Open in browser visible after each deadline. A third fallback receives a
+connected install event and navigates automatically to the Trusty Squire page.
+The renderer tests exercise the same sequence with the unchanged production
+deadline and an AppState return.
+
+Run from `apps/mobile`:
+
+```sh
+npx vitest run 'sources/app/(app)/beeline/settings/workbench/connect-signin.test.tsx' sources/test/squire-browser-fallback.browser.test.ts
+```
+
+Spinner audit: helper reach stops after one minute; subsequent active pairing
+steps stop after two minutes; streamed page loading stops after fifteen seconds;
+service loading is bounded by the shared Workbench read. Helper discovery had a
+second gap: its loader stayed visible alongside the failed-read message. It now
+stops when that bounded read fails, covered in `connect.test.tsx`.
+No mock layout or copy changes accompany these corrections.

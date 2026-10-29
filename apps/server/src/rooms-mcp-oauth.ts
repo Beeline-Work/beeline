@@ -257,6 +257,9 @@ export class RoomsMcpOAuth {
         [tokenHash(request.socket.remoteAddress ?? 'unknown')]);
       if (!admitted.rowCount) {
         if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
+        // The rate-limited body is never read, so only the branch and header categories reach the log.
+        if (request.method === 'POST' && path === '/mcp/oauth/token')
+          console.warn('[rooms-mcp-oauth] token refused', JSON.stringify({ error: 'temporarily_unavailable', reason: 'rate_limited', ...tokenHeaders(request) }));
         mcpJson(response, 429, { error: 'temporarily_unavailable' }); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/register') {
@@ -426,8 +429,7 @@ export class RoomsMcpOAuth {
         // grant_type and content-type are client-chosen strings, so only fixed categories reach the log.
         grant_type: tokenInput?.grant_type === undefined ? undefined : tokenInput.grant_type === 'authorization_code' || tokenInput.grant_type === 'refresh_token' ? tokenInput.grant_type : 'other',
         params: (tokenInput ? Object.keys(tokenInput) : error instanceof Refusal ? error.params : undefined)?.slice(0, 20).map(key => key.slice(0, 40)).sort(),
-        client_auth: request.headers.authorization ? /^(basic|bearer)\s/i.exec(request.headers.authorization)?.[1]!.toLowerCase() ?? 'other' : 'none',
-        content_type: ((type?: string) => type === undefined ? undefined : ['application/json', 'application/x-www-form-urlencoded'].includes(type) ? type : 'other')(request.headers['content-type']?.split(';')[0]?.trim().toLowerCase()) }));
+        ...tokenHeaders(request) }));
       if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,
         ...(error instanceof SyntaxError ? { reason: 'invalid_json' } : {}), ...registrationSummary(registrationInput) }));
       if (message === 'invalid_client' && request.headers.authorization) response.setHeader('www-authenticate', 'Basic realm="Beeline MCP"');
@@ -435,4 +437,11 @@ export class RoomsMcpOAuth {
     }
     return true;
   }
+}
+
+// Header values are client-chosen, so only fixed categories reach the token refusal log.
+function tokenHeaders(request: IncomingMessage): { client_auth: string; content_type?: string } {
+  const type = request.headers['content-type']?.split(';')[0]?.trim().toLowerCase();
+  return { client_auth: request.headers.authorization ? /^(basic|bearer)\s/i.exec(request.headers.authorization)?.[1]!.toLowerCase() ?? 'other' : 'none',
+    content_type: type === undefined ? undefined : ['application/json', 'application/x-www-form-urlencoded'].includes(type) ? type : 'other' };
 }

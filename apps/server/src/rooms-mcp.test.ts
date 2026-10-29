@@ -208,6 +208,13 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect([response.status, await response.json()]).toEqual([429, { error: 'temporarily_unavailable' }]);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: 'temporarily_unavailable' }));
+      warn.mockClear();
+      const token = await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: 'Basic c2VjcmV0LWlkOnNlY3JldC12YWx1ZQ==' },
+        body: 'grant_type=authorization_code&code=code-never-log&code_verifier=verifier-never-log' });
+      expect([token.status, await token.json()]).toEqual([429, { error: 'temporarily_unavailable' }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('[rooms-mcp-oauth] token refused', JSON.stringify({ error: 'temporarily_unavailable', reason: 'rate_limited',
+        client_auth: 'basic', content_type: 'application/x-www-form-urlencoded' }));
     } finally { warn.mockRestore(); }
   });
   it.each(['https://example.com/cb', 'http://127.0.0.1:9876/cb', 'http://[::1]:9876/cb', 'http://localhost:9876/cb'])(

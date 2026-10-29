@@ -231,8 +231,17 @@ export async function stopCommandedTurn(
     [address, worker.id])).rows[0];
   if (!running)
     return { stopped: false, address, agent: worker.id, receipt: 'No running turn to stop. Send an order; it runs now.' };
-  const order = await commandOrder(db, running);
-  const ordered = order.private_payload?.kind === 'order' && order.private_payload.authorId === agentId;
+  // A digest turn runs every folded source; any order among them grants stop.
+  const heads = [...new Set([running.id, (await commandOrder(db, running)).id])];
+  const sources = (await db.query<CommandRow>(
+    `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+     AND (id=ANY($3::text[]) OR cancellation_reason=ANY($4::text[]))`,
+    [address, worker.id, heads, heads.map((id) => `coalesced_into:${id}`)])).rows;
+  let ordered = false;
+  for (const source of sources) {
+    const order = await commandOrder(db, source);
+    if (order.private_payload?.kind === 'order' && order.private_payload.authorId === agentId) { ordered = true; break; }
+  }
   const commandsCorner = !ordered && Boolean(target.parent_id) && Boolean((await db.query(
     'SELECT 1 FROM rooms WHERE id=$1 AND created_by=$2', [address, agentId])).rowCount);
   if (!ordered && !commandsCorner)

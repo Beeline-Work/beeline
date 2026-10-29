@@ -1610,6 +1610,42 @@ it('AGENT-STOP-1: a commander stops its worker\'s running turn, then its new ord
   }
 });
 
+it('AGENT-STOP-3: an orderer stops a turn whose digest folded its order behind a human tag', async () => {
+  const OTHER = 'd'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other') ON CONFLICT DO NOTHING`, [OTHER]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [OTHER, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`, [WS, OTHER, ROOM]);
+  const send = (text: string) => phone.execute('sendRoomMessage', { roomId: ROOM, messageId: randomBytes(32).toString('hex'), text }, HUMAN);
+  await send('@worker First: look at the widget');
+  const first = (await commands(ROOM, WORKER))[0]!;
+  await claim(first);
+  await send('@worker Second: check the hinge');
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'worker', text: 'Third: sand the edges' }, RUBY);
+  await commands(ROOM, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(first), agentId: WORKER, status: 'complete' }, WORKER);
+  const next = (await commands(ROOM, WORKER)).filter(command => command.action === 'input');
+  expect(next).toHaveLength(1);
+  const digest = await claim(next[0]!);
+  expect((digest.source?.body ?? next[0]!.source.body) + (digest.coalescedContext ?? '')).toContain('Third: sand the edges');
+  await send('@other Look at the widget');
+  const otherTurn = (await commands(ROOM, OTHER))[0]!;
+  await claim(otherTurn);
+  await expect(daemon.execute('stopAgentTurn', { ...authority(otherTurn), address: ROOM, agent: 'worker' }, OTHER))
+    .rejects.toThrow(/you did not order this turn and you do not command this corner/);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [ROOM, next[0]!.turnRequestId])).rows[0]?.status).toBe('working');
+  const result = await daemon.execute('stopAgentTurn', { ...authority(order), address: ROOM, agent: 'worker' }, RUBY);
+  expect(result).toMatchObject({ stopped: true, agent: WORKER });
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [ROOM, next[0]!.turnRequestId])).rows[0]?.status).toBe('cancelled');
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'worker', text: 'New plan: paint it green' }, RUBY);
+  const followUp = (await commands(ROOM, WORKER)).filter(command => command.action === 'input');
+  expect(followUp).toHaveLength(1);
+  const claimed = await claim(followUp[0]!);
+  expect((claimed.source?.body ?? followUp[0]!.source.body) + (claimed.coalescedContext ?? '')).toContain('New plan: paint it green');
+  console.log('AGENT-STOP-3: orderer stopped the human-led digest turn; unrelated agent refused; follow-up order runs next');
+});
+
 it('AGENT-STOP-2: an agent with no command over the running turn is refused and nothing stops', async () => {
   const OTHER = 'd'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other') ON CONFLICT DO NOTHING`, [OTHER]);

@@ -1,3 +1,4 @@
+import { freeAgentModelTakesImages, imageInput, withoutImageData } from './free-agent-image-input.js';
 import { Writable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -186,7 +187,7 @@ const MINIMUM_CALL_TOKENS = 256;
  * This is an estimate, not a tokenizer guarantee for arbitrary input.
  */
 export function promptTokenBound(body: Record<string, unknown>): number {
-  return Math.ceil(promptTextBytes(forwardedFields(body)) / 3) + 256;
+  return Math.ceil(promptTextBytes(withoutImageData(forwardedFields(body))) / 3) + 256 + imageInput(body, true);
 }
 
 /**
@@ -398,15 +399,9 @@ export async function handleFreeAgentModelRequest(
   try {
     body = JSON.parse((await readBody(request)).toString('utf8')) as Record<string, unknown>;
     if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) throw new Error('messages required');
-    for (const message of body.messages) {
-      if (!message || typeof message !== 'object') throw new Error('invalid message');
-      if (Array.isArray(message.content) && message.content.some((part: { type?: string }) => part?.type !== 'text'))
-        throw new Error('free agent model requests support text content only');
-      const content = typeof message.content === 'string' ? message.content
-        : Array.isArray(message.content) ? message.content.map((part: { text?: string }) => part?.text ?? '').join('') : '';
-      if (/data:[^\s,]+;base64,[a-z0-9+/=]{64}/i.test(content))
-        throw new Error('free agent model requests do not support inline binary data');
-    }
+    const hasImages = body.messages.some(message => Array.isArray(message?.content) &&
+      message.content.some((part: { type?: string }) => part?.type === 'image_url'));
+    imageInput(body, hasImages && await freeAgentModelTakesImages(options.config.model));
   } catch (error) {
     sendJson(response, 400, { error: { message: error instanceof Error ? error.message : 'invalid request' } });
     return true;
@@ -464,8 +459,8 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     requested.length ? Math.min(...requested) : undefined,
     limits,
     // Keep the dollar budget's existing byte-based worst-case reservation.
-    Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') + 256,
-    promptTextBytes(forwarded) + 256,
+    Buffer.byteLength(JSON.stringify(withoutImageData(forwarded)), 'utf8') + 256 + imageInput(body, true),
+    promptTextBytes(withoutImageData(forwarded)) + 256 + imageInput(body, true),
   );
   if ('limit' in reservation) {
     if (reservation.limit === 'rate') {

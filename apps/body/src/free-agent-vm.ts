@@ -1,3 +1,4 @@
+import { parseOpenRouterEndpoints, piInputModalities } from './openrouter-routing.js';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
@@ -48,7 +49,7 @@ interface FreeAgentSettings {
 }
 
 /** Pi's private provider uses only the scoped proxy token, resolved from env. */
-export function freeAgentPiConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | 'upstreamModel'>): string {
+export function freeAgentPiConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | 'upstreamModel'>, input: Array<'text' | 'image'> = ['text']): string {
   return JSON.stringify({
     providers: {
       beeline: {
@@ -59,7 +60,7 @@ export function freeAgentPiConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | '
           id: grant.upstreamModel,
           name: grant.upstreamModel,
           reasoning: true,
-          input: ['text'],
+          input,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 1_000_000,
           maxTokens: 65_536,
@@ -67,6 +68,18 @@ export function freeAgentPiConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | '
       },
     },
   });
+}
+
+async function freeAgentInput(model: string): Promise<Array<'text' | 'image'>> {
+  try {
+    const response = await fetch(`https://openrouter.ai/api/v1/models/${model}/endpoints`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return ['text'];
+    return piInputModalities(parseOpenRouterEndpoints(await response.json()).inputModalities) ?? ['text'];
+  } catch {
+    return ['text'];
+  }
 }
 
 /** Values are single lines; parseEnvFile does not unescape quoted values. */
@@ -139,7 +152,7 @@ export async function stageFreeAgent(
     resolve(directory, 'settings.json'),
     `${JSON.stringify({ idleSeconds: grant.idleSeconds } satisfies FreeAgentSettings)}\n`,
   );
-  await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig(grant));
+  await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig(grant, await freeAgentInput(grant.upstreamModel)));
   const agent = await freeAgentPiCommand(env);
   const localConfig = loadBodyConfig({ workspaceRoot: process.cwd(), llmEnvFile, agent, env });
   const staged = await stageMonolithAgentRuntime({
@@ -202,13 +215,23 @@ async function upgradeFreeAgentHarness(configPath: string, env: NodeJS.ProcessEn
     await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig({
       modelBaseUrl: provider.options.baseURL,
       upstreamModel: model.slice('beeline/'.length),
-    }));
+    }, await freeAgentInput(model.slice('beeline/'.length))));
     runtime.agentKind = agent.kind;
     runtime.agentCommand = agent.command;
     runtime.agentBinary = agent.command;
     runtime.agentArgs = agent.args;
     await writeRuntimeRecord(runtime);
     delete normalized.OPENCODE_CONFIG_CONTENT;
+  } else {
+    const path = resolve(env.HOME ?? '/root', '.pi/agent/models.json');
+    const persisted = JSON.parse(await readFile(path, 'utf8').catch(() => '{}'));
+    const provider = persisted.providers?.beeline;
+    const model = runtime.modelSelection?.model;
+    if (provider?.baseUrl && model?.startsWith('beeline/')) {
+      const upstreamModel = model.slice('beeline/'.length);
+      await writePrivate(path, freeAgentPiConfig({ modelBaseUrl: provider.baseUrl, upstreamModel },
+        await freeAgentInput(upstreamModel)));
+    }
   }
   const reconciled = `${Object.entries(normalized).map(([name, value]) => `${name}=${value}`).join('\n')}\n`;
   if (reconciled !== original) await writePrivateFileAtomically(runtime.llmEnvFile, reconciled);

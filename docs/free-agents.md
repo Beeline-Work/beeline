@@ -190,8 +190,12 @@ Admission estimates tokenized text as `ceil(UTF-8 bytes / 3) + 256`, including
 schemas and selectors. OpenRouter `reasoning.text`/`reasoning.summary` fragments
 are concatenated for this calculation: thousands of repeated transport envelopes
 are not model text. The original request is forwarded unchanged. Unknown detail
-types/extra fields count in full. Image blocks, inline binary data URLs and
-encrypted reasoning are refused before reservation by this text-only proxy.
+types/extra fields count in full. Image parts are accepted only when OpenRouter advertises image input for the
+server-pinned model. Pi refreshes that same advertised input list on boot,
+including persisted runtimes. Images reserve 131,072 input tokens apiece,
+settled to reported usage. Binary data embedded in text and other non-text
+content parts remain refused. Limits, cache behavior and the built-handler
+photo demonstration: [free-agent image proof](free-agent-images-proof.md).
 
 A matching recent prefix may use the server's own previously reported cache
 reads at `cachedTokenWeight` (default 0.25). Evidence stores only hashes, counts

@@ -157,7 +157,7 @@
     "line": 374,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "2526cacfb9829172f114",
+    "id": "7ebe302144058a61dc8f",
     "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
@@ -166,7 +166,7 @@
     "line": 381,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "8937d351745e3e77c31c",
+    "id": "65340498e8e4de75db4e",
     "control": "<View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numberOfLines={1} style={styles.replyLabel}> <Text style={styles.replyGlyph}>↩</Text> Replying to{' '} <Text style={styles.replyHandle}>@{reply.handle}</Text> </Text> <Text numberOfLines={1} ellipsizeMode=\"tail\" sty",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
@@ -175,7 +175,7 @@
     "line": 402,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "3f99cd59c2455f1c12c4",
+    "id": "ff9f134c6fc92747909f",
     "control": "<View key={`${attachment.uri}:${index}`} style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]} testID={`pending-chat-attachment-${index}`} > <View style={styles.attachmentCopy}> <Text numberOfLines={1} ellipsizeMode=\"tail\" style={styles.attachmentName}> {attachment.name} </Text> <InlineRow style={styles.attachmentInfo}> <Text numberOfLines={1} style={styles.attachmentMeta} tes",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },

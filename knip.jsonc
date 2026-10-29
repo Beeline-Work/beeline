@@ -252,6 +252,8 @@
         "scripts/composer-pin-row-native-proof.tsx",
         "scripts/composer-v4-native-proof.tsx",
         "scripts/composer-v4-web-proof.tsx",
+        "scripts/composer-retry-wrap-web-proof.tsx",
+        "scripts/composer-retry-wrap-native-proof.tsx",
         "scripts/answer-prefill-proof.tsx",
         "scripts/sign-in-notice-native-proof.tsx",
         "scripts/composer-waveform-web-proof.tsx",

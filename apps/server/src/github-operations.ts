@@ -1535,13 +1535,15 @@ export class GitHubOperations {
     };
   }
 
-  processWebhook(event: string, payload: unknown, deliveryId?: string): Promise<void> {
-    return this.ownCheckWork(() => this.processOwnedWebhook(event, payload, deliveryId));
-  }
-
-  private async processOwnedWebhook(event: string, payload: unknown, deliveryId?: string) {
-    const release = await this.#webhooks.acquire();
+  async processWebhook(event: string, payload: unknown, deliveryId?: string) {
+    if (this.#stoppingChecks)
+      throw new CommandRefusalError('GitHub check service is shutting down', 409);
+    let finish!: () => void;
+    const work = new Promise<void>((resolve) => { finish = resolve; });
+    this.#checkWork.add(work);
+    let release: (() => void) | undefined;
     try {
+      release = await this.#webhooks.acquire();
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
       const body = payload as Record<string, unknown>;
       // The authenticated phone route uses this internal signal after a human message commits.
@@ -1638,7 +1640,9 @@ export class GitHubOperations {
       }
       await this.syncInstallation(owner, install.id);
     } finally {
-      release();
+      release?.();
+      this.#checkWork.delete(work);
+      finish();
     }
   }
 

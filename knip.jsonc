@@ -32,6 +32,8 @@
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
+        // VAULT-CARD-1 invokes the isolated built-server/Squire proof by path.
+        "scripts/prove-vault-save.mjs",
         // Usage truth live proof: two agents on one real login, run by path.
         "scripts/prove-usage-accounts.mjs",
         // The background latency runbook invokes these isolated database proofs by path.
@@ -159,6 +161,8 @@
         "scripts/squire-wallet-freshness-fixtures.ts",
         // Selected as the temporary native entry for the Android approval card proof.
         "scripts/squire-approval-native-proof.tsx",
+        // The vault card evidence runbook selects this temporary Metro entry.
+        "scripts/vault-save-native-proof.tsx",
         "scripts/identity-picture-seat-proof.tsx",
         "scripts/identity-picture-seat-frames.tsx",
         "scripts/render-identity-picture-seat-frames.mjs",

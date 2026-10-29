@@ -179,6 +179,7 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
+  postVaultSaveCard: Operation<RoomInput & TurnOutputAuthority & import('./vault-save.js').VaultSaveRequest, WriteResult>;
   getInstitutionalContext: Operation<RoomInput & TurnOutputAuthority, InstitutionalContextSnapshot>;
   saveInstitutionalMemory: Operation<SaveInstitutionalMemoryInput, InstitutionalMemoryWriteResult>;
   updateInstitutionalMemory: Operation<

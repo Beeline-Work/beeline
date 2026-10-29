@@ -1,4 +1,5 @@
 import { readRepositoryOnboardingCard } from './repository-onboarding.js';
+import { readVaultSaveCard } from './vault-save.js';
 import { readAgentUsage } from './agent-usage.js';
 import { isSystemEvent } from './system-events.js';
 import { isAgentSignInHarness, isAgentSignInKeyProvider } from './agent-sign-in.js';
@@ -1161,6 +1162,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('computerSession', readComputerSession(item.computerSession)),
     ...field('voiceCall', readVoiceCall(item.voiceCall)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
+    ...field('vaultSave', readVaultSaveCard(item.vaultSave)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
     ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),
     ...field('onboarding', readRepositoryOnboardingCard(item.onboarding)),

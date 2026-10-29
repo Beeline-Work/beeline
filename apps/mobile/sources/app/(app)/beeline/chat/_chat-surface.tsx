@@ -6,6 +6,7 @@ import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import { VaultSaveCard } from '@/components/buzz/VaultSaveCard';
 import { CornerActionsSheet } from '@/components/buzz/CornerActionsSheet';
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 import { showVoiceJoinError } from '@/buzz/voice-update';
@@ -5656,6 +5657,11 @@ export function BuzzChatSurface({
       // An agent's order or report is ordinary transcript: the recipient leads
       // the text as an @mention and the row keeps its own author's byline.
       item = agentCommandTranscriptMessage(item, roomParticipants);
+      if (item.vaultSave) {
+        return <VaultSaveCard card={item.vaultSave} cardId={item.id} roomId={decodedId}
+          stamp={ledgerStamp(item.timestamp)}
+          viewerId={cacheViewerPubkey} agentName={agentByPubkey.get(item.vaultSave.agentId)?.displayName ?? 'Agent'} />;
+      }
       if (item.roomUpdate) {
         return (
           <LedgerRoomUpdate

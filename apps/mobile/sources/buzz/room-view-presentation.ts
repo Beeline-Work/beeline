@@ -318,6 +318,7 @@ export type ChatDisplayMessage = {
   voiceCall?: NonNullable<RoomViewMessage['voiceCall']>;
   /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
   connectorOffer?: NonNullable<RoomViewMessage['connectorOffer']>;
+  vaultSave?: NonNullable<RoomViewMessage['vaultSave']>;
   appSignIn?: NonNullable<RoomViewMessage['appSignIn']>;
   /** `@agent /login`: Claude's sign-in card at the call site. Never holds a code. */
   agentSignIn?: NonNullable<RoomViewMessage['agentSignIn']>;
@@ -467,6 +468,7 @@ export function displayRoomMessage(
     ...(message.computerSession ? { computerSession: { ...message.computerSession } } : {}),
     ...(message.voiceCall ? { voiceCall: message.voiceCall } : {}),
     ...(message.connectorOffer ? { connectorOffer: { ...message.connectorOffer } } : {}),
+    ...(message.vaultSave ? { vaultSave: { ...message.vaultSave } } : {}),
     ...(message.appSignIn ? { appSignIn: { ...message.appSignIn } } : {}),
     ...(message.agentSignIn ? { agentSignIn: { ...message.agentSignIn } } : {}),
     ...(message.onboarding ? { onboarding: message.onboarding } : {}),

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { VaultSaveRelay } from './vault-save-relay.js';
 import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
 import type { WebSocket } from 'ws';
 import { isTransientDatabaseConnectionError } from './database.js';
@@ -27,6 +28,7 @@ export const MAX_LIVE_ROOMS_PER_SESSION = 8_192;
 export const MAX_LIVE_SUBSCRIBE_FRAME_ROOMS = 32;
 
 export interface DaemonLiveDependencies {
+  readonly vaultSaveRelay?: VaultSaveRelay;
   readonly auth: TokenAuth;
   readonly phone: PhoneService;
   readonly daemon: DaemonService;
@@ -129,6 +131,11 @@ export class DaemonAgentSession {
     } = {},
   ) {
     const { live, database } = deps;
+    this.#wakeReleases.push(deps.vaultSaveRelay?.attach(agentId, frame => {
+      if (!transport.isOpen()) return false;
+      transport.send(frame);
+      return true;
+    }) ?? (() => {}));
     // A fresh Room (or any Room/corner membership change) inserts a
     // `memberships` row whose live notification is Room-scoped — a Room this
     // daemon has never heard of, so it holds no socket subscription for it.

@@ -1,4 +1,6 @@
 import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
+import { VaultSaveRelay } from './vault-save-relay.js';
+import { vaultSaveHttp } from './vault-save-http.js';
 import type { RoomsMcp } from './rooms-mcp.js';
 import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
@@ -531,6 +533,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     finally { release(); }
   };
   const daemonRegistry = new DaemonConnectionRegistry();
+  const vaultSaveRelay = new VaultSaveRelay();
   let shuttingDown = false;
   const daemonLive: DaemonLiveDependencies = {
     auth: options.auth,
@@ -545,6 +548,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     errors: liveErrors,
     counters: liveCounters,
     registry: daemonRegistry,
+    vaultSaveRelay,
     shuttingDown: () => shuttingDown,
   };
   // Another server instance accepted a newer connection for an agent this
@@ -643,6 +647,10 @@ export function createBeelineServer(options: ServerOptions): Server {
       return;
     }
     if (url.pathname !== '/v1/site/download-tap' && isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
+    if (url.pathname === '/v1/vault-save/submit' || url.pathname === '/v1/vault-save/answer') {
+      void vaultSaveHttp(request, response, options, vaultSaveRelay);
+      return;
+    }
     void route(
       request,
       response,

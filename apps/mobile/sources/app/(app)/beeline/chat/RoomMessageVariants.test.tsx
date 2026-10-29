@@ -3067,9 +3067,8 @@ describe('Room message variant components', () => {
       );
       expect(connecting.root.findByProps({ testID: 'connector-offer-connecting' })).toBeDefined();
       expect(
-        connecting.root.findByProps({ testID: 'connector-offer-offer-1-connecting' }).props
-          .children,
-      ).toBe('connecting for @zeke');
+        connecting.root.findAllByProps({ testID: 'connector-offer-offer-1-connecting' }),
+      ).toHaveLength(0);
       expect(
         connecting.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
       ).toHaveLength(0);
@@ -3078,6 +3077,17 @@ describe('Room message variant components', () => {
       });
       act(() => resume.props.onPress());
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
+    });
+
+    it('retains the automatic reconnect note while sign-in is in progress', () => {
+      const reconnecting = render(
+        <ConnectorOfferCard
+          message={message({ connectorOffer: { ...pending.connectorOffer!, status: 'connecting', intent: 'reconnect' } })}
+          viewerIsAgent={false} viewerPubkey="zeke" actionId={null}
+          onAccept={vi.fn()} onContinue={vi.fn()} onOpenWorkbench={vi.fn()}
+        />,
+      );
+      expect(reconnecting.root.findByProps({ testID: 'connector-offer-offer-1-connecting' }).props.children).toBe('Reconnecting…');
     });
 
     it('renders a squire-login-wall reconnect card with no Add affordance, straight to Continue sign-in', () => {
@@ -3119,7 +3129,7 @@ describe('Room message variant components', () => {
         testID: 'connector-offer-offer-1-continue',
       });
       // The continue action names the service it signs in to, in words only.
-      expect(resume.props.label).toBe('Continue Trusty Squire sign-in');
+      expect(resume.props.label).toBe('Continue sign-in');
       act(() => resume.props.onPress());
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });

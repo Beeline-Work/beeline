@@ -93,7 +93,7 @@ setTimeout(() => {
     'PASS',
     `action ${text('connector-offer-switch-accept')}`,
     `waiting ${text('connector-offer-switch-waiting')}`,
-    `connecting ${text('connector-offer-switch-connecting')}`,
+    `connecting-note ${text('connector-offer-switch-connecting') || 'absent'}`,
     `outcome ${text('connector-offer-switch-outcome')}`,
     `add ${text('connector-offer-add-accept')}`,
   ].join(' | ');

@@ -1,5 +1,6 @@
 import { Button } from './Button';
 import { CloseButton } from './CloseGlyph';
+import { InlineRow } from './IndexRow';
 import React from 'react';
 import { BackHandler, Platform, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -277,12 +278,13 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
   };
   return (
     <View style={[styles.viewer, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
-      <View style={styles.controls} testID="computer-session-controls">
+      <InlineRow style={styles.controls} testID="computer-session-controls">
         {!ended && !unavailable && session.access ? (
           <Button
             label="Open in browser"
             destination="external"
             size="inline"
+            style={styles.openBrowser}
             accessibilityRole="link"
             variant="secondary"
             onPress={() => void openInBrowser()}
@@ -295,7 +297,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
           accessibilityLabel="Close browser"
           testID="computer-session-close"
         />
-      </View>
+      </InlineRow>
       <View style={styles.viewerStream}>
         {unavailable ? (
           <View style={styles.ended}><Text style={styles.endedText}>Browser is unavailable</Text></View>
@@ -334,8 +336,9 @@ const styles = StyleSheet.create((theme) => ({
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   viewerStream: { flex: 1, minHeight: 0 },
   previewFrame: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
-  controls: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.buzz.space.sm,
+  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.buzz.space.sm,
     marginTop: theme.buzz.space.md, marginHorizontal: theme.buzz.space.md, marginBottom: theme.buzz.space.sm },
+  openBrowser: { alignSelf: 'center' },
   control: {
     width: 44,
     height: 44,

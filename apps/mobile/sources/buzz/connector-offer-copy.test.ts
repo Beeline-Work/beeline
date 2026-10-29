@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   connectorOfferActionLabel,
-  connectorOfferConnectingLine,
   connectorOfferOutcomeLine,
   connectorOfferReconnectTitle,
   connectorOfferSwitchTitle,
@@ -45,22 +44,11 @@ describe('connector-offer copy (R5)', () => {
     ).toBe('added by Nameless');
   });
 
-  it('names the actor while the sign-in ceremony is still in progress', () => {
-    expect(connectorOfferConnectingLine({ status: 'connecting', acceptedBy: zeke })).toBe(
-      'connecting for @zeke',
-    );
-    expect(connectorOfferConnectingLine({ status: 'pending' })).toBeNull();
-    expect(connectorOfferConnectingLine({ status: 'accepted', acceptedBy: zeke })).toBeNull();
-  });
-
   it('asks to switch the bound account, and records the switch, for a switch offer', () => {
     expect(connectorOfferSwitchTitle('Trusty Squire', 'google')).toBe(
       "Switch Trusty Squire's Google account?",
     );
     expect(CONNECTOR_OFFER_SWITCH_ACTION).toBe('Switch account');
-    expect(
-      connectorOfferConnectingLine({ status: 'connecting', acceptedBy: zeke, intent: 'switch' }),
-    ).toBe('switching for @zeke');
     expect(
       connectorOfferOutcomeLine({
         status: 'accepted',

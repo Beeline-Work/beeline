@@ -1,0 +1,112 @@
+/** Android evidence fixture: production navigation chrome, armed rail and repo search. */
+import 'react-native-get-random-values';
+import '../sources/unistyles';
+import React, { useState } from 'react';
+import { Text, View } from 'react-native';
+import { registerRootComponent } from 'expo';
+import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUnistyles } from 'react-native-unistyles';
+import { setAppAppearance } from '../sources/unistyles';
+import { CommunityRail } from '../sources/components/buzz/CommunityRail';
+import { RepoPicker } from '../sources/components/buzz/RepoPicker';
+import { Button } from '../sources/components/buzz/Button';
+import { CommunityRail as BeforeRail } from '../sources/components/buzz/CommunityRail.audit-before';
+import { RepoPicker as BeforeRepo } from '../sources/components/buzz/RepoPicker.audit-before';
+const none = () => {};
+setAppAppearance('light');
+function Scene() {
+  const [state, setState] = useState<'rail' | 'search'>('rail');
+  const [before, setBefore] = useState(false);
+  const [dark, setDark] = useState(false);
+  const { theme } = useUnistyles();
+  const { buzz } = theme;
+  const insets = useSafeAreaInsets();
+  const Rail = before ? BeforeRail : CommunityRail,
+    Repo = before ? BeforeRepo : RepoPicker;
+  const [loaded] = useFonts({
+    'SpaceGrotesk-Regular': require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),
+    'SpaceGrotesk-Medium': require('../sources/assets/fonts/SpaceGrotesk-Medium.ttf'),
+    'SpaceGrotesk-SemiBold': require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
+    'IBMPlexMono-Regular': require('../sources/assets/fonts/IBMPlexMono-Regular.ttf'),
+    'IBMPlexMono-SemiBold': require('../sources/assets/fonts/IBMPlexMono-SemiBold.ttf'),
+  });
+  React.useEffect(() => {
+    if (loaded) void SplashScreen.hideAsync();
+  }, [loaded]);
+  if (!loaded) return null;
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: buzz.bgBase,
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom,
+      }}
+    >
+      <View style={{ padding: 16, gap: 8 }}>
+        <Text style={{ ...buzz.type.bodyStrong, color: buzz.textPrimary }}>
+          UI audit · Android · {dark ? 'Obsidian' : 'Bone'} · {before ? 'Parent' : 'Main'}
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Button label="Rail" onPress={() => setState('rail')} testID="audit-native-rail" />
+          <Button label="Search" onPress={() => setState('search')} testID="audit-native-search" />
+          <Button label="Before" onPress={() => setBefore(!before)} testID="audit-native-before" />
+          <Button
+            label="Theme"
+            onPress={() => {
+              setAppAppearance(dark ? 'light' : 'dark');
+              setDark(!dark);
+            }}
+            testID="audit-native-theme"
+          />
+        </View>
+      </View>
+      <View style={{ flex: 1, paddingHorizontal: 16 }}>
+        {state === 'rail' ? (
+          <Rail
+            key={String(before)}
+            communities={[{ communityId: 'audit-workspace', name: 'Beeline' }]}
+            activeCommunityId="audit-workspace"
+            onSelect={none}
+            onAdd={none}
+            onSettings={none}
+            onLeaveWorkspace={none}
+            presentation="column"
+          />
+        ) : (
+          <Repo
+            key={String(before)}
+            candidates={[{ key: 'beeline', name: 'Beeline-Work/beeline', githubInstallationId: 1 }]}
+            installations={[
+              {
+                installationId: 1,
+                accountLogin: 'Beeline-Work',
+                accountType: 'Organization',
+                repositorySelection: 'selected',
+                status: 'active',
+              } as any,
+            ]}
+            onSelect={none}
+            onAddAccount={none}
+            onManageInstallation={none}
+            testIDPrefix="audit-native-repo"
+            fillAvailableHeight
+          />
+        )}
+      </View>
+    </View>
+  );
+}
+function Proof() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <Scene />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+registerRootComponent(Proof);

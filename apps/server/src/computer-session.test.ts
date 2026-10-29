@@ -1240,14 +1240,14 @@ describe('computer session handoff', () => {
     expect(opened.height).toBeCloseTo(700);
     expect(opened.left).toBeCloseTo((900 - opened.width) / 2);
     expect(opened.top).toBe(0);
-    // Zooming out stops at the whole page in view, centred on both axes.
+    // Zooming out stops at the whole page in view, centred horizontally and pinned to the top.
     const out = viewerLayout(viewerZoomAt(opened, 0.01, 450, 350), 900, 700, 1279, 936);
     expect(out.zoom).toBeCloseTo(opened.minZoom);
     expect(out.zoom).toBeLessThan(1);
     expect(out.width).toBeCloseTo(900);
     expect(out.height).toBeLessThan(700);
     expect(out.left).toBeCloseTo(0);
-    expect(out.top).toBeCloseTo((700 - out.height) / 2);
+    expect(out.top).toBe(0);
     // Zooming in keeps the point under the cursor and stops at 4x.
     const inside = viewerLayout(viewerZoomAt(opened, 2, 300, 200), 900, 700, 1279, 936);
     expect((300 - inside.left) / inside.scale).toBeCloseTo((300 - opened.left) / opened.scale);
@@ -1425,6 +1425,15 @@ describe('computer session handoff', () => {
       expect(forwarded.some((message) => message.type === 'key' && message.key === 'v')).toBe(false);
       // Focus returns to the page view, so other shortcuts still reach the remote.
       expect(await evaluate<string>('document.activeElement.id')).toBe('canvas');
+      // UI-AUDIT-1: only the remote sign-in window owns a keyboard control.
+      // The existing structured navigation message selects that mode.
+      await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 750, deviceScaleFactor: 1, mobile: true });
+      await command('Emulation.setTouchEmulationEnabled', { enabled: true });
+      expect(await evaluate<boolean>(`document.getElementById('beeline-paste') === null`)).toBe(true);
+      await evaluate(`socket.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({type:'navigation',url:'https://login.example/vnc.html'})}))`);
+      expect(await evaluate<string>(`getComputedStyle(document.getElementById('bar')).display`)).toBe('none');
+      await evaluate(`socket.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({type:'navigation',url:'https://example.com/'})}))`);
+      expect(await evaluate<string>(`getComputedStyle(document.getElementById('bar')).display`)).not.toBe('none');
       socket.close();
     } finally {
       if (chrome.exitCode === null && chrome.signalCode === null) {

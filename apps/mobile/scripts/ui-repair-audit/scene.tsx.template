@@ -1,0 +1,679 @@
+import React from 'react';
+// @ts-expect-error Browser proof uses installed react-dom.
+import { createRoot } from 'react-dom/client';
+import { Text, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { LedgerBylineView } from '../sources/components/buzz/Ledger';
+import { modelChoiceLabel, modelPickerChoiceLabel } from '@beeline/api-contract/phone';
+import { SettingsRow } from '../sources/components/buzz/SettingsRow';
+import { ComputerSessionViewer } from '../sources/components/buzz/ComputerSession';
+import { ArtifactCard } from '../sources/components/buzz/ArtifactCard';
+import { TranscriptCard } from '../sources/components/buzz/TranscriptCard';
+import { SlashVerbPicker } from '../sources/components/buzz/SlashVerbPicker';
+import { StarPromptCard } from '../sources/components/buzz/StarPromptCard';
+import {
+  ConnectorOfferCard,
+  SquireApprovalCard,
+} from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
+
+import { CommunityRail } from '../sources/components/buzz/CommunityRail';
+import { TurnProgressLine } from '../sources/components/buzz/TurnProgressLine';
+import { CornerAppScreen, CornerAppRow } from '../sources/components/buzz/CornerAppScreen';
+import { RepoPicker } from '../sources/components/buzz/RepoPicker';
+import { ArtifactViewerScreen } from '../sources/components/buzz/ArtifactViewer';
+import { DesktopArtifactPane } from '../sources/components/buzz/DesktopArtifactPane';
+import { AgentUsageSection } from '../sources/components/buzz/AgentUsageSection';
+import { RoomRosterSheet } from '../sources/components/buzz/RoomRosterSheet';
+import { Button } from '../sources/components/buzz/Button';
+import { ConversationComposer } from '../sources/components/buzz/ConversationComposer';
+import { AgentVoiceSection } from '../sources/components/buzz/AgentVoiceSection';
+import { UpdateReadyPrompt } from '../sources/components/UpdateReadyPrompt';
+import { RoomDeckComposeMenu } from '../sources/components/buzz/RoomDeckComposeMenu';
+import { NeedsYouCell } from '../sources/components/buzz/NeedsYouCell';
+import { ErrorBanner } from '../sources/components/buzz/ErrorBanner';
+import { MemberRosterRow } from '../sources/components/buzz/MemberRosterRow';
+import { HullActionSheetRow as SettingsChoice } from '../sources/components/buzz/HullActionSheet';
+import { InlineRow } from '../sources/components/buzz/IndexRow';
+import { ChevronGlyph, CHEVRON_ROW_SIZE } from '../sources/components/buzz/ChevronGlyph';
+import { OpenedCorner } from '../sources/components/buzz/WorkflowRunLine.audit';
+import { AttachmentCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants.audit';
+import { AuditInspectorHeader } from '../sources/components/DesktopRoomInspector.audit';
+import { RepositoryOnboardingCard } from '../sources/app/(app)/beeline/chat/RepositoryOnboardingCard';
+import { cornerStatusLine } from '../sources/buzz/corner-status-line';
+const none = () => {};
+const params = new URLSearchParams(location.search);
+const after = params.get('state') === 'after';
+const section = params.get('section') ?? 'model';
+const agent = { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Ruby' };
+const axis = {
+  options: [
+    { id: 'default', name: 'Default (recommended)', description: 'Opus' },
+    { id: 'opus', name: 'Opus 5.5' },
+  ],
+};
+const model = after ? modelChoiceLabel(axis, 'default') : '';
+const human = { pubkey: 'b'.repeat(64), kind: 'human', name: 'Owner' };
+function Proof() {
+  const {
+    theme: { buzz },
+  } = useUnistyles();
+  const parts: Record<string, React.ReactNode> = {
+    failure: (
+      <Text style={{ ...buzz.type.meta, color: buzz.textSecondary }}>
+        {cornerStatusLine(
+          {
+            checks: 'failing',
+            pr: { number: 3016 },
+            checksSummary: {
+              status: 'failing',
+              total: 3,
+              failing: ['Mobile suite'],
+              checks: [{ name: 'Mobile suite', status: 'failed' }],
+            },
+          } as any,
+          false,
+        )}
+      </Text>
+    ),
+    ended: (
+      <View style={{ height: 400 }}>
+        <ComputerSessionViewer
+          session={{
+            id: 'proof',
+            url: 'https://example.invalid',
+            status: 'ended',
+            title: 'Browser',
+          }}
+          onClose={none}
+          active={false}
+        />
+      </View>
+    ),
+    workflow: (
+      <OpenedCorner
+        corner={{ id: 'proof', parentRoomId: 'proof', name: 'Review phone layouts' }}
+        onOpenCorner={none}
+      />
+    ),
+    attachment: (
+      <AttachmentCard
+        attachment={
+          {
+            kind: 'file',
+            url: 'data:text/plain,proof',
+            name: 'layout-review.txt',
+            mimeType: 'text/plain',
+            size: 5,
+          } as any
+        }
+        isDesktop={false}
+      />
+    ),
+    inspector: <AuditInspectorHeader />,
+    repositoryChoice: (
+      <RepositoryOnboardingCard
+        viewerId="proof"
+        card={{
+          id: 'proof',
+          agentId: agent.pubkey,
+          requesterId: 'proof',
+          roomId: 'proof',
+          defaultName: 'layout-review',
+          canLink: true,
+          kind: 'repository',
+          repositories: [
+            { id: 1, fullName: 'Beeline-Work/beeline', current: true },
+            { id: 2, fullName: 'Beeline-Work/layout-review' },
+          ],
+          status: 'open',
+        }}
+        author={agent as any}
+      />
+    ),
+    needs: (
+      <NeedsYouCell
+        item={
+          {
+            messageId: 'proof',
+            roomId: 'proof',
+            workspaceId: 'proof',
+            roomKind: 'room',
+            roomName: 'general',
+            text: 'Review this sign-in',
+            createdAt: Date.now() / 1000,
+            author: { name: 'Ruby' },
+            approval: {
+              kind: 'squire',
+              subject: 'Sign in',
+              actor: 'Ruby',
+              actions: [{ kind: 'external', label: 'Use passkey', url: 'https://example.invalid' }],
+            },
+          } as any
+        }
+        now={Date.now()}
+        desktop={false}
+        onOpen={none}
+        onDismiss={none}
+        onAction={async () => {}}
+      />
+    ),
+    error: (
+      <ErrorBanner
+        inline
+        title="THIS REPO ISN’T IN THE BEELINE INSTALLATION"
+        description="Beeline-Work/beeline must be reconnected before a corner can open."
+        retryLabel={
+          after
+            ? 'Add this repo to the Beeline installation'
+            : 'Add this repo to the Beeline installation →'
+        }
+        retryDestination={after ? 'external' : undefined}
+        onRetry={none}
+      />
+    ),
+    modelRows: (
+      <>
+        <MemberRosterRow
+          name="Ruby"
+          handle="ruby"
+          kind="agent"
+          pubkey={agent.pubkey}
+          model={after ? 'Opus 5.5' : ''}
+          onPress={none}
+        />
+        <SettingsRow title="Model" description={after ? 'Opus 5.5' : 'Default (recommended)'} />
+        <SettingsChoice
+          label={after ? 'Default · Opus 5.5' : 'Default (recommended)'}
+          selected
+          onPress={none}
+        />
+      </>
+    ),
+    trayFooter: (
+      <View
+        testID="audit-tray-footer"
+        style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: buzz.space.sm }}
+      >
+        {after ? (
+          <InlineRow style={{ alignItems: 'center', gap: buzz.space.xs }}>
+            <Text style={{ ...buzz.type.sectionHead, color: buzz.accent }}>OPEN</Text>
+            <ChevronGlyph
+              color={buzz.accent}
+              size={
+                params.get('fixed') === '1' ? buzz.type.sectionHead.lineHeight : CHEVRON_ROW_SIZE
+              }
+            />
+          </InlineRow>
+        ) : (
+          <Text style={{ ...buzz.type.sectionHead, color: buzz.accent }}>OPEN →</Text>
+        )}
+      </View>
+    ),
+    connectorLong: (
+      <ConnectorOfferCard
+        message={
+          {
+            connectorOffer: {
+              offerId: 'proof',
+              agent,
+              addressee: human,
+              status: 'connecting',
+              intent: 'add',
+              connectorType: 'googlecalendar',
+              connectorName: 'Google Calendar',
+              connectorId: 'proof',
+            },
+          } as any
+        }
+        viewerIsAgent={false}
+        viewerPubkey={human.pubkey}
+        actionId={null}
+        onAccept={none}
+        onContinue={none}
+        onOpenWorkbench={none}
+        onDecline={none}
+      />
+    ),
+    connectorActions: (
+      <>
+        {['switch', 'add'].map((intent) => (
+          <ConnectorOfferCard
+            key={intent}
+            message={
+              {
+                connectorOffer: {
+                  offerId: intent,
+                  agent,
+                  addressee: human,
+                  status: 'pending',
+                  intent: intent === 'add' ? undefined : intent,
+                  connectorType: 'trusty-squire',
+                  connectorName: 'Trusty Squire',
+                  reason: 'Sign in to the requested service',
+                  consequence: 'Use this account',
+                  createdAt: Date.now() / 1000,
+                },
+              } as any
+            }
+            viewerIsAgent={false}
+            viewerPubkey={human.pubkey}
+            actionId={null}
+            onAccept={none}
+            onContinue={none}
+            onOpenWorkbench={none}
+            onDecline={none}
+          />
+        ))}
+      </>
+    ),
+    composer: (
+      <ConversationComposer
+        value=""
+        height={26}
+        focused={false}
+        disabled={false}
+        speechEnabled={false}
+        onBlur={none}
+        onChangeText={none}
+        onContentSizeChange={none}
+        onFocus={none}
+        onKeyPress={none}
+        onSend={none}
+        reply={{ handle: 'ruby', preview: 'Review the phone layouts' }}
+        onCancelReply={none}
+        attachments={[
+          {
+            uri: 'data:image/png;base64,',
+            name: 'layout.png',
+            mimeType: 'image/png',
+            sizeLabel: '5 KB',
+            uploadState: 'uploaded',
+          },
+        ]}
+        onRemoveAttachment={none}
+      />
+    ),
+    voice: (
+      <AgentVoiceSection
+        agentId="proof"
+        handle="ruby"
+        canEdit
+        api={
+          {
+            read: async () => ({
+              currentVoiceId: 'proof',
+              canChange: true,
+              choices: [{ id: 'proof', name: 'Ruby', description: 'A clear voice' }],
+            }),
+            save: async () => {},
+            preview: async () => ({}),
+          } as any
+        }
+      />
+    ),
+    update: (
+      <View style={{ height: 120 }}>
+        <UpdateReadyPrompt />
+      </View>
+    ),
+    composeMenu: <RoomDeckComposeMenu onSelect={none} header />,
+    rail: (
+      <CommunityRail
+        communities={[{ communityId: 'proof', name: 'Beeline' }]}
+        activeCommunityId="proof"
+        onSelect={none}
+        onAdd={none}
+        onSettings={none}
+        presentation="column"
+      />
+    ),
+    turn: <TurnProgressLine label="Thinking" onStop={none} testID="audit-turn" />,
+    corner: (
+      <>
+        <CornerAppRow title="Review this corner" onOpen={none} />
+        <View style={{ height: 400 }}>
+          <CornerAppScreen
+            app={
+              {
+                title: 'Review',
+                command: 'review',
+                authorName: 'Ruby',
+                revision: 1,
+                blocks: [{ type: 'action', label: 'Review this corner', prompt: 'Review' }],
+              } as any
+            }
+            onBack={none}
+            onAction={none}
+          />
+        </View>
+      </>
+    ),
+    repo: (
+      <RepoPicker
+        testIDPrefix="audit-repo"
+        candidates={[]}
+        installations={[
+          {
+            installationId: 1,
+            accountLogin: 'Beeline-Work',
+            accountType: 'Organization',
+            status: 'active',
+          } as any,
+        ]}
+        onSelect={none}
+        onAddAccount={none}
+        onStartCreateRepository={none}
+        onCreateRepository={none}
+        onUnlink={none}
+        unlinkRepositoryName="Beeline-Work/beeline"
+      />
+    ),
+    artifact: (
+      <View style={{ height: 400 }}>
+        <ArtifactViewerScreen
+          notice={{ title: 'Audit artifact', message: 'A phone-width artifact viewer.' }}
+          onClose={none}
+        />
+      </View>
+    ),
+    desktopArtifact: (
+      <View style={{ height: 400 }}>
+        <DesktopArtifactPane
+          attachment={
+            {
+              kind: 'artifact',
+              url: 'data:text/plain,proof',
+              name: 'Audit artifact',
+              mimeType: 'text/plain',
+              size: 5,
+            } as any
+          }
+          onClose={none}
+        />
+      </View>
+    ),
+    usageStates: (
+      <>
+        {['fresh', 'rate_limited', 'signed_out', 'offline'].map((status, i) => (
+          <View key={status}>
+            <Text style={{ ...buzz.type.meta, color: buzz.textPrimary }}>{status}</Text>
+            <AgentUsageSection
+              harness="claude"
+              onRefresh={async () => ({ status })}
+              usage={
+                {
+                  updatedAt: Date.now() / 1000 - (i ? 600 : 0),
+                  windows: [
+                    {
+                      rateLimitType: 'five_hour',
+                      status: 'allowed',
+                      utilization: 0.14,
+                      resetsAt: Date.now() / 1000 + 10800,
+                      updatedAt: Date.now() / 1000 - (i ? 600 : 0),
+                      label: 'session',
+                    },
+                  ],
+                  plan: 'max',
+                  sharedWith: ['Jellybean', 'Nerd'],
+                  machine: 'squire',
+                  read: { status: status === 'offline' ? 'fresh' : status, at: Date.now() / 1000 },
+                } as any
+              }
+            />
+          </View>
+        ))}
+      </>
+    ),
+    usage: (
+      <AgentUsageSection
+        harness="claude"
+        onRefresh={async () => ({ status: 'fresh' })}
+        usage={
+          {
+            updatedAt: Date.now() / 1000,
+            windows: [
+              {
+                rateLimitType: 'five_hour',
+                status: 'allowed',
+                utilization: 0.14,
+                resetsAt: Date.now() / 1000 + 10800,
+                updatedAt: Date.now() / 1000,
+                label: 'session',
+              },
+              {
+                rateLimitType: 'seven_day',
+                status: 'allowed',
+                utilization: 0.28,
+                resetsAt: Date.now() / 1000 + 259200,
+                updatedAt: Date.now() / 1000,
+                label: 'week',
+              },
+            ],
+            plan: 'max',
+            sharedWith: ['Jellybean', 'Nerd'],
+            machine: 'squire',
+            read: { status: 'fresh', at: Date.now() / 1000 },
+          } as any
+        }
+      />
+    ),
+    buttons: (
+      <>
+        <Button
+          label={after ? 'Open in browser' : 'Open in browser ↗'}
+          destination={after ? 'external' : undefined}
+          onPress={none}
+        />
+        <Button
+          label={after ? 'Continue Gmail sign-in' : 'Continue sign-in ›'}
+          destination={after ? 'external' : undefined}
+          onPress={none}
+        />
+      </>
+    ),
+    roster: (
+      <RoomRosterSheet
+        visible
+        bottomInset={0}
+        canManage
+        isDirectMessage={false}
+        memberByPubkey={new Map()}
+        members={[]}
+        membershipActionPubkey={null}
+        membershipError={null}
+        onAddMembers={none}
+        onClose={none}
+        onRemove={none}
+        workingByPubkey={{}}
+        userPubkey="proof"
+        personProfileByPubkey={{}}
+      />
+    ),
+    model: (
+      <>
+        <LedgerBylineView
+          byline={{
+            name: 'Ruby',
+            role: model ?? '',
+            stamp: '21:08',
+            mark: { seed: agent.pubkey, kind: 'agent' },
+          }}
+        />
+        <SettingsRow title="Model" value={model ?? ''} />
+        <SettingsRow
+          title="Picker choice"
+          value={after ? modelPickerChoiceLabel(axis, axis.options[0]!) : ''}
+        />
+      </>
+    ),
+    viewer: (
+      <View style={{ height: 220 }}>
+        <ComputerSessionViewer
+          session={
+            {
+              id: 'proof',
+              url: 'https://example.invalid',
+              status: 'live',
+              access: 'proof.9999999999999',
+              agentId: agent.pubkey,
+            } as any
+          }
+          onClose={none}
+          active={false}
+        />
+      </View>
+    ),
+    close: (
+      <TranscriptCard
+        tier="ask"
+        title="Shared close control"
+        body="Close this card."
+        onDismiss={none}
+      />
+    ),
+    destinations: (
+      <>
+        <ArtifactCard
+          attachment={{
+            kind: 'artifact',
+            url: 'data:text/plain,proof',
+            name: 'Label proof',
+            title: 'Label proof',
+            mimeType: 'text/plain',
+            size: 5,
+          }}
+        />
+        <SquireApprovalCard
+          message={
+            {
+              squireApproval: {
+                agent,
+                tool: 'operate_login',
+                detail: 'Sign in to example.invalid',
+                approvalUrl: 'https://example.invalid',
+                linkKind: 'passkey',
+                action: 'sign in',
+              },
+            } as any
+          }
+          viewerPubkey={human.pubkey}
+        />
+      </>
+    ),
+    rows: (
+      <SlashVerbPicker
+        verbs={[]}
+        apps={[
+          {
+            slug: 'review',
+            command: 'review',
+            title: 'Review',
+            description: 'Review this corner',
+          } as any,
+        ]}
+        query=""
+        highlightedIndex={-1}
+        onDismiss={none}
+        onSelect={none}
+        onSelectCommand={none}
+      />
+    ),
+    symbols: (
+      <StarPromptCard
+        prompt={{
+          milestone: 3,
+          repository: 'Beeline-Work/beeline',
+          url: 'https://github.com/Beeline-Work/beeline',
+        }}
+        busy={null}
+        onAnswer={none}
+      />
+    ),
+    signin: (
+      <ConnectorOfferCard
+        message={
+          {
+            connectorOffer: {
+              offerId: 'proof',
+              agent,
+              addressee: human,
+              status: 'connecting',
+              intent: 'add',
+              connectorType: 'gmail',
+              connectorName: 'Gmail',
+              connectorId: 'gmail-proof',
+            },
+          } as any
+        }
+        viewerIsAgent={false}
+        viewerPubkey={human.pubkey}
+        actionId={null}
+        onAccept={none}
+        onContinue={none}
+        onOpenWorkbench={none}
+        onDecline={none}
+      />
+    ),
+  };
+  parts.repoPending = parts.repo;
+  return (
+    <View style={{ width: Number(params.get('width') ?? 390), backgroundColor: buzz.bgBase, padding: 16, gap: 16 }}>
+      <Text style={{ color: buzz.textPrimary, fontSize: 18 }}>
+        {after ? 'After' : 'Before'} · {section}
+      </Text>
+      {parts[section]}
+    </View>
+  );
+}
+createRoot(document.getElementById('root')!).render(<Proof />);
+setTimeout(() => {
+  if (section === 'repoPending')
+    (document.querySelector('[data-testid="audit-repo-add-account"]') as HTMLElement)?.click();
+  if (section === 'voice')
+    (document.querySelector('[data-testid="change-agent-voice"]') as HTMLElement)?.click();
+  if (section === 'composeMenu')
+    (document.querySelector('[data-testid="room-deck-compose-fab"]') as HTMLElement)?.click();
+}, 300);
+setTimeout(() => {
+  const root = document.getElementById('root')!;
+  const text = root.textContent ?? '';
+  const checks: Record<string, boolean> = { [section]: text.length > 0 };
+  document.getElementById('result')!.textContent = checks[section]
+    ? `PASS ${section}`
+    : `FAIL ${section}: ${text}`;
+  const metrics = [...root.querySelectorAll('[data-testid], [role="button"], [role="link"]')].map(
+    (el) => {
+      const r = el.getBoundingClientRect();
+      const c = getComputedStyle(el);
+      return {
+        id: el.getAttribute('data-testid') || el.getAttribute('aria-label'),
+        text: el.textContent,
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+        font: c.fontSize,
+        line: c.lineHeight,
+      };
+    },
+  );
+  document.getElementById('result')!.textContent = JSON.stringify({
+    section,
+    metrics,
+    text,
+    boxes: [...root.querySelectorAll('[dir="auto"]')].map((el) => {
+      const r = el.getBoundingClientRect(),
+        c = getComputedStyle(el);
+      return {
+        text: el.textContent,
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+        font: c.fontSize,
+        line: c.lineHeight,
+      };
+    }),
+    errors: (window as any).__console,
+  });
+}, 700);

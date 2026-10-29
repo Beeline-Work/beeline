@@ -1,0 +1,94 @@
+/** Release-mode Android evidence for the connector continuation footer. */
+import 'react-native-get-random-values';
+import '../sources/unistyles';
+import React, { useState } from 'react';
+import { Text, View } from 'react-native';
+import { registerRootComponent } from 'expo';
+import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUnistyles } from 'react-native-unistyles';
+import { setAppAppearance } from '../sources/unistyles';
+import { ConnectorOfferCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
+import { Button } from '../sources/components/buzz/Button';
+const none = () => {};
+setAppAppearance('light');
+function Scene() {
+  const [dark, setDark] = useState(false);
+  const { theme } = useUnistyles();
+  const { buzz } = theme;
+  const insets = useSafeAreaInsets();
+  const [loaded] = useFonts({
+    'SpaceGrotesk-Regular': require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),
+    'SpaceGrotesk-Medium': require('../sources/assets/fonts/SpaceGrotesk-Medium.ttf'),
+    'SpaceGrotesk-SemiBold': require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
+    'IBMPlexMono-Regular': require('../sources/assets/fonts/IBMPlexMono-Regular.ttf'),
+    'IBMPlexMono-SemiBold': require('../sources/assets/fonts/IBMPlexMono-SemiBold.ttf'),
+  });
+  React.useEffect(() => {
+    if (loaded) void SplashScreen.hideAsync();
+  }, [loaded]);
+  if (!loaded) return null;
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: buzz.bgBase,
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom,
+      }}
+    >
+      <View style={{ padding: 16, gap: 8 }}>
+        <Text style={{ ...buzz.type.bodyStrong, color: buzz.textPrimary }}>
+          Connector footer · Android · {dark ? 'Obsidian' : 'Bone'} · After fix
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Button
+            label="Theme"
+            onPress={() => {
+              setAppAppearance(dark ? 'light' : 'dark');
+              setDark(!dark);
+            }}
+            testID="audit-native-theme"
+          />
+        </View>
+      </View>
+      <View style={{ width: '100%', alignSelf: 'center', padding: 16 }}>
+        <ConnectorOfferCard
+          message={
+            {
+              connectorOffer: {
+                offerId: 'proof',
+                agent: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Ruby' },
+                addressee: { pubkey: 'b'.repeat(64), kind: 'human', name: 'Owner' },
+                status: 'connecting',
+                intent: 'add',
+                connectorType: 'googlecalendar',
+                connectorName: 'Google Calendar',
+                connectorId: 'proof',
+              },
+            } as any
+          }
+          viewerIsAgent={false}
+          viewerPubkey={'b'.repeat(64)}
+          actionId={null}
+          onAccept={none}
+          onContinue={none}
+          onOpenWorkbench={none}
+          onDecline={none}
+        />
+      </View>
+    </View>
+  );
+}
+function Proof() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <Scene />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+registerRootComponent(Proof);

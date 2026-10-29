@@ -45,7 +45,7 @@ setTimeout(() => {
   destinations: text.includes(after ? 'Open in browser' : 'Open in browser ↗') && text.includes(after ? 'Use passkey' : 'Use passkey ↗'),
   rows: text.includes('Review this corner') && (after ? !!root.querySelector('svg') : text.includes('→')),
   symbols: text.includes('Star Beeline on GitHub') && (after ? !text.includes('★') : text.includes('★')),
-  signin: text.includes(after ? 'Continue Gmail sign-in' : 'Continue sign-in ›'),
+  signin: text.includes(after ? 'Continue sign-in' : 'Continue sign-in ›'),
  };
  document.getElementById('result')!.textContent = checks[section] ? `PASS ${section}` : `FAIL ${section}: ${text}`;
 }, 700);

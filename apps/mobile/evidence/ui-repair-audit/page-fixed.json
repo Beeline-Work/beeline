@@ -1,0 +1,17 @@
+{
+  "initial": {
+    "x": -305,
+    "y": 0,
+    "width": 1000,
+    "height": 750
+  },
+  "zoom": {
+    "x": 0,
+    "y": 0,
+    "width": 391,
+    "height": 293
+  },
+  "buttons": [
+    "Keyboard"
+  ]
+}

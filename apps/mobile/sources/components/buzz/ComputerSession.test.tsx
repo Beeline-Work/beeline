@@ -104,6 +104,8 @@ it('keeps only Open and Close above the page; closing never controls or ends the
   expect(tree!.root.findByProps({ testID: 'computer-session-viewer' }).props.style[1]).toEqual({ paddingTop: 0, paddingBottom: 24 });
   const controls = tree!.root.findByProps({ testID: 'computer-session-controls' });
   expect(controls.props.style.position).toBeUndefined();
+  expect(controls.props.style.alignItems).toBe('center');
+  expect(tree!.root.findByProps({ testID: 'computer-session-open-browser' }).props.style).toEqual({ alignSelf: 'center' });
   expect(controls.props.style.marginTop + controls.props.style.marginBottom).toBe(24);
   expect(controls.props.style.marginHorizontal).toBe(16);
   expect(controls.findAllByType('Pressable').map((button: any) => button.props.accessibilityLabel))

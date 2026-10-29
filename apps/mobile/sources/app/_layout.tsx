@@ -1,4 +1,5 @@
 import 'react-native-quick-base64';
+import { StoreUpdateGate } from '@/components/StoreUpdateGate';
 import { funnelOpened } from '@/auth/signin-funnel';
 import * as Linking from 'expo-linking';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -527,6 +528,7 @@ export default function RootLayout() {
           <UpdateProvider>
             <ThemeProvider value={navigationTheme}>
               <StatusBarProvider />
+              <StoreUpdateGate fontsReady={initialized}>
               <ModalProvider>
                 <DesktopDeepLinkBridge />
                 <BrowserNavigationShortcuts />
@@ -538,6 +540,7 @@ export default function RootLayout() {
                 <WarmComputerSessionHost />
               </ModalProvider>
               <UpdateReadyPrompt />
+              </StoreUpdateGate>
             </ThemeProvider>
           </UpdateProvider>
         </GestureHandlerRootView>

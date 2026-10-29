@@ -333,3 +333,20 @@ per-platform released runtime comparisons and setup-before-command ordering.
 A manually dispatched preflight proves the runner and native paths; failure triage activates
 from the default branch after merge because GitHub requires `workflow_run`
 listeners there. The failure/redelivery fixture is its pre-merge stand-in.
+
+## Minimum supported store versions
+
+The optional `mobile_store_minimum` workflow input writes platform policy only
+after successful delivery. Leave it empty for routine and nightly OTA releases.
+For an explicitly required store update, pass JSON such as
+`{"android":{"minVersion":"0.2.24","reason":"This version can no longer sign in."}}`.
+Only named platforms change; the database starts with no minimums. Use the same
+input with a lower version to recover from an incorrect minimum. Never raise it
+before the required version is available to affected people in the store.
+
+The public `/v1/public/mobile-minimum` endpoint serves this policy without
+sign-in. Mobile compares `expo-application.nativeApplicationVersion`, never
+the OTA manifest version, runtime pin, update id or release identity. Unknown
+versions, invalid responses and network failures fail open; web skips the read.
+Builds without the gate cannot display it. The policy is checked on launch and
+foreground, without delaying the first screen.

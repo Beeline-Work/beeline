@@ -257,3 +257,70 @@ Environment naming: `BEELINE_AUTH_TENANTS_JSON`, `BEELINE_AUTH_SETUP_TOKEN`, and
 When both spellings are set, `BEELINE_` wins, including an empty value.
 
 See [environment naming and compatibility](../../docs/environment-names.md) for the full migration and production staging rules.
+
+## Server sign-in attempt history
+
+This is not a defect report: this adds observation without changing sign-in.
+The monolith stores a separate append-only `signin_attempt_events` ledger for
+Google and GitHub, including native Android picker starts/completions. Each
+server attempt has its own ID; `funnel_attempt_id` joins the client's existing
+attempt, and may be shared by browser fallback attempts. Missing/invalid funnel
+context leaves install/platform/version NULL; the attempt is still logged.
+No names, email addresses, tokens, authorization codes or ID tokens are stored.
+Only allowlisted provider error codes are retained; other values become
+`provider_error`. `failed` means server verification failed.
+
+Run this query for the last stage and the last checkpoint before expiry.
+Expiry means the server never saw a successful exchange by the deadline; it
+does not prove whether the person closed the picker, killed the app, lost
+connectivity or left it open. Provider denial is recorded separately from an
+explicit app cancel. A successful exchange means the server issued its successful
+response; receipt by the device cannot be proven by the server.
+
+```sql
+WITH history AS (
+  SELECT e.*, row_number() OVER (
+    PARTITION BY attempt_id
+    ORDER BY occurred_at DESC,
+      CASE stage WHEN 'expired' THEN 7 WHEN 'ticket_exchanged' THEN 6
+        WHEN 'cancelled' THEN 5 WHEN 'failed' THEN 4 WHEN 'ticket_issued' THEN 3
+        WHEN 'provider_returned' THEN 2 ELSE 1 END DESC
+  ) AS recency
+  FROM signin_attempt_events e
+), checkpoints AS (
+  SELECT DISTINCT ON (attempt_id) attempt_id, stage
+  FROM signin_attempt_events WHERE stage <> 'expired'
+  ORDER BY attempt_id, occurred_at DESC,
+    CASE stage WHEN 'ticket_exchanged' THEN 6 WHEN 'cancelled' THEN 5
+      WHEN 'failed' THEN 4 WHEN 'ticket_issued' THEN 3
+      WHEN 'provider_returned' THEN 2 ELSE 1 END DESC
+)
+SELECT h.attempt_id, h.install_id, h.funnel_attempt_id, h.provider,
+       h.platform, h.version, s.occurred_at AS started_at,
+       CASE WHEN c.expires_at < now()
+              AND h.stage NOT IN ('ticket_exchanged','cancelled','failed')
+              AND h.error_code IS NULL THEN 'expired'
+            ELSE h.stage END AS last_stage,
+       p.stage AS last_checkpoint, h.error_code,
+       CASE WHEN c.expires_at < now()
+              AND h.stage NOT IN ('ticket_exchanged','cancelled','failed')
+              AND h.error_code IS NULL THEN c.expires_at
+            ELSE h.occurred_at END AS last_stage_at
+FROM history h
+JOIN signin_attempt_events s ON s.attempt_id=h.attempt_id AND s.stage='started'
+JOIN checkpoints p ON p.attempt_id=h.attempt_id
+LEFT JOIN signin_attempt_correlations c ON c.attempt_id=h.attempt_id
+LEFT JOIN signin_funnel_installs i ON i.install_id=h.install_id
+WHERE h.recency=1 AND NOT (h.internal OR COALESCE(i.internal,false))
+ORDER BY started_at DESC;
+```
+
+Join `signin_funnel_events` on both `install_id` and
+`attempt_id = funnel_attempt_id`. Internal installs are excluded using their
+current funnel classification, including accounts classified after sign-in.
+The ledger retains whole attempts for ninety days from their start, matching
+sign-in funnel detail retention. Existing funnel maintenance appends expiry and
+removes expired correlation hashes; the query infers expiry before maintenance.
+The separate correlation table contains only hashes, IDs and deadlines, never
+the deleted continuation secrets. Log errors are swallowed and sent to Sentry
+without SQL errors or parameter values.

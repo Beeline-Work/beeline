@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import type { SigninAttemptObservation } from '@beeline/api-contract/signin-funnel';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { alphaTenant, betaTenant, app, provider, store, useAuthServerFixture } from './server-test-fixture.js';
 
 const recoveryToken = 'r'.repeat(43);
@@ -8,7 +9,9 @@ const post = (url: string, payload: unknown, host = alphaTenant.host) =>
   app.inject({ method: 'POST', url, payload, headers: { host } });
 
 describe('Native Android Google sign-in', () => {
-  useAuthServerFixture({ nativeGoogle: true });
+  const observe = vi.fn(async (_input: SigninAttemptObservation) => {});
+  useAuthServerFixture({ nativeGoogle: true, onSigninAttempt: observe });
+  beforeEach(() => { observe.mockReset(); observe.mockResolvedValue(undefined); });
 
   const start = async () => {
     const response = await post('/auth/oidc/native/start', { recoveryChallenge });
@@ -23,6 +26,7 @@ describe('Native Android Google sign-in', () => {
     const response = await post('/auth/oidc/native/complete', payload);
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ completed: true });
+    expect(observe.mock.calls.map(([input]) => input.stage)).toEqual(['started','provider_returned','ticket_issued']);
     expect(response.headers.location).toBeUndefined();
     const recovered = await post('/auth/oidc/completion', { recoveryToken });
     expect(recovered.statusCode).toBe(200);
@@ -31,6 +35,7 @@ describe('Native Android Google sign-in', () => {
     const otherTenant = await post('/auth/oidc/completion', { recoveryToken }, betaTenant.host);
     expect(otherTenant.statusCode).toBe(202);
     await post('/auth/oidc/completion/cancel', { recoveryToken });
+    expect(observe.mock.calls.at(-1)?.[0]).toMatchObject({ stage: 'cancelled' });
     expect((await post('/auth/oidc/completion', { recoveryToken })).statusCode).toBe(410);
   });
 
@@ -42,6 +47,16 @@ describe('Native Android Google sign-in', () => {
     const idToken = await provider.nativeIdToken(field === 'nonce' ? 'wrong' : config.nonce);
     expect((await post('/auth/oidc/native/complete', { state: config.state, recoveryToken, idToken })).statusCode).toBe(401);
     expect(await store.findTicket(recoveryChallenge)).toBeNull();
+    expect(observe.mock.calls.at(-1)?.[0]).toMatchObject({ stage: 'failed', errorCode: 'invalid_oidc_proof' });
+  });
+
+  it('completes native sign-in even when all attempt observations fail', async () => {
+    observe.mockRejectedValue(new Error('log unavailable'));
+    const config = await start();
+    expect((await post('/auth/oidc/native/complete', {
+      state: config.state, recoveryToken, idToken: await provider.nativeIdToken(config.nonce),
+    })).statusCode).toBe(200);
+    expect((await post('/auth/oidc/completion', { recoveryToken })).statusCode).toBe(200);
   });
 
   it('requires the app-held recovery secret to complete its flow', async () => {

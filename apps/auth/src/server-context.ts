@@ -1,4 +1,4 @@
-import type { FunnelAuthObservation } from '@beeline/api-contract/signin-funnel';
+import type { FunnelAuthObservation, SigninAttemptObservation } from '@beeline/api-contract/signin-funnel';
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -104,6 +104,7 @@ export type GitHubRoomTokenAuthorityResult =
   | { authorized: false; reason: GitHubRoomTokenAuthorityFailureReason };
 
 export interface AuthServerOptions {
+  onSigninAttempt?: (input: SigninAttemptObservation) => Promise<void>;
   onFunnelAuth?: (input: FunnelAuthObservation) => Promise<void>;
   store: AuthStore;
   oidc: OidcClient;
@@ -497,6 +498,10 @@ function sha256Bytes(value: string): Uint8Array {
 }
 
 export function createAuthRouteContext(options: AuthServerOptions) {
+  const observeSigninAttempt = async (input: SigninAttemptObservation) => {
+    try { await options.onSigninAttempt?.(input); }
+    catch { /* The consumer reports failures; telemetry never changes sign-in. */ }
+  };
   const now = options.now ?? (() => new Date());
   const flowTtlMs = options.flowTtlMs ?? DEFAULT_FLOW_TTL_MS;
   const ticketTtlMs = options.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS;
@@ -860,6 +865,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       appRedirectUri: string | null;
       appState: string | null;
       appRecoveryHash?: string | null;
+      stateHash?: string;
     },
     identity: {
       issuer: string;
@@ -911,6 +917,8 @@ export function createAuthRouteContext(options: AuthServerOptions) {
           'GitHub authorization was canceled',
         );
       }
+      if (flow.stateHash) await observeSigninAttempt({ stage: 'ticket_issued',
+        flowHash: flow.stateHash, ticketHash: flow.appRecoveryHash, expiresAt, at: issuedAt });
       const completion = nativeCompletion(flow, { completed: 1 });
       if (nativeJson) {
         noStore(reply);
@@ -920,6 +928,8 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       throw new ProtocolError(400, 'invalid_oauth_flow', 'Native recovery flow has no redirect');
     }
     await options.store.createTicket(sha256(ticket), storedTicket);
+    if (flow.stateHash) await observeSigninAttempt({ stage: 'ticket_issued',
+      flowHash: flow.stateHash, ticketHash: sha256(ticket), expiresAt, at: issuedAt });
     noStore(reply);
     const bindChallenge = {
       protocol: 1,
@@ -1232,6 +1242,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     nativeCompletion,
     deliverNativeCompletion,
     issueBindChallenge,
+    observeSigninAttempt,
     provisionManagedIdentity,
     completeGitHubInstallation,
     githubInstallationManageUrl,

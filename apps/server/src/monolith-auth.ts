@@ -1,4 +1,5 @@
 import { observeFunnelAuth } from './signin-funnel.js';
+import { recordSigninAttempt } from './signin-attempts.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { authTenantsFromEnvironment, oidcClientFromEnvironment } from '@beeline/auth/environment';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -53,6 +54,7 @@ export async function createMonolithAuth(
   const app = buildAuthServer({
     store,
     onFunnelAuth: (input) => observeFunnelAuth(database, input),
+    onSigninAttempt: (input) => recordSigninAttempt(database, input),
     completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
     ...(github ? { github } : {}),

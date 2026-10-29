@@ -3,6 +3,7 @@ import type { RoomsMcp } from './rooms-mcp.js';
 import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
+import { recordSigninAttempt } from './signin-attempts.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
 import { runnableOrigin, serveRunnableArtifact } from './runnable-artifact.js';
 import { readCompanyLogo } from './company-logos.js';
@@ -2049,6 +2050,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
     try {
       const tokens = await options.auth.exchangeGoogleOidc(input.oidcToken, input.xAttribution);
+      await recordSigninAttempt(options.database, { stage: 'ticket_exchanged',
+        ticketHash: createHash('sha256').update(input.oidcToken).digest('hex'), at: new Date() });
       const funnel = parseSigninFunnelEvent(input.funnel);
       if (funnel && funnel.event === 'provider_tapped' && funnel.provider === 'google') {
         await recordSigninFunnelEvent(options.database, {...funnel, event: 'signed_in'}, 'server', tokens.identityId).catch(() => undefined);
@@ -2064,6 +2067,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
     const tokens=await options.auth.exchangeGitHubOidc(input.oidcToken, input.xAttribution);
+    await recordSigninAttempt(options.database, { stage: 'ticket_exchanged',
+      ticketHash: createHash('sha256').update(input.oidcToken).digest('hex'), at: new Date() });
     const funnel=parseSigninFunnelEvent(input.funnel);
     if(funnel && funnel.event==='provider_tapped' && funnel.provider==='github') {
       await recordSigninFunnelEvent(options.database,{...funnel,event:'signed_in'},'server',tokens.identityId).catch(()=>undefined);

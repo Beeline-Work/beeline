@@ -1,0 +1,16 @@
+{
+  "scope": "Fresh cold launch, reviewer bypass, connected voice call, injected Firebase receive, outgoing invite share sheet on local-fixed.aab",
+  "lines": 7603,
+  "sha256": "1edddee2ff159190faa27bb64d4e6fe5b3a4b3cf7b525c4482406f5a8d06e2be",
+  "matches": {
+    "ClassNotFound": 0,
+    "NoSuchMethod": 0,
+    "FATAL EXCEPTION": 0,
+    "InvocationTargetException": 0,
+    "IllegalAccessException": 0,
+    "NoSuchFieldException": 0,
+    "UnsatisfiedLinkError": 0
+  },
+  "crashBufferBytes": 0,
+  "rawLocalPath": "/tmp/emberus-r8-final-device-logcat.txt"
+}

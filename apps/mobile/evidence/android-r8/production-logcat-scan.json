@@ -1,0 +1,14 @@
+{
+  "scope": "Final production-configured AAB cold launch and Google/GitHub provider pages",
+  "lines": 6761,
+  "sha256": "9fc41e496a4c5c1b522407a251b0792eea67f24b6499198cc70104bfadfdcb47",
+  "matches": {
+    "ClassNotFound": 0,
+    "NoSuchMethod": 0,
+    "FATAL EXCEPTION": 0,
+    "InvocationTargetException": 0,
+    "IllegalAccessException": 0,
+    "NoSuchFieldException": 0,
+    "UnsatisfiedLinkError": 0
+  }
+}

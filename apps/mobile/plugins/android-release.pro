@@ -18,6 +18,10 @@
 # Backport the narrow rule from expo/expo#51206: the installed Expo version
 # fails record argument conversion when R8 renames this reflection annotation.
 -keep @interface expo.modules.kotlin.records.Field { *; }
+# TaskManager loads this class by its manifest metadata value.
+-keep class expo.modules.adapters.react.apploader.RNHeadlessAppLoader { *; }
+# Install-referrer consumers invoke the builder and response methods by name.
+-keep class com.android.installreferrer.api.** { *; }
 # Sentry is excluded from native autolinking; PostHog is JavaScript-only.
 # Neither currently contributes JVM classes requiring application keep rules.
 -keepattributes SourceFile,LineNumberTable

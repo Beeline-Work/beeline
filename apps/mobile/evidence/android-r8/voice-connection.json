@@ -1,0 +1,90 @@
+[
+  {
+    "time": "2026-10-29T21:32:21.909Z",
+    "event": "participant active",
+    "room": "beeline-voice-bdbff258-74fc-42b7-a3d7-ed074e0528f1",
+    "participant": "beeline-voice-bdbff258-74fc-42b7-a3d7-ed074e0528f1",
+    "connectionType": "udp",
+    "clientInfo": {
+      "sdk": "NODE",
+      "version": "1.1.0",
+      "protocol": 17,
+      "os": "Ubuntu",
+      "osVersion": "24.4.0",
+      "deviceModel": "Super Server",
+      "clientProtocol": 2,
+      "capabilities": [
+        "CAP_PACKET_TRAILER",
+        "CAP_COMPRESSION_DEFLATE_RAW"
+      ]
+    }
+  },
+  {
+    "time": "2026-10-29T21:32:22.366Z",
+    "event": "published track",
+    "room": "beeline-voice-bdbff258-74fc-42b7-a3d7-ed074e0528f1",
+    "participant": "beeline-voice-bdbff258-74fc-42b7-a3d7-ed074e0528f1",
+    "trackInfo": {
+      "sid": "TR_AMaaZYbAUhUFgx",
+      "type": "AUDIO",
+      "name": "<redacted>",
+      "source": "MICROPHONE",
+      "mimeType": "audio/red",
+      "codecs": [
+        {
+          "mimeType": "audio/red",
+          "cid": "497d22ad-89a3-4409-9673-786aab62aac3",
+          "videoLayerMode": "ONE_SPATIAL_LAYER_PER_STREAM"
+        }
+      ],
+      "encryption": "NONE",
+      "stream": "camera",
+      "version": {
+        "unixMicro": 1793309542366792
+      },
+      "backupCodecPolicy": "SIMULCAST"
+    }
+  },
+  {
+    "time": "2026-10-29T21:32:23.468Z",
+    "event": "participant active",
+    "room": "beeline-voice-bdbff258-74fc-42b7-a3d7-ed074e0528f1",
+    "participant": "a20051619213d49342620f14e5dfbf5bd73c4c794c835e6cab4f8e1e050645b9",
+    "connectionType": "udp",
+    "clientInfo": {
+      "sdk": "JS",
+      "version": "2.22.4",
+      "protocol": 17,
+      "os": "android",
+      "deviceModel": "Other",
+      "browser": "okhttp",
+      "browserVersion": "4.9.2",
+      "clientProtocol": 2
+    }
+  },
+  {
+    "time": "2026-10-29T21:32:23.620Z",
+    "event": "published track",
+    "room": "beeline-voice-bdbff258-74fc-42b7-a3d7-ed074e0528f1",
+    "participant": "a20051619213d49342620f14e5dfbf5bd73c4c794c835e6cab4f8e1e050645b9",
+    "trackInfo": {
+      "sid": "TR_AMixe8KFSDuM5z",
+      "type": "AUDIO",
+      "source": "MICROPHONE",
+      "mimeType": "audio/red",
+      "codecs": [
+        {
+          "mimeType": "audio/red",
+          "cid": "9997b39b-c70f-45c1-8534-b155df53c3e9",
+          "videoLayerMode": "ONE_SPATIAL_LAYER_PER_STREAM"
+        }
+      ],
+      "encryption": "NONE",
+      "stream": "camera",
+      "version": {
+        "unixMicro": 1793309543620318
+      },
+      "backupCodecPolicy": "SIMULCAST"
+    }
+  }
+]

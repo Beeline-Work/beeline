@@ -37,6 +37,8 @@ test('prebuild mods enable release optimization without changing debug and prese
   assert.match(first, /livekit.org.webrtc/);
   assert.match(first, /-keep class livekit\.org\.jni_zero\.\*\*/);
   assert.match(first, /-keep @interface expo\.modules\.kotlin\.records\.Field/);
+  assert.match(first, /-keep class expo\.modules\.adapters\.react\.apploader\.RNHeadlessAppLoader/);
+  assert.match(first, /-keep class com\.android\.installreferrer\.api\.\*\*/);
   assert.match(first, /app.usebeeline.crashtrace/);
   assert.match(await fs.readFile(path.join(root, 'app/src/main/res/raw/beeline_keep.xml'), 'utf8'), /notification_icon/);
 });

@@ -653,10 +653,39 @@ export class AuthStore {
     await this.database.query(`DELETE FROM beeline_oidc_flows WHERE expires_at < $1`, [
       flow.createdAt,
     ]);
-    await this.database.query(
+    await this.insertFlow(this.database, stateHash, flow, null);
+  }
+
+  /**
+   * Replace a consumed flow with a continuation flow. The native recovery hash
+   * moves to the new row in one transaction, so exactly one row holds it.
+   */
+  async continueFlow(previousStateHash: string, stateHash: string, flow: OidcFlow): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      let nativeCancelledAt: unknown = null;
+      if (flow.appRecoveryHash) {
+        const previous = await transaction.query<QueryResultRow & { native_cancelled_at: unknown }>(
+          `UPDATE beeline_oidc_flows SET app_recovery_hash = NULL
+           WHERE state_hash = $1 AND app_recovery_hash = $2
+           RETURNING native_cancelled_at`,
+          [previousStateHash, flow.appRecoveryHash],
+        );
+        nativeCancelledAt = previous.rows[0]?.native_cancelled_at ?? null;
+      }
+      await this.insertFlow(transaction, stateHash, flow, nativeCancelledAt);
+    });
+  }
+
+  private async insertFlow(
+    executor: SqlExecutor,
+    stateHash: string,
+    flow: OidcFlow,
+    nativeCancelledAt: unknown,
+  ): Promise<void> {
+    await executor.query(
       `INSERT INTO beeline_oidc_flows
-        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, app_recovery_hash, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        (state_hash, community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, app_recovery_hash, created_at, expires_at, native_cancelled_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         stateHash,
         flow.community,
@@ -672,6 +701,7 @@ export class AuthStore {
         flow.appRecoveryHash ?? null,
         flow.createdAt,
         flow.expiresAt,
+        nativeCancelledAt,
       ],
     );
   }

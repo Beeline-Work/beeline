@@ -21,9 +21,6 @@ const GLYPH =
  */
 const ALLOWED: Readonly<Record<string, string>> = {
   // Step and result marks.
-  'app/(app)/beeline/settings/workbench/connect.tsx|●': 'connect step in progress',
-  'app/(app)/beeline/settings/workbench/connect.tsx|✓ ': 'connect step passed',
-  'app/(app)/beeline/settings/workbench/connect.tsx|✗ ': 'connect step failed',
   'components/buzz/ActivityTimeline.tsx|✗': 'failed tool step',
   'app/(app)/beeline/chat/_chat-surface.tsx|✓': 'check result mark',
   'app/(app)/beeline/chat/_chat-surface.tsx|✗': 'check result mark',

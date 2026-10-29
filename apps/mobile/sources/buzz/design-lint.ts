@@ -34,7 +34,6 @@ export const DESIGN_ALLOWLIST: Readonly<Record<DesignRule, Readonly<Record<strin
     'components/buzz/ArtifactPdfView.tsx': 'The PDF page is paper: it renders white in both themes.',
     'components/buzz/DesktopArtifactPane.tsx': 'The PDF page is paper: it renders white in both themes.',
     'app/_layout.tsx': 'Native splash and root background before the theme has loaded.',
-    'components/AnimatedOverlay.tsx': 'The modal scrim is black at an opacity in both themes.',
   },
   spacing: {
     'components/buzz/SettingsRow.tsx':

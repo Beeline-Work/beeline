@@ -103,15 +103,18 @@ it('Reproduction squire-false-card: account replaces Ready and reconnect hides D
   const renderer = await render();
   expect(renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.value).toBe('owner@example.com');
   await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
-  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Reconnecting…' })) }]);
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Waiting for sign-in' })) }]);
   await act(async () => mobileSurfaceCache.clear());
   await act(async () => renderer.unmount());
+  navigation.push.mockClear();
   const reconnecting = await render();
   const computer = reconnecting.root.findByProps({ testID: 'squire-computer-machine-one' });
-  expect(computer.props.value).toBe('Reconnecting…');
-  expect(computer.props.disabled).toBe(true);
+  // A pairing waiting on sign-in is a next step, never a dead row.
+  expect(computer.props.description).toBe('Waiting for sign-in');
+  expect(computer.props.action).toBe('Continue');
   await act(async () => computer.props.onPress());
-  expect(reconnecting.root.findAllByType('HullActionSheetRow').filter((r: any) => r.props.label === 'Disconnect')).toHaveLength(0);
+  expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
+    params: { workspaceId: 'ws', viewerId: expect.any(String), connectorId: 'trusty-squire', pairedConnectorId: 'squire:machine-one' } });
   await act(async () => reconnecting.unmount());
 });
 

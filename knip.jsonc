@@ -20,6 +20,8 @@
     // Type declarations for the JavaScript boundary shared by Expo Go and the
     // rendered-page test; the runtime module is selected through boundary aliases.
     "apps/mobile/offline-proof/adapters/services.d.ts": ["exports"],
+    // The Trusty Squire native proof resolves these through its temporary Metro adapter.
+    "apps/mobile/scripts/proof-shims/*.{ts,tsx,cjs}": ["exports", "types"],
     "apps/mobile/scripts/ui-alignment-proof/{proof-env,proof-workbench,svg,unistyles}.{ts,tsx}": ["exports"],
   },
   "workspaces": {
@@ -115,6 +117,9 @@
         "scripts/render-card-buttons.mjs",
         "scripts/card-button-gallery.tsx",
         "scripts/card-buttons-native-proof.tsx",
+        // evidence/trusty-squire-connect/README.md selects this native entry and Metro adapter by path.
+        "scripts/trusty-squire-native-proof.tsx",
+        "scripts/proof-shims/*.{ts,tsx,cjs}",
         // The artifact-card footer restore selects this native Metro entry by path.
         "scripts/artifact-card-native-proof.tsx",
         // The desktop proportions evidence runbook invokes these standalone proof tools by path.

@@ -5,7 +5,7 @@ import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
@@ -13,7 +13,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
@@ -22,8 +21,12 @@ import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
   connectorSignInLocationLine,
+  isSquireStageLabel,
+  squirePairingStages,
   type ConnectorInstallState,
+  type ConnectorInstallStep,
 } from '@/buzz/workbench';
+import { WorkflowStepCircle } from '@/components/buzz/WorkflowRunLine';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -37,6 +40,28 @@ const CONNECTOR_NAMES: Record<string, string> = {
 
 function connectorNameFor(connectorId: string): string {
   return CONNECTOR_NAMES[connectorId] ?? connectorId;
+}
+
+type InstallStage = {
+  key?: string;
+  label: string;
+  status: 'done' | 'current' | 'pending' | 'failed';
+  reason?: string;
+  command?: string;
+  output?: string;
+};
+
+/** Any other connector's own steps: the running (or first unfinished) one is current. */
+function genericInstallStages(steps: readonly ConnectorInstallStep[]): InstallStage[] {
+  const failed = steps.some((step) => step.status === 'failed');
+  const active = steps.some((step) => step.status === 'active');
+  let current = failed || active;
+  return steps.map((step) => {
+    const status = step.status === 'active' ? 'current' as const
+      : step.status === 'pending' && !current ? (current = true, 'current' as const)
+        : step.status;
+    return { ...step, status };
+  });
 }
 
 /** Bounded feedback for a pair POST that never settles: the transport sets
@@ -101,7 +126,7 @@ function ConnectToolFlow() {
   const [observedId, setObservedId] = useState(pairedConnectorId);
   const observed = useInstallObserver(workspaceId, observedId);
   useEffect(() => { if (pairedConnectorId) setObservedId(pairedConnectorId); }, [pairedConnectorId]);
-  const pairedHelperRef = useRef<string | null>(null);
+  const pairedHelperRef = useRef<string | null>(pairedConnectorId?.startsWith('squire:') ? pairedConnectorId.slice(7) : null);
   const autoPairRef = useRef(false);
 
   const stopObserving = useCallback(() => setObservedId(undefined), []);
@@ -150,7 +175,8 @@ function ConnectToolFlow() {
   );
 
   useEffect(() => {
-    if (offerCeremony || autoPairRef.current || helpers === null || pairedHelperRef.current) return;
+    // A pairing already under way is observed, never started again.
+    if (offerCeremony || pairedConnectorId || autoPairRef.current || helpers === null || pairedHelperRef.current) return;
     const online = helpers.filter((helper) => helper.online);
     const requested = online.find((helper) => helper.id === requestedHelperId);
     if (requested) {
@@ -161,7 +187,7 @@ function ConnectToolFlow() {
     if (requestedHelperId || online.length !== 1) return;
     autoPairRef.current = true;
     void pair(online[0]!.id);
-  }, [helpers, offerCeremony, pair, requestedHelperId]);
+  }, [helpers, offerCeremony, pair, pairedConnectorId, requestedHelperId]);
 
   const retry = useCallback(() => {
     setError(null);
@@ -196,6 +222,34 @@ function ConnectToolFlow() {
   const onlineHelpers = helpers?.filter((helper) => helper.online &&
     (!requestedHelperId || helper.id === requestedHelperId)) ?? [];
   const someHelpers = onlineHelpers.length > 0;
+
+  const stages: InstallStage[] = install === null ? []
+    : connectorId === 'trusty-squire' && install.steps.some((step) => isSquireStageLabel(step.label))
+      ? squirePairingStages(install.steps, machineName, Boolean(install.signIn))
+      : genericInstallStages(install.steps);
+  const failedStage = stages.find((stage) => stage.status === 'failed');
+  const currentStage = failedStage ?? stages.find((stage) => stage.status === 'current');
+  const stageNumber = currentStage ? stages.indexOf(currentStage) + 1 : stages.length;
+  const openSignIn = () => {
+    const signIn = install?.signIn;
+    if (!install || !signIn) return;
+    router.push({
+      pathname: '/beeline/settings/workbench/connect-signin' as never,
+      params: {
+        workspaceId,
+        viewerId,
+        // The paired ROW id, so the overlay observes this
+        // machine's connector — not any row of the type.
+        connectorId: install.connectorId,
+        connectorName,
+        ...(machineName ? { machineName } : {}),
+        url: signIn.url,
+        method: signIn.method,
+        ...(offerId ? { offerId } : {}),
+        ...(roomId ? { roomId } : {}),
+      },
+    });
+  };
 
   return (
     <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>
@@ -252,12 +306,13 @@ function ConnectToolFlow() {
           <View testID="connect-machine-picker">
             <RoomListSectionHeader title="Helpers" inset="content" />
             {onlineHelpers.length === 1 ? (
-              <SettingsRow title={onlineHelpers[0]!.name}
+              <SettingsRow appBoard title={onlineHelpers[0]!.name}
                 description={install ? 'paired' : 'pairing automatically'}
                 testID={`connect-machine-${onlineHelpers[0]!.id}`} />
             ) : (
               onlineHelpers.map((helper) => (
               <SettingsRow
+                appBoard
                 key={helper.id}
                 description={pairedHelperRef.current === helper.id ? 'paired' : 'online'}
                 disabled={Boolean(pairedHelperRef.current)}
@@ -275,81 +330,75 @@ function ConnectToolFlow() {
         ) : null}
         {install !== null ? (
           <View testID="connect-install-progress">
-            <Text style={styles.note}>Installing on {machineName ?? 'your machine'}</Text>
+            <Text style={styles.progress} testID="connect-progress-count">
+              {failedStage ? `Stopped at step ${stageNumber} of ${stages.length}`
+                : currentStage ? `Step ${stageNumber} of ${stages.length} · ${machineName ?? 'your computer'}`
+                  : `${stages.length} of ${stages.length} done`}
+            </Text>
             <View style={styles.steps}>
-              {install.steps.map((step, index) => (
-                <View
-                  key={`${step.label}-${index}`}
-                  testID={`connect-step-${index}-${step.status}`}
-                >
-                  {step.status === 'active' ? (
-                    <PulsingText style={[styles.stepText, styles.stepActive]}>
-                      ● {step.label}
-                    </PulsingText>
-                  ) : (
-                    <Text
-                      style={[
-                        styles.stepText,
-                        step.status === 'done' && styles.stepDone,
-                        step.status === 'failed' && styles.stepFailed,
-                      ]}
-                    >
-                      {step.status === 'done'
-                        ? `✓ ${step.label}`
-                        : step.status === 'failed'
-                          ? `✗ ${step.label}`
-                          : `· ${step.label}`}
+              {stages.map((stage, index) => (
+                <View key={`${stage.label}-${index}`} style={styles.step}
+                  testID={`connect-step-${index}-${stage.status}`}>
+                  <View style={styles.stepMark}>
+                    {stage.status === 'current' && !(stage.key === 'sign-in' && install.signIn)
+                      ? <ActivityIndicator size="small" color={theme.buzz.accent}
+                        accessibilityLabel={`${stage.label}, in progress`} testID={`connect-step-${index}-spinner`} />
+                      : <WorkflowStepCircle status={stage.status} />}
+                  </View>
+                  <View style={styles.stepBody}>
+                    <Text style={[styles.stepText, stage.status === 'pending' && styles.stepPending,
+                      stage.status === 'current' && styles.stepCurrent]}>
+                      {stage.label}
                     </Text>
-                  )}
-                  {step.command ? (
-                    <Text style={styles.stepCommand} testID={`connect-step-${index}-command`}>
-                      $ {step.command}
-                    </Text>
-                  ) : null}
-                  {step.output ? (
-                    <Text style={styles.stepOutput} testID={`connect-step-${index}-output`}>
-                      {step.output}
-                    </Text>
-                  ) : null}
-                  {step.reason ? (
-                    <Text style={styles.stepReason} testID={`connect-step-${index}-reason`}>
-                      {step.reason}
-                    </Text>
-                  ) : null}
+                    {stage.command ? (
+                      <Text style={styles.stepCommand} testID={`connect-step-${index}-command`}>
+                        $ {stage.command}
+                      </Text>
+                    ) : null}
+                    {stage.output ? (
+                      <Text style={styles.stepOutput} testID={`connect-step-${index}-output`}>
+                        {stage.output}
+                      </Text>
+                    ) : null}
+                    {stage.reason ? (
+                      <Text style={styles.stepReason} testID={`connect-step-${index}-reason`}>
+                        {stage.reason}
+                      </Text>
+                    ) : null}
+                    {stage.key === 'sign-in' && stage.status === 'current' && install.signIn && !failedStage ? (
+                      <View style={styles.signInBlock}>
+                        <Text style={styles.note}>Waiting for you to sign in.</Text>
+                        <Button
+                          label="Sign in to Google"
+                          onPress={openSignIn}
+                          testID="connect-sign-in"
+                          variant="primary"
+                          destination="screen"
+                        />
+                        {connectorSignInLocationLine(install.signIn.browserLocation) ? (
+                          <Text style={styles.note} testID="connect-sign-in-location">
+                            {connectorSignInLocationLine(install.signIn.browserLocation)}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
               ))}
             </View>
-            {install.steps.some((step) => step.status === 'failed') ? (
+            {failedStage ? (
               <ErrorBanner inline title="Connection failed" onRetry={retry} retryTestID="connect-retry" />
-            ) : install.signIn ? (
+            ) : install.signIn && !stages.some((stage) => stage.key === 'sign-in') ? (
               <View style={styles.signInBlock}>
                 <Button
                   label={`Sign in to ${connectorName}`}
-                  onPress={() => {
-                    const { signIn } = install;
-                    if (!signIn) return;
-                    router.push({
-                      pathname: '/beeline/settings/workbench/connect-signin' as never,
-                      params: {
-                        workspaceId,
-                        viewerId,
-                        // The paired ROW id, so the overlay observes this
-                        // machine's connector — not any row of the type.
-                        connectorId: install.connectorId,
-                        connectorName,
-                        ...(machineName ? { machineName } : {}),
-                        url: signIn.url,
-                        method: signIn.method,
-                        ...(offerId ? { offerId } : {}),
-                        ...(roomId ? { roomId } : {}),
-                      },
-                    });
-                  }}
+                  onPress={openSignIn}
                   testID="connect-sign-in"
-                  variant="secondary"
+                  variant="primary"
+                  destination="screen"
                 />
                 {connectorSignInLocationLine(install.signIn.browserLocation) ? (
-                  <Text style={styles.signInLocation} testID="connect-sign-in-location">
+                  <Text style={styles.note} testID="connect-sign-in-location">
                     {connectorSignInLocationLine(install.signIn.browserLocation)}
                   </Text>
                 ) : null}
@@ -372,7 +421,8 @@ const styles = StyleSheet.create((theme) => {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     content: { flex: 1 },
     contentInner: {
-      padding: hull.space.md,
+      paddingHorizontal: hull.space.lg,
+      paddingTop: hull.layout.screenTop,
       gap: hull.layout.sectionGap,
       paddingBottom: hull.space.xxl,
     },
@@ -396,11 +446,15 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
     },
     command: { ...Typography.mono(), ...hull.type.body, color: hull.textPrimary },
-    steps: { gap: hull.space.xs },
-    stepText: { ...Typography.mono(), ...hull.type.meta, color: hull.textMuted },
-    stepDone: { color: hull.textSecondary },
-    stepActive: { color: hull.accent },
-    stepFailed: { color: hull.dialogDanger },
+    progress: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary, marginBottom: hull.space.sm },
+    steps: { gap: hull.space.md },
+    step: { flexDirection: 'row', gap: hull.space.sm, alignItems: 'flex-start' },
+    // The circle and the spinner share one 20 pt column centred on the label's first line.
+    stepMark: { width: 20, height: hull.type.body.lineHeight, alignItems: 'center', justifyContent: 'center' },
+    stepBody: { flex: 1, minWidth: 0, gap: hull.space.xs },
+    stepText: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
+    stepCurrent: { color: hull.textPrimary },
+    stepPending: { color: hull.textMuted },
     stepCommand: {
       ...Typography.mono(),
       ...hull.type.meta,
@@ -415,13 +469,7 @@ const styles = StyleSheet.create((theme) => {
       marginTop: hull.space.xs,
     },
     stepReason: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
-    signInBlock: { gap: hull.space.xs },
-    signInLocation: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textMuted,
-      textAlign: 'center',
-    },
+    signInBlock: { gap: hull.space.sm, marginTop: hull.space.xs },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

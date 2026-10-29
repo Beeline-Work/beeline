@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   appDetailLine,
+  squirePairingStages,
   connectionCompany,
   connectionCreatedByLine,
   connectionDetailLabel,
@@ -529,5 +530,35 @@ describe('the ONE Google entry', () => {
       expect(connectorInstrument('error', failedId).connect).toBe(true);
       expect(resolveGoogleConnectTarget(failed)).toBe(failedId);
     }
+  });
+});
+
+describe('squirePairingStages', () => {
+  const done = (label: string) => ({ label, status: 'done' as const });
+  const pending = (label: string) => ({ label, status: 'pending' as const });
+  const statuses = (stages: { status: string }[]) => stages.map(stage => stage.status);
+
+  it('Reproduction pairing-progress: reads the helper’s out-of-order steps as four ordered stages', () => {
+    // The exact list production showed: sign-in pending above a finished pairing.
+    const stages = squirePairingStages([done('helper reached'), done('trusty-squire 1.1.38 installed'),
+      pending('waiting for sign-in'), done('paired to workspace')], 'squire');
+    expect(stages.map(stage => stage.label)).toEqual(['Reach squire', 'Install Trusty Squire', 'Pair with this workspace', 'Sign in to Google']);
+    expect(statuses(stages)).toEqual(['done', 'done', 'done', 'current']);
+  });
+
+  it('keeps four stages from the server’s two placeholders onward', () => {
+    expect(statuses(squirePairingStages([pending('Install on helper'), pending('Connect provider account')], 'squire')))
+      .toEqual(['current', 'pending', 'pending', 'pending']);
+    expect(statuses(squirePairingStages([done('helper reached')], 'squire'))).toEqual(['done', 'current', 'pending', 'pending']);
+  });
+
+  it('marks earlier stages passed when only a later failure is reported', () => {
+    const stages = squirePairingStages([{ label: 'waiting for sign-in', status: 'failed', reason: 'expired' }], 'squire');
+    expect(statuses(stages)).toEqual(['done', 'done', 'done', 'failed']);
+    expect(stages[3]!.reason).toBe('expired');
+  });
+
+  it('treats a published sign-in page as past every earlier stage', () => {
+    expect(statuses(squirePairingStages([pending('waiting for sign-in')], 'squire', true))).toEqual(['done', 'done', 'done', 'current']);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import {
+  awaitPublicPage,
   connectBlockedLine,
   connectBrowserLocation,
   connectionGrant,
@@ -32,6 +33,13 @@ import {
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
+
+
+// A published quick-tunnel page answers at once here; its own test drives the wait.
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+  return () => vi.unstubAllGlobals();
+});
 
 describe('hosted broker readiness', () => {
   it.each([undefined, 'handoff', 'missing', 'requested-missing'])('preserves requested provider re-login (%s) on a paired hosted broker', async (scenario) => {
@@ -375,6 +383,30 @@ describe('parseConnectReport', () => {
 });
 
 describe('defaultStreamedRunner', () => {
+  it('Reproduction squire-linger: ends a connect that reported connected but kept running', async () => {
+    // Production 2026-10-29: the owner finished Google sign-in at 14:06:50,
+    // Squire printed its terminal report, and the process lived on until the
+    // 300 s safety kill at 14:11:03, so the row sat installing the whole time.
+    const signIn = reportLine({
+      state: 'needs-sign-in',
+      sign_in_url: 'https://squire.test/vnc#p=1',
+      browser_location: { kind: 'virtual', url: 'https://squire.test/vnc#p=1' },
+    });
+    const connected = reportLine({ state: 'connected', terminal: true, account: { id: 'acct', providers: ['google'] } });
+    const result = await defaultStreamedRunner(process.execPath, [
+      '-e',
+      `process.stdout.write(${JSON.stringify(`${signIn}\n`)});` +
+        `setTimeout(() => process.stdout.write(${JSON.stringify(`${connected}\n`)}), 150);` +
+        'setInterval(() => {}, 30_000);',
+    ], undefined, 'linger');
+    expect(result.report?.state).toBe('needs-sign-in');
+    const claim = squireConnectSession('linger');
+    let exited = false;
+    claim?.onExit?.(() => { exited = true; });
+    await vi.waitFor(() => expect(exited).toBe(true), { timeout: 6_000 });
+    releaseSquireConnectSession(undefined, 'linger');
+  });
+
   it('never publishes a report a chunk boundary cut in half', async () => {
     // The runner reads complete lines only. Writing the JSON line in two
     // pieces with no newline between them is an ordinary pipe split, and the
@@ -1199,5 +1231,24 @@ describe('vault reads through the Squire MCP', () => {
       state: 'error',
     });
     expect(readGrants).toBeTypeOf('function');
+  });
+});
+
+describe('awaitPublicPage', () => {
+  it('Reproduction tunnel-dns: waits for a fresh quick-tunnel page to answer before publishing it', async () => {
+    const answers = [new TypeError('fetch failed'), 530, 200];
+    const fetch = vi.fn(async () => {
+      const next = answers.shift();
+      if (next instanceof Error) throw next;
+      return new Response(null, { status: next });
+    });
+    vi.stubGlobal('fetch', fetch);
+    expect(await awaitPublicPage('https://fresh.trycloudflare.com/#p=x', 10_000)).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after its bound instead of holding the sign-in back', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    expect(await awaitPublicPage('https://never.trycloudflare.com/', 1_500)).toBe(false);
   });
 });

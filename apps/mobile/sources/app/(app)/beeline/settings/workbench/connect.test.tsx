@@ -100,13 +100,6 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 
-vi.mock('@/components/buzz/PulsingText', async () => {
-  const ReactModule = await import('react');
-  return {
-    PulsingText: (props: any) => ReactModule.createElement('PulsingText', props),
-  };
-});
-
 import ConnectTrustySquireScreen from './connect';
 import { getWorkbenchSource, setWorkbenchSource, MonolithWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -341,9 +334,11 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBeUndefined();
     const active = renderer.root.findAll(
-      (node: any) => node.props?.testID === 'connect-step-1-active',
+      (node: any) => node.props?.testID === 'connect-step-1-current',
     );
     expect(active.length).toBeGreaterThan(0);
+    const count = renderer.root.findByProps({ testID: 'connect-progress-count' });
+    expect([count.props.children].flat().join('')).toMatch(/^Step 2 of 5 · /);
     await untilSignin(renderer);
     expect(renderer.root.findByProps({ testID: 'connect-sign-in' })).toBeDefined();
   });
@@ -406,7 +401,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     await advancePolls();
     const line = renderer.root.findByProps({ testID: 'connect-sign-in-location' });
     expect([line.props.children].flat().join('')).toBe(
-      'Sign-in page opened on a virtual display · https://tunnel.example.test/#p=x',
+      'The page streams a private browser from your computer',
     );
   });
 
@@ -424,14 +419,14 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     );
   });
 
-  it('the running step renders as a pulsing gold marker', async () => {
+  it('the running step carries a loading indicator', async () => {
     const renderer = await render();
     await pair(renderer);
     await advancePolls(2);
-    const pulsing = renderer.root.findAll(
-      (node: any) => node.props?.testID === undefined && node.type === 'PulsingText',
+    const spinners = renderer.root.findAll(
+      (node: any) => typeof node.props?.testID === 'string' && /^connect-step-\d+-spinner$/.test(node.props.testID),
     );
-    expect(pulsing.length).toBeGreaterThan(0);
+    expect(spinners.length).toBeGreaterThan(0);
   });
 
   it('reports a failed step in red with the helper’s reason and Retry re-pairs', async () => {

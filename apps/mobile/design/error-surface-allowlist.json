@@ -199,9 +199,22 @@
     "reason": "kept, already inset: identity error panel supplies its content inset."
   },
   {
-    "layoutHash": "6f6c51d9b397aea6c562bcd6080dce938d46b2b306a423e2f4bb8b9b84ed8085",
+    "layoutHash": "f420655f6ffe095b79db918e6edc3de0a185cf21eb1c9e2028bd20374ed81059",
+    "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
+    "line": 141,
+    "tag": "ErrorBanner",
+    "source": "<ErrorBanner\n              title={errorTitle}\n              description={!observed.error && signIn.url ? 'Retry, or open it in your browser.' : undefined}\n              onRetry={observed.installMissing ? () => router.back() : () => void retry()}\n              retryLabel={observed.installMissing ? 'Go back' : 'Retry'}\n              retryTestID=\"signin-retry\"\n              secondaryAction={!observed.installMissing && signIn.url\n                ? { label: 'Open in browser', onPress: () => void openBrowser(), testID: 'signin-open-external' } : undefined}\n              testID=\"signin-error\"\n            />",
+    "ancestors": [
+      "<View style={styles.errorBlock}>",
+      "<View style={[styles.column, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]} testID=\"signin-card\">",
+      "<View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID=\"signin-overlay\">"
+    ],
+    "reason": "kept, already inset: the sign-in error block adds 8 to the banner's own 16 side margin, matching the 24 page inset."
+  },
+  {
+    "layoutHash": "8853babc9fa4e40ac5d9810da8e4f7e96f1b903402d5a0d878ee56e343f3b0ce",
     "file": "app/(app)/beeline/settings/workbench/connect.tsx",
-    "line": 322,
+    "line": 390,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title=\"Connection failed\" onRetry={retry} retryTestID=\"connect-retry\" />",
     "ancestors": [
@@ -212,9 +225,9 @@
     "reason": "kept, already inset: install detail block and scroll content supply the inset."
   },
   {
-    "layoutHash": "6f6c51d9b397aea6c562bcd6080dce938d46b2b306a423e2f4bb8b9b84ed8085",
+    "layoutHash": "8853babc9fa4e40ac5d9810da8e4f7e96f1b903402d5a0d878ee56e343f3b0ce",
     "file": "app/(app)/beeline/settings/workbench/connect.tsx",
-    "line": 360,
+    "line": 410,
     "tag": "ErrorBanner",
     "source": "<ErrorBanner inline title={error ?? 'Helpers are unavailable right now'} titleTestID=\"connect-error\"\n            onRetry={pairedHelperRef.current || observedId ? retry : undefined} retryTestID=\"connect-pair-retry\" />",
     "ancestors": [

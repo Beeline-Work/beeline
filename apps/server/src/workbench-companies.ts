@@ -206,10 +206,10 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
       machines: machines.map(m => ({ id: m.id, name: m.name, online: m.online,
         status: m.squire?.status ?? 'not-added', error: m.squire?.errorMessage,
         signedInAs: m.squire?.signedInAs, reconnecting: m.squire?.reconnecting,
-        statusText: m.squire?.reconnecting ? 'Reconnecting…' : m.squire?.googleSessionExpired ? 'Google sign-in expired' : m.squire?.status === 'error' ? 'Sign-in unavailable'
+        statusText: m.squire?.reconnecting ? 'Waiting for sign-in' : m.squire?.googleSessionExpired ? 'Google sign-in expired' : m.squire?.status === 'error' ? 'Sign-in unavailable'
           : m.squire?.status !== 'connected' ? 'Google sign-in needed' : !m.online ? 'Computer offline'
           : m.squire.signedInAs ?? 'Google signed in' })),
-      status: machines.some(m => m.squire?.reconnecting) ? 'Reconnecting…' : machines.some(m => m.squire?.googleSessionExpired) ? 'Google sign-in expired' : trouble.length ? 'Sign-in unavailable'
+      status: machines.some(m => m.squire?.reconnecting) ? 'Waiting for sign-in' : machines.some(m => m.squire?.googleSessionExpired) ? 'Google sign-in expired' : trouble.length ? 'Sign-in unavailable'
         : machines.some(m => m.squire?.status === 'connected') ? 'Google signed in' : 'Google sign-in needed',
       attention: trouble.length ? `${trouble.length} ${trouble.length === 1 ? 'computer needs' : 'computers need'} attention` : undefined });
   }

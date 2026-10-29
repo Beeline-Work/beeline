@@ -81,13 +81,6 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
-vi.mock('@/components/AnimatedOverlay', async () => {
-  const ReactModule = await import('react');
-  return {
-    AnimatedBlurBackdrop: (props: any) => ReactModule.createElement('AnimatedBlurBackdrop', props),
-  };
-});
-
 vi.mock('@/components/buzz/PageHeader', async () => {
   const ReactModule = await import('react');
   return {
@@ -167,9 +160,29 @@ describe('ConnectorSignInScreen', () => {
     let renderer!: ReactTestRenderer;
     try {
       await act(async () => { renderer = create(<ConnectorSignInScreen />); });
-      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoadEnd());
+      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoad());
       await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
+    } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
+  });
+
+  it('Reproduction tunnel-dns: a page that fails while its name is new reloads itself before failing', async () => {
+    vi.useFakeTimers();
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [], signIn: { method: 'streamed', url: searchParams.url } });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      const first = renderer.root.findByProps({ testID: 'signin-webview' });
+      await act(async () => { first.props.onError(); first.props.onLoad(); });
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' })).toHaveLength(0);
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_001); });
+      const second = renderer.root.findByProps({ testID: 'signin-webview' });
+      expect(second).not.toBe(first);
+      await act(async () => second.props.onLoad());
+      expect(renderer.root.findAllByProps({ testID: 'signin-webview-loading' })).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' })).toHaveLength(0);
     } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
   });
 
@@ -244,6 +257,7 @@ describe('ConnectorSignInScreen', () => {
         ...options,
         mcp: { async call() { return { credentials: [] }; } },
         run: async () => ({ code: 0, stdout: '1.1.17', stderr: '' }),
+        awaitPage: async () => true,
         streamRun: async () => ({
           stdout: '', stderr: '', abort: () => {},
           report: claimed

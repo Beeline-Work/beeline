@@ -1,4 +1,4 @@
-import { StarterOnboardingService } from './starter-onboarding-run.js';
+import { STARTER_BANTER_TYPING_MS, StarterOnboardingService } from './starter-onboarding-run.js';
 import { starterHello, consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import { postRoomChoice } from './room-choice.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -166,6 +166,12 @@ describe('free starter agents', () => {
   const finishWelcome = async (roomId: string, viewerId: string) => {
     await new StarterOnboardingService(db).enter(roomId, viewerId);
   };
+
+  it('shows each banter agent typing 3.5 s, and keeps playback inside the 35 s reclaim window', () => {
+    expect(STARTER_BANTER_TYPING_MS).toBe(3500);
+    // 20 s generation deadline + three typed lines must finish before another server may reclaim playback.
+    expect(20_000 + 3 * STARTER_BANTER_TYPING_MS).toBeLessThan(35_000);
+  });
 
   it('reruns welcome in the calling Room and keeps every manual step out of signup counts', async () => {
     const workspace = await phone.execute('createWorkspace', { name: 'Manual welcome', timeZone: 'America/New_York' }, FRIEND);

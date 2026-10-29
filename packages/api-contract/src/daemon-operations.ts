@@ -178,6 +178,15 @@ export type CommandClaimInput = RoomInput & {
   readonly generationId: string;
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
+/** A commander's stop: whether a running turn was cancelled, and how many of its queued orders were dropped. */
+export interface StopAgentTurnResult {
+  readonly stopped: boolean;
+  readonly address: string;
+  readonly agent: string;
+  readonly droppedOrders?: number;
+  readonly receipt: string;
+}
+
 export type DaemonOperationMap = {
   postVaultSaveCard: Operation<RoomInput & TurnOutputAuthority & import('./vault-save.js').VaultSaveRequest, WriteResult>;
   getInstitutionalContext: Operation<RoomInput & TurnOutputAuthority, InstitutionalContextSnapshot>;
@@ -331,6 +340,7 @@ export type DaemonOperationMap = {
     }
   >;
   order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string; readonly agent?: string }, WriteResult>;
+  stopAgentTurn: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly agent?: string }, StopAgentTurnResult>;
   report: Operation<RoomInput & TurnOutputAuthority & { readonly status: AgentReportStatus; readonly text: string; readonly ask?: string }, WriteResult>;
   read: Operation<RoomInput & { readonly address: string; readonly limit?: number }, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;

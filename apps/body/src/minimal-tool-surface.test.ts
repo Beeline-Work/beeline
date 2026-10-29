@@ -15,6 +15,7 @@ const names = [
   'open_corner',
   'revise_corner',
   'order',
+  'stop',
   'report',
   'dispatch_release',
   'report_feedback',

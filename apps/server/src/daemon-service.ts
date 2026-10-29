@@ -24,7 +24,7 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, stopCommandedTurn, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -556,6 +556,7 @@ export class DaemonService {
       'createLinkSpendRequest',
       'retrieveLinkSpendRequest',
       'order',
+      'stopAgentTurn',
       'report',
       'createCorner',
       'reviseCornerBrief',
@@ -1266,6 +1267,10 @@ export class DaemonService {
       case 'order':
         return await sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId,
           String(candidate.address), String(candidate.text),
+          candidate.agent === undefined ? undefined : String(candidate.agent)) as Output<Name>;
+      case 'stopAgentTurn':
+        return await stopCommandedTurn(this.database, this.authorizedCommand!, authenticatedAgentId,
+          String(candidate.address),
           candidate.agent === undefined ? undefined : String(candidate.agent)) as Output<Name>;
       case 'report': {
         const ask = candidate.ask === undefined
@@ -9231,6 +9236,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getRoomConversation: true,
   getRoomMessage: true,
   order: true,
+  stopAgentTurn: true,
   report: true,
   read: true,
   getRoomAuthority: true,

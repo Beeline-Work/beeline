@@ -4,6 +4,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import {
   createAgentCommand,
+  dropQueuedOrdersForStop,
+  lockAgentCommandQueue,
   refuseVerdictedReviewerWake,
   repairReviewerCornerMembership,
   nextAgentDepth,
@@ -184,6 +186,86 @@ export async function sendOrder(
   return { id: queued.id, createdAt: Math.floor(Date.now() / 1000),
     effect: 'order', address, agent: worker, visibility: 'private', reportsAssignment: false,
     accepted: true, executionConfirmed: false, receipt: 'Order queued privately; not confirmation of execution.' };
+}
+
+/**
+ * An agent stops the running turn of an agent it commands: the turn runs its
+ * own order, or it runs in a corner this agent opened. The stop reuses the
+ * tagged Stop: cancel the turn, enqueue the helper Stop, and drop the
+ * orderer's older queued orders. An order sent after this call runs next.
+ */
+export async function stopCommandedTurn(
+  db: SqlDatabase,
+  command: CommandRow,
+  agentId: string,
+  address: string,
+  agent?: string,
+) {
+  const named = agent?.trim().replace(/^@/, '');
+  if (agent !== undefined && !named) throw new CommandRefusalError('stop agent must name one agent', 400);
+  const target = await commandAddress(db, address, agentId);
+  const candidates = (await db.query<{ id: string; handle: string | null; name: string }>(
+    `SELECT identity.id,identity.handle,identity.name FROM effective_memberships member JOIN identities identity
+       ON identity.id=member.identity_id AND identity.kind='agent'
+     WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.id<>$2`,
+    [address, agentId])).rows;
+  const matches = named
+    ? candidates.filter((row) => row.id === named || row.handle?.toLowerCase() === named.toLowerCase())
+    : target.worker ? candidates.filter((row) => row.id === target.worker) : candidates;
+  if (named && !matches.length)
+    throw new CommandRefusalError(`stop agent ${named} is not another agent member of this address`, 400);
+  if (matches.length !== 1)
+    throw new CommandRefusalError('stop must name exactly one agent: pass agent with its handle or id', 400);
+  const worker = matches[0]!;
+  await lockAgentCommandQueue(db, address, worker.id);
+  const running = (await db.query<CommandRow>(
+    `SELECT command.* FROM agent_turns turn
+     JOIN agent_commands command ON command.room_id=turn.room_id
+       AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
+       AND command.action IN ('input','resume')
+     WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
+       AND command.state='claimed' AND command.lease_expires_at>now()
+       AND command.generation_id=turn.generation_id
+       AND turn.generation_id NOT LIKE 'pending:%'
+     ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1 FOR UPDATE OF command`,
+    [address, worker.id])).rows[0];
+  const subject = { kind: 'agent' as const, id: worker.id, name: worker.handle ? `@${worker.handle}` : worker.name };
+  if (!running)
+    return { stopped: false, address, agent: worker.id, receipt: 'No running turn to stop. Send an order; it runs now.' };
+  const order = await commandOrder(db, running);
+  const ordered = order.private_payload?.kind === 'order' && order.private_payload.authorId === agentId;
+  const commandsCorner = !ordered && Boolean(target.parent_id) && Boolean((await db.query(
+    'SELECT 1 FROM rooms WHERE id=$1 AND created_by=$2', [address, agentId])).rowCount);
+  if (!ordered && !commandsCorner)
+    throw new CommandRefusalError(
+      'stop refused: you did not order this turn and you do not command this corner; nothing was stopped', 403);
+  await createAgentCommand(db, {
+    id: createHash('sha256').update(`agent-stop:${command.id}:${running.id}`).digest('hex'),
+    roomId: address, agentId: worker.id, sourceMessageId: null, turnRequestId: running.turn_request_id,
+    action: 'stop', reason: 'agent_stop', parent: running, retainDepth: true,
+    privatePayload: { text: 'Stop the running turn for the commander.', authorId: agentId,
+      fromRoomId: command.room_id, kind: 'lifecycle' },
+  });
+  await db.query(
+    `UPDATE agent_turns SET status='cancelled',created_at=now()
+     WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
+    [address, worker.id, running.turn_request_id]);
+  const dropped = await dropQueuedOrdersForStop(db, running);
+  await db.query(
+    `UPDATE agent_commands SET state='cancelled',completed_at=now()
+     WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+       AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+    [address, worker.id, running.turn_request_id]);
+  const stopper = (await db.query<{ name: string; handle: string | null }>(
+    'SELECT name,handle FROM identities WHERE id=$1', [agentId])).rows[0];
+  await systemLine(db, {
+    id: createHash('sha256').update(`agent-stop-line:${command.id}:${running.id}`).digest('hex'),
+    roomId: address, authorId: worker.id, subject, verb: 'stopped its running turn',
+    consequence: [`for ${stopper?.handle ? `@${stopper.handle}` : stopper?.name ?? agentId}`,
+      ...(dropped ? [`${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`] : [])].join(' · '),
+  });
+  return { stopped: true, address, agent: worker.id, droppedOrders: dropped,
+    receipt: 'Running turn stopped. Send a new order; it runs next.' };
 }
 
 /**

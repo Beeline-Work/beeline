@@ -66,7 +66,6 @@
     "prove:public-post": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-public-post.ts",
     "prove:script-grant": "npx turbo run build --filter=@beeline/body... && node scripts/prove-script-grant.mjs",
     "prove:command-grammar": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-command-grammar.ts",
-    "prove:live-steer": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-live-steer.mjs",
     "prove:claude-silent-wake": "npm run build -w @beeline/body && node scripts/prove-claude-silent-wake.mjs",
     "prove:corner-brief-acceptance": "node scripts/prove-corner-brief-acceptance.mjs",
     "prove:brief-approval-citations": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-brief-approval-citations.mjs",

@@ -3104,6 +3104,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       throw new Error('unknown wake action/trigger');
     }
     case 'order':
+    case 'stop':
     case 'open_corner':
     case 'post_artifact':
     case 'react_to_message':
@@ -3493,6 +3494,8 @@ async function executeAgentOperation(
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
       return JSON.stringify(result);
     }
+    case 'stop':
+      return JSON.stringify(await daemonExecute('stopAgentTurn', { address: args.address as string, agent: args.agent as string | undefined }));
     case 'no_reply_needed': {
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();

@@ -26,9 +26,6 @@ const claim = (command: AgentCommand) => daemon.execute('claimAgentCommand', {
 }, command.agentId);
 const delivery = (value: 'immediate' | `batch:${number}`, agentId = AGENT) =>
   daemon.execute('setWakeDelivery', { roomId: ROOM, delivery: value }, agentId);
-async function finishSetupTurn() {
-  await daemon.execute('postAgentTurnReceipt', { ...authority(humanCommand), agentId: AGENT, status: 'complete' }, AGENT);
-}
 async function mature(database: SqlDatabase = db) {
   await database.query("UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE wake_after IS NOT NULL");
   return flushDueCommanderWakes(database);
@@ -81,7 +78,6 @@ it('defaults to immediate and permits only the authenticated agent to change its
 it('demonstrates one digest covering system, subscription, lifecycle, order, report and scheduler producers', async () => {
   // Obtain a worker order so a real report has its normal commander provenance.
   await daemon.execute('order', { ...authority(humanCommand), address: OTHER, agent: 'worker', text: 'Review other Room' }, AGENT);
-  await finishSetupTurn();
   const workerOrder = (await inbox(db, OTHER, WORKER))[0]!;
   await claim(workerOrder);
   await delivery('batch:5');
@@ -119,12 +115,9 @@ it('keeps actual human messages immediate without shortening the pending digest 
   await delivery('batch:5');
   const delayed = await wake('queued-system-proof');
   await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: id(), text: '@inbox Human follow-up' }, HUMAN);
-  const all = await inbox();
-  expect(all.filter(command => command.action === 'stop')).toHaveLength(1);
-  const delivered = all.filter(command => command.action === 'input');
+  const delivered = (await inbox()).filter(command => command.id !== humanCommand.id);
   expect(delivered).toHaveLength(1);
-  expect(delivered[0]!.source.body).toContain('@inbox Human follow-up');
-  expect(delivered[0]!.source.body).toContain('interrupted');
+  expect(delivered[0]!.source.body).toBe('@inbox Human follow-up');
   expect((await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [delayed!.id])).rows[0]!.wake_after)
     .toEqual(delayed!.wake_after);
   await claim(delivered[0]!);
@@ -228,7 +221,6 @@ it('batches an unsubscribed approval resume and preserves its original turn auth
   console.info('Demonstrated inbox-system: an unsubscribed approval resume is batched and claims under its original turn authority');
 });
 it('retains message and private attachments in a digest without modifying the source messages', async () => {
-  await finishSetupTurn();
   await delivery('batch:2');
   const firstId = id(), secondId = id();
   const firstAttachment = { id: 'photo-first', name: 'First.png', type: 'image/png', size: 12 };
@@ -297,7 +289,6 @@ it.each(['head', 'absorbed'] as const)('revalidates a %s workflow source after r
   console.info(`Demonstrated inbox-workflow: cancelled ${position} attempt loses authority at claim; unrelated work survives in a refreshed digest`);
 });
 it('reports a digest to each actual orderer even when an unrelated lifecycle fact opened the window', async () => {
-  await finishSetupTurn();
   await delivery('batch:2');
   await wake('Unrelated lifecycle');
   await phone.execute('sendRoomMessage', { roomId: OTHER, messageId: id(), text: '@worker Lead this work' }, HUMAN);
@@ -325,7 +316,6 @@ it('reports a digest to each actual orderer even when an unrelated lifecycle fac
   console.info('Demonstrated inbox-provenance: one digest executes two orders and each actual orderer receives one completion report');
 });
 it('delivers and claims ordinary work inside a browser-led digest despite later queued windows', async () => {
-  await finishSetupTurn();
   await delivery('batch:2');
   const first = await wake('Browser observation', 'computer_activity');
   await createAgentCommand(db, { roomId: ROOM, agentId: AGENT, sourceMessageId: null,

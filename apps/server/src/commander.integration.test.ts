@@ -87,8 +87,7 @@ it('delivers blocked privately to Ruby and Ruby orders the current worker privat
   await claim(report);
   await daemon.execute('order', { ...authority(report), address: opened.cornerId, text: 'Use endpoint v2' }, RUBY);
   expect((await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order'))
-    .toMatchObject({ private: true, source: { authorId: RUBY,
-      body: expect.stringMatching(/previous turn was interrupted[\s\S]*\nUse endpoint v2$/) } });
+    .toMatchObject({ private: true, source: { authorId: RUBY, body: 'Use endpoint v2' } });
   expect((await db.query(`SELECT text FROM messages WHERE text IN ($1,$2)`,
     ['blocked: need an endpoint decision', 'Use endpoint v2'])).rowCount).toBe(0);
 });
@@ -106,8 +105,7 @@ it('records each corner order and report as one collapsed card in the corner onl
   await claim(report);
   await daemon.execute('order', { ...authority(report), address: opened.cornerId, text: 'Use endpoint v2' }, RUBY);
   expect((await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order'))
-    .toMatchObject({ private: true, source: { authorId: RUBY,
-      body: expect.stringMatching(/previous turn was interrupted[\s\S]*\nUse endpoint v2$/) } });
+    .toMatchObject({ private: true, source: { authorId: RUBY, body: 'Use endpoint v2' } });
   const cards = (await db.query<{ id: string; author_id: string; presentation: string; text: string; card: unknown }>(
     `SELECT id,author_id,presentation,text,card FROM messages WHERE room_id=$1 AND card_type='agent-command' ORDER BY created_at,id`,
     [opened.cornerId])).rows;

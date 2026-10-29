@@ -1568,6 +1568,36 @@ it('dedupe keeps a lightly reworded summary in collapsed activity', async () => 
     .toMatchObject({ presentation: 'activity', activity: [{ kind: 'note', title: 'Turn summary', text: final }] });
 });
 
+it.each(['final', 'post-final', 'silent', 'post-silent'] as const)('Reproduction R1 missing attachments: report wake delivers files once (%s)', async mode => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await daemon.execute('postRoomMessage', { ...authority(order), text: 'Work started.' }, RUBY);
+  await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: files ready' }, WORKER);
+  const wake = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
+  await claim(wake);
+  const objectId = randomUUID();
+  await db.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+    VALUES($1,$2,'artifact',$3,'image/png','proof.png',10,$4,'ready',now()+interval '24 hours')`,
+    [objectId, RUBY, `artifact/${objectId}`, randomBytes(32).toString('hex')]);
+  await daemon.execute('postAgentAttachment', { ...authority(wake), attachment: {
+    url: `http://test/v1/media/${objectId}`, name: 'proof.png', mimeType: 'image/png', size: 10,
+  } }, RUBY);
+  if (mode.startsWith('post-')) {
+    const receipt = await daemon.execute('postCornerMessage', { ...authority(wake), cornerId: DM, text: 'Here is the image.' }, RUBY);
+    expect(receipt.receipt).not.toContain('closing text here also publishes');
+  }
+  if (mode.endsWith('silent')) {
+    await daemon.execute('markAgentTurnSilent', authority(wake), RUBY);
+    await daemon.execute('postRoomMessage', { ...authority(wake), text: 'This must remain silent.' }, RUBY);
+  } else {
+    await daemon.execute('postRoomMessage', { ...authority(wake), text: 'Here is the image.' }, RUBY);
+  }
+  const visible = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message' && m.text !== 'Work started.');
+  expect(visible).toHaveLength(1);
+  expect(visible[0]!.attachments.map(a => a.name)).toEqual(['proof.png']);
+  expect(visible[0]!.text).not.toContain('must remain silent');
+  expect((await db.query('SELECT 1 FROM agent_pending_attachments WHERE request_id=$1', [wake.turnRequestId])).rowCount).toBe(0);
+});
+
 it.each([false, true])('same-place closing keeps a new attachment on the visible post (tagged=%s)', async tagged => {
   const text = `${tagged ? '@captain ' : ''}Google sign-in is merged.`;
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
@@ -1651,7 +1681,7 @@ it.each(['human', 'order'])('Reproduction R1: silent completion preserves fresh 
   expect((await commands(DM, RUBY)).filter(command => command.reason === 'report')).toEqual([]);
 });
 
-const currentPlaceReminder = 'Posted to your current place. Your closing text here also publishes, so only write it if it adds something new; do not repeat this post.';
+const currentPlaceReminder = 'Posted to your current place. Closing text is kept in turn activity; queued files attach to this post when the turn finishes.';
 it.each(['dm', 'room', 'corner', 'parent-room'] as const)('post receipt identifies the actual current place: %s', async (place) => {
   let command = order;
   let agent = RUBY;
@@ -1819,7 +1849,7 @@ it('WAKE-STORM: identical failures of separate Room orders retain both results',
 });
 
 
-it('WAKE-STORM: a returned result answers a human order once across later delegate report turns', async () => {
+it('WAKE-STORM: a later delegate report publishes its reply without re-answering the inherited order', async () => {
   const opened = await open();
   const turn = await worker(opened.cornerId);
   await daemon.execute('report', {...authority(order),status:'done',text:'done: coordination finished'}, RUBY);
@@ -1828,7 +1858,7 @@ it('WAKE-STORM: a returned result answers a human order once across later delega
   await claim(returned);
   await daemon.execute('postRoomMessage', {...authority(returned),text:'The reviewer still needs to sign in.'}, RUBY);
   expect((await phone.readRoom(DM,HUMAN))!.messages.filter(m=>m.author.pubkey===RUBY && m.presentation==='message').map(m=>m.text))
-    .toEqual(['done: coordination finished']);
+    .toEqual(['done: coordination finished', 'The reviewer still needs to sign in.']);
 });
 
 it('Reproduction SELF-1: orders itself in another Room and corner, refuses the current place', async () => {

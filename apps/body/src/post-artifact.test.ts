@@ -41,6 +41,7 @@ describe('beeline-agent post_artifact', () => {
     );
     expect(result).toContain('Room list mock');
     expect(result).toContain('delivered with your final reply');
+    expect(result).toContain('file-only message if you end silently');
     expect(uploads).toHaveLength(1);
     expect(queued).toEqual([
       {

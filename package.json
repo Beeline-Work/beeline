@@ -53,6 +53,7 @@
     "prove:agent-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-agent-sign-in.ts",
     "prove:done-report-before-pr": "npm run build -w @beeline/server && node --import tsx scripts/prove-done-report-before-pr.mjs",
     "prove:report-files": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-files.mjs",
+    "prove:report-wake-artifacts": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-wake-artifacts.mjs",
     "prove:closed-corner": "npm run build -w @beeline/server && node --import tsx scripts/prove-closed-corner.mjs",
     "prove:installation-sync": "npm run build -w @beeline/server && node --import tsx scripts/prove-installation-sync.mjs",
     "prove:corner-check-header": "npm run build -w @beeline/server && node --import tsx scripts/prove-corner-check-header.mjs",

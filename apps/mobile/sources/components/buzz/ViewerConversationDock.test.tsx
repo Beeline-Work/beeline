@@ -271,3 +271,11 @@ it.each(['artifact', 'computer'] as const)('does not lift the %s dock twice insi
   act(() => { keyboard.height = 0; composer().props.onChangeText('Keyboard dismissed'); });
   expect(bottom()).toBe(restingBottom);
 });
+
+it.each(['artifact', 'computer'] as const)('keeps the requested outer radius when %s expands', kind => {
+  act(() => renderer.update(<ViewerConversationDock kind={kind} title="Browser" roomId="viewer-test" />));
+  const radius = () => Object.assign({}, ...node('viewer-conversation-pill').props.style.filter(Boolean)).borderRadius;
+  expect(radius()).toBe(kind === 'computer' ? 14 : 3);
+  toggle();
+  expect(radius()).toBe(kind === 'computer' ? 14 : 3);
+});

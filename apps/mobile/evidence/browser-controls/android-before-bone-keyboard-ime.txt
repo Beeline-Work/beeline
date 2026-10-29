@@ -1,0 +1,5 @@
+        packageName=app.usebeeline autofillId=1073741831 fieldId=-1 fieldName=null
+      mInputShown=true
+    packageName=app.usebeeline autofillId=1073741831 fieldId=-1 fieldName=null
+    packageName=app.usebeeline autofillId=1073741831 fieldId=-1 fieldName=null
+      packageName=app.usebeeline autofillId=1073741831 fieldId=-1 fieldName=null

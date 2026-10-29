@@ -34,6 +34,47 @@ import {
 } from './connector-squire.js';
 
 describe('hosted broker readiness', () => {
+  it.each([undefined, 'google'])('preserves requested provider re-login (%s) on a paired hosted broker', async (forceReloginProvider) => {
+    const root = mkdtempSync(join(tmpdir(), 'hosted-relogin-'));
+    mkdirSync(join(root, '.trusty-squire'));
+    const broker = createServer(socket => socket.destroy());
+    const mcpSocket = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => broker.listen(join(root, '.trusty-squire/broker.sock'), resolve));
+    await new Promise<void>(resolve => mcpSocket.listen(join(root, '.trusty-squire/mcp.sock'), resolve));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('BEELINE_HOSTED_SERVICES', '1');
+    try {
+      const streamRun = vi.fn(async () => ({ stdout: '', stderr: '', abort: () => {}, report: report({
+        state: 'needs-sign-in',
+        sign_in_url: 'https://trustysquire.ai/install?token=fixture',
+        browser_location: { kind: 'virtual', url: 'https://phone.example/vnc.html' },
+      }) }));
+      const { client, calls } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+      const result = await installSquire({
+        workspaceId: 'hosted-relogin-proof', run: okRunner(), streamRun,
+        mcp: client, forceReloginProvider,
+      });
+      expect(calls.filter(call => call.tool === 'list_credentials')).toHaveLength(1);
+      if (forceReloginProvider) {
+        expect(streamRun).toHaveBeenCalledTimes(1);
+        expect(streamRun).toHaveBeenCalledWith(process.execPath,
+          expect.arrayContaining(['connect', '--force-relogin=google']),
+          expect.any(Object), 'hosted-relogin-proof');
+        expect(result.status).toBe('installing');
+        expect(result.signIn?.url).toBe('https://phone.example/vnc.html');
+        expect(result.steps.find(step => step.label === 'waiting for sign-in')?.status).toBe('pending');
+      } else {
+        expect(streamRun).not.toHaveBeenCalled();
+        expect(result.status).toBe('connected');
+        expect(result.signIn).toBeUndefined();
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      broker.close(); mcpSocket.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('completes hosted API pairing without provider cookies only after an authenticated vault probe', async () => {
     const root = mkdtempSync(join(tmpdir(), 'hosted-api-ready-'));
     mkdirSync(join(root, '.trusty-squire'));

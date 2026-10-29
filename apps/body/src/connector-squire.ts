@@ -742,8 +742,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   }
 
   // A paired hosted broker can serve API apps before any browser provider is
-  // signed in. Do not start another pairing ceremony for that account.
-  if (hostedEntry && (await pairSquire(options.mcp, options.workspaceId)).ok) {
+  // signed in. Explicit provider re-login still needs its sign-in ceremony.
+  if (hostedEntry && !options.forceReloginProvider &&
+      (await pairSquire(options.mcp, options.workspaceId)).ok) {
     push(step(`trusty-squire${resolution.resolvedVersion ? ` ${resolution.resolvedVersion}` : ''} installed`, 'done'));
     push(step('waiting for sign-in', 'done'));
     push(step('paired to workspace', 'done'));

@@ -9391,21 +9391,24 @@ export class PhoneService {
       }>(
         // A helper is a MACHINE, not an individual agent: agents sharing a
         // machine_id are grouped into one row. An agent without a machine_id
-        // (pre-migration legacy) is its own machine. Online is true when ANY
+        // (pre-migration helper) is its own machine; remote MCP members are excluded.
+        // Work reports older than machine health cannot poison sibling status.
+        // Legacy work keeps its own reporting agent authoritative.
+        // Online is true when ANY
         // agent on that machine has recent durable presence evidence (the
         // same 90-second window readers use). Name is the machine_name if set,
         // falling back to the first agent's identity name.
         `SELECT COALESCE(a.machine_id,a.agent_id) id,
                 COALESCE(MAX(a.machine_name),MIN(i.name)) name,
                 bool_or(p.online) online,
-                bool_or(COALESCE(a.squire_work->>'install','false')='true' AND NOT a.squire_work ? 'errorMessage') reconnecting,
-                MAX(a.squire_work->>'signedInAs') signed_in_as,
-                MAX(a.squire_work->>'errorMessage') squire_error,
-                bool_or(a.squire_work->>'forceReloginProvider'='google') google_session_expired,
-                (array_agg(a.squire_report ORDER BY (a.squire_report->>'reportedAt')::double precision DESC NULLS LAST)
+                bool_or(COALESCE(work.current->>'install','false')='true' AND NOT work.current ? 'errorMessage') reconnecting,
+                MAX(work.current->>'signedInAs') signed_in_as,
+                MAX(work.current->>'errorMessage') squire_error,
+                bool_or(work.current->>'forceReloginProvider'='google') google_session_expired,
+                (array_agg(a.squire_report ORDER BY (a.squire_report->>'status'='connected') DESC NULLS LAST, (a.squire_report->>'reportedAt')::double precision DESC NULLS LAST)
                   FILTER (WHERE a.squire_report IS NOT NULL))[1] squire_report
          FROM agents a
-         JOIN identities i ON i.id=a.agent_id
+         JOIN identities i ON i.id=a.agent_id AND NOT i.hidden_from_roster
          JOIN memberships m ON m.identity_id=a.agent_id
            AND m.room_id IS NULL AND m.removed_at IS NULL
          LEFT JOIN LATERAL(
@@ -9416,7 +9419,22 @@ export class PhoneService {
                AND (p.updated_at>now()-interval '90 seconds' OR p.body->>'held'='true')
            ) online
          ) p ON true
+         LEFT JOIN LATERAL (
+           SELECT MAX((s.squire_report->>'reportedAt')::double precision) connected_at
+           FROM agents s JOIN identities si ON si.id=s.agent_id AND NOT si.hidden_from_roster
+           WHERE s.owner_id=a.owner_id AND COALESCE(s.machine_id,s.agent_id)=COALESCE(a.machine_id,a.agent_id)
+             AND s.squire_report->>'status'='connected'
+             AND EXISTS (SELECT 1 FROM memberships sm WHERE sm.identity_id=s.agent_id
+               AND sm.room_id IS NULL AND sm.removed_at IS NULL)
+         ) latest ON true
+         CROSS JOIN LATERAL (
+           SELECT CASE WHEN COALESCE((a.squire_work->>'reportedAt')::double precision,
+             CASE WHEN COALESCE((a.squire_report->>'reportedAt')::double precision,0) < latest.connected_at
+               THEN EXTRACT(EPOCH FROM a.updated_at) END) < latest.connected_at
+             THEN '{}'::jsonb ELSE a.squire_work END current
+         ) work
          WHERE a.owner_id=$1
+           AND NOT EXISTS (SELECT 1 FROM rooms_mcp_members remote WHERE remote.member_id=a.agent_id)
          GROUP BY COALESCE(a.machine_id,a.agent_id)
          ORDER BY name`,
         [viewerId],

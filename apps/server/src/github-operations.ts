@@ -298,6 +298,23 @@ export type LandCornerOutcome =
 export class GitHubOperations {
   readonly #key: Buffer;
   readonly #webhooks = new NotificationWork(1);
+  readonly #checkWork = new Set<Promise<unknown>>();
+  #stoppingChecks = false;
+
+  /** HTTP close cannot drain work left alive by a caller's transaction deadline. */
+  async stopCheckRefreshes(): Promise<void> {
+    this.#stoppingChecks = true;
+    await Promise.allSettled(this.#checkWork);
+  }
+
+  private ownCheckWork<T>(run: () => Promise<T>): Promise<T> {
+    if (this.#stoppingChecks)
+      return Promise.reject(new CommandRefusalError('GitHub check service is shutting down', 409));
+    const work = run();
+    this.#checkWork.add(work);
+    return work.finally(() => this.#checkWork.delete(work));
+  }
+
   readonly #roomTokens = new Map<string, { token: string; expiresAt: number }>();
   readonly #roomTokenMints = new Map<string, Promise<{ token: string; expiresAt: number }>>();
   constructor(
@@ -952,7 +969,11 @@ export class GitHubOperations {
   }
 
   /** Caller is authorized by DaemonService against the requesting corner membership. */
-  async prChecksStatus(input: { cornerId: string; pullRequest?: number | string }, confirmZeroChecks = false) {
+  prChecksStatus(input: { cornerId: string; pullRequest?: number | string }, confirmZeroChecks = false) {
+    return this.ownCheckWork(() => this.readPrChecksStatus(input, confirmZeroChecks));
+  }
+
+  private async readPrChecksStatus(input: { cornerId: string; pullRequest?: number | string }, confirmZeroChecks: boolean) {
     const corner = (
       await this.database.query<{
         parent_id: string;
@@ -1515,8 +1536,14 @@ export class GitHubOperations {
   }
 
   async processWebhook(event: string, payload: unknown, deliveryId?: string) {
-    const release = await this.#webhooks.acquire();
+    if (this.#stoppingChecks)
+      throw new CommandRefusalError('GitHub check service is shutting down', 409);
+    let finish!: () => void;
+    const work = new Promise<void>((resolve) => { finish = resolve; });
+    this.#checkWork.add(work);
+    let release: (() => void) | undefined;
     try {
+      release = await this.#webhooks.acquire();
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
       const body = payload as Record<string, unknown>;
       // The authenticated phone route uses this internal signal after a human message commits.
@@ -1613,7 +1640,9 @@ export class GitHubOperations {
       }
       await this.syncInstallation(owner, install.id);
     } finally {
-      release();
+      release?.();
+      this.#checkWork.delete(work);
+      finish();
     }
   }
 

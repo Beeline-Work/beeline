@@ -96,6 +96,82 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it.each(['webhook', 'live checks read'] as const)('R-GH-SHUTDOWN: drains %s before closing the pool', async trigger => {
+    const { app, payload } = await checksFixture();
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    const original = app.readCommitCheckRollup.getMockImplementation()!;
+    app.readCommitCheckRollup.mockImplementationOnce(async () => {
+      entered();
+      await paused;
+      return original();
+    });
+    let closed = false;
+    const lateQueries: string[] = [];
+    const guarded = {
+      query: async (sql: string, values?: unknown[]) => {
+        if (closed) {
+          lateQueries.push(sql);
+          throw new Error('Cannot use a pool after calling end on the pool');
+        }
+        return database.query(sql, values);
+      },
+      transaction: database.transaction.bind(database),
+    } as SqlDatabase;
+    const operations = new GitHubOperations(guarded, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    const refresh = (trigger === 'webhook'
+      ? operations.processWebhook('check_run', payload)
+      : operations.prChecksStatus({ cornerId: '33333333-3333-4333-8333-000000000001' }))
+      .catch(error => error);
+    await started;
+    const queued = trigger === 'webhook'
+      ? operations.processWebhook('check_run', payload).catch(error => error)
+      : Promise.resolve();
+    // Simulate HTTP shutdown finishing while an asynchronous refresh remains alive.
+    const shutdown = (async () => {
+      await operations.stopCheckRefreshes();
+      closed = true;
+    })();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(closed).toBe(false);
+    resume();
+    const result = await refresh;
+    expect(await queued).not.toBeInstanceOf(Error);
+    await shutdown;
+    expect(lateQueries).toEqual([]);
+    expect(result).not.toBeInstanceOf(Error);
+    expect(closed).toBe(true);
+    const readsBefore = app.readCommitCheckRollup.mock.calls.length;
+    await expect(operations.processWebhook('check_run', payload)).rejects.toThrow('shutting down');
+    await expect(operations.prChecksStatus({ cornerId: '33333333-3333-4333-8333-000000000001' }))
+      .rejects.toThrow('shutting down');
+    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(readsBefore);
+  });
+
+  it('R-GH-SHUTDOWN: drain preserves a genuine refresh failure for its caller', async () => {
+    const { app, payload } = await checksFixture();
+    const error = new Error('provider check refresh failed');
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    app.readCommitCheckRollup.mockImplementationOnce(async () => {
+      entered();
+      await paused;
+      throw error;
+    });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    const failure = expect(operations.processWebhook('check_run', payload)).rejects.toBe(error);
+    await started;
+    const shutdown = operations.stopCheckRefreshes();
+    resume();
+    await Promise.all([failure, shutdown]);
+  });
+
   it.each(['workflow completion', 'live checks read'])(
     'CHECK-HEADER-1: %s replaces the stale rerun summary seen by the phone', async trigger => {
       const { corners, app, payload, headSha } = await checksFixture();

@@ -55,17 +55,18 @@ export async function mcpBody(request: IncomingMessage, maxBytes = 32_768): Prom
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     size += Buffer.byteLength(chunk);
-    if (size > maxBytes) throw new Error('invalid_request');
+    if (size > maxBytes) throw new Refusal('invalid_request', 'body_too_large');
     chunks.push(Buffer.from(chunk));
   }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded') {
     const params = new URLSearchParams(raw);
-    if ([...params.keys()].some(key => params.getAll(key).length !== 1)) throw new Error('invalid_request');
+    const names = [...new Set(params.keys())];
+    if (names.some(key => params.getAll(key).length !== 1)) throw new Refusal('invalid_request', 'duplicate_parameter', names);
     return Object.fromEntries(params);
   }
   const value: unknown = JSON.parse(raw);
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_request');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Refusal('invalid_request', 'body_not_object');
   return value as Record<string, unknown>;
 }
 function string(value: unknown, max = 2048): string {
@@ -75,7 +76,8 @@ function string(value: unknown, max = 2048): string {
 const AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic'];
 /** An OAuth error with the branch that refused it, logged for token requests. */
 class Refusal extends Error {
-  constructor(error: string, readonly reason: string) { super(error); }
+  // params carries body parameter names when the body is refused before it can be read as input.
+  constructor(error: string, readonly reason: string, readonly params?: string[]) { super(error); }
 }
 const RESOURCE_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'];
 const ISSUER_PATHS = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'];
@@ -423,7 +425,7 @@ export class RoomsMcpOAuth {
         reason: error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : tokenInput ? 'invalid_parameter' : 'invalid_body',
         // grant_type and content-type are client-chosen strings, so only fixed categories reach the log.
         grant_type: tokenInput?.grant_type === undefined ? undefined : tokenInput.grant_type === 'authorization_code' || tokenInput.grant_type === 'refresh_token' ? tokenInput.grant_type : 'other',
-        params: tokenInput ? Object.keys(tokenInput).slice(0, 20).map(key => key.slice(0, 40)).sort() : undefined,
+        params: (tokenInput ? Object.keys(tokenInput) : error instanceof Refusal ? error.params : undefined)?.slice(0, 20).map(key => key.slice(0, 40)).sort(),
         client_auth: request.headers.authorization ? /^(basic|bearer)\s/i.exec(request.headers.authorization)?.[1]!.toLowerCase() ?? 'other' : 'none',
         content_type: ((type?: string) => type === undefined ? undefined : ['application/json', 'application/x-www-form-urlencoded'].includes(type) ? type : 'other')(request.headers['content-type']?.split(';')[0]?.trim().toLowerCase()) }));
       if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,

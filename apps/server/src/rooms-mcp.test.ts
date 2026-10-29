@@ -363,6 +363,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(warn).toHaveBeenCalledTimes(1);
       expect(JSON.parse(warn.mock.calls[0]![1] as string)).toMatchObject({ error: 'unsupported_grant_type', reason: 'grant_type_unsupported', grant_type: 'other',
         params: ['client_id', 'grant_type'], content_type: 'application/json' });
+      // A body refused before parsing still logs its parameter names and the exact branch, never the values.
+      warn.mockClear();
+      const duplicate = await fetch(origin + '/mcp/oauth/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=authorization_code&code=dup-one-123&code=dup-two-123&client_id=${grant.clientId}&code_verifier=dup-verifier-123` });
+      expect([duplicate.status, (await duplicate.json() as { error: string }).error]).toEqual([400, 'invalid_request']);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const duplicateLine = warn.mock.calls[0]![1] as string;
+      expect(JSON.parse(duplicateLine)).toMatchObject({ error: 'invalid_request', reason: 'duplicate_parameter',
+        params: ['client_id', 'code', 'code_verifier', 'grant_type'], content_type: 'application/x-www-form-urlencoded' });
+      for (const value of ['dup-one-123', 'dup-two-123', 'dup-verifier-123', grant.clientId]) expect(duplicateLine).not.toContain(value);
       warn.mockClear();
       expect((await exchange(grant)).status).toBe(200);
       expect(warn).not.toHaveBeenCalled();

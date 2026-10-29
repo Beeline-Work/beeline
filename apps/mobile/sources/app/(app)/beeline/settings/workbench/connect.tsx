@@ -14,6 +14,7 @@ import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { InlineRow } from '@/components/buzz/IndexRow';
 import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
@@ -337,7 +338,7 @@ function ConnectToolFlow() {
             </Text>
             <View style={styles.steps}>
               {stages.map((stage, index) => (
-                <View key={`${stage.label}-${index}`} style={styles.step}
+                <InlineRow key={`${stage.label}-${index}`} style={styles.step}
                   testID={`connect-step-${index}-${stage.status}`}>
                   <View style={styles.stepMark}>
                     {stage.status === 'current' && !(stage.key === 'sign-in' && install.signIn)
@@ -383,7 +384,7 @@ function ConnectToolFlow() {
                       </View>
                     ) : null}
                   </View>
-                </View>
+                </InlineRow>
               ))}
             </View>
             {failedStage ? (

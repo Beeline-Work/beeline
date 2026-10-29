@@ -119,6 +119,10 @@ describe('voice providers', () => {
     expect(prompt).toContain('A bare contact name is never a requested action');
     expect(prompt).toContain('clarify without tools');
     expect(prompt).toContain('Handoff needs an action');
+    expect(prompt).toContain('For a request that mixes conversation with work, call order for the whole request');
+    expect(prompt).toContain('Connecting an app or account requires order');
+    expect(orderDescription).toContain('app/account connections');
+    expect(orderDescription).toContain('mixed conversation and work requests');
     expect(orderDescription).toContain('require an action');
     expect(orderDescription).toContain('Never use for a name/fragment alone');
     expect(prompt).toContain('Knowledge questions, including the history of Serbia');

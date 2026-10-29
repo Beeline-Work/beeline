@@ -20,6 +20,8 @@
 -keep @interface expo.modules.kotlin.records.Field { *; }
 # TaskManager loads this class by its manifest metadata value.
 -keep class expo.modules.adapters.react.apploader.RNHeadlessAppLoader { *; }
+# TaskManager constructs registered consumers through reflection.
+-keep class * implements expo.modules.interfaces.taskManager.TaskConsumerInterface { <init>(...); }
 # Install-referrer consumers invoke the builder and response methods by name.
 -keep class com.android.installreferrer.api.** { *; }
 # Sentry is excluded from native autolinking; PostHog is JavaScript-only.

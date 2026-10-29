@@ -1,0 +1,34 @@
+[
+  {
+    "capture": "connectorLong-android-390-bone.png",
+    "widthDp": 390,
+    "theme": "bone",
+    "cardHeightDp": 242,
+    "actionRightInsetDp": 17,
+    "connectingLineAbsent": true
+  },
+  {
+    "capture": "connectorLong-android-390-obsidian.png",
+    "widthDp": 390,
+    "theme": "obsidian",
+    "cardHeightDp": 242,
+    "actionRightInsetDp": 17,
+    "connectingLineAbsent": true
+  },
+  {
+    "capture": "connectorLong-android-360-bone.png",
+    "widthDp": 360,
+    "theme": "bone",
+    "cardHeightDp": 242,
+    "actionRightInsetDp": 17,
+    "connectingLineAbsent": true
+  },
+  {
+    "capture": "connectorLong-android-360-obsidian.png",
+    "widthDp": 360,
+    "theme": "obsidian",
+    "cardHeightDp": 242,
+    "actionRightInsetDp": 17,
+    "connectingLineAbsent": true
+  }
+]

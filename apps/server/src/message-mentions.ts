@@ -127,7 +127,7 @@ export async function resolveCurrentMemberMentions(
     mcp_callback_url: string | null;
     mcp_member: boolean;
   }>(
-    `SELECT identity.id,identity.kind,identity.handle,client.callback_url mcp_callback_url,
+    `SELECT identity.id,identity.kind,identity.handle,COALESCE(member.callback_url,client.callback_url) mcp_callback_url,
        member.member_id IS NOT NULL mcp_member
      FROM memberships membership
      JOIN identities identity ON identity.id=membership.identity_id

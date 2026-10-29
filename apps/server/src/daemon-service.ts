@@ -459,6 +459,8 @@ export class DaemonService {
     input: Input<Name>,
     authenticatedAgentId: string,
   ): Promise<Output<Name>> {
+    for (let attempt = 0; ; attempt++) {
+      try {
     input = { ...input };
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
@@ -2183,6 +2185,16 @@ export class DaemonService {
         )) as Output<Name>;
       default:
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
+    }
+      } catch (error) {
+        // Activity has only transactional writes and buffered live events.
+        // Retry the owning transaction, including authorization, after rollback;
+        // a nested transaction cannot recover an aborted PostgreSQL transaction.
+        if (name !== 'postAgentActivity' || this.commandTransaction || attempt >= 2 ||
+          !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));
+      }
     }
   }
 

@@ -1,3 +1,4 @@
+import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
@@ -4762,7 +4763,7 @@ export function BuzzChatSurface({
         activeCommunityId,
         resolveCommunityInvitePublicOrigin(getBuzzRuntimeConfig()),
       );
-      await Share.share({ message: url });
+      await presentPersonInvite(url);
     } catch (reason) {
       setMembershipError(appErrorCopy(reason, `Could not create person invite.`));
     } finally {

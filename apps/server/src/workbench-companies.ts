@@ -1,3 +1,4 @@
+import { isAppApiCredential } from './app-api-credential.js';
 import type {
   CompanyItem, CompanySuggestion, ConnectorViewState, WorkbenchCompany, WorkbenchCompanyIndex, WorkbenchView, WorkbenchAppSearchResult,
 } from '@beeline/api-contract/workbench';
@@ -10,6 +11,17 @@ type MutableItem = { -readonly [K in keyof CompanyItem]: CompanyItem[K] };
 type MutableCompany = { -readonly [K in keyof Omit<WorkbenchCompany, 'items' | 'machines' | 'alsoAvailable'>]: WorkbenchCompany[K] } & {
   items: MutableItem[]; machines: WorkbenchCompany['machines']; alsoAvailable: CompanySuggestion[];
 };
+/** Vault credentials do not establish a managed app connection or its auth scheme.
+ * Keep discovery available; connect checks the provider's OAuth config. */
+function hasAccountRoute(row: Pick<WorkbenchCompany, 'items'>, view: WorkbenchView, oauth = false): boolean {
+  const api = !oauth && row.items.some(item => item.target.kind === 'key' &&
+    isAppApiCredential(view.connections.find(key => key.connectionId === item.id) ?? {}));
+  return api || row.items.some(item => {
+    const target = item.target;
+    return target.kind !== 'key' && (target.kind !== 'app' ||
+      view.apps?.find(app => app.appId === target.appId)?.transport !== 'squire-api');
+  });
+}
 const collator = new Intl.Collator('en', { sensitivity: 'base' });
 const sectionRank = { attention: 0, signin: 1, apps: 2, keys: 3 };
 const popularityCache = new WeakMap<SqlDatabase, { until: number; value: Promise<ReadonlyMap<string, number>> }>();
@@ -114,7 +126,7 @@ export function companySuggestions(rows: readonly WorkbenchCompany[], origin: st
 
 /** The only grouping/order/title authority consumed by Connectors, details, search and summary. */
 export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
-  popularity: ReadonlyMap<string, number> = new Map(), now = Date.now() / 1000): WorkbenchCompanyIndex {
+  popularity: ReadonlyMap<string, number> = new Map(), now = Date.now() / 1000, oauthApps: ReadonlySet<string> = new Set()): WorkbenchCompanyIndex {
   const companies = new Map<string, MutableCompany>();
   const appKeys = new Map<string, Set<string>>();
   function group(provider: CompanyProvider): MutableCompany {
@@ -227,8 +239,9 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     }).join(' · ');
     const existing = appKeys.get(row.id);
     row.alsoAvailable = COMPANY_APPS.filter(app => resolveCompany({ domain: app.domain }).id === row.id
-      && app.appKey !== row.id && app.name.toLowerCase() !== row.name.toLowerCase()
-      && !existing?.has(app.appKey) && row.id !== 'squire').map(app => suggestion(app, origin));
+      && (app.appKey !== row.id && app.name.toLowerCase() !== row.name.toLowerCase()
+        || !hasAccountRoute(row, view, oauthApps.has(app.appKey)))
+      && (!existing?.has(app.appKey) || !hasAccountRoute(row, view, oauthApps.has(app.appKey))) && row.id !== 'squire').map(app => suggestion(app, origin));
     row.items.sort((a, b) => ({ connection: 0, login: 1, key: 2 })[a.kind] - ({ connection: 0, login: 1, key: 2 })[b.kind]
       || collator.compare(a.title, b.title) || a.id.localeCompare(b.id));
   }
@@ -253,7 +266,8 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
 export function companySearchResults(view: WorkbenchView, candidates: WorkbenchAppSearchResult,
   query: string, origin: string): WorkbenchAppSearchResult {
   const index = view.companies!; const q = query.toLowerCase();
-  const seen = new Set(index.rows.map(r => r.kind === 'sign-in-service' ? 'squire' : r.id));
+  const seen = new Set(index.rows.filter(row => hasAccountRoute(row, view))
+    .map(r => r.kind === 'sign-in-service' ? 'squire' : r.id));
   const existing: WorkbenchAppSearchResult[number][] = index.rows.filter(r => r.name.toLowerCase().includes(q)
     || r.items.some(i => i.title.toLowerCase().includes(q) || i.title.toLowerCase().includes(humanize(query).toLowerCase())) || r.alsoAvailable.some(a => a.appName.toLowerCase().includes(q)))
     .map(r => ({ appKey: r.id, name: r.name, domain: r.domain, companyId: r.id, mark: r.logo, description: r.subtitle }));
@@ -262,7 +276,10 @@ export function companySearchResults(view: WorkbenchView, candidates: WorkbenchA
   const results = [...candidates, ...catalog].flatMap(app => {
     const provider = resolveCompany({ domain: app.domain, appKey: app.appKey });
     if (provider.id === 'other' || offered.has(provider.id)) return [];
-    if (seen.has(provider.id) && !('registryServerName' in app && app.registryServerName)) return [];
+    const owned = index.rows.find(row => row.id === provider.id);
+    const available = owned && !hasAccountRoute(owned, view, true)
+      && owned.alsoAvailable.some(option => option.appKey === app.appKey);
+    if (seen.has(provider.id) && !available && !('registryServerName' in app && app.registryServerName)) return [];
     seen.add(provider.id); offered.add(provider.id);
     const option: CompanySuggestion = { appKey: app.appKey, appName: app.name, name: provider.name,
       purpose: 'description' in app && typeof app.description === 'string' ? app.description : 'purpose' in app ? app.purpose : `Connect to ${provider.name}`,
@@ -271,8 +288,8 @@ export function companySearchResults(view: WorkbenchView, candidates: WorkbenchA
       ...('registryServerName' in app && app.registryServerName ? { registryServerName: app.registryServerName, registryVersion: app.registryVersion } : {}),
       flow: app.appKey === 'trusty-squire' ? 'squire' : app.appKey === 'tailscale' ? 'tailscale' : app.appKey === 'wallet' ? 'wallet' : app.appKey === 'link' ? 'link' : 'app' };
     const result = { ...app, name: provider.name, mark: option.logo, company: option };
-    const index = existing.findIndex(row => row.companyId === provider.id);
-    if (index >= 0) { existing[index] = result; return []; }
+    const position = existing.findIndex(row => row.companyId === provider.id);
+    if (position >= 0) { existing[position] = result; return []; }
     return [result];
   });
   return [...existing, ...results];

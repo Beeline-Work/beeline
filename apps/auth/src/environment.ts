@@ -49,6 +49,7 @@ export function oidcClientFromEnvironment(env: NodeJS.ProcessEnv): OidcClient {
     jwksUri: required(oidcEnv, 'BEELINE_AUTH_OIDC_JWKS_URI'),
     clientId: required(oidcEnv, 'BEELINE_AUTH_OIDC_CLIENT_ID'),
     clientSecret: oidcEnv.BEELINE_AUTH_OIDC_CLIENT_SECRET,
+    androidClientIds: (env.BEELINE_AUTH_GOOGLE_ANDROID_CLIENT_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean),
     allowInsecure,
   });
   if (env.NODE_ENV === 'production' && !oidc.config.clientSecret) {

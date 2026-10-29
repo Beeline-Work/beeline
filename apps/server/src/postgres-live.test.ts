@@ -19,6 +19,7 @@ import {
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
+import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
 
 const AUTHOR = 'a'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -321,6 +322,23 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
       VALUES($1,$2,now(),'push-wake-message')`, [ROOM, AUTHOR]);
     expect(wake).toHaveBeenCalledTimes(2);
+  });
+
+  it('wakes AI-client webhook delivery only when a tag commits', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const wake = vi.fn();
+    listener.setMcpWebhookWake(wake);
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    await database.transaction(async (db) => {
+      await db.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
+        JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId: ROOM })]);
+      expect(wake).not.toHaveBeenCalled();
+    });
+    await eventually(() => wake.mock.calls.length === 1);
   });
 
   it('fans out one committed helper release without a follow-up read', async () => {

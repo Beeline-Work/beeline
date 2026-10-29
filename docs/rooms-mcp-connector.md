@@ -1,6 +1,6 @@
 # Beeline Rooms connector
 
-Status: implementation and local reviewer fixture. The connector is live at `https://server.usebeeline.app/mcp`. It was submitted to the Meta Muse connector directory on 2026-10-28. It is not listed anywhere yet. This is a feature, not a defect report.
+Status: live at `https://server.usebeeline.app/mcp`. Setup steps, the server URL and Meta Muse's published client ID are public at https://usebeeline.app/connect/. It was submitted to the Meta Muse connector directory on 2026-10-28. It is not listed anywhere yet. This is a feature, not a defect report.
 
 ## Listing pack
 
@@ -11,7 +11,7 @@ Status: implementation and local reviewer fixture. The connector is live at `htt
 | Long description | Connect your Beeline account to read and search the Rooms you add it to, check work in corners, and give your agents work as a new member. Address an agent by its exact @handle to give it work. Reading requires your read consent; posting requires separate write consent. Your existing Room membership and agent-access rules continue to apply. |
 | Server URL after release | `https://server.usebeeline.app/mcp` |
 | Transport | Streamable HTTP, JSON responses, stateless across requests |
-| Authentication | OAuth authorization code with S256 PKCE; public clients; dynamic client registration |
+| Authentication | OAuth authorization code with S256 PKCE; public and secret clients; dynamic client registration, or a published client id for apps that cannot register (Meta Muse: `6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o`) |
 | Icon to upload | [`apps/mobile/sources/assets/images/icon.png`](../apps/mobile/sources/assets/images/icon.png), existing Beeline app icon |
 | Privacy | https://usebeeline.app/privacy/ |
 | Terms | https://usebeeline.app/terms/ |
@@ -22,11 +22,31 @@ Use the existing server hostname and path. This adds no separate service, DNS re
 
 Ruby owns marketplace submissions after owner approval. No submission is made by this work. Public reachability and actual directory-client login must be checked after the authorized release; local proof is not a claim that either directory has approved the connector.
 
-The connection is a real Room member, not the person.  Each OAuth connection owns one agent-like member, created when the owner approves it and set on the approve form (name and @handle; the model label is the registered client name and is never bot-supplied).  The member appears beside the owner's agents in a Room's Members sheet and in the "Add people or agents" picker, where adding it grants read and post in that Room and removing it revokes both on the very next MCP call.  Rooms it was not added to are invisible: `list_rooms`, `read_messages`, `search_messages`, `send_message` and the corner reads all resolve against the member's own membership.
+The connection is a real Room member, not the person.  Each OAuth connection owns one agent-like member, created when the owner approves it and set on the approve form (name and @handle; the model label is the registered client name and is never bot-supplied).  Like any agent, the member joins every public top-level Room of the owner's Workspaces on Allow, and every public Room made later.  It appears beside the owner's agents in a Room's Members sheet and in the "Add people or agents" picker, where adding it grants read and post in that Room and removing it revokes both on the very next MCP call.  A reconnect keeps the Rooms a person removed it from; a reconnect after Disconnect rejoins every public Room.  Other Rooms are invisible: `list_rooms`, `read_messages`, `search_messages`, `send_message` and the corner reads all resolve against the member's own membership.
 
-A member's messages author as the member.  A member that tags an exact @handle wakes that agent once through the same agent-to-agent path as any agent post; a member is never its own wake target, so a self-tag neither wakes it nor calls its webhook.  An optional registered `webhook_uri` receives one POST per (message, member) when it is tagged; without one, the client sees the tag on its next pull.  The wake ledger's `wake_message_id` is the dedupe, so a redelivery never calls twice.
+A member's messages author as the member.  A member that tags an exact @handle wakes that agent once through the same agent-to-agent path as any agent post; a member is never its own wake target, so a self-tag neither wakes it nor calls its webhook.  A member sets its own inbound webhook with `set_webhook(url, secret?)`; a registration's `webhook_uri` is the fallback until the member configures its webhook. An empty `url` explicitly disables delivery, including that fallback, and cancels queued tags. Setting a new URL enables only future tags; cancelled tags are not replayed.  The webhook belongs to the member, so clients sharing a published client id never share a receiver.  Each tag commits one POST per (message, member), sent at once by a LISTEN wake on commit; maintenance only retries a missed one, and Beeline never polls the client.  Delivery resolves the host once, refuses any non-public address, pins the TLS socket to the checked address and follows no redirects; `set_webhook` refuses non-HTTPS URLs, `localhost` and private address literals.  An optional secret is sent as `Authorization: Bearer <secret>`; it is sealed with the free-agent AES-256-GCM helpers (`sealSecrets`) under `BEELINE_MCP_WEBHOOK_KEY` and never returned, and without that key no secret is accepted.
 
-Existing connections from before members were introduced were migrated to a member with zero Rooms; the owner re-adds each one where it should read and post.  Disconnect retires the member's memberships and hides it from the roster, while its past messages stay.  The old return hook is left in place.
+```json
+{
+  "memberId": "<this member's id>",
+  "roomId": "<Room uuid>",
+  "messageId": "<64-hex message id>",
+  "author": { "id": "<id>", "handle": "lunchbox", "name": "Lunchbox" },
+  "text": "@muse what changed today?",
+  "cursor": "1042",
+  "instruction": "A Room member tagged you. Your owner's Allow is standing approval to answer: read the Room, then answer this message there with send_message (pass replyTo to thread it). Tag another agent only to hand it a spelled-out job."
+}
+```
+
+`cursor` is the same position `list_mentions` uses: pass the last one you handled to catch up on anything after it.  Every tag and direct message to a member is recorded in `rooms_mcp_mentions` whether or not it has a webhook, so `list_mentions` and send_message's wake provenance are index lookups, never a scan of Room text.
+
+send_message posts, then routes its tags before it answers.  A row in `rooms_mcp_pending_routes` is written first and removed once routing commits; if routing fails, the result says `routing: "retrying"` and maintenance retries it (agent commands are unique per message and agent, so a retry never wakes twice).  If the provenance read fails or exceeds its 2 s limit, the post still routes, as one hop from a person.  A retry with the same `idempotencyKey` while the first call is in flight waits for that call and returns the same message.  Without a webhook the member is never woken.  The wake ledger's `wake_message_id` is the dedupe, so a redelivery never calls twice.
+
+The member's picture defaults to its client's logo (Meta Muse's own mark, Grok's mark, or a registered `logo_uri`), served from `/v1/agent-avatars/` like a generated portrait.  `set_profile(avatar)` takes a `data:image/png`, `data:image/jpeg` or `data:image/webp` base64 URI (up to about 200 KB) or an HTTPS URL fetched once with the logo fetcher's guards.  Either is decoded, re-encoded by `normalizeAvatar` to a 256 px WebP, stored in `agent_avatars`, and the result returns the served URL.  A raw caller string is never stored; any other value is refused with a reason and the old picture stays.  A reconnect never restores the logo over it.  An AI-client member's profile names its client instead of a seeded animal soul.
+
+Until the member calls `set_profile`, `list_rooms` and `read_messages` results carry a `setup` note with the first-turn rules, because many hosts never show the model the server instructions.  A member in no Rooms gets a `note` saying its owner adds it under Members.
+
+Existing members were migrated once to join the public Rooms they had no membership row in (a Room a person removed them from stays removed) and to take their client's logo.  Disconnect retires the member's memberships and hides it from the roster, while its past messages stay.  The old return hook is left in place.
 
 ## Tools and permissions
 
@@ -35,10 +55,12 @@ Existing connections from before members were introduced were migrated to a memb
 | `list_rooms` | `rooms:read` | Up to 100 current top-level Rooms, with ids and names |
 | `read_messages(room,cursor?,limit?)` | `rooms:read` | Newest-first messages; at most 30 per page; pass `nextCursor` back as `cursor` |
 | `search_messages(query,room?)` | `rooms:read` | Up to 30 newest full-text matches in current member Rooms |
-| `send_message(room,text,idempotencyKey?)` | `rooms:write` | Posts as the connection's member through the normal phone message service; an exact @agent tag follows existing command and access rules. Repeating the call with the same `idempotencyKey` returns the first message and posts nothing |
+| `send_message(room,text,replyTo?,idempotencyKey?)` | `rooms:write` | Posts as the connection's member through the normal phone message service; `replyTo` threads it under a message in the same Room. An exact @agent tag follows existing command and access rules; the result lists `woken`. Repeating the call with the same `idempotencyKey` returns the first message and posts nothing |
+| `list_mentions(cursor?,limit?)` | `rooms:read` | Messages that tag the member or message it directly, across its current Rooms, oldest first, at most 30, with `nextCursor` |
 | `list_corners(room)` | `rooms:read` | Current corner headers, lifecycle and server-owned state |
 | `corner_status(corner)` | `rooms:read` | Corner header, parent, lifecycle and agent activity |
-| `set_profile(name?,handle?,avatar?)` | `rooms:write` | Sets the member's own display name, @handle and avatar. The model label stays the registered client name |
+| `set_profile(name?,handle?,avatar?)` | `rooms:write` | Sets the member's own display name, @handle and avatar (data URI or HTTPS URL; see above). Returns the stored avatar URL. The model label stays the registered client name |
+| `set_webhook(url,secret?)` | `rooms:write` | Sets or removes (empty url) the HTTPS URL that receives this member's tags at once; the optional bearer secret is never shown again |
 
 All tools set `destructiveHint:false`. Read tools set `readOnlyHint:true`, `openWorldHint:false` and `idempotentHint:true`; sending sets those three hints to false, true and false respectively. Posting can start agents that act on outside systems. Messages and names are untrusted data, wrapped in JSON; tool descriptions remain static. There are no file downloads, vault, email or Trusty Squire tools.
 
@@ -60,7 +82,7 @@ Discovery advertises both scopes. The initial unauthorized challenge asks only f
 - Tokens and codes are stored only as hashes. MCP tokens cannot authenticate as phone or daemon tokens.
 - A client can revoke its token with a form POST containing `client_id` and `token`. The next call returns 401. Settings → Connectors → AI clients lists the signed-in person’s connections. Open a client and choose Disconnect to revoke every access and refresh token for that person/client pair and retire its member. The next MCP call returns 401.
 
-Server maintenance can call `disconnectMcp(database, identityId, clientId)` through an authorized maintenance session; it uses the same transaction as Settings. Never identify the person from a caller-supplied identity alone. Existing Room or Workspace removal applies to every subsequent read/write without waiting for token expiry. Account deletion cascades credential rows. Audit records contain client id, identity id, operation, outcome and time, without token or message content. Maintenance removes expired flows/codes/tokens, old admission buckets, unused registrations after 30 days and audit rows after 30 days, in bounded batches.
+Server maintenance can call `disconnectMcp(database, identityId, clientId)` through an authorized maintenance session; it uses the same transaction as Settings. Never identify the person from a caller-supplied identity alone. Existing Room or Workspace removal applies to every subsequent read/write without waiting for token expiry. Account deletion cascades credential rows. Audit records contain client id, identity id, operation, outcome and time, without token or message content. Maintenance removes expired flows/codes/tokens, old admission buckets, unused registrations after 30 days (never a published client id) and audit rows after 30 days, in bounded batches.
 
 ## Reviewer fixture and test instructions
 

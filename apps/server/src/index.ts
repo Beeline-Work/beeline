@@ -3,6 +3,7 @@ import { NextDayCheckin } from './next-day-checkin.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
+import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { deliverXSignups } from './x-ads.js';
 import { flushOperatorSystemDms } from './operator-system-dm.js';
@@ -579,6 +580,18 @@ async function main() {
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   if (push) liveListener.setPushWake(() => wakeWork('push'));
   liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
+  // An AI client's tag is POSTed the moment it commits. Each delivery is
+  // claimed atomically, so every instance may drain; maintenance retries.
+  let mcpWebhooks: Promise<void> | undefined, mcpWebhooksAgain = false;
+  liveListener.setMcpWebhookWake(() => {
+    if (mcpWebhooks) { mcpWebhooksAgain = true; return; }
+    mcpWebhooks = (async () => {
+      do {
+        mcpWebhooksAgain = false;
+        try { await deliverMcpMemberWebhooks(jobsDatabase); } catch (error) { captureServerError(error); }
+      } while (mcpWebhooksAgain);
+    })().finally(() => { mcpWebhooks = undefined; });
+  });
   // A committed wake for a sleeping free agent starts its Machine at once;
   // the leader sweep retries anything this misses.
   const stopFreeAgentWake = freeAgents

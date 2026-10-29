@@ -382,8 +382,9 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).not.toMatch(/never merge|do not merge|only human approval/i);
   });
   it('checks mandate against Intent and earlier decisions before a verdict', () => {
-    for (const text of ['## Check mandate', 'each user-visible behavior', 'quoted line in the brief', 'no match is outside the mandate', 'Search the Room', 'git log -S<symbol>', 'blocks PASS', 'needs-decision:', 'to its commander, quoting the old decision and the diff line', 'does not send a FAIL to the worker', 'never on taste'])
+    for (const text of ['## Check mandate', 'each user-visible behavior', 'quoted line in the brief', 'no match is outside the mandate', 'Search the Room', 'git log -S<symbol>', 'blocks PASS', 'Send a FAIL to the worker', 'restore the approved state', 'Do not escalate the deviation to the commander or owner', 'Only when the brief itself orders a change', 'never on taste'])
       expect(markdown).toContain(text);
+    expect(markdown).not.toContain('does not send a FAIL to the worker');
   });
   it('uses an isolated checkout, preserves worker work and reviews design and security', () => {
     expect(markdown).toContain('never the worker');
@@ -403,6 +404,7 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain(
       "reject visual changes outside the brief's Visual scope and PRs missing its listed screenshots",
     );
+    expect(markdown).toContain('Any visual change the owner has not approved fails review');
   });
 });
 

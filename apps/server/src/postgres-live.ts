@@ -4,6 +4,7 @@ import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-us
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
+import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
 import {
   CORNER_ROW_FACT_COLUMNS,
   CORNER_ROW_MESSAGE_COLUMNS,
@@ -543,6 +544,9 @@ export class PostgresLiveListener {
   setPushWake(wake: () => void): void { this.pushWake = wake; }
   private owedWake?: (source: 'sentry' | 'owed') => void;
   setOwedWake(wake: (source: 'sentry' | 'owed') => void): void { this.owedWake = wake; }
+  private mcpWebhookWake?: () => void;
+  /** A committed AI-client tag; the wake sends its webhook POST at once. */
+  setMcpWebhookWake(wake: () => void): void { this.mcpWebhookWake = wake; }
   private stopped = false;
   private active?: LivePgClient;
   private connected = false;
@@ -633,6 +637,10 @@ export class PostgresLiveListener {
     if (!payload) return;
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
+      return;
+    }
+    if (payload.table === MCP_WEBHOOK_TABLE) {
+      this.mcpWebhookWake?.();
       return;
     }
     const pushOnly = payload.table === 'push_devices' ||

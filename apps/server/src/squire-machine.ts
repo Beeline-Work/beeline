@@ -11,6 +11,7 @@ export const squireMachineId = (address: string): string | undefined =>
 
 type Work = {
   generation: number;
+  reportedAt?: number;
   install?: boolean;
   disconnected?: boolean;
   signedInAs?: string;
@@ -59,7 +60,7 @@ export async function queueSquireWork(database: SqlDatabase, agentId: string,
       [machine.owner_id, machine.machine_id, agentId]);
   }
   const work: Work = input.install
-    ? { generation, install: true,
+    ? { generation, install: true, reportedAt: Date.now() / 1000,
         steps: [{ label: 'Install on helper', status: 'pending' },
           { label: 'Connect provider account', status: 'pending' }],
         ...(input.forceReloginProvider ? { forceReloginProvider: input.forceReloginProvider } : {}),
@@ -145,7 +146,7 @@ export async function reportSquireWork(database: SqlDatabase, agentId: string,
   if (!row || squireMachineAddress(row.machine_id) !== input.connectorId ||
       !row.squire_work.install || row.squire_work.generation !== (input.pairingGeneration ?? 1))
     throw new Error('Squire work not found for this helper');
-  const work: Work = { ...row.squire_work, steps: input.steps,
+  const work: Work = { ...row.squire_work, reportedAt: Date.now() / 1000, steps: input.steps,
     ...(input.signedInAs ? { signedInAs: input.signedInAs } : {}),
     ...(input.signIn !== undefined ? { signIn: input.signIn } : {}),
     ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}) };

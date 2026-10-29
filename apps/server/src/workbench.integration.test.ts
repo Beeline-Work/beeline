@@ -368,6 +368,42 @@ describe('workbench connectors', () => {
     }
   });
 
+  it('Reproduction R1: stale sibling work loses to health, fresh reconnect failure wins', async () => {
+    await database.query("UPDATE agents SET owner_id=$1,machine_id='squire'", [HUMAN]);
+    await database.query("UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1",
+      [HELPER, JSON.stringify({ status: 'connected', reportedAt: 200 })]);
+    for (const [reportedAt, status] of [[100, 'connected'], [300, 'error']] as const) {
+      await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
+        [OTHER_HELPER, JSON.stringify({ install: true, reportedAt, forceReloginProvider: 'google', errorMessage: 'Expired sign-in' })]);
+      const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+      expect(view.helpers).toHaveLength(1);
+      expect(view.helpers[0].squire.status).toBe(status);
+      expect(view.helpers[0].squire.googleSessionExpired).toBe(status === 'error');
+    }
+    await database.query("UPDATE agents SET squire_work=squire_work-'reportedAt',updated_at=to_timestamp(100) WHERE agent_id=$1", [OTHER_HELPER]);
+    const legacy = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(legacy.helpers[0].squire.status).toBe('connected');
+    await database.query('UPDATE agents SET updated_at=to_timestamp(300) WHERE agent_id=$1', [OTHER_HELPER]);
+    const unrelatedUpdate = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(unrelatedUpdate.helpers[0].squire.status).toBe('connected');
+    await database.query("UPDATE agents SET squire_report='{\"status\":\"error\",\"reportedAt\":400,\"errorMessage\":\"Broker unavailable\"}'::jsonb");
+    const broken = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(broken.helpers[0].squire.status).toBe('error');
+    await database.query('UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1',
+      [HELPER, JSON.stringify({ status: 'connected', reportedAt: 500 })]);
+    await database.query('UPDATE identities SET hidden_from_roster=true WHERE id=$1', [OTHER_HELPER]);
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(view.helpers[0].squire.status).toBe('connected');
+  });
+
+  it('Reproduction R1: remote MCP members are not computers', async () => {
+    await database.query("UPDATE agents SET owner_id=$1 WHERE agent_id=$2", [HUMAN, OTHER_HELPER]);
+    await database.query("INSERT INTO rooms_mcp_clients(id,name,redirects) VALUES('cursor','Cursor','[]')");
+    await database.query("INSERT INTO rooms_mcp_members(client_id,owner_id,member_id,model_label) VALUES('cursor',$1,$2,'Cursor2')", [HUMAN, OTHER_HELPER]);
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(view.helpers.map((h: any) => h.id)).toEqual([HELPER]);
+  });
+
   it('Reproduction squire-false-card: reconnect work overrides a connected broker report in the phone view', async () => {
     await daemonOperation('postConnectorVault', { connections: [] });
     await database.query(`UPDATE agents SET squire_work='{"install":true,"generation":1,"signedInAs":"owner@example.com"}'::jsonb WHERE agent_id=$1`, [HELPER]);

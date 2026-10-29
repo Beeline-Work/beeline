@@ -26,16 +26,6 @@ it.skipIf(!existsSync(CHROME))(
     const swipe = file.statements.find(
       (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'SwipeToReply',
     )!;
-    const ledger = ts.createSourceFile(
-      'ledger.tsx',
-      readFileSync(path.join(mobile, 'sources/components/buzz/Ledger.tsx'), 'utf8'),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TSX,
-    );
-    const byline = ledger.statements.find(
-      (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'Byline',
-    )!;
     const names = new Set([...swipe.getText(file).matchAll(/styles\.(\w+)/g)].map((m) => m[1]));
     let properties: ts.ObjectLiteralElementLike[] = [];
     function visit(n: ts.Node) {
@@ -56,32 +46,6 @@ it.skipIf(!existsSync(CHROME))(
       ts.forEachChild(n, visit);
     }
     visit(file);
-    const bylineNames = new Set(
-      [...byline.getText(ledger).matchAll(/styles\.(\w+)/g)].map((m) => m[1]),
-    );
-    let bylineProperties: ts.ObjectLiteralElementLike[] = [];
-    function visitLedger(n: ts.Node) {
-      if (
-        ts.isVariableDeclaration(n) &&
-        n.name.getText(ledger) === 'styles' &&
-        n.initializer &&
-        ts.isCallExpression(n.initializer)
-      ) {
-        const a = n.initializer.arguments[0];
-        if (
-          ts.isArrowFunction(a) &&
-          ts.isParenthesizedExpression(a.body) &&
-          ts.isObjectLiteralExpression(a.body.expression)
-        )
-          bylineProperties = [...a.body.expression.properties];
-      }
-      ts.forEachChild(n, visitLedger);
-    }
-    visitLedger(ledger);
-    const bylineStyle = bylineProperties
-      .filter((p) => p.name && bylineNames.has(p.name.getText(ledger)))
-      .map((p) => p.getText(ledger))
-      .join(',');
     const style = properties
       .filter((p) => p.name && names.has(p.name.getText(file)))
       .map((p) => p.getText(file))
@@ -91,7 +55,7 @@ it.skipIf(!existsSync(CHROME))(
       const entry = path.join(dir, 'entry.tsx');
       await writeFile(
         entry,
-        `import React,{useCallback,useEffect,useRef,useState} from 'react';import{createRoot}from'react-dom/client';import{View,Text,Pressable,Platform}from'react-native';import{Swipeable,GestureHandlerRootView}from'react-native-gesture-handler';import{StyleSheet}from'react-native-unistyles';import{TurnProgressLine}from'@/components/buzz/TurnProgressLine';import{IdentityMark}from'@/components/buzz/IdentityMark';import{ALIVE_RING_PAD}from'@/buzz/identity-mark';import{CornerGlyph}from'@/components/buzz/CornerGlyph';import{emojiTextStyle}from'@/buzz/emoji-text';import{Typography}from'@/constants/Typography';const CORNER_LABEL='corner';const MESSAGE_REACTION_EMOJIS=[];const DesktopMessageAction=()=>null;import{identityPalette,isGeneratedAgentAvatarUrl}from'@/buzz/identity-mark';const LEDGER_MARK_SIZE=26;const BYLINE_DOT_SIZE=5;const Ionicons=()=>null;const styles=StyleSheet.create(theme=>({${style},${bylineStyle}}));${swipe.getText(file)}${byline.getText(ledger)}
+        `import React,{useCallback,useEffect,useRef,useState} from 'react';import{createRoot}from'react-dom/client';import{View,Text,Pressable,Platform}from'react-native';import{LedgerBylineView as Byline}from'@/components/buzz/Ledger';import{Swipeable,GestureHandlerRootView}from'react-native-gesture-handler';import{StyleSheet}from'react-native-unistyles';import{TurnProgressLine}from'@/components/buzz/TurnProgressLine';import{IdentityMark}from'@/components/buzz/IdentityMark';import{ALIVE_RING_PAD}from'@/buzz/identity-mark';import{CornerGlyph}from'@/components/buzz/CornerGlyph';import{emojiTextStyle}from'@/buzz/emoji-text';import{Typography}from'@/constants/Typography';const CORNER_LABEL='corner';const MESSAGE_REACTION_EMOJIS=[];const DesktopMessageAction=()=>null;import{identityPalette,isGeneratedAgentAvatarUrl}from'@/buzz/identity-mark';const LEDGER_MARK_SIZE=26;const BYLINE_DOT_SIZE=5;const Ionicons=()=>null;const styles=StyleSheet.create(theme=>({${style}}));${swipe.getText(file)}
  createRoot(document.getElementById('root')!).render(<GestureHandlerRootView style={{width:412,padding:16,backgroundColor:'#14091A'}}><SwipeToReply messageId="edge" isDesktop={false} onReply={()=>{}} onLongPress={()=>{}} onReact={()=>{}} onForward={()=>{}} onSwipeCorner={()=>{}}><View style={{paddingVertical:24}}><Byline byline={{name:'Beebee',role:'deepseek-v4.1',stamp:'20:12',onOpenProfile:()=>{},mark:{seed:'a'.repeat(64),kind:'agent',alive:true}}}/><Text style={{color:'#eee',fontFamily:'SpaceGrotesk-Regular',marginTop:12}}>Choose a repository to start working together.</Text></View></SwipeToReply><TurnProgressLine label="Beebee Mulling…" startedAt={Date.now()/1000-1} onStop={()=>{}} /></GestureHandlerRootView>);
  setTimeout(()=>{try{const tile=document.querySelector('[data-testid="chat-byline-mark"]')!;const ring=tile.lastElementChild!;const clip=document.querySelector('[data-testid="swipe-reply-edge"]')!;document.getElementById('result')!.textContent=JSON.stringify({tile:tile.getBoundingClientRect().left,ring:ring.getBoundingClientRect().left,clip:clip.getBoundingClientRect().left,overflow:getComputedStyle(clip).overflow,ancestors:(()=>{let n=tile.parentElement;const a=[];while(n){a.push({tag:n.tagName,left:n.getBoundingClientRect().left,overflow:getComputedStyle(n).overflow});n=n.parentElement;}return a;})()});}catch(error){document.getElementById('result')!.textContent=JSON.stringify({error:String(error),console:window.__console,html:document.getElementById('root')!.innerHTML});}},1000);`,
       );
@@ -118,6 +82,7 @@ it.skipIf(!existsSync(CHROME))(
         head: `<script>window.addEventListener('error',e=>document.getElementById('result').textContent=JSON.stringify({crash:e.message}));</script><style>${fontCss}html,body,#root{width:412px;margin:0;background:#14091A}#result{display:none}</style>`,
         shims: {
           ...webProofShims(mobile),
+          './MonoMarkdown': 'export const MonoMarkdown = () => null;',
           'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}'; import {StyleSheet as RealStyleSheet} from '${path.join(mobile, 'node_modules/react-native-unistyles/src/web/index.ts')}';const theme={buzz:beelineThemes.obsidian};RealStyleSheet.configure({themes:{proof:theme},settings:{initialTheme:'proof'}});export const StyleSheet={create:factory=>{const styles=typeof factory==='function'?factory(theme):factory;for(const key of Object.keys(styles)){if(key.startsWith('replySwipe'))styles[key]=RealStyleSheet.create({[key]:styles[key]})[key];}return styles;},hairlineWidth:1,absoluteFillObject:{position:'absolute',left:0,right:0,top:0,bottom:0}};export const useUnistyles=()=>({theme});`,
         },
       });

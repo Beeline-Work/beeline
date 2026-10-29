@@ -260,7 +260,7 @@ describe('the ledger — an agent turn', () => {
     expect(marker.props.children).toBe('Reported');
     expect(marker.props.accessibilityLabel).toBe('Reported to Beeline');
     // Metadata, not a control: it rides the stamp's own quiet style.
-    expect(marker.props.style).toBe(
+    expect(marker.props.style).toEqual(
       reported.root.findByProps({ testID: 'chat-byline-stamp' }).props.style,
     );
 

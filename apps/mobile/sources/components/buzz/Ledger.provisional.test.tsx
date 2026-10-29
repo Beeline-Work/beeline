@@ -162,7 +162,9 @@ describe('provisional prose (C98)', () => {
   it('renders the same byline, node for node, in both states', () => {
     const streaming = streamingRow().toJSON();
     const settled = settledRow().toJSON();
-    expect(streaming.children[0]).toEqual(settled.children[0]);
+    // Layout callbacks are instance-specific; compare the rendered byline.
+    const visualTree = (node: unknown) => JSON.parse(JSON.stringify(node));
+    expect(visualTree(streaming.children[0])).toEqual(visualTree(settled.children[0]));
   });
 
   it('cross-fades out of the provisional text once, and leaves the settled words in place', () => {

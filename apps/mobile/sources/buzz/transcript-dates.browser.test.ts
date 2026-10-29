@@ -15,6 +15,8 @@ it.skipIf(!existsSync(chrome))(
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(tmpdir(), 'transcript-dates-'));
     const shims: Record<string, string> = {
+      'expo-font': 'export const useFonts = () => [true, null];',
+      './Button': 'export const Button = () => null;',
       'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
       const theme = { buzz: beelineThemes[new URLSearchParams(location.search).get('theme')] };
       export const StyleSheet = { create: factory => factory(theme) };
@@ -36,6 +38,8 @@ it.skipIf(!existsSync(chrome))(
       export default { View: props => React.createElement(View, props) };`,
       '@expo/vector-icons': 'export const Ionicons = () => null;',
       'react-native-svg': `import React from 'react';
+      export const Circle = () => null;
+      export const Polygon = () => null;
       export const Path = () => null;
       export const Polyline = () => null;
       export default props => React.createElement('svg', props);`,
@@ -50,6 +54,7 @@ it.skipIf(!existsSync(chrome))(
         bundle: true,
         platform: 'browser',
         jsx: 'automatic',
+        loader: { '.ttf': 'dataurl' },
         define: { 'process.env.NODE_ENV': '"production"', __DEV__: 'false' },
         plugins: [
           {

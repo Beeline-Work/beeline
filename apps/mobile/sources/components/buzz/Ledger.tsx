@@ -419,7 +419,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
   const metadataFont = fontsReady
     ? 'IBMPlexMono-Regular'
     : Platform.OS === 'ios' ? 'Courier' : 'monospace';
-  const stampStyle = [styles.bylineStamp, { fontFamily: metadataFont }];
+  const metadataFace = { fontFamily: metadataFont };
   // Reserve only the inter-item gaps. Metadata may use the remaining space,
   // but must never take it from a name that would otherwise fit.
   const nameLimit = wordsWidth == null ? '100%' : Math.max(0, wordsWidth - (byline.role ? 16 : 8));
@@ -513,7 +513,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
             <Text
               accessibilityLabel="Reported to Beeline"
               numberOfLines={1}
-              style={stampStyle}
+              style={[styles.bylineStamp, metadataFace]}
               testID="chat-reported-marker"
             >
               Reported
@@ -528,7 +528,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
               testID="chat-bookmark-marker"
             />
           ) : null}
-          <Text numberOfLines={1} style={stampStyle} testID="chat-byline-stamp">
+          <Text numberOfLines={1} style={[styles.bylineStamp, metadataFace]} testID="chat-byline-stamp">
             {byline.stamp}
           </Text>
         </InlineRow>

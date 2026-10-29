@@ -1,0 +1,206 @@
+[
+  {
+    "width": 360,
+    "theme": "bone",
+    "trial": 0,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 360,
+    "theme": "bone",
+    "trial": 1,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 360,
+    "theme": "bone",
+    "trial": 2,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 360,
+    "theme": "obsidian",
+    "trial": 0,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 360,
+    "theme": "obsidian",
+    "trial": 1,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 360,
+    "theme": "obsidian",
+    "trial": 2,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 38.476190476190474
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 121.9047619047619
+      }
+    ],
+    "rubyVisibleFull": false,
+    "humanVisibleFull": false
+  },
+  {
+    "width": 412,
+    "theme": "bone",
+    "trial": 0,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 412,
+    "theme": "bone",
+    "trial": 1,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 412,
+    "theme": "bone",
+    "trial": 2,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 412,
+    "theme": "obsidian",
+    "trial": 0,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 412,
+    "theme": "obsidian",
+    "trial": 1,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  },
+  {
+    "width": 412,
+    "theme": "obsidian",
+    "trial": 2,
+    "names": [
+      {
+        "name": "Ruby",
+        "widthDp": 43.42857142857143
+      },
+      {
+        "name": "lunchboxfortwo",
+        "widthDp": 135.61904761904762
+      }
+    ],
+    "rubyVisibleFull": true,
+    "humanVisibleFull": true
+  }
+]

@@ -1,0 +1,96 @@
+
+> @beeline/mobile@0.2.22 test
+> vitest --run sources/components/buzz/Ledger.byline-before.test.ts -t changes the requested face|lets metadata shrink
+
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/05e3bb30-4332-4dfc-b2d2-017e5fa03154/apps/mobile
+
+ ❯ sources/components/buzz/Ledger.byline-before.test.ts (52 tests | 2 failed | 50 skipped) 20ms
+   ↓ the ledger — an agent turn > renders a Room update as a Space Grotesk upright caption with mono gutter time and a plain digest
+   ↓ the ledger — an agent turn > emphasizes the lead by brightness with the same font family and size
+   ↓ the ledger — an agent turn > makes an exact-source body action tappable for either speaker lane
+   ↓ the ledger — an agent turn > opens a Room run with a byline: steel dot, name, role tag, stamp
+   ↓ the ledger — an agent turn > shows a quiet Reported marker beside the stamp only on a reported message
+   ↓ the ledger — an agent turn > lets the nested profile control claim the row long press
+   ↓ the ledger — an agent turn > never prints a repeat byline for a continued run
+   ↓ the ledger — an agent turn > gives speaker-changing bylines twice the same-speaker chunk spacing
+   ↓ the ledger — a human turn is plain body text > renders your message at body weight and size — NEVER the bolded lead
+   ↓ the ledger — a human turn is plain body text > matches a long agent turn’s body size next to it, so neither reads bigger
+   ↓ the ledger — a human turn is plain body text > marks your own turn with the brass dot and brass name alone
+   ↓ the ledger — a human turn is plain body text > keeps resolved and unresolved mention messages at the same text size and weight
+   ↓ the ledger — a human turn is plain body text > folds a run of your own messages into a single passage
+   ↓ the ledger — a human turn is plain body text > keeps agent→person and person→agent speaker-change gaps equal
+   ↓ the ledger — a human turn is plain body text > keeps a person continuation to the next speaker at the widened facing-edge gap
+   ↓ the ledger — the right gutter > hangs the stamp in the margin without touching the flowing column
+   ↓ the ledger — the right gutter > renders nothing at all when there is nothing to annotate
+   ↓ the ledger — machine noise > uses the shared disclosure and reveals machine output on demand
+   ↓ the ledger — the lead sentence keeps Markdown whole > splits a plain first sentence from the rest
+   ↓ the ledger — the lead sentence keeps Markdown whole > keeps a single line without a terminator as the whole lead
+   ↓ the ledger — the lead sentence keeps Markdown whole > never splits a fenced code block
+   ↓ the ledger — the lead sentence keeps Markdown whole > extends the lead to the end of a bold run instead of cutting inside it
+   ↓ the ledger — the lead sentence keeps Markdown whole > never cuts inside inline code or a link
+   ↓ the ledger — the lead sentence keeps Markdown whole > leaves a body whose first line is a block construct whole
+   ↓ the ledger — the lead sentence keeps Markdown whole > does not cut after a bare number or a short abbreviation
+   ↓ the ledger — the lead sentence keeps Markdown whole > renders a bold lead with no stray asterisks
+   ↓ the ledger — the typewriter reveals each message at most once > reveals a genuinely new message without per-character React commits
+   ↓ the ledger — the typewriter reveals each message at most once > shows an already-revealed message in full from the first frame
+   ↓ the ledger — the typewriter reveals each message at most once > still gives a different message its own type-out
+   ↓ the ledger — the typewriter reveals each message at most once > a row without the typewriter renders in full and spends nothing
+   ↓ the ledger — per-speaker identity marks > leads an agent turn with that agent’s own identity mark, ring while working
+   ↓ the ledger — per-speaker identity marks > starts the tile at the row’s content edge for both kinds — never inset past it
+   ↓ the ledger — per-speaker identity marks > renders the same mark shape without the ring when the agent is idle
+   ↓ the ledger — per-speaker identity marks > leads a human turn with that person’s circle mark, never an alive ring
+   ↓ the ledger — per-speaker identity marks > gives two speakers visibly different marks from the same system
+   ↓ the ledger — per-speaker identity marks > renders no mark on a continued run — the byline (and mark) open the run only
+   ↓ the ledger — per-speaker identity marks > carries the speaker’s chosen face into the tile
+   ↓ the ledger — per-speaker identity marks > keeps the plain dot fallback for a byline without a mark
+   × the ledger — the byline says who is talking > changes the requested face only after fonts are ready, including streaming bylines 17ms
+     → expected 'SpaceGrotesk-Medium' to be 'sans-serif' // Object.is equality
+   × the ledger — the byline says who is talking > lets metadata shrink before the name, bounding only names that exhaust the row 2ms
+     → renderer.root.findByProps(...).props.onLayout is not a function
+   ↓ the ledger — the byline says who is talking > sets the name in the speaker’s hue at body size, beside the 26px tile
+   ↓ the ledger — the byline says who is talking > uses readable theme brass for a generated avatar’s brass plate
+   ↓ the ledger — the byline says who is talking > keeps the viewer’s name brass, whatever their own hue is
+   ↓ the ledger — the byline says who is talking > sits the name, the role tag and the stamp on one baseline, tile centred
+   ↓ the ledger — the byline says who is talking > gives a person and an agent each their own hue from the one palette
+   ↓ the ledger — explicit #room/#room/corner references > hands the workspace channel index and handler to the prose renderer
+   ↓ the ledger — explicit #room/#room/corner references > threads the same resolution through the typewriter path
+   ↓ the ledger — explicit #room/#room/corner references > renders no pressable when no index is supplied (references stay text)
+   ↓ the ledger day caption > places the caption before the message within its cell
+   ↓ the ledger day caption > is in-flow quiet machine type, never sticky or overlayed
+   ↓ expandable system notices > uses native overflow measurement and reveals unchanged text with an accessible brass control
+   ↓ webhook caller preview > labels and caps caller words as plain native text without actionable markup
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/components/buzz/Ledger.byline-before.test.ts > the ledger — the byline says who is talking > changes the requested face only after fonts are ready, including streaming bylines
+AssertionError: expected 'SpaceGrotesk-Medium' to be 'sans-serif' // Object.is equality
+
+Expected: "sans-serif"
+Received: "SpaceGrotesk-Medium"
+
+ ❯ sources/components/buzz/Ledger.byline-before.test.ts:1165:90
+    1163|     const props = { itemId: 'font-race', byline: { name: 'Ruby', role:…
+    1164|     const renderer = render(React.createElement(LedgerEntry, props));
+    1165|     expect(merged(renderer.root.findByProps({ testID: 'chat-byline-nam…
+       |                                                                                          ^
+    1166|     expect(merged(renderer.root.findByProps({ testID: 'chat-byline-rol…
+    1167|     expect(renderer.root.findByProps({ testID: 'chat-byline-name' }).p…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  sources/components/buzz/Ledger.byline-before.test.ts > the ledger — the byline says who is talking > lets metadata shrink before the name, bounding only names that exhaust the row
+TypeError: renderer.root.findByProps(...).props.onLayout is not a function
+ ❯ sources/components/buzz/Ledger.byline-before.test.ts:1176:80
+
+ ❯ Proxy.process.env.NODE_ENV.exports.act node_modules/react/cjs/react.development.js:814:22
+ ❯ sources/components/buzz/Ledger.byline-before.test.ts:1176:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 50 skipped (52)
+   Start at  00:05:35
+   Duration  504ms (transform 187ms, setup 64ms, collect 190ms, tests 20ms, environment 0ms, prepare 77ms)
+

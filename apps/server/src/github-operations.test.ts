@@ -1775,6 +1775,55 @@ describe('GitHub phone operations', () => {
     expect(mint).toHaveBeenCalledTimes(2);
   });
 
+  it('TOKEN-PERM-1: an older mint resolving does not drop the replacement mint still in flight', async () => {
+    const { room } = await checksFixture();
+    let releaseFirst!: (value: { token: string; expiresAt: string }) => void;
+    let releaseSecond!: (value: { token: string; expiresAt: string }) => void;
+    const mint = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { releaseFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { releaseSecond = resolve; }))
+      .mockResolvedValue({ token: 'unexpected', expiresAt: '2030-01-01T00:00:00Z' });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, {
+      installationToken: mint,
+      installationAccount: async () => ({
+        id: '42', login: 'owner', type: 'User' as const, repositorySelection: 'selected' as const,
+      }),
+      listRepositories: async () => [{
+        id: 101, installationId: 77, fullName: 'owner/widgets', defaultBranch: 'main',
+        private: false, allowAutoMerge: false,
+      }],
+    } as unknown as GitHubAppClient, 'secret');
+
+    const first = operations.roomToken(room);
+    await vi.waitFor(() => expect(mint).toHaveBeenCalledTimes(1));
+    await operations.processWebhook('installation', {
+      action: 'new_permissions_accepted', installation: { id: 77 },
+    });
+    const second = operations.roomToken(room);
+    await vi.waitFor(() => expect(mint).toHaveBeenCalledTimes(2));
+    releaseFirst({ token: 'stale', expiresAt: '2030-01-01T00:00:00Z' });
+    await expect(first).resolves.toMatchObject({ token: 'stale' });
+    const query = database.query.bind(database);
+    let roomLookups = 0;
+    const spy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      const result = await query(sql, values);
+      if (typeof sql === 'string' && sql.includes('github_installation_id,g.repository_id')) roomLookups++;
+      return result;
+    });
+    try {
+      const third = operations.roomToken(room);
+      await vi.waitFor(() => expect(roomLookups).toBe(1));
+      expect(mint).toHaveBeenCalledTimes(2);
+      releaseSecond({ token: 'fresh', expiresAt: '2030-01-01T00:00:00Z' });
+      await expect(second).resolves.toMatchObject({ token: 'fresh' });
+      await expect(third).resolves.toMatchObject({ token: 'fresh' });
+    } finally {
+      spy.mockRestore();
+    }
+    await expect(operations.roomToken(room)).resolves.toMatchObject({ token: 'fresh' });
+    expect(mint).toHaveBeenCalledTimes(2);
+  });
+
   it('reuse-room-token: reuses scoped tokens through the daemon and refreshes at five minutes', async () => {
     const { room } = await checksFixture();
     let now = Date.now();

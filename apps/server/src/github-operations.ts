@@ -289,10 +289,11 @@ export function reviewerWakeFromFacts(input: {
 }
 
 /**
- * GitHub fixes an installation token's permissions at mint time. `roomToken`
- * stays unchanged because repository onboarding reads through it and the
- * System message lock hashes that path. A mint notes the epoch when its
- * expiry is read; a cache write after an installation webhook is ignored.
+ * GitHub fixes an installation token's permissions at mint time. A mint notes
+ * the epoch when its expiry is read; a cache write after an installation
+ * webhook is ignored. That check stays on the token map: repository onboarding
+ * hashes `roomToken`'s returned expressions. Pending-map cleanup drops only
+ * the mint that started it, so an older mint cannot erase its replacement.
  */
 const installationTokenEpoch = new Map<number, number>();
 let installationTokenStamp: number | undefined;
@@ -787,7 +788,8 @@ export class GitHubOperations {
     try {
       return { ...await mint };
     } finally {
-      this.#roomTokenMints.delete(key);
+      // A permission webhook may already have replaced this mint.
+      if (this.#roomTokenMints.get(key) === mint) this.#roomTokenMints.delete(key);
     }
   }
 

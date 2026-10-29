@@ -1,6 +1,6 @@
 # Corner adb and wording-neutral refactors
 
-Scope: corner brief revision 1, approved by lunchboxfortwo in message
+Scope: corner brief revision 2, approved by lunchboxfortwo in message
 `4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e`.
 No server producer wording changes are part of this repair.
 
@@ -70,3 +70,14 @@ The lock inventory is regenerated for the scanner change, with existing approval
 comments retained. Regression cases accept moved producers, local renames and
 reformatting, and reject changed literal wording, changed expression operators,
 reordered/repeated phrases, visible card changes and forwarded SQL phrase changes.
+
+The review follow-up for SYSTEM-REFACTOR-2 reproduced a false pass when
+`['hello','world'].find(word => word === 'hello')` changed its predicate to
+`word === 'world'`: the displayed verb changed from `hello` to `world`, but
+`enforce` accepted it. The same bypass reproduced for `filter` and `sort`.
+Selection callbacks are now retained for local literal arrays, including aliases,
+spreads and typed helper returns. Negative fixtures exercise those paths through
+the same scanner and enforcer, while the four archived refactor fixtures must
+continue to pass. The inventory is regenerated for the stricter callback dependencies
+from unchanged producer source. Opaque provider/row arrays retain their data-only
+treatment; request arguments do not become returned phrase-array dependencies.

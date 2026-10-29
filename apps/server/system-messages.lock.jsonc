@@ -1,4 +1,4 @@
-// Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 1. Regenerated after excluding type syntax, query predicates and provider transport; no producer source or displayed wording changed.
+// Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays; no producer source or displayed wording changed.
 // Save to vault card and saved receipt approved by lunchboxfortwo, brief revision 2, message 2df3e0f5a54cd95512707fd11e51f20cc7c399f4bedf1934adf7f9bfdfd4634e; vault producers and their transitive wrappers only.
 // MCP send_message threaded-reply wrapper approved by lunchboxfortwo, Room request 7fd0f8d926c4f91c53dac705cb0735248ae1a6ea2630fb053e4c5e78c2810888 (brief revision 5, criterion 10); client-authored text, no System wording changes.
 // Transport-only System input projection, approved in corner brief revision 1; producer source and visible wording unchanged.
@@ -2070,7 +2070,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/connector-offer-completion.ts:settleConnectingOffers:systemLine:a587e6a09316abd5",
+    "id": "src/connector-offer-completion.ts:settleConnectingOffers:systemLine:7be790855ca3f55e",
     "file": "apps/server/src/connector-offer-completion.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: offer.room_id,\n    authorId: offer.accepted_by ?? SYSTEM_IDENTITY_ID,\n    subject: offer.accepted_by ? identitySubject({\n        id: offer.accepted_by,\n        kind: offer.accepted_kind,\n        name: offer.accepted_name,\n    }) : { kind: 'system', name: connectorName },\n    verb: offer.accepted_by ? (offer.intent === 'reconnect' ? 'reconnected' : 'added') : 'reconnected automatically',\n    ...(offer.accepted_by ? { object: connectorName } : {}),\n    kind: 'connector-offer-decided',\n    ...(offer.command_id ? { commandId: offer.command_id } : {}),\n    wakes: [offer.agent_id],\n    cardType: 'connector-offer-decision',\n    card: { offerId: offer.id, status: 'accepted', ...(connectorId ? { connectorId } : {}) },\n})",
@@ -2092,6 +2092,7 @@
       ".accepted_by",
       ".accepted_name",
       ".command_id",
+      ".connectorType",
       ".connector_type",
       ".find",
       ".find()",
@@ -2732,20 +2733,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:5ab120ad5ed1c649",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, 'the configured reviewer is unreachable or unhealthy', false)",
-    "literals": [
-      "\"the configured reviewer is unreachable or unhealthy\"",
-      ".headSha",
-      ".lifecycle",
-      ".pr"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:64dda519808b4482",
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:55ac20d448441804",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, reason)",
@@ -2964,6 +2952,19 @@
       "randomBytes()",
       "shortenAsk()",
       "write()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:5ab120ad5ed1c649",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, 'the configured reviewer is unreachable or unhealthy', false)",
+    "literals": [
+      "\"the configured reviewer is unreachable or unhealthy\"",
+      ".headSha",
+      ".lifecycle",
+      ".pr"
     ],
     "occurrences": 1
   },
@@ -4700,7 +4701,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.offerConnector:systemLine:992308b82632cf64",
+    "id": "src/daemon-service.ts:DaemonService.offerConnector:systemLine:49be4383941536b8",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: switching ? `asked ${addresseeMention} to switch` : `offered ${addresseeMention}`,\n    object: switching ? `${connectorName}'s Google account` : connectorName,\n    consequence: reason,\n    presentation: 'card',\n    cardType: 'connector-offer',\n    card: card as unknown as Record<string, unknown>,\n})",
@@ -5274,7 +5275,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.squireApproval:systemLine:ae034d7e243e8a34",
+    "id": "src/daemon-service.ts:DaemonService.squireApproval:systemLine:e4963389f383e67e",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: connectorDisplayName('trusty-squire'),\n    },\n    verb: 'needs your approval for',\n    object: input.title.trim(),\n    consequence: input.detail.trim(),\n    presentation: 'card',\n    cardType: 'squire-approval',\n    card: {\n        agent,\n        tool: input.tool.trim(),\n        title: input.title.trim(),\n        detail: input.detail.trim(),\n        ...(input.reason ? { reason: input.reason.trim().slice(0, 1000) } : {}),\n        ...(input.action ? { action: input.action.trim().slice(0, 240) } : {}),\n        ...(input.reference ? { reference: input.reference.trim().slice(0, 1000) } : {}),\n        ...(input.facts ? { facts: input.facts.slice(0, 3).map(fact => ({ label: fact.label.slice(0, 40), value: fact.value.slice(0, 500) })) } : {}),\n        approvalUrl: approvalUrl.toString(),\n        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),\n        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60000,\n        linkKind: input.linkKind,\n        ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),\n        ...source,\n    },\n})",
@@ -5298,6 +5299,7 @@
       ".approvalId",
       ".approvalUrl",
       ".authorizedCommand",
+      ".connectorType",
       ".detail",
       ".expiresAt",
       ".facts",
@@ -5337,6 +5339,7 @@
       "TrueKeyword",
       "binary:*",
       "binary:+",
+      "binary:===",
       "binary:??",
       "conditional:?:",
       "end:expression"
@@ -5401,7 +5404,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.squireLoginWall:systemLine:7a9719a95f1cfde2",
+    "id": "src/daemon-service.ts:DaemonService.squireLoginWall:systemLine:b38694c389ed738b",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: 'needs',\n    object: 'Google sign-in',\n    consequence: reason,\n    presentation: 'card',\n    cardType: 'connector-offer',\n    card: card as unknown as Record<string, unknown>,\n})",
@@ -5429,6 +5432,7 @@
       ".agent_name",
       ".authorizedCommand",
       ".avatar",
+      ".connectorType",
       ".created_at",
       ".find",
       ".find()",
@@ -5462,6 +5466,7 @@
       "[\"squire:\",\"\"]",
       "binary:!==",
       "binary:/",
+      "binary:===",
       "binary:??",
       "conditional:?:",
       "end:expression",
@@ -7080,7 +7085,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.deleteRoomMessage:message-write:a07bc93578507d67",
+    "id": "src/phone-service.ts:PhoneService.deleteRoomMessage:message-write:2eafebb344961783",
     "file": "apps/server/src/phone-service.ts",
     "kind": "message-write",
     "template": "UPDATE messages system_event=JSON.stringify(await deletedMessageEvent(database, row.deleted_by, row.author_id)) :: jsonb",
@@ -7141,6 +7146,7 @@
       ".trim",
       ".trim()",
       ".verb",
+      "Boolean()",
       "FirstLiteralToken:0",
       "RegularExpressionLiteral:/[\\s ]+/g",
       "RegularExpressionLiteral:/[\\u0300-\\u036f]/g",
@@ -8924,7 +8930,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/system-line.ts:restateSystemLine:message-write:3bbb7c954e7fd97b",
+    "id": "src/system-line.ts:restateSystemLine:message-write:acc8ed044c977f54",
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
     "template": "UPDATE messages text=text, system_event=JSON.stringify(event) :: jsonb, card=COALESCE ( card ? JSON.stringify(card) : null :: jsonb , card )",
@@ -8976,6 +8982,7 @@
       ".trim",
       ".trim()",
       ".verb",
+      "Boolean()",
       "NullKeyword",
       "RegularExpressionLiteral:/[\\s ]+/g",
       "RegularExpressionLiteral:/[\\u0300-\\u036f]/g",
@@ -9002,7 +9009,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/system-line.ts:systemLine:message-write:f7a2c270e44335b2",
+    "id": "src/system-line.ts:systemLine:message-write:f42d8131ff1b9bbf",
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
     "template": "INSERT messages text=text, card=input.card ? JSON.stringify({ ...input.card, ask: approvalAsk(input.cardType, input.card) }) : null :: jsonb, system_event=JSON.stringify(event) :: jsonb, author_id=authorId, presentation=input.presentation ?? 'system', card_type=input.cardType ?? null",
@@ -9083,6 +9090,7 @@
       ".trim",
       ".trim()",
       ".verb",
+      "Boolean()",
       "FirstLiteralToken:0",
       "NullKeyword",
       "RegularExpressionLiteral:/[\\s ]+/g",

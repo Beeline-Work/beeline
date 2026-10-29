@@ -898,6 +898,39 @@ function scan(files: Map<string, string>): Entry[] {
   }
 
   const entries = new Map<string, Entry>();
+  // Follow phrase arrays through aliases, spreads and helper returns. A return
+  // annotation alone cannot turn locally supplied wording into opaque data.
+  const literalArray = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
+    if (seen.has(node)) return false;
+    seen.add(node);
+    if (ts.isArrayLiteralExpression(node))
+      return node.elements.some((element) => !ts.isSpreadElement(element) || literalArray(element.expression, seen));
+    if (ts.isCallExpression(node)) {
+      for (const declaration of callableDeclarations(node.expression)) {
+        if (!ts.isFunctionLike(declaration) || !('body' in declaration) || !declaration.body) continue;
+        let found = false;
+        const returned = (part: ts.Node) => {
+          if (ts.isReturnStatement(part) && part.expression) found ||= literalArray(part.expression, seen);
+          else if (!ts.isFunctionLike(part)) ts.forEachChild(part, returned);
+        };
+        if (ts.isBlock(declaration.body)) ts.forEachChild(declaration.body, returned);
+        else found = literalArray(declaration.body, seen);
+        if (found) return true;
+      }
+      // Request arguments select external data; they are not returned arrays.
+      // Chained array operations still retain the origin of their receiver.
+      return ts.isPropertyAccessExpression(node.expression) && literalArray(node.expression.expression, seen);
+    }
+    if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
+      for (const declaration of declarations(node)) {
+        if ((ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) &&
+          declaration.initializer && literalArray(declaration.initializer, seen)) return true;
+        if (ts.isVariableDeclaration(declaration) && symbol(declaration.name) &&
+          (mutations.get(symbol(declaration.name)!) ?? []).some((value) => literalArray(value, seen))) return true;
+      }
+    }
+    return !!ts.forEachChild(node, (part) => literalArray(part, seen) || undefined);
+  };
   const arrayData = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
     if (seen.has(node)) return false;
     seen.add(node);
@@ -954,10 +987,11 @@ function scan(files: Map<string, string>): Entry[] {
           collect(part.expression);
           return;
         }
-        // Array selection callbacks choose existing values rather than supplying words.
+        // Selection of opaque row/provider data does not supply fixed words.
+        // Literal arrays retain callbacks because selection changes their wording.
         if (ts.isCallExpression(part) && ts.isPropertyAccessExpression(part.expression) &&
           /^(find|filter|sort)$/.test(part.expression.name.text) &&
-          arrayData(part.expression.expression)) {
+          arrayData(part.expression.expression) && !literalArray(part.expression.expression)) {
           literals.push(`.${part.expression.name.text}()`, `.${part.expression.name.text}`);
           collect(part.expression.expression);
           return;
@@ -1935,5 +1969,19 @@ it('SYSTEM-REFACTOR-2: keeps array values and selection method identity locked',
     "const words=['hello','world']; line(db,{verb:words.filter(word=>word==='hello')});"]) {
     const changed=fixture(text);
     expect(() => enforce(scan(changed),scan(base))).toThrow(failure);
+  }
+});
+
+it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks selecting literal phrase data', (method) => {
+  const original = method === 'sort' ? "(a,b)=>a==='hello'?-1:1" : "word=>word==='hello'";
+  const changed = original.replace('hello', 'world');
+  for (const setup of [
+    "const words=['hello','world'];",
+    "const phrases=['hello','world']; const words=phrases;",
+    "const phrases=['hello','world']; const words=[...phrases];",
+    "function phrases(): string[] { return ['hello','world']; } const words=phrases();",
+  ]) {
+    const source = `${setup} line(db,{verb:words.${method}(${original})});`;
+    expect(() => enforce(scan(fixture(source.replace(original, changed))), scan(fixture(source)))).toThrow(failure);
   }
 });

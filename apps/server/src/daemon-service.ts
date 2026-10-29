@@ -805,19 +805,25 @@ export class DaemonService {
         ].includes(name) && !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount))) {
           // Final prose keeps the private return route without inventing a status.
+          let publishSkippedReport = false;
           if (name === 'postRoomMessage') {
             const text = String(candidate.text ?? '').trim();
             if (text) {
               const report = await this.report(text, authenticatedAgentId, command, db, true);
               if ('delivered' in report && report.delivered === false)
                 throw new CommandRefusalError('Report was not delivered; restore commander membership at the recorded return address, then report again.', 409);
+              // A report wake may inherit an already answered order. Skipping
+              // another private report must not discard its public reply/files.
+              publishSkippedReport = command.private_payload.kind === 'report' && 'skipped' in report && report.skipped === true;
             } else throw new CommandRefusalError('An assignment outcome requires nonempty report text.', 400);
-            await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
-            await db.query(`UPDATE agent_turns SET status='complete',created_at=now()
+            if (!publishSkippedReport) {
+              await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
+              await db.query(`UPDATE agent_turns SET status='complete',created_at=now()
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
               [scopedRoom, authenticatedAgentId, requestId]);
+            }
           }
-          return this.writeResult() as Output<Name>;
+          if (!publishSkippedReport) return this.writeResult() as Output<Name>;
         }
         if (command.state === 'complete') {
           if (name === 'postRoomMessage' && command.result_message_id) {
@@ -1573,6 +1579,14 @@ export class DaemonService {
           'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
           'corner_background_tool', 'corner_brief_revision'].includes(command.reason))
           throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
+        // Silence suppresses prose, never files already promised to the Room.
+        // The ordinary reply writer drains them once and folds them onto an
+        // earlier same-place post when one exists, inside this transaction.
+        if ((await this.database.query(`SELECT 1 FROM agent_pending_attachments
+          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 LIMIT 1`,
+          [command.room_id, authenticatedAgentId, command.turn_request_id, command.generation_id])).rowCount)
+          await this.postRoomMessage({ roomId: command.room_id, requestId: command.turn_request_id!,
+            generationId: command.generation_id!, text: '', presentation: 'message' }, authenticatedAgentId);
         await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
           [command.room_id, authenticatedAgentId, command.turn_request_id]);
@@ -8951,7 +8965,7 @@ export class DaemonService {
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
       stored: true, visible: true, receipt: 'Message stored and visible.' +
         (input.cornerId === command.room_id
-          ? '\nPosted to your current place. Your closing text here also publishes, so only write it if it adds something new; do not repeat this post.'
+          ? '\nPosted to your current place. Closing text is kept in turn activity; queued files attach to this post when the turn finishes.'
           : '') };
   }
 

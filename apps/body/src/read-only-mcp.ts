@@ -1670,7 +1670,7 @@ export async function postArtifact(
   const objectId = POSTED_MEDIA_ID.exec(uploaded.url)?.[1];
   return (
     `Posted artifact "${title}" (${bytes.length} bytes, ${mime}); it is delivered with your ` +
-    `final reply.${objectId ? ` Object ${objectId} will be included automatically if this turn opens or revises a corner brief.` : ''} Ask for feedback here in the Room.`
+    `final reply, or on the existing post or a file-only message if you end silently.${objectId ? ` Object ${objectId} will be included automatically if this turn opens or revises a corner brief.` : ''} Ask for feedback here in the Room.`
   );
 }
 

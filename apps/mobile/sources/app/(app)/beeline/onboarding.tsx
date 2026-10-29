@@ -50,6 +50,7 @@ import { authSessionOptions } from '@/auth/auth-session';
 import {
   clearPendingGitHubSignInState,
   cancelPendingGitHubSignIn,
+  isGitHubSignInLeft,
   isPendingGitHubReconnect,
   loadPendingGitHubBindChallenge,
   recoverPendingGitHubBindChallenge,
@@ -457,6 +458,12 @@ export default function BuzzOnboarding() {
     } catch (error) {
       const cancelled=error instanceof OidcBindError && ['browser_canceled','github_denied','oidc_denied'].includes(error.code);
       void funnelCallback(cancelled?'cancelled':'error',cancelled?undefined:error instanceof OidcBindError && error.code==='offline'?'offline':'unknown');
+      // Leaving the GitHub page is not a failure: free the buttons without a notice.
+      if (isGitHubSignInLeft(error)) {
+        setStatus('idle');
+        void cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
+        return;
+      }
       await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
       const next = noticeForAuthError(error);
       setStatus(next.status);

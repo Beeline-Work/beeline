@@ -334,6 +334,33 @@ describe('GitHub callback delivery into onboarding', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('Reproduction gh3: leaving the GitHub page frees both buttons within 2 s without a notice', async () => {
+    vi.useFakeTimers();
+    browser.open.mockResolvedValue({ type: 'dismiss' });
+    network.fetch.mockImplementation(async (url: string) => new Response('{}', {
+      status: url.endsWith('/completion') ? 202 : 200,
+    }));
+    try {
+      const tree = await render();
+      const button = (testID: string) => tree.root.find((node: any) =>
+        node.type === 'Button' && node.props.testID === testID);
+      let press!: Promise<void>;
+      await act(async () => { press = button('onboarding-github-sign-in').props.onPress(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); await press; });
+      expect(noticeText(tree)).not.toContain('Sign-in did not finish');
+      expect(noticeText(tree)).not.toContain('Sign-in expired');
+      for (const testID of ['onboarding-github-sign-in', 'onboarding-google-sign-in']) {
+        expect(button(testID).props.disabled).toBe(false);
+        expect(button(testID).props.loading).toBe(false);
+      }
+      expect(button('onboarding-github-sign-in').props.label).toBe('Continue with GitHub');
+      expect(network.fetch).toHaveBeenCalledWith(
+        'https://server.usebeeline.app/auth/github/completion/cancel',
+        expect.anything(),
+      );
+    } finally { vi.useRealTimers(); }
+  });
+
   it('opens monolith sign-in on server.usebeeline.app and exchanges its callback there', async () => {
     phoneOperation.mockImplementation(async (name: string) =>
       name === 'getManagedIdentity'

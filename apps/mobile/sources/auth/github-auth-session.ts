@@ -36,6 +36,13 @@ const GITHUB_OFFLINE_GIVE_UP_MS = 10_000;
 /** How long the server may still report pending after the browser closed before it counts as a cancel. */
 const GITHUB_CLOSED_PENDING_MS = 1_500;
 
+const leftGitHubSignIns = new WeakSet<Error>();
+
+/** True when the person left the GitHub page before finishing; sign-in should end without a notice. */
+export function isGitHubSignInLeft(error: unknown): boolean {
+  return error instanceof Error && leftGitHubSignIns.has(error);
+}
+
 interface PendingGitHubSignInSession {
   state: string;
   purpose: 'signin' | 'reconnect';
@@ -629,8 +636,11 @@ export async function runResilientGitHubSignInSession({
     // The browser closed without a callback and the server still has no
     // completion: the person left GitHub. Free the sign-in buttons, as Google does.
     if (serverPending && browserClosedAt !== null && Date.now() - browserClosedAt >= closedPendingMs) {
-      await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-      throw new OidcBindError('browser_canceled', 'GitHub sign-in was canceled');
+      // Revoke in the background so the buttons free without waiting on the network.
+      void cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+      const left = new OidcBindError('browser_canceled', 'GitHub sign-in was canceled');
+      leftGitHubSignIns.add(left);
+      throw left;
     }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;

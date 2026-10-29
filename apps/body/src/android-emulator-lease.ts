@@ -136,7 +136,7 @@ export interface SpawnedLeasedEmulator {
 export async function spawnLeasedEmulator(
   args: string[],
   env: NodeJS.ProcessEnv,
-  options: { detached?: boolean; logPath?: string } = {},
+  options: { detached?: boolean; logPath?: string; leaseAdbServer?: boolean } = {},
 ): Promise<SpawnedLeasedEmulator | { exitCode: number }> {
   const leaseRoot = env.BEELINE_ANDROID_LEASE_ROOT;
   const privateRoot = env.BEELINE_ANDROID_INSTANCE_ROOT;
@@ -166,6 +166,11 @@ export async function spawnLeasedEmulator(
     return { exitCode: 1 };
   }
   const lease = await leaseEmulator(leaseRoot, privateRoot);
+  if (options.leaseAdbServer) {
+    env = { ...env, ANDROID_ADB_SERVER_PORT: String(lease.port + 2),
+      ANDROID_SERIAL: lease.serial, BEELINE_ANDROID_EMULATOR_PORT: String(lease.port), ADB_EMU: '0' };
+    delete env.ADB_SERVER_SOCKET;
+  }
   let child: ChildProcess | undefined;
   try {
     if (env.ANDROID_EMULATOR_HOME)

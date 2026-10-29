@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,7 @@ import {
   cornerEmulatorHostFromEnv,
   cornerEmulatorSocketName,
   listenCornerEmulator,
+  prepareCornerAdb,
   reapKeptCornerEmulators,
   stopKeptCornerEmulator,
   type CornerEmulatorHost,
@@ -228,6 +229,37 @@ describe('corner emulator lifetime', () => {
     expect(processAlive(kept.pid)).toBe(true);
     expect(existsSync(marker)).toBe(false);
     expect(kept.leaseRoot).toBe(env.BEELINE_ANDROID_LEASE_ROOT);
-    expect(kept.adbServerPort).toBe('6799');
+    expect(kept.adbServerPort).toBe(String(kept.port + 2));
   }, 30_000);
+});
+
+it('CORNER-ADB-1: resolves a lease booted during the turn and restores it for another agent', async () => {
+  const { supervisor, socketPath, env, host } = await layout('adb');
+  const adb = join(host.androidHome, 'platform-tools', 'adb');
+  await mkdir(join(host.androidHome, 'platform-tools'), { recursive: true });
+  // The fake adb exposes the exact environment delivered to the SDK binary.
+  await writeFile(adb, '#!/usr/bin/env node\nconsole.log(JSON.stringify({serial:process.env.ANDROID_SERIAL,port:process.env.ANDROID_ADB_SERVER_PORT,socket:process.env.ADB_SERVER_SOCKET}));\n', {mode:0o755});
+  const first = { ...env, PATH: process.env.PATH!, ANDROID_ADB_SERVER_PORT: '6799' } as Record<string,string>;
+  await prepareCornerAdb(supervisor, 'corner-keep', first);
+  // Boot with no platform-tools installed so this lifetime fixture needs no Android guest.
+  await rm(adb);
+  await listenCornerEmulator(socketPath, undefined, host);
+  await turn(socketPath, 'corner-keep', { ANDROID_ADB_SERVER_PORT: '6799' });
+  const kept = await record(env, 'corner-keep');
+  await writeFile(adb, '#!/usr/bin/env node\nconsole.log(JSON.stringify({serial:process.env.ANDROID_SERIAL,port:process.env.ANDROID_ADB_SERVER_PORT,socket:process.env.ADB_SERVER_SOCKET}));\n', {mode:0o755});
+  const invoke = (wiring: Record<string,string>) => JSON.parse(execFileSync(join(supervisor,'corner-adb-bin','adb'), ['devices'], {
+    env: {...wiring, ADB_SERVER_SOCKET:'tcp:localhost:5037'}, encoding:'utf8',
+  }));
+  expect(invoke(first)).toEqual({serial:kept.serial,port:kept.adbServerPort});
+  // A retained lease from an older helper keeps its server but loses its TCP alias.
+  kept.adbServerPort = '6799';
+  await writeFile(join(env.BEELINE_ANDROID_LEASE_ROOT!, 'kept', 'corner-keep.json'), JSON.stringify(kept));
+  const calls = join(supervisor, 'adb-calls');
+  await writeFile(adb, `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(calls)},JSON.stringify(process.argv.slice(2))+'\\n');\nconsole.log(JSON.stringify({serial:process.env.ANDROID_SERIAL,port:process.env.ANDROID_ADB_SERVER_PORT,socket:process.env.ADB_SERVER_SOCKET}));\n`, {mode:0o755});
+  const next = {...first, ANDROID_ADB_SERVER_PORT:'6899'};
+  await prepareCornerAdb(supervisor,'corner-keep',next);
+  expect(await readFile(calls,'utf8')).toContain(JSON.stringify(['disconnect',`127.0.0.1:${kept.port+1}`]));
+  expect(next.ANDROID_SERIAL).toBe(kept.serial);
+  expect(next.ANDROID_ADB_SERVER_PORT).toBe(kept.adbServerPort);
+  expect(invoke(next)).toEqual(invoke(first));
 });

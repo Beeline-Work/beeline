@@ -156,13 +156,18 @@ function scan(files: Map<string, string>): Entry[] {
         (ts.isBindingElement(declaration) && declaration.propertyName?.getText() === name),
     );
   };
+  const queryResults = new Map<ts.Node, boolean>();
   const queryResult = (node: ts.Node) => {
+    const cached = queryResults.get(node);
+    if (cached !== undefined) return cached;
     const target = ts.isCallExpression(node)
       ? node.expression
       : ts.isTaggedTemplateExpression(node)
         ? node.tag
         : undefined;
-    return !!target && ['query', 'sql', 'execute'].some((name) => targets(target, name));
+    const result = !!target && ['query', 'sql', 'execute'].some((name) => targets(target, name));
+    queryResults.set(node, result);
+    return result;
   };
   const templatePrint = (node: ts.Node) => {
     const transformed = ts.transform(node, [
@@ -351,7 +356,7 @@ function scan(files: Map<string, string>): Entry[] {
   };
   // A query reached through returned phrase data can supply wording. Track
   // SELECT, VALUES, SET and RETURNING expressions, excluding access predicates.
-  const queryWording = (node: ts.Node): { literals: string[]; parts: ts.Node[] } => {
+  const queryWordingUncached = (node: ts.Node): { literals: string[]; parts: ts.Node[] } => {
     const expressions: ts.Node[] = [];
     const render = (part: ts.Node, seen = new Set<ts.Node>()): string => {
       if (seen.has(part)) return '';
@@ -419,6 +424,12 @@ function scan(files: Map<string, string>): Entry[] {
       if (value) parts.push(value);
     }
     return { literals, parts };
+  };
+  const queryWords = new Map<ts.Node, { literals: string[]; parts: ts.Node[] }>();
+  const queryWording = (node: ts.Node) => {
+    let result = queryWords.get(node);
+    if (!result) queryWords.set(node, result = queryWordingUncached(node));
+    return result;
   };
   const systemPresentation = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
     if (seen.has(node)) return false;
@@ -754,6 +765,17 @@ function scan(files: Map<string, string>): Entry[] {
           return [ts.isPropertyAssignment(property) ? property.initializer : name];
         })
       : [node];
+  // A binding's container carries every possible selected value. Keep defaults
+  // at every nesting level as additional origins, including rest bindings.
+  const bindingOrigin = (binding: ts.BindingElement) => {
+    const defaults: ts.Expression[] = [];
+    let root: ts.Node = binding;
+    while (ts.isBindingElement(root) || ts.isBindingPattern(root)) {
+      if (ts.isBindingElement(root) && root.initializer) defaults.push(root.initializer);
+      root = root.parent;
+    }
+    return { root, defaults };
+  };
   const forward = (node: ts.Node, parts: readonly ts.Node[]) => {
     const owner = owners.get(node);
     if (!owner || !ts.isFunctionLike(owner)) return false;
@@ -764,6 +786,12 @@ function scan(files: Map<string, string>): Entry[] {
     const inspect = (part: ts.Node) => {
       if (seen.has(part)) return;
       seen.add(part);
+      if (ts.isTypeNode(part)) return;
+      // Query parameters select rows; only projected values supply phrases.
+      if (queryResult(part)) {
+        queryWording(part).parts.forEach(inspect);
+        return;
+      }
       if (ts.isIdentifier(part))
         for (const declaration of declarations(part)) {
           const index = parameters.findIndex((parameter) => parameter === declaration);
@@ -841,11 +869,27 @@ function scan(files: Map<string, string>): Entry[] {
       );
     });
   };
+  // A conversation write can also carry cards, but an explicit ordinary-message
+  // call cannot introduce System wording through its text/receipt parameters.
+  const ordinaryReply = (call: ts.CallExpression) =>
+    (call.arguments[0] && ts.isStringLiteralLike(call.arguments[0]) &&
+      /^(sendRoomMessage|sendRoomReply)$/.test(call.arguments[0].text) &&
+      callableDeclarations(call.expression).some((declaration) =>
+        ts.isMethodDeclaration(declaration) && declaration.name.getText() === 'execute' &&
+        declaration.getSourceFile().fileName === resolve(server, 'src/phone-service.ts'))) ||
+    (callableDeclarations(call.expression).some((declaration) =>
+      ts.isMethodDeclaration(declaration) && declaration.name.getText() === 'postRoomMessage' &&
+      declaration.getSourceFile().fileName === resolve(server, 'src/daemon-service.ts')) &&
+    call.arguments[0] && ts.isObjectLiteralExpression(call.arguments[0]) &&
+    call.arguments[0].properties.some((property) => ts.isPropertyAssignment(property) &&
+      property.name.getText() === 'presentation' && ts.isStringLiteralLike(property.initializer) &&
+      property.initializer.text === 'message') &&
+    !call.arguments[0].properties.some(ts.isSpreadAssignment));
   let changed = true;
   while (changed) {
     changed = false;
     for (const call of calls) {
-      if (privateReport(call)) continue;
+      if (privateReport(call) || ordinaryReply(call)) continue;
       const indices = new Set(
         callableDeclarations(call.expression).flatMap((declaration) => [
           ...(wrappers.get(functions.get(declaration) ?? declaration) ?? []),
@@ -865,6 +909,81 @@ function scan(files: Map<string, string>): Entry[] {
   }
 
   const entries = new Map<string, Entry>();
+  // Parameters can carry local phrase arrays through several forwarding helpers.
+  // Resolve actual callers rather than treating every typed array as opaque data.
+  const parameterInputs = new Map<ts.ParameterDeclaration, ts.Node[]>();
+  for (const call of calls) {
+    const args = invocationArguments(call);
+    for (const target of callableDeclarations(call.expression)) {
+      const declaration = functions.get(target) ?? target;
+      if (!ts.isFunctionLike(declaration)) continue;
+      declaration.parameters.forEach((parameter, index) => {
+        const inputs = parameter.dotDotDotToken ? args.slice(index) : args.slice(index, index + 1);
+        parameterInputs.set(parameter, [...(parameterInputs.get(parameter) ?? []), ...inputs]);
+      });
+    }
+  }
+  // Follow phrase arrays through aliases, spreads and helper returns. A return
+  // annotation alone cannot turn locally supplied wording into opaque data.
+  const literalArray = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
+    if (seen.has(node)) return false;
+    seen.add(node);
+    if (ts.isArrayLiteralExpression(node))
+      return node.elements.some((element) => !ts.isSpreadElement(element) || literalArray(element.expression, seen));
+    if (ts.isCallExpression(node)) {
+      for (const declaration of callableDeclarations(node.expression)) {
+        if (!ts.isFunctionLike(declaration) || !('body' in declaration) || !declaration.body) continue;
+        let found = false;
+        const returned = (part: ts.Node) => {
+          if (ts.isReturnStatement(part) && part.expression) found ||= literalArray(part.expression, seen);
+          else if (!ts.isFunctionLike(part)) ts.forEachChild(part, returned);
+        };
+        if (ts.isBlock(declaration.body)) ts.forEachChild(declaration.body, returned);
+        else found = literalArray(declaration.body, seen);
+        if (found) return true;
+      }
+      // Request arguments select external data; they are not returned arrays.
+      // Chained array operations still retain the origin of their receiver.
+      return ts.isPropertyAccessExpression(node.expression) && literalArray(node.expression.expression, seen);
+    }
+    if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
+      for (const declaration of declarations(node)) {
+        // A destructured projection is not proven opaque by its container's
+        // type. Retain wording dependencies even when its key/origin is unknown.
+        // This covers object/array, renamed, nested, default and rest bindings.
+        if (ts.isBindingElement(declaration)) return true;
+        if (ts.isParameter(declaration) &&
+          [...(parameterInputs.get(declaration) ?? []), ...(declaration.initializer ? [declaration.initializer] : [])]
+            .some((input) => literalArray(input, seen))) return true;
+        if ((ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) &&
+          declaration.initializer && literalArray(declaration.initializer, seen)) return true;
+        if (ts.isVariableDeclaration(declaration) && symbol(declaration.name) &&
+          (mutations.get(symbol(declaration.name)!) ?? []).some((value) => literalArray(value, seen))) return true;
+      }
+    }
+    return !!ts.forEachChild(node, (part) => literalArray(part, seen) || undefined);
+  };
+  const arrayData = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
+    if (seen.has(node)) return false;
+    seen.add(node);
+    if (ts.isArrayLiteralExpression(node) || checker.isArrayType(checker.getTypeAtLocation(node))) return true;
+    if (ts.isAwaitExpression(node) || ts.isParenthesizedExpression(node)) return arrayData(node.expression, seen);
+    if (ts.isCallExpression(node))
+      return callableDeclarations(node.expression).some((declaration) => {
+        if (!ts.isFunctionLike(declaration) || !declaration.type) return false;
+        const type = declaration.type;
+        const arrayType = (type: ts.TypeNode): boolean => ts.isArrayTypeNode(type) ||
+          ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword && arrayType(type.type);
+        return arrayType(type) || ts.isTypeReferenceNode(type) &&
+          type.typeName.getText() === 'Promise' && !!type.typeArguments?.some(arrayType);
+      });
+    return declarations(node).some((declaration) => {
+      if (!ts.isVariableDeclaration(declaration)) return false;
+      const values = [...(declaration.initializer ? [declaration.initializer] : []),
+        ...(symbol(declaration.name) ? mutations.get(symbol(declaration.name)!) ?? [] : [])];
+      return values.length > 0 && values.every((value) => arrayData(value, new Set(seen)));
+    });
+  };
   for (const [node, kind] of direct) {
     const file = relative(server, node.getSourceFile().fileName).replaceAll('\\', '/');
     const template = writes.get(node)?.template ?? templatePrint(node);
@@ -886,6 +1005,29 @@ function scan(files: Map<string, string>): Entry[] {
       if (active.has(part)) return;
       active.add(part);
       try {
+        if (ts.isTypeNode(part)) return;
+        // Provider responses are data. Authentication and request construction
+        // do not supply the prose wrapped around those responses at the sink.
+        if (ts.isCallExpression(part) && ts.isPropertyAccessExpression(part.expression) &&
+          part.getSourceFile().fileName === resolve(server, 'src/github-operations.ts') &&
+          part.expression.expression.getText() === 'this.app' &&
+          /^(issuesRequest|readCommitCheckRollup)$/.test(part.expression.name.text)) {
+          literals.push(`provider:${(part.expression as ts.PropertyAccessExpression).name.text}`);
+          return;
+        }
+        if (ts.isParenthesizedExpression(part) || ts.isAsExpression(part) || ts.isTypeAssertionExpression(part)) {
+          collect(part.expression);
+          return;
+        }
+        // Selection of opaque row/provider data does not supply fixed words.
+        // Literal arrays retain callbacks because selection changes their wording.
+        if (ts.isCallExpression(part) && ts.isPropertyAccessExpression(part.expression) &&
+          /^(find|filter|sort)$/.test(part.expression.name.text) &&
+          arrayData(part.expression.expression) && !literalArray(part.expression.expression)) {
+          literals.push(`.${part.expression.name.text}()`, `.${part.expression.name.text}`);
+          collect(part.expression.expression);
+          return;
+        }
         // This server helper returns only the sign-in card's logo/domain metadata.
         // Its network lookup and provider metadata cannot supply displayed wording.
         if (ts.isCallExpression(part) && callableDeclarations(part.expression).some(
@@ -939,10 +1081,15 @@ function scan(files: Map<string, string>): Entry[] {
           literals.push(`${ts.SyntaxKind[part.kind]}:${part.text}`);
         if (part.kind === ts.SyntaxKind.TrueKeyword || part.kind === ts.SyntaxKind.FalseKeyword || part.kind === ts.SyntaxKind.NullKeyword)
           literals.push(ts.SyntaxKind[part.kind]);
-        if (ts.isPropertyAccessExpression(part)) literals.push(`.${part.name.text}`);
+        const localCallable = (target: ts.Node) => callableDeclarations(target).some((declaration) =>
+          (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration) ||
+            ts.isArrowFunction(declaration) || ts.isFunctionExpression(declaration)) && !!declaration.body);
+        if (ts.isPropertyAccessExpression(part))
+          literals.push(localCallable(part) ? '.$local' : `.${part.name.text}`);
         if (ts.isCallExpression(part)) {
           const callee = part.expression;
-          if (ts.isIdentifier(callee)) literals.push(`${callee.text}()`);
+          if (localCallable(callee)) literals.push('$local()');
+          else if (ts.isIdentifier(callee)) literals.push(`${callee.text}()`);
           else if (ts.isPropertyAccessExpression(callee)) literals.push(`.${callee.name.text}()`);
         }
         if (ts.isStringLiteralLike(part)) literals.push(JSON.stringify(part.text));
@@ -964,9 +1111,10 @@ function scan(files: Map<string, string>): Entry[] {
                 : []
               ).forEach(collect);
             if (ts.isBindingElement(declaration)) {
-              let parent: ts.Node = declaration;
-              while (parent.parent && !ts.isVariableDeclaration(parent)) parent = parent.parent;
-              if (ts.isVariableDeclaration(parent) && parent.initializer) collect(parent.initializer);
+              const { root, defaults } = bindingOrigin(declaration);
+              defaults.forEach(collect);
+              if ((ts.isVariableDeclaration(root) || ts.isParameter(root)) && root.initializer)
+                collect(root.initializer);
             }
             if (ts.isPropertyAssignment(declaration)) collect(declaration.initializer);
             // Formatting helpers carry literal phrases in their bodies, including imported helpers.
@@ -1024,21 +1172,24 @@ function scan(files: Map<string, string>): Entry[] {
 }
 
 function compare(current: Entry[], locked: Entry[]): { violations: string[]; removed: string[] } {
-  const baseline = new Map(locked.map((entry) => [entry.id, entry]));
+  // Location is review context. Moving a producer cannot change its ordered
+  // wording fingerprint or the number of producers with that fingerprint.
+  const signature = (entry: Entry) => `${entry.kind}:${entry.id.split(':').at(-1)}`;
+  const inventory = (entries: Entry[]) => {
+    const result = new Map<string, number>();
+    for (const entry of entries)
+      result.set(signature(entry), (result.get(signature(entry)) ?? 0) + entry.occurrences);
+    return result;
+  };
+  const baseline = inventory(locked);
+  const live = inventory(current);
   const violations = current
-    .filter((entry) => {
-      const prior = baseline.get(entry.id);
-      return (
-        !prior ||
-        JSON.stringify(entry.literals) !== JSON.stringify(prior.literals) ||
-        entry.occurrences !== prior.occurrences
-      );
-    })
+    .filter((entry) => live.get(signature(entry)) !== baseline.get(signature(entry)))
     .map((entry) => `${entry.file}: ${entry.id}`);
-  const live = new Set(current.map((entry) => entry.id));
   return {
     violations,
-    removed: locked.filter((entry) => !live.has(entry.id)).map((entry) => entry.id),
+    removed: locked.filter((entry) => live.get(signature(entry)) !== baseline.get(signature(entry)))
+      .map((entry) => entry.id),
   };
 }
 
@@ -1769,3 +1920,146 @@ it('freeze: accepts real shared command depth metadata', () => {
   changed.set(path,base.get(path)!.replace(before,'? parent.agent_depth : nextAgentDepth(parent.agent_depth) : input.initialAgentDepth ?? 0'));
   expect(() => enforce(scan(changed),scan(base))).not.toThrow();
 },60_000);
+
+
+// Reproduction SYSTEM-REFACTOR-2: reduced replays of the four actual failed CI heads.
+const refactors = JSON.parse(readFileSync(resolve(server, 'test-fixtures/system-wording-refactors.json'), 'utf8')) as {
+  pr: number; run: string; head: string; file: string; mode: string; name?: string; before: string; after: string;
+}[];
+it.each(refactors)('SYSTEM-REFACTOR-2: PR $pr / run $run preserves visible wording', (refactor) => {
+  const base = sources(resolve(server, 'src'));
+  const path = resolve(server, '../..', refactor.file);
+  const source = base.get(path)!;
+  const replay = (version: string) => {
+    const files = new Map(base);
+    if (refactor.mode === 'file') files.set(path, version);
+    else if (refactor.mode === 'replace') {
+      expect(source).toContain(refactor.before);
+      files.set(path, source.replace(refactor.before, version));
+    } else {
+      const tree = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+      let target: ts.MethodDeclaration | undefined;
+      const visit = (node: ts.Node) => {
+        if (ts.isMethodDeclaration(node) && node.name.getText(tree) === (refactor.name ?? 'execute')) target = node;
+        ts.forEachChild(node, visit);
+      };
+      visit(tree);
+      expect(target).toBeDefined();
+      if (refactor.mode === 'method')
+        files.set(path, source.slice(0,target!.getStart(tree)) + version + source.slice(target!.end));
+      else {
+        const position = target!.body!.getStart(tree) + 1;
+        files.set(path, source.slice(0,position) + '\n' + version + '\n' + source.slice(position));
+      }
+    }
+    return files;
+  };
+  const before = scan(replay(refactor.before));
+  const after = scan(replay(refactor.after));
+  const result = compare(after, before);
+  console.info('SYSTEM-REFACTOR-2', refactor.pr, JSON.stringify(result));
+  expect(() => enforce(after,before)).not.toThrow();
+},60_000);
+
+it('SYSTEM-REFACTOR-2: moves strings and producers, renames locals, and reformats without changing words', () => {
+  const base = fixture("const greeting='hello'; function formatName(person:any) { return person.name; } line(db,{verb:`${greeting} ${formatName(owner)}`});");
+  const moved = new Map([...base].map(([path,text]) => [path.endsWith('producer.ts') ? path.replace('producer.ts','moved.ts') : path,
+    text.replaceAll('existing','renamedProducer').replaceAll('greeting','salutation').replaceAll('formatName','renderName').replaceAll('person','recipient').replaceAll('line(db,','line( db ,')]));
+  expect(() => enforce(scan(moved),scan(base))).not.toThrow();
+  const changed = new Map([...moved].map(([path,text])=>[path,text.replace("'hello'","'goodbye'")]));
+  expect(() => enforce(scan(changed),scan(base))).toThrow(failure);
+});
+
+it('SYSTEM-REFACTOR-2: keeps SQL projected parameters locked across forwarding helpers', () => {
+  const base=fixture("function notice(word:string) { line(db,{verb:db.query('SELECT $1 AS phrase',[word]).rows[0].phrase}); } notice('hello');");
+  const changed=new Map([...base].map(([path,text])=>[path,text.replace("notice('hello')","notice('goodbye')")]));
+  expect(() => enforce(scan(changed),scan(base))).toThrow(failure);
+});
+
+it('SYSTEM-REFACTOR-2: excludes explicit conversation replies while retaining card wording', () => {
+  const path = resolve(server, 'src/daemon-service.ts');
+  const files = new Map([
+    [resolve(server,'src/system-line.ts'),'export function systemLine(db:unknown,input:unknown) {}'],
+    [path, `import {systemLine} from './system-line.js';
+      class DaemonService {
+        postRoomMessage(input:any) { systemLine(db,{verb:input.text}); }
+        execute() { this.postRoomMessage({presentation:'message',text:'ordinary reply'}); }
+      }`],
+  ]);
+  const ordinary = new Map(files);
+  ordinary.set(path,files.get(path)!.replace('ordinary reply','another ordinary reply'));
+  expect(() => enforce(scan(ordinary),scan(files))).not.toThrow();
+  const card = new Map(files);
+  card.set(path,files.get(path)!.replace("presentation:'message'","presentation:'card'"));
+  const changed = new Map(card);
+  changed.set(path,card.get(path)!.replace('ordinary reply','changed card wording'));
+  expect(() => enforce(scan(changed),scan(card))).toThrow(failure);
+});
+
+it('SYSTEM-REFACTOR-2: keeps array values and selection method identity locked', () => {
+  const base=fixture("const words=['hello','world']; line(db,{verb:words.find(word=>word==='hello')});");
+  for (const text of ["const words=['goodbye','world']; line(db,{verb:words.find(word=>word==='hello')});",
+    "const words=['hello','world']; line(db,{verb:words.filter(word=>word==='hello')});"]) {
+    const changed=fixture(text);
+    expect(() => enforce(scan(changed),scan(base))).toThrow(failure);
+  }
+});
+
+it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks selecting literal phrase data', (method) => {
+  const original = method === 'sort' ? "(a,b)=>a==='hello'?-1:1" : "word=>word==='hello'";
+  const changed = original.replace('hello', 'world');
+  for (const setup of [
+    "const words=['hello','world'];",
+    "const phrases=['hello','world']; const words=phrases;",
+    "const phrases=['hello','world']; const words=[...phrases];",
+    "function phrases(): string[] { return ['hello','world']; } const words=phrases();",
+  ]) {
+    const source = `${setup} line(db,{verb:words.${method}(${original})});`;
+    expect(() => enforce(scan(fixture(source.replace(original, changed))), scan(fixture(source)))).toThrow(failure);
+  }
+});
+
+it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks on helper-forwarded phrase arrays', (method) => {
+  const original = method === 'sort' ? "(a,b)=>a==='hello'?-1:1" : "word=>word==='hello'";
+  const changed = original.replace('hello', 'world');
+  const source = `
+    function forward(words: string[]): string[] { return words; }
+    function select(words: string[]) { return forward(words).${method}(${original}); }
+    line(db,{verb:select(['hello','world'])});
+  `;
+  expect(() => enforce(scan(fixture(source.replace(original, changed))), scan(fixture(source)))).toThrow(failure);
+});
+
+it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks through destructured bindings', (method) => {
+  const original = method === 'sort' ? "(a,b)=>a==='hello'?-1:1" : "word=>word==='hello'";
+  const setups = [
+    "function forward({words}:{words:string[]}):string[] { return words; } const selected=forward({words});",
+    "function forward({words:w}:{words:string[]}):string[] { return w; } const selected=forward({words});",
+    "function forward({nested:{words}}:any):string[] { return words; } const selected=forward({nested:{words}});",
+    "function forward({words=['hello','world']}={}):string[] { return words; } const selected=forward();",
+    "function forward([words]:string[][]):string[] { return words; } const selected=forward([words]);",
+    "function forward([...words]:string[]):string[] { return words; } const selected=forward(words);",
+    "function forward({ignored,...rest}:any):string[] { return rest.words; } const selected=forward({words});",
+    "const {nested:{words:selected}}={nested:{words}};",
+    "const [selected]=[words];",
+    "const [...selected]=words;",
+    "const {words:selected=['hello','world']}={};",
+    "const {[unknownKey]:selected}=unresolvedSource;",
+  ];
+  for (const setup of setups) {
+    const source = `function select(words:string[]) { ${setup} return selected.${method}(${original}); }
+      line(db,{verb:select(['hello','world'])});`;
+    const before = scan(fixture(source));
+    const after = scan(fixture(source.replace(original, original.replace('hello', 'world'))));
+    expect(compare(after, before).violations, setup).not.toEqual([]);
+    expect(() => enforce(after, before), setup).toThrow(failure);
+  }
+});
+
+it('SYSTEM-REFACTOR-2: fails closed for an unresolvable destructured array origin', () => {
+  const source = "function forward({[unknownKey]:words}:any):string[] { return words; } line(db,{verb:forward(unresolvedSource).find(word=>word==='hello')});";
+  const before = scan(fixture(source));
+  const after = scan(fixture(source.replace("==='hello'", "==='world'")));
+  expect(compare(after, before).violations).not.toEqual([]);
+  expect(() => enforce(after, before)).toThrow(failure);
+});

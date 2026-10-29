@@ -70,10 +70,13 @@ describe('Android emulator instance leases', () => {
     roots.push(root);
     const shared = join(root, 'shared');
     await mkdir(shared);
+    const available = await leaseEmulator(shared, join(root, 'private'));
+    const expectedPort = available.port;
+    await available.release();
     for (let port = 5554; port <= 5584; port += 4)
       await writeFile(join(shared, `port-${port}.lease`), `${process.pid}:wrong-start:old`);
     const lease = await leaseEmulator(shared, join(root, 'private'));
-    expect(lease.port).toBe(5554);
+    expect(lease.port).toBe(expectedPort);
     await lease.release();
   });
 

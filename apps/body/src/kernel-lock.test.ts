@@ -41,13 +41,22 @@ it('serializes installers and releases ownership when the owner process dies', a
 it.runIf(process.platform === 'linux')(
   'never waits on an unrelated HTTP fixture that owns the former hashed port',
   async () => {
-    const key = `beeline-collision:${randomUUID()}`;
-    const port = 20_000 + (createHash('sha256').update(key).digest().readUInt32BE(0) % 40_000);
     const server = createServer((_request, response) => response.end('unrelated fixture'));
-    await new Promise<void>((done, reject) => {
-      server.once('error', reject);
-      server.listen(port, '127.0.0.1', done);
-    });
+    // A busy runner can already own this hashed port. Only that collision gets another key.
+    let key = '';
+    for (let attempt = 1; attempt <= 10; attempt += 1) {
+      key = `beeline-collision:${randomUUID()}`;
+      const port = 20_000 + (createHash('sha256').update(key).digest().readUInt32BE(0) % 40_000);
+      try {
+        await new Promise<void>((done, reject) => {
+          server.once('error', reject);
+          server.listen(port, '127.0.0.1', done);
+        });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || attempt === 10) throw error;
+      }
+    }
     try {
       await expect(withKernelLock(key, async () => 'owned', 1000)).resolves.toBe('owned');
     } finally {

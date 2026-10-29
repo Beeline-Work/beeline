@@ -25,7 +25,7 @@ checking the helper's PID inside the turn's private PID namespace.
 Run the real installed SDK proof after `npm run build -w @beeline/body`:
 
 ```sh
-node scripts/prove-corner-adb.mjs
+npm run prove:corner-adb
 ```
 
 It boots two guests with independent throwaway corner roots, keeps both running,

@@ -277,6 +277,13 @@ connectivity or left it open. Provider denial is recorded separately from an
 explicit app cancel. A successful exchange means the server issued its successful
 response; receipt by the device cannot be proven by the server.
 
+The shared `TokenAuth` session-issuance path records `ticket_exchanged` for both
+phone HTTP exchanges and Rooms MCP browser callbacks. MCP sign-in does not call
+the phone exchange endpoint. Do not interpret a missing phone endpoint request
+as an unredeemed ticket, or compare successes predating this ledger with its
+later attempts. Investigation and device-proof limits: [October 29 sign-in
+investigation](../../docs/signin-oct29-investigation.md).
+
 ```sql
 WITH history AS (
   SELECT e.*, row_number() OVER (

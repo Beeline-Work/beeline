@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
+import { recordSigninAttempt } from './signin-attempts.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -116,6 +117,18 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
     return { client, token: tokens.access_token, grant, member };
   }
+  it('R-MCP-SIGNIN-LEDGER: records an exchanged ticket when browser sign-in reaches MCP consent', async () => {
+    const flowHash = tokenHash(opaque());
+    const at = new Date(), expiresAt = new Date(at.getTime() + 120_000);
+    await recordSigninAttempt(db, { stage: 'started', provider: 'google', flowHash, at, expiresAt });
+    await recordSigninAttempt(db, { stage: 'provider_returned', flowHash, at });
+    await recordSigninAttempt(db, { stage: 'ticket_issued', flowHash, ticketHash: tokenHash('local-demo-ticket'), at, expiresAt });
+    await authorize();
+    const rows = await db.query(`SELECT stage FROM signin_attempt_events WHERE attempt_id=(
+      SELECT attempt_id FROM signin_attempt_correlations WHERE flow_hash=$1)`, [flowHash]);
+    expect(rows.rows.map(row => row.stage).sort())
+      .toEqual(['provider_returned', 'started', 'ticket_exchanged', 'ticket_issued']);
+  });
   it('rotates refresh tokens and revokes their family on reuse', async () => {
     const grant = await authorize();
     const initial = await (await exchange(grant)).json() as { access_token: string; refresh_token: string };

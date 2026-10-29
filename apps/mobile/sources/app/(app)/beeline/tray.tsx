@@ -40,7 +40,7 @@ import {
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -684,7 +684,7 @@ export default function TrayScreen() {
           {!desktop ? (
             <InlineRow style={styles.openRow}>
               <Text style={styles.open}>OPEN</Text>
-              <ChevronGlyph color={styles.open.color} size={CHEVRON_ROW_SIZE} />
+              <ChevronGlyph color={styles.open.color} size={styles.open.lineHeight} />
             </InlineRow>
           ) : null}
           {desktop && bookmark.available ? (

@@ -334,7 +334,7 @@ function isFrameMessage(data: WebSocket.RawData): boolean {
 /**
  * Page layout shared by both viewers. The page opens filling the frame
  * (cover) and centred across; zoom runs from the whole page in view
- * (contain) to 4x, and an axis that does not fill the frame stays centred.
+ * (contain) to 4x. Horizontal space stays centred; the page stays at the top.
  * A frame resize keeps the page point at the middle of the frame in place.
  */
 export const VIEWER_LAYOUT_SCRIPT = `function viewerLayout(state,viewWidth,viewHeight,remoteWidth,remoteHeight){
@@ -346,7 +346,7 @@ export const VIEWER_LAYOUT_SCRIPT = `function viewerLayout(state,viewWidth,viewH
   else if(state.viewWidth!==viewWidth||state.viewHeight!==viewHeight){
     left=viewWidth/2-(state.viewWidth/2-state.left)*scale/state.scale;top=state.top*scale/state.scale;}
   left=width<=viewWidth?(viewWidth-width)/2:Math.min(0,Math.max(viewWidth-width,left));
-  top=height<=viewHeight?(viewHeight-height)/2:Math.min(0,Math.max(viewHeight-height,top));
+  top=height<=viewHeight?0:Math.min(0,Math.max(viewHeight-height,top));
   return {fitted:true,zoom,minZoom,scale,width,height,left,top,viewWidth,viewHeight,remoteWidth,remoteHeight};}
 function viewerZoomAt(state,zoom,x,y){const next=Math.min(4,Math.max(state.minZoom??1,zoom)),ratio=next/state.zoom;
   return {...state,zoom:next,left:x-(x-state.left)*ratio,top:y-(y-state.top)*ratio};}`;
@@ -443,14 +443,18 @@ export async function serveComputerSession(
       body.beeline-embedded #bar{bottom:12px!important}
       #focus{width:42px;height:42px;margin:0!important;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
       #focus::before{content:'⌨';font-size:20px}
-      #beeline-paste{width:42px;height:42px;margin:0 0 0 8px;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
-      #beeline-paste::before{content:'📋';font-size:18px}
+      body.beeline-remote-login #bar{display:none!important}
       @media(pointer:fine){#bar{display:none!important}}
     </style>`;
     const bridge = `<script>
       const beelineScreen=document.getElementById('screen'),beelineCanvas=document.getElementById('canvas');
       const beelineQuery=new URLSearchParams(location.search),beelinePreview=beelineQuery.has('preview');
       if(beelineQuery.has('embedded'))document.body.classList.add('beeline-embedded');
+      // The shared page already reports navigation. The remote login window
+      // owns its own keyboard control; ordinary browser pages use ours.
+      socket.addEventListener('message',event=>{let message;try{message=JSON.parse(event.data);}catch{return;}
+        if(message.type!=='navigation'||typeof message.url!=='string')return;
+        try{const page=new URL(message.url);document.body.classList.toggle('beeline-remote-login',page.pathname.endsWith('/vnc.html'));}catch{}});
       if(beelinePreview||beelineQuery.has('warm'))document.getElementById('bar').style.display='none';
       let beelineInteractive=!beelineQuery.has('warm');
       function beelineMode(){if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'viewer-mode',interactive:beelineInteractive}));
@@ -519,14 +523,6 @@ export async function serveComputerSession(
       beelinePaste.addEventListener('paste',event=>{event.preventDefault();event.stopImmediatePropagation();
         const text=event.clipboardData?.getData('text/plain');beelineCanvas.focus();if(text)sendText(text);});
       beelinePaste.addEventListener('keyup',()=>beelineCanvas.focus());
-      // Phones have no paste shortcut: this button reads the clipboard after a tap.
-      const beelinePasteButton=document.createElement('button');beelinePasteButton.id='beeline-paste';beelinePasteButton.type='button';
-      beelinePasteButton.setAttribute('aria-label','Paste');document.getElementById('bar').append(beelinePasteButton);
-      beelinePasteButton.addEventListener('click',()=>{
-        if(window.ReactNativeWebView){window.ReactNativeWebView.postMessage(JSON.stringify({type:'computer-paste-request',id:'${id}'}));return;}
-        const keyboard=document.getElementById('keyboard');
-        if(!navigator.clipboard?.readText){keyboard.focus();return;}
-        navigator.clipboard.readText().then(text=>{if(text)sendText(text);else keyboard.focus();},()=>keyboard.focus());});
       addEventListener('message',event=>{if(event.source!==window||event.data?.type!=='viewer-paste'||event.data.id!=='${id}')return;
         if(typeof event.data.text==='string'&&event.data.text)sendText(event.data.text);});
       // Signal a decoded canvas paint, not merely the receipt of JPEG bytes.

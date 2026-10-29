@@ -3119,7 +3119,7 @@ describe('Room message variant components', () => {
         testID: 'connector-offer-offer-1-continue',
       });
       // The continue action names the service it signs in to, in words only.
-      expect(resume.props.label).toBe('Continue Trusty Squire sign-in');
+      expect(resume.props.label).toBe('Continue sign-in');
       act(() => resume.props.onPress());
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });

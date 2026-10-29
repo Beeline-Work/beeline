@@ -1,0 +1,1151 @@
+[
+  {
+    "name": "Shared destination buttons",
+    "file": "apps/mobile/sources/components/buzz/Button.tsx",
+    "section": "buttons",
+    "note": "Body labels keep their size and one-row fit; destination marks add a fixed gap. Inline and caller appearances are covered by the artifact and approval footers.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "buttons-before.png"
+      ],
+      [
+        "Main",
+        "buttons-after.png"
+      ],
+      [
+        "Fixed",
+        "buttons-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Shared close mark / close button",
+    "file": "apps/mobile/sources/components/buzz/CloseGlyph.tsx",
+    "section": "close",
+    "note": "Drawn replacement is smaller than some former font characters. Transcript title geometry stays intact; caller-specific control boxes are checked below.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "close-before.png"
+      ],
+      [
+        "Main",
+        "close-after.png"
+      ],
+      [
+        "Fixed",
+        "close-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Shared destination mark",
+    "file": "apps/mobile/sources/components/buzz/ExternalGlyph.tsx",
+    "section": "buttons",
+    "note": "Drawn mark stays in its fixed box beside the label.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "buttons-before.png"
+      ],
+      [
+        "Main",
+        "buttons-after.png"
+      ],
+      [
+        "Fixed",
+        "buttons-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ButtonRow destination forwarding",
+    "file": "apps/mobile/sources/components/buzz/ButtonRow.tsx",
+    "section": "repositoryChoice",
+    "note": "No new row styles. Choice-card action stack keeps the same layout.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "repositoryChoice-before.png"
+      ],
+      [
+        "Main",
+        "repositoryChoice-after.png"
+      ],
+      [
+        "Fixed",
+        "repositoryChoice-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ChoicePlate and repository choices",
+    "file": "apps/mobile/sources/app/(app)/beeline/chat/RepositoryOnboardingCard.tsx",
+    "section": "repositoryChoice",
+    "note": "Current and alternative plates keep their boxes, label sizes, spacing, and selected border. The check is deliberately replaced by selected-box treatment.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "repositoryChoice-before.png"
+      ],
+      [
+        "Main",
+        "repositoryChoice-after.png"
+      ],
+      [
+        "Fixed",
+        "repositoryChoice-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "TranscriptCard dismiss",
+    "file": "apps/mobile/sources/components/buzz/TranscriptCard.tsx",
+    "section": "close",
+    "note": "Header text fits; the drawn close changes the mark, not the card title size.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "close-before.png"
+      ],
+      [
+        "Main",
+        "close-after.png"
+      ],
+      [
+        "Fixed",
+        "close-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "TranscriptCard footer destinations",
+    "file": "apps/mobile/sources/components/buzz/TranscriptCard.tsx",
+    "section": "destinations",
+    "note": "Approval footer remains one row; inline destination aligns to the label.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "destinations-before.png"
+      ],
+      [
+        "Main",
+        "destinations-after.png"
+      ],
+      [
+        "Fixed",
+        "destinations-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ArtifactCard external footer",
+    "file": "apps/mobile/sources/components/buzz/ArtifactCard.tsx",
+    "section": "destinations",
+    "note": "Footer target remains (23 px) high; text remains on one line.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "destinations-before.png"
+      ],
+      [
+        "Main",
+        "destinations-after.png"
+      ],
+      [
+        "Fixed",
+        "destinations-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ArtifactCard internal footer",
+    "file": "apps/mobile/sources/components/buzz/ArtifactCard.tsx",
+    "section": "destinations",
+    "note": "Open plus drawn chevron fits in the original footer.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "destinations-before.png"
+      ],
+      [
+        "Main",
+        "destinations-after.png"
+      ],
+      [
+        "Fixed",
+        "destinations-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ArtifactViewer close",
+    "file": "apps/mobile/sources/components/buzz/ArtifactViewer.tsx",
+    "section": "artifact",
+    "note": "Close stays (44 px); viewer header and body begin at the same positions.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "artifact-before.png"
+      ],
+      [
+        "Main",
+        "artifact-after.png"
+      ],
+      [
+        "Fixed",
+        "artifact-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "DesktopArtifactPane close",
+    "file": "apps/mobile/sources/components/buzz/DesktopArtifactPane.tsx",
+    "section": "desktopArtifact",
+    "note": "Phone-width stress stand-in: close and link fit beside the truncated title. Desktop surface is not normally shown on phones.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "desktopArtifact-before.png"
+      ],
+      [
+        "Main",
+        "desktopArtifact-after.png"
+      ],
+      [
+        "Fixed",
+        "desktopArtifact-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "DesktopRoomInspector close",
+    "file": "apps/mobile/sources/components/DesktopRoomInspector.tsx",
+    "section": "inspector",
+    "note": "Extracted production cockpit header: row stays (58 px); both controls stay (36 px) and share the same centre.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "inspector-before.png"
+      ],
+      [
+        "Main",
+        "inspector-after.png"
+      ],
+      [
+        "Fixed",
+        "inspector-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "UpdateReadyPrompt dismiss",
+    "file": "apps/mobile/sources/components/UpdateReadyPrompt.tsx",
+    "section": "update",
+    "note": "Original prompt height and two-line copy retained. Drawn close stays inside original target.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "update-before.png"
+      ],
+      [
+        "Main",
+        "update-after.png"
+      ],
+      [
+        "Fixed",
+        "update-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "CommunityRail add",
+    "file": "apps/mobile/sources/components/buzz/CommunityRail.tsx",
+    "section": "rail",
+    "note": "Column layout retains the glyph seat and small tracked label. Settings and add remain aligned.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "rail-before.png"
+      ],
+      [
+        "Main",
+        "rail-after.png"
+      ],
+      [
+        "Fixed",
+        "rail-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "CommunityRail settings",
+    "file": "apps/mobile/sources/components/buzz/CommunityRail.tsx",
+    "section": "rail",
+    "note": "Settings mark changes from a font gear to drawn sliders; label size and seat remain stable.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "rail-before.png"
+      ],
+      [
+        "Main",
+        "rail-after.png"
+      ],
+      [
+        "Fixed",
+        "rail-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "CommunityRail exit control",
+    "file": "apps/mobile/sources/components/buzz/CommunityRail.tsx",
+    "section": "rail",
+    "note": "Fresh Android production rail, before and main, armed by an actual long press. The exit mark retains the original seat and fits; selected Workspace and label retain their alignment.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent \u00b7 Android",
+        "android-armed-parent.png"
+      ],
+      [
+        "Main \u00b7 Android",
+        "android-armed-bone.png"
+      ],
+      [
+        "Fixed \u00b7 unchanged",
+        "android-armed-bone.png"
+      ]
+    ]
+  },
+  {
+    "name": "SlashVerbPicker dismiss",
+    "file": "apps/mobile/sources/components/buzz/SlashVerbPicker.tsx",
+    "section": "rows",
+    "note": "Dismiss box remains (34 px); picker remains (92 px) in the app-row case.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "rows-before.png"
+      ],
+      [
+        "Main",
+        "rows-after.png"
+      ],
+      [
+        "Fixed",
+        "rows-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "SlashVerbPicker app row",
+    "file": "apps/mobile/sources/components/buzz/SlashVerbPicker.tsx",
+    "section": "rows",
+    "note": "Row remains (55 px), with label and description fitting before the chevron.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "rows-before.png"
+      ],
+      [
+        "Main",
+        "rows-after.png"
+      ],
+      [
+        "Fixed",
+        "rows-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "TurnProgressLine STOP",
+    "file": "apps/mobile/sources/components/buzz/TurnProgressLine.tsx",
+    "section": "turn",
+    "note": "Row and stop target remain (24 px), with unchanged text scale. Only the typed square was removed.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "turn-before.png"
+      ],
+      [
+        "Main",
+        "turn-after.png"
+      ],
+      [
+        "Fixed",
+        "turn-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ConversationComposer reply dismiss",
+    "file": "apps/mobile/sources/components/buzz/ConversationComposer.tsx",
+    "section": "composer",
+    "note": "Reply banner remains (62 px). Close occupies the same trailing box.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "composer-before.png"
+      ],
+      [
+        "Main",
+        "composer-after.png"
+      ],
+      [
+        "Fixed",
+        "composer-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ConversationComposer attachment remove",
+    "file": "apps/mobile/sources/components/buzz/ConversationComposer.tsx",
+    "section": "composer",
+    "note": "Attachment row remains (56 px). Filename and metadata fit as before.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "composer-before.png"
+      ],
+      [
+        "Main",
+        "composer-after.png"
+      ],
+      [
+        "Fixed",
+        "composer-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "CornerApp row OPEN",
+    "file": "apps/mobile/sources/components/buzz/CornerAppScreen.tsx",
+    "section": "corner",
+    "note": "Title and OPEN stay in one row at their original size; drawn chevron fits.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "corner-before.png"
+      ],
+      [
+        "Main",
+        "corner-after.png"
+      ],
+      [
+        "Fixed",
+        "corner-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "CornerApp action",
+    "file": "apps/mobile/sources/components/buzz/CornerAppScreen.tsx",
+    "section": "corner",
+    "note": "Action plate remains at the original height and size with the drawn trailing chevron.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "corner-before.png"
+      ],
+      [
+        "Main",
+        "corner-after.png"
+      ],
+      [
+        "Fixed",
+        "corner-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "RoomRosterSheet close",
+    "file": "apps/mobile/sources/components/buzz/RoomRosterSheet.tsx",
+    "section": "roster",
+    "note": "Members title, Add, and close retain their original alignment; close stays (44 px).",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "roster-before.png"
+      ],
+      [
+        "Main",
+        "roster-after.png"
+      ],
+      [
+        "Fixed",
+        "roster-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "RoomDeckComposeMenu open/close",
+    "file": "apps/mobile/sources/components/buzz/RoomDeckComposeMenu.tsx",
+    "section": "composeMenu",
+    "note": "FAB remains (44 px); menu labels and spacing retain their original scale. Same drawn plus as before.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "composeMenu-before.png"
+      ],
+      [
+        "Main",
+        "composeMenu-after.png"
+      ],
+      [
+        "Fixed",
+        "composeMenu-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "RepoPicker create repository",
+    "file": "apps/mobile/sources/components/buzz/RepoPicker.tsx",
+    "section": "repo",
+    "note": "Removing a typed plus does not change row height or label scale.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "repo-before.png"
+      ],
+      [
+        "Main",
+        "repo-after.png"
+      ],
+      [
+        "Fixed",
+        "repo-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "RepoPicker add account",
+    "file": "apps/mobile/sources/components/buzz/RepoPicker.tsx",
+    "section": "repo",
+    "note": "Long label is ellipsized on the same row as before; no new overflow.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "repo-before.png"
+      ],
+      [
+        "Main",
+        "repo-after.png"
+      ],
+      [
+        "Fixed",
+        "repo-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "RepoPicker installation instruction",
+    "file": "apps/mobile/sources/components/buzz/RepoPicker.tsx",
+    "section": "repoPending",
+    "note": "Original instruction layout; Continue to GitHub retains its label size and destination fits.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "repoPending-before.png"
+      ],
+      [
+        "Main",
+        "repoPending-after.png"
+      ],
+      [
+        "Fixed",
+        "repoPending-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "RepoPicker pasted repository linkage",
+    "file": "apps/mobile/sources/components/buzz/RepoPicker.tsx",
+    "section": "repo",
+    "note": "Fresh Android search entered Beeline-Work/layout-review into the production picker. Parent and main keep the description within the row, at the same type size. Main removes the typed trailing arrow.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent \u00b7 Android",
+        "android-search-parent.png"
+      ],
+      [
+        "Main \u00b7 Android",
+        "android-search-bone.png"
+      ],
+      [
+        "Fixed \u00b7 unchanged",
+        "android-search-bone.png"
+      ]
+    ]
+  },
+  {
+    "name": "Workflow opened corner",
+    "file": "apps/mobile/sources/components/buzz/WorkflowRunLine.tsx",
+    "section": "workflow",
+    "note": "Production OpenedCorner rendered in isolation: name, corner mark, and trailing chevron fit.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "workflow-before.png"
+      ],
+      [
+        "Main",
+        "workflow-after.png"
+      ],
+      [
+        "Fixed",
+        "workflow-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Chat attachment row",
+    "file": "apps/mobile/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "section": "attachment",
+    "note": "Production AttachmentCard rendered in isolation: filename, metadata, and drawn mark fit.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "attachment-before.png"
+      ],
+      [
+        "Main",
+        "attachment-after.png"
+      ],
+      [
+        "Fixed",
+        "attachment-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Squire approval external action",
+    "file": "apps/mobile/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "section": "destinations",
+    "note": "Use passkey keeps its inline text scale and row height.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "destinations-before.png"
+      ],
+      [
+        "Main",
+        "destinations-after.png"
+      ],
+      [
+        "Fixed",
+        "destinations-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Connector Add and Switch account",
+    "file": "apps/mobile/sources/buzz/connector-offer-copy.ts",
+    "section": "connectorActions",
+    "note": "Removing leading check characters retains button label size and fit.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "connectorActions-before.png"
+      ],
+      [
+        "Main",
+        "connectorActions-after.png"
+      ],
+      [
+        "Fixed",
+        "connectorActions-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Connector continue sign-in",
+    "file": "apps/mobile/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "section": "connectorLong",
+    "note": "Google Calendar changes the card from (245 px) to (267 px); the footer action moves below the note. Restore the previous short action wording.",
+    "status": "broken",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "connectorLong-before.png"
+      ],
+      [
+        "Main",
+        "connectorLong-after.png"
+      ],
+      [
+        "Fixed",
+        "connectorLong-fixed.png"
+      ]
+    ],
+    "fixedNote": "Restored the original short Continue sign-in wording. Footer action returns beside its note, and total card height returns from (267 px) to (245 px)."
+  },
+  {
+    "name": "Corner repository access retry",
+    "file": "apps/mobile/sources/app/(app)/beeline/chat/_chat-surface.tsx",
+    "section": "error",
+    "note": "Extracted call-site props on the real ErrorBanner. Label remains on one line with its destination mark.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "error-before.png"
+      ],
+      [
+        "Main",
+        "error-after.png"
+      ],
+      [
+        "Fixed",
+        "error-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "NeedsYou external action",
+    "file": "apps/mobile/sources/components/buzz/NeedsYouCell.tsx",
+    "section": "needs",
+    "note": "Action retains its inline label size; drawn external mark fits beside it.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "needs-before.png"
+      ],
+      [
+        "Main",
+        "needs-after.png"
+      ],
+      [
+        "Fixed",
+        "needs-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Tray bookmark OPEN footer",
+    "file": "apps/mobile/sources/app/(app)/beeline/tray.tsx",
+    "section": "trayFooter",
+    "note": "Isolated exact footer composition: the row mark is taller than the former section-head line (18 vs 15 px). Restore the original line height with a matching mark size.",
+    "status": "broken",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "trayFooter-before.png"
+      ],
+      [
+        "Main",
+        "trayFooter-after.png"
+      ],
+      [
+        "Fixed",
+        "trayFooter-fixed.png"
+      ]
+    ],
+    "fixedNote": "The drawn chevron now uses the section-head line height. Footer height returns from (18 px) to (15 px)."
+  },
+  {
+    "name": "StarPromptCard label",
+    "file": "apps/mobile/sources/components/buzz/StarPromptCard.tsx",
+    "section": "symbols",
+    "note": "Star word label remains at its original size without the typed star.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "symbols-before.png"
+      ],
+      [
+        "Main",
+        "symbols-after.png"
+      ],
+      [
+        "Fixed",
+        "symbols-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Members model value and choice",
+    "file": "apps/mobile/sources/app/(app)/beeline/members.tsx",
+    "section": "modelRows",
+    "note": "Real SettingsRow, MemberRosterRow, and choice-row controls with the changed labels. Text fits; model resolution logic is intentionally retained.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "modelRows-before.png"
+      ],
+      [
+        "Main",
+        "modelRows-after.png"
+      ],
+      [
+        "Fixed",
+        "modelRows-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "AgentProfile model description",
+    "file": "apps/mobile/sources/components/buzz/AgentProfileView.tsx",
+    "section": "modelRows",
+    "note": "Changed description rendered through the actual SettingsRow. No font or spacing change in this PR.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "modelRows-before.png"
+      ],
+      [
+        "Main",
+        "modelRows-after.png"
+      ],
+      [
+        "Fixed",
+        "modelRows-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "AgentVoice play label",
+    "file": "apps/mobile/sources/components/buzz/AgentVoiceSection.tsx",
+    "section": "voice",
+    "note": "Open production voice chooser: Play remains aligned with the voice row after removing the typed triangle.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "voice-before.png"
+      ],
+      [
+        "Main",
+        "voice-after.png"
+      ],
+      [
+        "Fixed",
+        "voice-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Model byline and picker examples",
+    "file": "apps/mobile/sources/buzz/model-display.ts",
+    "section": "model",
+    "note": "Shared byline and row fixture: model words fit at existing type sizes. No model logic changes proposed.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "model-before.png"
+      ],
+      [
+        "Main",
+        "model-after.png"
+      ],
+      [
+        "Fixed",
+        "model-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Corner failed-check sentence",
+    "file": "apps/mobile/sources/buzz/corner-status-line.ts",
+    "section": "failure",
+    "note": "The production failure sentence is rendered with a failed Mobile suite check. Replacing the cross separator with a middle dot retains the original size and phone-width fit.",
+    "status": "fine",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "failure-before.png"
+      ],
+      [
+        "Main",
+        "failure-after.png"
+      ],
+      [
+        "Fixed \u00b7 unchanged",
+        "failure-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "ComputerSession header",
+    "file": "apps/mobile/sources/components/buzz/ComputerSession.tsx",
+    "section": "viewer",
+    "note": "Link is (19 px) high and top-aligned against a (44 px) close; their centres differ by (12.5 px). Parent already had the offset, but the longer label makes it conspicuous. Required repair: centre both within one row.",
+    "status": "broken",
+    "pr": "3016",
+    "captures": [
+      [
+        "Parent",
+        "viewer-before.png"
+      ],
+      [
+        "Main",
+        "viewer-after.png"
+      ],
+      [
+        "Fixed",
+        "viewer-fixed.png"
+      ]
+    ],
+    "fixedNote": "Both control centres are now at the same vertical coordinate (91 px in the fixture); the row stays (44 px) high. The drawn external and close marks remain."
+  },
+  {
+    "name": "Shared browser page and paste control",
+    "file": "apps/server/src/computer-session.ts",
+    "section": "zoom",
+    "note": "Actual HTTP proxy with a local Squire page fixture. Pinch-out creates a top gap (229 px) and the added emoji paste button appears. Restore top alignment and remove that button.",
+    "status": "broken",
+    "pr": "3014",
+    "captures": [
+      [
+        "Parent",
+        "zoom-before.png"
+      ],
+      [
+        "Main",
+        "zoom-after.png"
+      ],
+      [
+        "Fixed",
+        "zoom-fixed.png"
+      ]
+    ],
+    "fixedNote": "Pinch-out now leaves the page at the top (0 px), keeping horizontal centering. The emoji paste button is removed. Desktop clipboard shortcut coverage still passes."
+  },
+  {
+    "name": "Shared browser one keyboard control",
+    "file": "apps/server/src/computer-session.ts",
+    "section": "page",
+    "note": "The owner screenshot has a remote-page keyboard plus a Beeline keyboard. The existing structured navigation event identifies the remote login route.",
+    "status": "broken",
+    "pr": "3014",
+    "captures": [
+      [
+        "Main \u00b7 extra controls",
+        "page-after.png"
+      ],
+      [
+        "Fixed \u00b7 remote login",
+        "keyboard-remote-fixed.png"
+      ],
+      [
+        "Fixed \u00b7 ordinary browser",
+        "keyboard-browser-fixed.png"
+      ]
+    ],
+    "fixedNote": "Beeline hides its keyboard on the remote vnc.html route, and restores it on ordinary browser navigation. The exact HTTP proxy path is exercised; remote screenshot contents are a local Squire stand-in."
+  },
+  {
+    "name": "Shared browser ended state",
+    "file": "apps/mobile/sources/components/buzz/ComputerSession.tsx",
+    "section": "viewer",
+    "note": "Explicit ended sessions already show a plain Beeline notice without Open in browser. Fresh production-control captures confirm that path. A remote login-closed page without a host-ended signal remains a Squire requirement, per commander decision.",
+    "status": "fine",
+    "pr": "3014",
+    "captures": [
+      [
+        "Parent \u00b7 explicit ended",
+        "ended-before.png"
+      ],
+      [
+        "Main \u00b7 explicit ended",
+        "ended-after.png"
+      ],
+      [
+        "Fixed \u00b7 unchanged",
+        "ended-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Corner swipe panel at rest",
+    "file": "apps/mobile/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "section": "swipe",
+    "note": "Fresh phone-width render against the true parent. Force the hidden translation away: parent paints the CORNER panel over text; main panel opacity stays zero. No regression found.",
+    "status": "fine",
+    "pr": "3006",
+    "captures": [
+      [
+        "Parent",
+        "swipe-before.png"
+      ],
+      [
+        "Main",
+        "swipe-after.png"
+      ],
+      [
+        "Fixed \u00b7 unchanged",
+        "swipe-after.png"
+      ]
+    ]
+  },
+  {
+    "name": "Android navigation bar",
+    "file": "apps/mobile/sources/unistyles.ts",
+    "section": "navbar",
+    "note": "Historical native pre-PR capture is the baseline. Fresh current-main release-mode Android captures show the bar matches the app in Bone and Obsidian, with readable buttons when system and app themes agree. Expo documents an Android 15 emulator limitation when changing button style independently of system appearance.",
+    "status": "fine",
+    "pr": "3019",
+    "captures": [
+      [
+        "Historical before",
+        "navbar-before.png"
+      ],
+      [
+        "Fresh main \u00b7 Bone",
+        "android-navbar-bone.png"
+      ],
+      [
+        "Fresh main \u00b7 Obsidian",
+        "android-navbar-obsidian.png"
+      ]
+    ]
+  },
+  {
+    "name": "AgentUsageSection fresh and refresh labels",
+    "file": "apps/mobile/sources/components/buzz/AgentUsageSection.tsx",
+    "section": "usage",
+    "note": "Production component before/after. Added shared-account line fits under the existing usage values; text retains its original scale.",
+    "status": "fine",
+    "pr": "3030",
+    "captures": [
+      [
+        "Parent",
+        "usage-before.png"
+      ],
+      [
+        "Main",
+        "usage-after.png"
+      ],
+      [
+        "Fixed",
+        "usage-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "AgentUsageSection failure / signed-out / offline labels",
+    "file": "apps/mobile/sources/components/buzz/AgentUsageSection.tsx",
+    "section": "usageStates",
+    "note": "Production states rendered at phone width. Additional reason lines use existing type scale and remain within the section.",
+    "status": "fine",
+    "pr": "3030",
+    "captures": [
+      [
+        "Parent",
+        "usageStates-before.png"
+      ],
+      [
+        "Main",
+        "usageStates-after.png"
+      ],
+      [
+        "Fixed",
+        "usageStates-fixed.png"
+      ]
+    ]
+  },
+  {
+    "name": "Members plan refresh host",
+    "file": "apps/mobile/sources/app/(app)/beeline/members.tsx",
+    "section": "usage",
+    "note": "This PR changes refresh/cache behavior, not a Members layout. The displayed section is the same production AgentUsageSection.",
+    "status": "fine",
+    "pr": "3030",
+    "captures": [
+      [
+        "Parent",
+        "usage-before.png"
+      ],
+      [
+        "Main",
+        "usage-after.png"
+      ],
+      [
+        "Fixed",
+        "usage-fixed.png"
+      ]
+    ]
+  }
+]

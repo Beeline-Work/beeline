@@ -298,6 +298,7 @@ describe('free starter agents', () => {
       { videoFile: { beelineObjectId: frame.objectId } }, { videoFile: 'https://other.test/clip.mp4' }, { unexpected: true }]) {
       await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, { ...args, ...changed }))).rejects.toThrow('match the approved video preview');
     }
+    await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, { ...args, videoFile: { name: 'clip.mp4', mimetype: 'video/mp4', s3key: 'private-placeholder' } }))).rejects.toThrow('videoFile shape');
     await db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, args));
     await expect(db.transaction(tx => consumeStarterVideoPost(tx, workspace.roomId!, agent, args))).rejects.toThrow('tap Post');
   });

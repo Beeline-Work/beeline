@@ -592,7 +592,7 @@ it('BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREVIEW-1P: real agent handl
         await db.query("INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route,composio_account_id) VALUES('55555555-5555-4555-8555-555555555555',$1,$2,'youtube','YouTube','composio','composio','fixture-youtube')",[workspace,human]);
         const upload = {...input,appId:'app:youtube',tool:'YOUTUBE_MULTIPART_UPLOAD_VIDEO',arguments:{title:'Changed'}};
         const tapMessage = 'Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.';
-        const matchMessage = 'Upload arguments must match the approved video preview exactly. Show a new preview for any changes.';
+        const matchMessage = 'Upload arguments must match the approved video preview exactly: title mismatched. Use videoFile: {beelineObjectId: "<videoObjectId from the preview>"}. Show a new preview for any changes.';
         const missingApproval = await call(upload,'executeAppTool');
         console.log('VIDEO-PREVIEW-1P missing approval HTTP response',JSON.stringify(missingApproval));
         assert.deepEqual(missingApproval,{status:403,body:{error:tapMessage}});

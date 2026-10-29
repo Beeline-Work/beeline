@@ -50,7 +50,7 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
 }
 
 /** Only the starter YouTube job adds this preview-tap requirement to the existing app boundary. */
-export async function consumeStarterVideoPost(database: SqlDatabase, roomId: string, agentId: string, args: Record<string, unknown>): Promise<void> {
+export async function consumeStarterVideoPost(database: SqlDatabase, roomId: string, agentId: string, args: Record<string, unknown>): Promise<{ messageId: string; attemptId: string } | undefined> {
   const welcome = (await database.query<{ selected: string | null; created_at: Date }>(
     `SELECT m.card->>'selectedOptionId' selected,m.created_at FROM messages m
      WHERE m.room_id=$1 AND m.author_id=$2 AND m.card->>'starterOnboarding'='welcome'
@@ -66,14 +66,20 @@ export async function consumeStarterVideoPost(database: SqlDatabase, roomId: str
     throw new CommandRefusalError('Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.', 403);
   const approved = card.videoPreview;
   const file = args.videoFile;
-  if (args.title !== approved.title || args.description !== approved.description ||
-    args.privacyStatus !== approved.visibility || !file || typeof file !== 'object' ||
-    Array.isArray(file) || Object.keys(file).length !== 1 ||
-    (file as Record<string, unknown>).beelineObjectId !== approved.videoObjectId ||
-    Object.keys(args).some(key => !['title', 'description', 'privacyStatus', 'videoFile', 'categoryId'].includes(key)) ||
-    (args.categoryId !== undefined && args.categoryId !== '22'))
-    throw new CommandRefusalError('Upload arguments must match the approved video preview exactly. Show a new preview for any changes.', 403);
-  await database.query(`UPDATE messages SET card=card || '{"youtubeUploadUsed":true}'::jsonb WHERE id=$1`, [preview.id]);
+  const mismatch = args.title !== approved.title ? 'title'
+    : args.description !== approved.description ? 'description'
+    : args.privacyStatus !== approved.visibility ? 'privacyStatus'
+    : !file || typeof file !== 'object' || Array.isArray(file) || Object.keys(file).length !== 1 ||
+      (file as Record<string, unknown>).beelineObjectId !== approved.videoObjectId ? 'videoFile shape'
+    : Object.keys(args).some(key => !['title', 'description', 'privacyStatus', 'videoFile', 'categoryId'].includes(key)) ? 'extra key'
+    : args.categoryId !== undefined && args.categoryId !== '22' ? 'categoryId' : undefined;
+  if (mismatch)
+    throw new CommandRefusalError(`Upload arguments must match the approved video preview exactly: ${mismatch} mismatched. ` +
+      'Use videoFile: {beelineObjectId: "<videoObjectId from the preview>"}. Show a new preview for any changes.', 403);
+  const attemptId = randomUUID();
+  await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
+    [preview.id, JSON.stringify({ youtubeUploadUsed: true, youtubeUploadAttempt: attemptId })]);
+  return { messageId: preview.id, attemptId };
 }
 
 
@@ -93,4 +99,10 @@ export async function postStarterVideoPreview(database: SqlDatabase, objects: Ob
     JSON.stringify({ videoPreview: { videoObjectId: input.videoObjectId, frameUrl: frame.url,
       title: input.title.trim(), description: input.description, visibility: input.visibility } })]);
   return posted;
+}
+
+/** Restore only this failed reservation; never clear a later attempt's approval. */
+export async function restoreStarterVideoPost(database: SqlDatabase, claim: { messageId: string; attemptId: string }) {
+  await database.query(`UPDATE messages SET card=card - 'youtubeUploadUsed' - 'youtubeUploadAttempt'
+    WHERE id=$1 AND card->>'youtubeUploadAttempt'=$2`, [claim.messageId, claim.attemptId]);
 }

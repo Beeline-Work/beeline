@@ -12,21 +12,19 @@
  * paths when it opens the socket. Those values come from the corner
  * configuration the helper already computed. A request that names any of them
  * is rejected, so a client cannot point this process at another executable.
- * The client may pass only its adb server port, so a second agent in the
- * corner can attach to the same device.
+ * Client environment values never select the executable or lease paths.
  *
- * At most one emulator is kept per corner. It registers with the adb server
- * port of the agent who started it (`android-agent-env.ts` still gives each
- * agent home its own port). A later start from either agent in the corner
- * reuses that device and attaches the caller's adb server to it, instead of
- * leasing a second one. The emulator stops when the corner closes or archives,
+ * At most one emulator is kept per corner. Its lease owns its adb server too.
+ * Each corner's adb launcher reads the kept record on every call, so later
+ * turns and other agents use the same server and emulator serial. A later
+ * start reuses that device instead of leasing a second one. The emulator stops when the corner closes or archives,
  * and on helper start when the corner is confirmed gone.
  */
 import { execFileSync } from 'node:child_process';
 import { createServer, createConnection, type Server } from 'node:net';
 import { chmod, mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { delimiter, dirname, resolve } from 'node:path';
 import {
   processAlive,
   processStart,
@@ -41,6 +39,7 @@ export const ANDROID_LEASE_ENV_KEYS = [
   'ANDROID_EMULATOR_HOME',
   'ANDROID_AVD_HOME',
   'ANDROID_ADB_SERVER_PORT',
+  'ANDROID_SERIAL',
   'ADB_EMU',
   'BEELINE_ANDROID_EMULATOR_PORT',
   'BEELINE_ANDROID_LEASE_ROOT',
@@ -160,6 +159,7 @@ export interface KeptCornerEmulator {
   markerPath: string;
   ownership: string;
   adbServerPort?: string;
+  androidHome?: string;
   leaseRoot: string;
 }
 
@@ -201,6 +201,60 @@ async function readRecord(leaseRoot: string, cornerId: string): Promise<KeptCorn
   }
 }
 
+/** Resolve the lease on every adb call, including an emulator booted during this turn. */
+export async function prepareCornerAdb(
+  root: string,
+  cornerId: string,
+  env: Record<string, string>,
+): Promise<void> {
+  const leaseRoot = env.BEELINE_ANDROID_LEASE_ROOT;
+  if (!leaseRoot || !env.ANDROID_HOME) return;
+  const kept = await readRecord(leaseRoot, cornerId);
+  if (kept && await sameProcess(kept.pid, kept.startedAt)) {
+    env.ANDROID_SERIAL = kept.serial;
+    if (kept.adbServerPort) env.ANDROID_ADB_SERVER_PORT = kept.adbServerPort;
+    env.BEELINE_ANDROID_EMULATOR_PORT = String(kept.port);
+    removeLegacyAdbAlias(kept, env.ANDROID_HOME);
+  }
+  const bin = resolve(root, 'corner-adb-bin');
+  await mkdir(bin, { recursive: true, mode: 0o700 });
+  const launcher = resolve(bin, 'adb');
+  await writeFile(launcher, `#!${process.execPath}
+const { readFileSync } = require('node:fs');
+const { spawn } = require('node:child_process');
+const env = { ...process.env };
+try {
+  const record = JSON.parse(readFileSync(${JSON.stringify(recordPath(leaseRoot, cornerId))}, 'utf8'));
+  if (record.version === 1 && record.cornerId === ${JSON.stringify(cornerId)}) {
+    env.ANDROID_SERIAL = record.serial;
+    if (record.adbServerPort) env.ANDROID_ADB_SERVER_PORT = record.adbServerPort;
+    delete env.ADB_SERVER_SOCKET;
+  }
+} catch (error) {
+  if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error;
+}
+const child = spawn(${JSON.stringify(resolve(env.ANDROID_HOME, 'platform-tools/adb'))}, process.argv.slice(2), { env, stdio: 'inherit' });
+child.on('error', error => { console.error(error.message); process.exitCode = 1; });
+child.on('exit', (code, signal) => { process.exitCode = signal ? 1 : code; });
+`, { mode: 0o700 });
+  await chmod(launcher, 0o700);
+  env.PATH = [bin, env.PATH].filter(Boolean).join(delimiter);
+}
+
+/** Earlier helpers registered both an emulator transport and a duplicate TCP alias. */
+function removeLegacyAdbAlias(record: KeptCornerEmulator, androidHome: string): void {
+  if (record.adbServerPort === String(record.port + 2)) return;
+  const adb = resolve(androidHome, 'platform-tools/adb');
+  if (!existsSync(adb)) return;
+  const env: NodeJS.ProcessEnv = { ...process.env, ANDROID_ADB_SERVER_PORT: record.adbServerPort };
+  delete env.ADB_SERVER_SOCKET;
+  try {
+    execFileSync(adb, ['disconnect', `127.0.0.1:${record.port + 1}`], {
+      env, timeout: 5_000, stdio: 'ignore',
+    });
+  } catch { /* The alias may already be gone. */ }
+}
+
 async function writeRecord(record: KeptCornerEmulator): Promise<void> {
   const path = recordPath(record.leaseRoot, record.cornerId);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -236,16 +290,18 @@ async function killProcessGroup(pid: number): Promise<void> {
 }
 
 function disconnectAdb(record: KeptCornerEmulator): void {
-  const home = process.env.ANDROID_HOME;
+  const home = record.androidHome ?? process.env.ANDROID_HOME;
   if (!home) return;
   const adb = resolve(home, 'platform-tools/adb');
   if (!existsSync(adb)) return;
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...(record.adbServerPort ? { ANDROID_ADB_SERVER_PORT: record.adbServerPort } : {}),
   };
+  delete env.ADB_SERVER_SOCKET;
   try {
-    execFileSync(adb, ['disconnect', `127.0.0.1:${record.port + 1}`], {
+    execFileSync(adb, record.adbServerPort === String(record.port + 2)
+      ? ['kill-server'] : ['disconnect', `127.0.0.1:${record.port + 1}`], {
       env, timeout: 5_000, stdio: 'ignore',
     });
   } catch {
@@ -287,25 +343,6 @@ function forwardedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
     if (value) out[key] = value;
   }
   return out;
-}
-
-async function startAdb(env: NodeJS.ProcessEnv): Promise<void> {
-  if (!env.ANDROID_HOME) return;
-  const adb = resolve(env.ANDROID_HOME, 'platform-tools/adb');
-  if (!existsSync(adb)) return;
-  execFileSync(adb, ['start-server'], { env, timeout: 15_000, stdio: 'ignore' });
-}
-
-async function adbConnect(env: NodeJS.ProcessEnv, port: number): Promise<void> {
-  if (!env.ANDROID_HOME) return;
-  const adb = resolve(env.ANDROID_HOME, 'platform-tools/adb');
-  if (!existsSync(adb)) return;
-  await startAdb(env);
-  try {
-    execFileSync(adb, ['connect', `127.0.0.1:${port + 1}`], { env, timeout: 15_000, stdio: 'ignore' });
-  } catch {
-    // The emulator may already be registered with this adb server.
-  }
 }
 
 async function waitUntilBooted(
@@ -350,6 +387,7 @@ function recordFromLease(
     markerPath: lease.marker,
     ownership: lease.ownership,
     ...(env.ANDROID_ADB_SERVER_PORT ? { adbServerPort: env.ANDROID_ADB_SERVER_PORT } : {}),
+    ...(env.ANDROID_HOME ? { androidHome: env.ANDROID_HOME } : {}),
     leaseRoot,
   };
 }
@@ -388,11 +426,11 @@ export async function keepCornerEmulator(
   return withCornerGate(cornerId, async () => {
     const existing = await readRecord(leaseRoot, cornerId);
     if (existing && await sameProcess(existing.pid, existing.startedAt)) {
-      await adbConnect(bound, existing.port);
+      removeLegacyAdbAlias(existing, bound.ANDROID_HOME!);
       return { ok: true, serial: existing.serial, port: existing.port, alreadyRunning: true };
     }
     if (existing) await releaseRecord(existing);
-    const started = await spawnLeasedEmulator(args, bound, { detached: true });
+    const started = await spawnLeasedEmulator(args, bound, { detached: true, leaseAdbServer: true });
     if ('exitCode' in started)
       return { ok: false, exitCode: started.exitCode, error: 'emulator did not start' };
     const pid = started.child.pid;
@@ -401,6 +439,7 @@ export async function keepCornerEmulator(
       return { ok: false, exitCode: 1, error: 'emulator did not start' };
     }
     const startedAt = await processStart(pid);
+    bound.ANDROID_ADB_SERVER_PORT = String(started.lease.port + 2);
     const record = recordFromLease(cornerId, started.lease, pid, startedAt, bound, leaseRoot);
     await writeRecord(record);
     started.child.once('error', () => undefined);
@@ -421,7 +460,6 @@ export async function keepCornerEmulator(
       return { ok: false, exitCode: 1, error: `emulator ${record.serial} exited before Android finished booting${diagnostic ? `\n${diagnostic.slice(-8192).trim()}` : ''}` };
     }
     bootPending = false;
-    await adbConnect(bound, record.port);
     return { ok: true, serial: record.serial, port: record.port, alreadyRunning: false };
   });
 }

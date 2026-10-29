@@ -29,6 +29,7 @@ import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import {
   androidLeaseShellBindings,
+  prepareCornerAdb,
   cornerEmulatorHostFromEnv,
   cornerEmulatorSocketName,
   listenCornerEmulator,
@@ -1162,6 +1163,7 @@ export class MonolithCornerTurnLoop {
 
     const emulatorHost = cornerEmulatorHostFromEnv(agentEnv);
     if (emulatorHost) {
+      await prepareCornerAdb(this.options.config.agentHomeRoot!, this.options.cornerId, agentEnv);
       await Promise.all([
         mkdir(emulatorHost.leaseRoot, { recursive: true, mode: 0o700 }),
         mkdir(emulatorHost.instanceRoot, { recursive: true, mode: 0o700 }),

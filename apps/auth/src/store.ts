@@ -347,6 +347,7 @@ interface FlowRow extends QueryResultRow {
 }
 
 export interface OidcFlow {
+  stateHash?: string;
   community: string;
   issuer: string;
   audience: string;
@@ -688,7 +689,7 @@ export class AuthStore {
        RETURNING community, issuer, audience, nonce, pkce_verifier, browser_session_hash, redirect_uri, app_redirect_uri, app_state, device_code_hash, app_recovery_hash, created_at, expires_at`,
       [stateHash, browserSessionHash, now],
     );
-    return result.rows[0] ? flowFromRow(result.rows[0]) : null;
+    return result.rows[0] ? { ...flowFromRow(result.rows[0]), stateHash } : null;
   }
 
   async identityLinkForSubject(

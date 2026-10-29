@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
 import { typedMentionHandles } from './message-mentions.js';
+import { compactSigninAttempts } from './signin-attempts.js';
 
 const lastCompaction = new WeakMap<SqlDatabase, string>();
 
@@ -306,6 +307,7 @@ export async function observeFunnelAuth(database: SqlDatabase, input: FunnelAuth
 }
 /** Sign-in detail compacts after 90 days; onboarding milestones retain the all-time cohort. */
 export async function compactSigninFunnel(database: SqlDatabase) {
+  await compactSigninAttempts(database);
   await database.transaction(async (tx) => {
     await tx.query(`WITH expired AS (
       DELETE FROM signin_funnel_events e WHERE occurred_at < (now() AT TIME ZONE 'UTC')::date-89

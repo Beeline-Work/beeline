@@ -1,11 +1,14 @@
 import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { request } from 'node:http';
+import { readFile } from 'node:fs/promises';
 import type { IncomingHttpHeaders } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate } from './database.js';
+import { compactSigninAttempts, recordSigninAttempt } from './signin-attempts.js';
+import * as sentry from './sentry.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -33,6 +36,7 @@ describe('mounted monolith auth', () => {
   let installationAccess: boolean;
   let availableInstallations: number[];
   let githubSubject: string;
+  let installationLogin: string;
   let repositorySelection: 'selected' | 'all';
   let processWebhook: ReturnType<typeof vi.fn>;
 
@@ -55,6 +59,7 @@ describe('mounted monolith auth', () => {
       },
     );
     githubSubject = '42';
+    installationLogin = 'owner';
     const githubOauth = {
       config: { clientId: 'github-client', clientSecret: 'github-secret' },
       authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
@@ -79,7 +84,7 @@ describe('mounted monolith auth', () => {
       listUserInstallationIds: async () => availableInstallations,
       installationAccount: async () => ({
         id: '42',
-        login: 'owner',
+        login: installationLogin,
         type: 'User' as const,
         repositorySelection,
       }),
@@ -142,6 +147,164 @@ describe('mounted monolith auth', () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (mount) await mount.close();
     if (database) await database.close();
+  });
+
+  const funnelContext = (provider: 'google' | 'github') => ({
+    event: 'provider_tapped', installId: '00000000-0000-4000-8000-000000000001',
+    attemptId: '00000000-0000-4000-8000-000000000002', provider,
+    platform: 'android', version: '0.2.22', environment: 'production',
+    timestamp: new Date().toISOString(),
+  });
+  const stages = async () => (await database.query(
+    'SELECT stage,error_code FROM signin_attempt_events ORDER BY occurred_at,stage',
+  )).rows;
+
+  it.each(['google', 'github'] as const)('logs %s start, provider denial and app cancellation without secrets', async provider => {
+    const path = provider === 'google' ? 'oidc' : 'github';
+    const recoveryToken = 'r'.repeat(43);
+    const query = new URLSearchParams({
+      funnel: JSON.stringify(funnelContext(provider)), app_state: 's'.repeat(43),
+      app_redirect: `beeline://beeline/${provider}-callback`,
+      app_recovery_challenge: createHash('sha256').update(recoveryToken).digest('hex'),
+    });
+    const start = await mountedRequest(`/auth/${path}/start?${query}`);
+    expect(start.status).toBe(302);
+    const state = new URL(String(start.headers.location)).searchParams.get('state');
+    const callback = await mountedRequest(`/auth/${path}/callback?state=${state}&error=access_denied&error_description=private-email@example.com`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! });
+    expect(callback.status).toBe(302);
+    expect(await stages()).toEqual([
+      { stage: 'started', error_code: null }, { stage: 'provider_returned', error_code: 'access_denied' },
+    ]);
+    await mountedJsonRequest(`/auth/${path}/completion/cancel`, { recoveryToken });
+    expect((await stages()).at(-1)).toMatchObject({ stage: 'cancelled' });
+    const rows = (await database.query('SELECT * FROM signin_attempt_events')).rows;
+    expect(rows.every(row => row.install_id === funnelContext(provider).installId)).toBe(true);
+    expect(rows.every(row => row.funnel_attempt_id === funnelContext(provider).attemptId)).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain('private-email');
+    expect(JSON.stringify(rows)).not.toContain(recoveryToken);
+    await compactSigninAttempts(database);
+    expect((await stages()).at(-1)).toMatchObject({ stage: 'cancelled' });
+  });
+
+  it.each(['denied', 'exchanged'])('R-GITHUB-INSTALL-HANDOFF: retains one attempt when installation is %s', async outcome => {
+    availableInstallations = [];
+    const context = funnelContext('github');
+    const query = new URLSearchParams({ onboarding: '1', funnel: JSON.stringify(context),
+      app_state: 's'.repeat(43), app_redirect: 'beeline://beeline/github-callback' });
+    const start = await mountedRequest(`/auth/github/start?${query}`);
+    const state = new URL(String(start.headers.location)).searchParams.get('state');
+    const handoff = await mountedRequest(`/auth/github/callback?state=${state}&code=initial-code`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! });
+    expect(handoff.status).toBe(200);
+    const nextState = handoff.body.match(/state=(onboarding_[^"&]+)/)?.[1];
+    expect(nextState).toBeTruthy();
+    const cookie = handoff.headers['set-cookie']!.filter(c => !c.includes('Max-Age=0')).map(c => c.split(';')[0]).join('; ');
+    availableInstallations = [77];
+    installationLogin = 'octocat';
+    repositorySelection = 'all';
+    const callback = await mountedRequest(`/auth/github/callback?state=${nextState}&${outcome === 'denied' ? 'error=access_denied' : 'code=install-code'}`, { cookie });
+    expect(callback.status).toBe(302);
+    if (outcome === 'exchanged') {
+      const ticket = new URL(String(callback.headers.location)).searchParams.get('ticket');
+      const response = await fetch(`${origin}/v1/auth/github/exchange`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ oidcToken: ticket }),
+      });
+      expect(response.status).toBe(200);
+      expect((await response.json() as { accessToken: string }).accessToken).toBeTruthy();
+    } else expect(callback.headers.location).toContain('error=github_denied');
+    const rows = (await database.query('SELECT * FROM signin_attempt_events')).rows;
+    expect(new Set(rows.map(row => row.attempt_id)).size).toBe(1);
+    expect(rows.filter(row => row.stage === 'provider_returned')).toHaveLength(2);
+    expect(rows.every(row => row.install_id === context.installId && row.funnel_attempt_id === context.attemptId)).toBe(true);
+    const readme = await readFile(new URL('../../auth/README.md', import.meta.url), 'utf8');
+    const sql = readme.match(/```sql\n(WITH history AS[\s\S]*?)```/)![1]!;
+    const result = (await database.query(sql)).rows;
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ last_stage: outcome === 'denied' ? 'provider_returned' : 'ticket_exchanged',
+      error_code: outcome === 'denied' ? 'access_denied' : null });
+    await database.query("UPDATE signin_attempt_correlations SET expires_at=now()-interval '1 second'");
+    await compactSigninAttempts(database);
+    expect((await database.query(sql)).rows).toEqual(result);
+  });
+
+  it('logs the full GitHub HTTP session path and survives a log failure', async () => {
+    const capture = vi.spyOn(sentry, 'captureServerError').mockImplementation(() => {});
+    try {
+      for (const breakLog of [false, true]) {
+        if (breakLog) await database.query('DROP TABLE signin_attempt_events');
+        const query = new URLSearchParams({ funnel: JSON.stringify(funnelContext('github')) });
+        const start = await mountedRequest(`/auth/github/start?${query}`);
+        expect(start.status).toBe(302);
+        const state = new URL(String(start.headers.location)).searchParams.get('state');
+        const callback = await mountedRequest(`/auth/github/callback?state=${state}&code=private-code`,
+          { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! });
+        expect(callback.status).toBe(200);
+        const ticket = JSON.parse(callback.body).ticket;
+        const response = await fetch(`${origin}/v1/auth/github/exchange`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ oidcToken: ticket }),
+        });
+        expect(response.status).toBe(200);
+        expect((await response.json() as { accessToken: string }).accessToken).toBeTruthy();
+        if (!breakLog) {
+          expect((await stages()).map(row => row.stage)).toEqual(['started', 'provider_returned', 'ticket_issued', 'ticket_exchanged']);
+          await mountedJsonRequest('/auth/github/completion/cancel', { recoveryToken: ticket });
+          expect((await stages()).map(row => row.stage)).not.toContain('cancelled');
+          const rows = JSON.stringify((await database.query('SELECT * FROM signin_attempt_events')).rows);
+          for (const secret of [ticket, 'private-code', 'github-user-token', 'octocat']) expect(rows).not.toContain(secret);
+        }
+      }
+      expect(capture).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ operation: 'signin_attempt_log' }));
+    } finally { capture.mockRestore(); }
+  });
+
+  it.each([false, true])('records expiry when a GitHub attempt never exchanges (provider returned: %s)', async returned => {
+    const start = await mountedRequest('/auth/github/start');
+    expect(start.status).toBe(302);
+    if (returned) {
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      expect((await mountedRequest(`/auth/github/callback?state=${state}&code=code`,
+        { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! })).status).toBe(200);
+    }
+    await database.query("UPDATE signin_attempt_correlations SET expires_at=now()-interval '1 second'");
+    await compactSigninAttempts(database);
+    expect((await stages()).map(row => row.stage)).toContain('expired');
+    expect((await database.query('SELECT * FROM signin_attempt_correlations')).rows).toEqual([]);
+    await compactSigninAttempts(database);
+    expect((await stages()).filter(row => row.stage === 'expired')).toHaveLength(1);
+    await database.query("UPDATE signin_attempt_events SET occurred_at=now()-interval '91 days'");
+    await compactSigninAttempts(database);
+    expect(await stages()).toEqual([]);
+  });
+
+  it('logs Google session exchange, preserves internal attribution and sanitizes unrecognized errors', async () => {
+    const context = funnelContext('google');
+    await database.query('INSERT INTO signin_funnel_installs(install_id,internal) VALUES($1,true)', [context.installId]);
+    const ticket = randomBytes(32).toString('base64url');
+    const ticketHash = createHash('sha256').update(ticket).digest('hex');
+    const at = new Date();
+    await recordSigninAttempt(database, { stage: 'started', flowHash: 'flow', provider: 'google', context,
+      at, expiresAt: new Date(Date.now()+120000) });
+    await recordSigninAttempt(database, { stage: 'provider_returned', flowHash: 'flow', at });
+    await store.createTicket(ticketHash, {
+      challenge: 'challenge', community: tenant.community, issuer: 'https://accounts.google.com',
+      audience: 'test-client', subject: 'google-owner', createdAt: at,
+      expiresAt: new Date(Date.now()+120000), attemptCount: 0, consumedAt: null, boundPubkey: null,
+    });
+    await recordSigninAttempt(database, { stage: 'ticket_issued', flowHash: 'flow', ticketHash,
+      at, expiresAt: new Date(Date.now()+120000) });
+    const response = await fetch(`${origin}/v1/auth/google/exchange`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ oidcToken: ticket }),
+    });
+    expect(response.status).toBe(200);
+    expect((await stages()).map(row => row.stage)).toContain('ticket_exchanged');
+    expect((await database.query('SELECT internal FROM signin_attempt_events')).rows.every(row => row.internal)).toBe(true);
+    await recordSigninAttempt(database, { stage: 'started', flowHash: 'bad', provider: 'google',
+      at, expiresAt: new Date(Date.now()+120000) });
+    await recordSigninAttempt(database, { stage: 'provider_returned', flowHash: 'bad', at, errorCode: 'private-token@example.com' });
+    expect(JSON.stringify(await stages())).not.toContain('private-token');
+    expect((await stages()).some(row => row.error_code === 'provider_error')).toBe(true);
   });
 
   it('R-GOOGLE-WEB-CORS: exposes Google capabilities only to configured browser origins', async () => {
@@ -437,6 +600,7 @@ describe('mounted monolith auth', () => {
     expect((await database.query(`SELECT github_subject FROM identities WHERE id=$1`, [id])).rows[0]?.github_subject).toBe('42');
     expect((await database.query(`SELECT 1 FROM github_user_tokens WHERE subject='43'`)).rows).toHaveLength(0);
     githubSubject = '42';
+    installationLogin = 'owner';
     const other = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
     const conflict = await githubOperations.beginInstallation(other, { redirectUri:'beeline://beeline/github-installation' });

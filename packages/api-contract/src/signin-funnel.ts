@@ -179,3 +179,13 @@ export interface FunnelAuthObservation {
   outcome?: 'success' | 'cancelled' | 'error';
   errorCode?: (typeof FUNNEL_ERRORS)[number];
 }
+
+/** Server-only observations. Hashes correlate short-lived ceremonies, never credentials. */
+export type SigninAttemptObservation =
+  | { stage: 'started'; flowHash: string; recoveryHash?: string | null;
+      provider: 'google' | 'github'; context?: unknown; expiresAt: Date; at: Date }
+  | { stage: 'continued'; flowHash: string; nextFlowHash: string; expiresAt: Date; at: Date }
+  | { stage: 'provider_returned'; flowHash: string; errorCode?: string; at: Date }
+  | { stage: 'failed'; flowHash: string; errorCode: string; at: Date }
+  | { stage: 'ticket_issued'; flowHash: string; ticketHash: string; expiresAt: Date; at: Date }
+  | { stage: 'ticket_exchanged' | 'cancelled'; ticketHash: string; at: Date };

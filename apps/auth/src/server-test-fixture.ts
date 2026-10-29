@@ -1,4 +1,4 @@
-import type { FunnelAuthObservation } from '@beeline/api-contract/signin-funnel';
+import type { FunnelAuthObservation, SigninAttemptObservation } from '@beeline/api-contract/signin-funnel';
 import { createHash, createHmac } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -322,7 +322,7 @@ export const state: {
   logLines: [],
 };
 
-export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>; nativeGoogle?: boolean} = {}): void {
+export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>; onSigninAttempt?: (input:SigninAttemptObservation)=>Promise<void>; nativeGoogle?: boolean} = {}): void {
   beforeEach(async () => {
     provider = new DemoOidcProvider();
     await provider.start();
@@ -355,6 +355,7 @@ export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthO
     state.logLines = [];
     app = buildAuthServer({
       onFunnelAuth: options.onFunnelAuth,
+      onSigninAttempt: options.onSigninAttempt,
       store,
       oidc: new OidcClient({
         issuer: options.nativeGoogle ? 'https://accounts.google.com' : provider.issuer,

@@ -51,6 +51,7 @@
     "prove:free-agent-instructions": "node --import tsx scripts/prove-free-agent-instructions.ts",
     "prove:free-agent:docker-machines": "node scripts/free-agent-docker-machines.mjs",
     "prove:agent-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-agent-sign-in.ts",
+    "prove:signin-attempts": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-signin-attempts.mjs",
     "prove:done-report-before-pr": "npm run build -w @beeline/server && node --import tsx scripts/prove-done-report-before-pr.mjs",
     "prove:report-files": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-files.mjs",
     "prove:report-wake-artifacts": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-wake-artifacts.mjs",

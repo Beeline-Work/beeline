@@ -2557,6 +2557,38 @@ CREATE TABLE IF NOT EXISTS signin_funnel_auth_flows (
   context jsonb NOT NULL,
   expires_at timestamptz NOT NULL
 );
+-- Only hashes used for correlation, never continuation secrets. Deleted after expiry.
+CREATE TABLE IF NOT EXISTS signin_attempt_correlations (
+  attempt_id uuid PRIMARY KEY,
+  flow_hash text UNIQUE NOT NULL,
+  recovery_hash text,
+  ticket_hash text,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS signin_attempt_correlations_recovery ON signin_attempt_correlations(recovery_hash);
+CREATE INDEX IF NOT EXISTS signin_attempt_correlations_ticket ON signin_attempt_correlations(ticket_hash);
+CREATE INDEX IF NOT EXISTS signin_attempt_correlations_expiry ON signin_attempt_correlations(expires_at);
+-- Append-only observations, except for the 90-day retention deletion.
+CREATE TABLE IF NOT EXISTS signin_attempt_events (
+  attempt_id uuid NOT NULL,
+  stage text NOT NULL CHECK(stage IN ('started','provider_returned','ticket_issued','ticket_exchanged','cancelled','expired','failed')),
+  install_id uuid,
+  funnel_attempt_id uuid,
+  provider text NOT NULL CHECK(provider IN ('google','github')),
+  platform text,
+  version text,
+  internal boolean NOT NULL,
+  error_code text,
+  occurred_at timestamptz NOT NULL,
+  PRIMARY KEY(attempt_id,stage)
+);
+-- Installation onboarding can return from GitHub twice in one attempt.
+ALTER TABLE signin_attempt_events DROP CONSTRAINT IF EXISTS signin_attempt_events_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS signin_attempt_events_once
+  ON signin_attempt_events(attempt_id,stage) WHERE stage <> 'provider_returned';
+CREATE INDEX IF NOT EXISTS signin_attempt_events_attempt ON signin_attempt_events(attempt_id);
+CREATE INDEX IF NOT EXISTS signin_attempt_events_date ON signin_attempt_events(occurred_at);
+CREATE INDEX IF NOT EXISTS signin_attempt_events_install ON signin_attempt_events(install_id,funnel_attempt_id);
 CREATE TABLE IF NOT EXISTS signin_funnel_daily (
   day date NOT NULL,
   platform text NOT NULL,

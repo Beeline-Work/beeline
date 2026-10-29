@@ -92,3 +92,15 @@ path used by CI; no running application is involved in this check.
 The stronger dependency tracking mechanically changes two wrapper fingerprints
 (`ensureReviewDispatch` and `DaemonService.report`); the regenerated inventory
 retains all producer source and visible wording unchanged.
+
+The destructuring follow-up for SYSTEM-REFACTOR-2 reproduced false passes for
+`forward({words})` with `find`, `filter` and `sort`. The new scanner/enforcer
+regressions failed on the previous head. Bindings now retain selection callbacks
+conservatively: a container's array type does not prove that a destructured
+projection is opaque. Unknown/computed bindings also retain their callbacks.
+The collector follows the binding's container and defaults at every nesting
+level, including parameter defaults. The regressions cover object and array
+patterns, renamed keys, nested patterns, defaults and rest elements in helpers
+and const declarations. An explicit unresolved-origin case checks fail-closed
+behavior. One workflow-gate wrapper fingerprint is regenerated from unchanged
+producer source to retain its destructured callback dependencies.

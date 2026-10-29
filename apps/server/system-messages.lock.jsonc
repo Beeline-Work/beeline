@@ -1,4 +1,4 @@
-// Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays through helper parameters; no producer source or displayed wording changed.
+// Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays through helper parameters and destructured bindings; no producer source or displayed wording changed.
 // Save to vault card and saved receipt approved by lunchboxfortwo, brief revision 2, message 2df3e0f5a54cd95512707fd11e51f20cc7c399f4bedf1934adf7f9bfdfd4634e; vault producers and their transitive wrappers only.
 // MCP send_message threaded-reply wrapper approved by lunchboxfortwo, Room request 7fd0f8d926c4f91c53dac705cb0735248ae1a6ea2630fb053e4c5e78c2810888 (brief revision 5, criterion 10); client-authored text, no System wording changes.
 // Transport-only System input projection, approved in corner brief revision 1; producer source and visible wording unchanged.
@@ -11066,7 +11066,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:postWorkflowGate:wrapper:973ad94786645e39",
+    "id": "src/workflow-runs.ts:postWorkflowGate:wrapper:af0a72a2fa805f0b",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "postRoomChoice(db, {\n    roomId: input.roomId,\n    agentId: askerAgentId,\n    workflowRunId: input.runId,\n    workflowOwnerId: (await loadRunStart(db, input.roomId, input.runId)).card.ownerId,\n    mode: 'question',\n    prompt: (input.state.does?.replace(/\\s+/g, ' ').trim() ||\n        `Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`).slice(0, 120),\n    ...(input.state.default && input.state.timeoutSeconds\n        ? { constraint: `No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}` }\n        : {}),\n    options: Object.entries(input.state.on).map(([outcome, target]) => ({\n        label: outcome,\n        consequence: (input.contract.handoffs[target]?.does?.replace(/\\s+/g, ' ').trim() ||\n            `Continue to ${target.replace(/[-_]/g, ' ')}`).slice(0, 80),\n    })),\n})",

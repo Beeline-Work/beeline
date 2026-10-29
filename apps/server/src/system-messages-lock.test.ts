@@ -765,6 +765,17 @@ function scan(files: Map<string, string>): Entry[] {
           return [ts.isPropertyAssignment(property) ? property.initializer : name];
         })
       : [node];
+  // A binding's container carries every possible selected value. Keep defaults
+  // at every nesting level as additional origins, including rest bindings.
+  const bindingOrigin = (binding: ts.BindingElement) => {
+    const defaults: ts.Expression[] = [];
+    let root: ts.Node = binding;
+    while (ts.isBindingElement(root) || ts.isBindingPattern(root)) {
+      if (ts.isBindingElement(root) && root.initializer) defaults.push(root.initializer);
+      root = root.parent;
+    }
+    return { root, defaults };
+  };
   const forward = (node: ts.Node, parts: readonly ts.Node[]) => {
     const owner = owners.get(node);
     if (!owner || !ts.isFunctionLike(owner)) return false;
@@ -937,6 +948,10 @@ function scan(files: Map<string, string>): Entry[] {
     }
     if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
       for (const declaration of declarations(node)) {
+        // A destructured projection is not proven opaque by its container's
+        // type. Retain wording dependencies even when its key/origin is unknown.
+        // This covers object/array, renamed, nested, default and rest bindings.
+        if (ts.isBindingElement(declaration)) return true;
         if (ts.isParameter(declaration) &&
           [...(parameterInputs.get(declaration) ?? []), ...(declaration.initializer ? [declaration.initializer] : [])]
             .some((input) => literalArray(input, seen))) return true;
@@ -1096,9 +1111,10 @@ function scan(files: Map<string, string>): Entry[] {
                 : []
               ).forEach(collect);
             if (ts.isBindingElement(declaration)) {
-              let parent: ts.Node = declaration;
-              while (parent.parent && !ts.isVariableDeclaration(parent)) parent = parent.parent;
-              if (ts.isVariableDeclaration(parent) && parent.initializer) collect(parent.initializer);
+              const { root, defaults } = bindingOrigin(declaration);
+              defaults.forEach(collect);
+              if ((ts.isVariableDeclaration(root) || ts.isParameter(root)) && root.initializer)
+                collect(root.initializer);
             }
             if (ts.isPropertyAssignment(declaration)) collect(declaration.initializer);
             // Formatting helpers carry literal phrases in their bodies, including imported helpers.
@@ -2012,4 +2028,38 @@ it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks on he
     line(db,{verb:select(['hello','world'])});
   `;
   expect(() => enforce(scan(fixture(source.replace(original, changed))), scan(fixture(source)))).toThrow(failure);
+});
+
+it.each(['find', 'filter', 'sort'])('SYSTEM-REFACTOR-2: locks %s callbacks through destructured bindings', (method) => {
+  const original = method === 'sort' ? "(a,b)=>a==='hello'?-1:1" : "word=>word==='hello'";
+  const setups = [
+    "function forward({words}:{words:string[]}):string[] { return words; } const selected=forward({words});",
+    "function forward({words:w}:{words:string[]}):string[] { return w; } const selected=forward({words});",
+    "function forward({nested:{words}}:any):string[] { return words; } const selected=forward({nested:{words}});",
+    "function forward({words=['hello','world']}={}):string[] { return words; } const selected=forward();",
+    "function forward([words]:string[][]):string[] { return words; } const selected=forward([words]);",
+    "function forward([...words]:string[]):string[] { return words; } const selected=forward(words);",
+    "function forward({ignored,...rest}:any):string[] { return rest.words; } const selected=forward({words});",
+    "const {nested:{words:selected}}={nested:{words}};",
+    "const [selected]=[words];",
+    "const [...selected]=words;",
+    "const {words:selected=['hello','world']}={};",
+    "const {[unknownKey]:selected}=unresolvedSource;",
+  ];
+  for (const setup of setups) {
+    const source = `function select(words:string[]) { ${setup} return selected.${method}(${original}); }
+      line(db,{verb:select(['hello','world'])});`;
+    const before = scan(fixture(source));
+    const after = scan(fixture(source.replace(original, original.replace('hello', 'world'))));
+    expect(compare(after, before).violations, setup).not.toEqual([]);
+    expect(() => enforce(after, before), setup).toThrow(failure);
+  }
+});
+
+it('SYSTEM-REFACTOR-2: fails closed for an unresolvable destructured array origin', () => {
+  const source = "function forward({[unknownKey]:words}:any):string[] { return words; } line(db,{verb:forward(unresolvedSource).find(word=>word==='hello')});";
+  const before = scan(fixture(source));
+  const after = scan(fixture(source.replace("==='hello'", "==='world'")));
+  expect(compare(after, before).violations).not.toEqual([]);
+  expect(() => enforce(after, before)).toThrow(failure);
 });

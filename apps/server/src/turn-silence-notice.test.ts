@@ -7,6 +7,7 @@ import { ConnectionPresence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import type { CommittedTurnLiveRow } from './live.js';
 import { noteFirstSilence, reclaimExpiredCommandLeases } from './turn-silence-notice.js';
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { repositoryCacheDamagedFault } from '@beeline/api-contract/daemon';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -465,6 +466,45 @@ describe('first-silence notice', () => {
         ).rows,
       ).toHaveLength(1);
     }
+  });
+
+  it.each(['Authentication required', 'The model refused the request', 'Tool error: connection reset'])(
+    'Reproduction CAPACITY-1: does not expand agent-triggered retries for %s', async reason => {
+      const requestId = 'non-capacity-request';
+      const command = await ask(database, requestId);
+      await database.query('UPDATE messages SET author_id=$1 WHERE id=$2', [AGENT, requestId]);
+      const result = await new DaemonService(database, new LiveHub()).execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: 'g1', status: 'failed', reason,
+      }, AGENT);
+      expect(result.hiccupRestart).toBeUndefined();
+      expect((await commandState(database, command.id))?.state).toBe('complete');
+    });
+
+  it('Reproduction CAPACITY-1: an agent-triggered turn backs off, resumes, and stops after a finite budget', async () => {
+    const requestId = 'capacity-request';
+    const command = await ask(database, requestId);
+    await database.query('UPDATE messages SET author_id=$1 WHERE id=$2', [AGENT, requestId]);
+    const daemon = new DaemonService(database, new LiveHub());
+    for (const attempt of [1, 2, 3]) {
+      if (attempt > 1) {
+        await database.query("UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1", [command.id]);
+        await flushDueCommanderWakes(database);
+        await claimAgentCommand(database, ROOM, AGENT, command.id, `g${attempt}`);
+      }
+      const result = await daemon.execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: `g${attempt}`, status: 'failed',
+        reason: 'The model is at capacity; overloaded_error', reasonKind: 'hiccup',
+      }, AGENT);
+      expect(Boolean(result.hiccupRestart)).toBe(attempt < 3);
+      const stored = (await database.query<{ state: string; delay: number | null }>(
+        `SELECT state,EXTRACT(EPOCH FROM (wake_after-now()))::float delay FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!;
+      expect(stored.state).toBe(attempt < 3 ? 'pending' : 'complete');
+      if (attempt < 3) {
+        expect(stored.delay).toBeGreaterThan(attempt === 1 ? 25 : 55);
+        expect(stored.delay).toBeLessThanOrEqual(attempt === 1 ? 30 : 60);
+      }
+    }
+    expect((await failureLine(database, requestId))?.text).toContain('Stopped retrying after three tries.');
   });
 
   it('gives up after three hiccups and says so once', async () => {

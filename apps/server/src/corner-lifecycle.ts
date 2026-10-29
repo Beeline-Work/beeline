@@ -978,8 +978,9 @@ async function noteMissingReviewVerdict(db: SqlDatabase, cornerId: string, corne
  * The reviewer's finished review of this head (callers have already checked
  * for an approval on the head), while the corner was still in review. Another
  * review wake for the same head would only repeat that verdict. A later brief
- * revision does not reopen it: the code is unchanged. A new head does. A turn
- * that ended after the corner left review (checks re-ran) gave no verdict.
+ * revision does not reopen it: the code is unchanged. A new head does.
+ * Delivered failed/blocked reports retain their head even if checks changed
+ * during the turn; a failed execution without a delivered decision does not.
  */
 export async function blockingReview(
   db: SqlDatabase,
@@ -996,7 +997,8 @@ export async function blockingReview(
        JOIN agent_turns turn ON turn.room_id=command.room_id
          AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
        WHERE command.room_id=$1 AND command.action='input'
-         AND command.state='complete' AND turn.status='complete'
+         AND (command.state='complete' AND turn.status='complete'
+           OR command.report_outcome IN ('failed','blocked'))
          AND (EXISTS (SELECT 1 FROM messages verdict
            WHERE verdict.room_id=command.room_id AND verdict.author_id=command.agent_id
              AND (verdict.id=command.result_message_id OR verdict.request_id=command.turn_request_id
@@ -1016,13 +1018,13 @@ export async function blockingReview(
             ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
          AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
            SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1))
-         AND NOT EXISTS (
+         AND (command.report_outcome IN ('failed','blocked') OR NOT EXISTS (
            SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
              AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
              AND card.created_at>command.created_at
-             AND card.created_at<=COALESCE(command.completed_at,now()))
+             AND card.created_at<=COALESCE(command.completed_at,now())))
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-      [cornerId, headSha, CORNER_LIFECYCLE_CARD_TYPE, REVIEW_VERDICT_SQL],
+      [cornerId, headSha, CORNER_LIFECYCLE_CARD_TYPE, `${REVIEW_VERDICT_SQL}|(^|\\n)[[:space:]]*blocked:[[:space:]]*[^[:space:]]`],
     )
   ).rows[0]?.id;
 }

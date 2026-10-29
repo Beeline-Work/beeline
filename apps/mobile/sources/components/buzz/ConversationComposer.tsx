@@ -434,6 +434,7 @@ function ConversationComposerContent({
                         accessibilityLabel={`Retry uploading ${attachment.name}`}
                         disabled={attachmentsUploading}
                         onPress={() => onRetryAttachment?.(index)}
+                        style={styles.attachmentRetry}
                         testID={`pending-chat-attachment-retry-${index}`}
                       />
                     )}
@@ -839,6 +840,8 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerGhost,
   },
   attachmentFailed: { color: theme.buzz.textPrimary },
+  // The file details truncate. Retry keeps the width of its label.
+  attachmentRetry: { flexShrink: 0 },
   removeButton: {
     width: 44,
     minHeight: 44,

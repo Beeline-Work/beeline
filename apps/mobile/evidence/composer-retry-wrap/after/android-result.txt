@@ -1,0 +1,5 @@
+PASS Bone: Retry label is present
+PASS Bone: Retry stays on one line (50px tall, 93px wide; metadata line 50px)
+PASS Obsidian: Retry label is present
+PASS Obsidian: Retry stays on one line (50px tall, 93px wide; metadata line 50px)
+RESULT PASS

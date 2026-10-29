@@ -33,6 +33,8 @@ const GITHUB_RECOVERY_WAIT_MS = 120_000;
 const REACHABILITY_TIMEOUT_MS = 5_000;
 /** How long completion reads may fail to reach the server before the device counts as offline. */
 const GITHUB_OFFLINE_GIVE_UP_MS = 10_000;
+/** How long the server may still report pending after the browser closed before it counts as a cancel. */
+const GITHUB_CLOSED_PENDING_MS = 1_500;
 
 interface PendingGitHubSignInSession {
   state: string;
@@ -513,6 +515,7 @@ interface ResilientGitHubSessionInput {
   recoveryWaitMs?: number;
   recoveryPollMs?: number;
   offlineGiveUpMs?: number;
+  closedPendingMs?: number;
   callbackGraceMs?: number;
 }
 
@@ -529,6 +532,7 @@ export async function runResilientGitHubSignInSession({
   recoveryWaitMs = GITHUB_RECOVERY_WAIT_MS,
   recoveryPollMs = 200,
   offlineGiveUpMs = GITHUB_OFFLINE_GIVE_UP_MS,
+  closedPendingMs = GITHUB_CLOSED_PENDING_MS,
   callbackGraceMs,
 }: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
   await assertAuthServerReachable(runtime, fetchImpl);
@@ -553,10 +557,17 @@ export async function runResilientGitHubSignInSession({
   }
   await persistGitHubSignInState(state, purpose, recoveryToken);
   let callbackUrl: string | null = null;
+  let browserSettledAt: number | null = null;
+  let browserClosedAt: number | null = null;
   try {
     callbackUrl = await waitForAuthCallbackResult({
       redirectUri: start.redirectUri,
-      openAuthSession: () => openAuthSession(start.authorizationUrl, start.redirectUri),
+      openAuthSession: () =>
+        openAuthSession(start.authorizationUrl, start.redirectUri).then((result) => {
+          // A desktop shell only reports that it opened the system browser.
+          if (result.type !== 'opened') browserSettledAt = Date.now();
+          return result;
+        }),
       subscribeToUrls,
       ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
     }).then((result) => result.url);
@@ -565,6 +576,7 @@ export async function runResilientGitHubSignInSession({
       await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
       throw error;
     }
+    browserClosedAt = browserSettledAt ?? Date.now();
   }
 
   if (callbackUrl) {
@@ -581,6 +593,7 @@ export async function runResilientGitHubSignInSession({
   const deadline = Date.now() + recoveryWaitMs;
   let unreachableSince: number | null = null;
   do {
+    let serverPending = false;
     try {
       const recovered = await fetchGitHubRecoveryChallenge(
         recoveryToken,
@@ -593,6 +606,7 @@ export async function runResilientGitHubSignInSession({
         return recovered;
       }
       unreachableSince = null;
+      serverPending = true;
     } catch (error) {
       // A slow or interrupted completion read says nothing about the proof. Keep
       // the app-held recovery secret and retry while the server ticket can live.
@@ -611,6 +625,12 @@ export async function runResilientGitHubSignInSession({
       } else {
         unreachableSince = null;
       }
+    }
+    // The browser closed without a callback and the server still has no
+    // completion: the person left GitHub. Free the sign-in buttons, as Google does.
+    if (serverPending && browserClosedAt !== null && Date.now() - browserClosedAt >= closedPendingMs) {
+      await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+      throw new OidcBindError('browser_canceled', 'GitHub sign-in was canceled');
     }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;

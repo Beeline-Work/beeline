@@ -408,6 +408,57 @@ describe('GitHub auth session redirects', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it('Reproduction gh3: frees sign-in within 2 s when the person leaves GitHub and the server stays pending', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/cancel')
+        ? new Response(null, { status: 204 })
+        : new Response(JSON.stringify({ status: 'pending' }), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        }));
+    const startedAt = Date.now();
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        runtime: MONOLITH_RUNTIME,
+        openAuthSession: async () => ({ type: 'dismiss' }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: reachable(fetchImpl),
+        recoveryWaitMs: 5_000,
+      }),
+    ).rejects.toMatchObject({ code: 'browser_canceled' });
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(fetchImpl.mock.calls.at(-1)?.[0]).toBe(
+      'https://server.usebeeline.app/auth/github/completion/cancel',
+    );
+  }, 10_000);
+
+  it('Reproduction gh3: still signs in when the browser closed and the completion lands after a pending read', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'pending' }), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(recoveryResponse());
+
+    await expect(
+      runResilientGitHubSignInSession({
+        state: STATE,
+        recoveryToken: RECOVERY_TOKEN,
+        runtime: MONOLITH_RUNTIME,
+        openAuthSession: async () => ({ type: 'dismiss' }),
+        subscribeToUrls: () => ({ remove: () => undefined }),
+        fetchImpl: reachable(fetchImpl),
+        callbackGraceMs: 0,
+        recoveryPollMs: 0,
+      }),
+    ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('treats a 410 completion response as terminal expiry and cancels recovery', async () => {
     const fetchImpl = vi
       .fn()

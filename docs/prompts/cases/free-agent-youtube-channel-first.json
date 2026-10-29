@@ -1,0 +1,214 @@
+{
+  "id": "free-agent-youtube-channel-first",
+  "section": "identity",
+  "summary": "A connected YouTube account with no channel needs channel creation before preview approval.",
+  "place": "room",
+  "session": {
+    "freeAgent": true,
+    "freeAgentJob": "youtube"
+  },
+  "turn": {
+    "task": {
+      "body": "Post a video to your YouTube. YouTube is connected. My square clip and extracted frame are ready in this Room. Title: Garden walk. Description: A garden walk. Use public visibility. Clip videoObjectId: 66666666-6666-4666-8666-666666666666. Frame frameObjectId: 77777777-7777-4777-8777-777777777777. The extracted frame is already posted. Luna already checked the metadata and caught a typo, which is fixed.",
+      "commandReason": "human_tag"
+    }
+  },
+  "tools": [],
+  "pass": {
+    "all": [
+      {
+        "call": "app_tool",
+        "args": {
+          "tool": "YOUTUBE_LIST_CHANNELS",
+          "args.mine": true
+        }
+      },
+      {
+        "noCall": "app_tool",
+        "args": {
+          "tool": "video_preview"
+        }
+      },
+      {
+        "noCall": "app_tool",
+        "args": {
+          "tool": "YOUTUBE_MULTIPART_UPLOAD_VIDEO"
+        }
+      },
+      {
+        "text": {
+          "matches": "youtube.com",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "creat.*channel|channel.*creat",
+          "flags": "i"
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "history": [
+      "Person: Post a video to your YouTube. Connected YouTube, square clip attached (videoObjectId: 66666666-6666-4666-8666-666666666666); frame posted (frameObjectId: 77777777-7777-4777-8777-777777777777).",
+      "Luna: The description typo is fixed; the title and frame look good."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "free-agent-long-work-closure",
+              "kind": "room"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": ""
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "free-agent-long-work-closure",
+          "members": "",
+          "repository": null,
+          "worktree": null,
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      },
+      {
+        "call": "app_tool",
+        "args": {
+          "tool": "YOUTUBE_LIST_CHANNELS"
+        },
+        "result": {
+          "items": [],
+          "pageInfo": {
+            "totalResults": 0
+          }
+        }
+      },
+      {
+        "call": "app_tool",
+        "args": {},
+        "result": {
+          "app": "app:youtube",
+          "tools": [
+            {
+              "name": "YOUTUBE_LIST_CHANNELS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "mine": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "remainingTokens": 50000
+    },
+    "connect": {
+      "status": {
+        "apps": [
+          {
+            "id": "app:youtube",
+            "name": "YouTube",
+            "transport": "composio",
+            "status": "connected"
+          }
+        ]
+      }
+    }
+  },
+  "messages": [
+    "Person: Post a video to your YouTube. Connected YouTube, square clip attached (videoObjectId: 66666666-6666-4666-8666-666666666666); frame posted (frameObjectId: 77777777-7777-4777-8777-777777777777).",
+    "Luna: The description typo is fixed; the title and frame look good."
+  ]
+}

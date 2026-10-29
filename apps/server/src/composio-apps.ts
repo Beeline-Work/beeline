@@ -5,6 +5,20 @@ import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js'
 type Json = Record<string, unknown>;
 const API = 'https://backend.composio.dev/api';
 
+/** Explicit YouTube rejection before a video exists; timeouts and generic 5xx stay ambiguous. */
+export class YouTubeUploadRefusal extends Error {}
+
+function clearYouTubeUploadRefusal(value: unknown): boolean {
+  const hasVideoId = (node: unknown): boolean => {
+    if (!node || typeof node !== 'object') return false;
+    return Object.entries(node).some(([key, item]) =>
+      (['id', 'videoId', 'video_id'].includes(key) && item !== null && item !== '') || hasVideoId(item));
+  };
+  if (hasVideoId(value)) return false;
+  const text = JSON.stringify(value);
+  return Boolean(text && /youtubeSignupRequired|channel is not properly configured|quotaExceeded|uploadLimitExceeded|dailyLimitExceeded|insufficientPermissions|unverified|invalidTitle|invalidDescription|invalidCategoryId/i.test(text));
+}
+
 function object(value: unknown): Json {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('App provider returned an invalid response');
@@ -422,8 +436,10 @@ export class ComposioApps {
     if (!response.ok) {
       const body = await readBoundedBody(response);
       let detail: string | undefined;
+      let payload: unknown;
       try {
-        detail = providerErrorDetail(JSON.parse(body) as unknown);
+        payload = JSON.parse(body);
+        detail = providerErrorDetail(payload);
       } catch {
         if (body.trim()) detail = boundedDetail(body.trim());
       }
@@ -431,6 +447,8 @@ export class ComposioApps {
       const error = new Error(detail
         ? `App provider request failed (${response.status}): ${detail}`
         : `App provider request failed (${response.status})`);
+      if (path === '/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO' && clearYouTubeUploadRefusal(payload))
+        throw new YouTubeUploadRefusal(error.message);
       Object.assign(error, { status: response.status });
       throw error;
     }
@@ -666,6 +684,7 @@ export class ComposioApps {
         const message = conceal(error.message) as string;
         const concealed = (error as Error & { status?: unknown }).status === 404
           ? new CommandRefusalError(message, 404)
+          : error instanceof YouTubeUploadRefusal ? new YouTubeUploadRefusal(message)
           : error instanceof CommandRefusalError
           ? new CommandRefusalError(message, error.status)
           : error instanceof ExpectedRefusalError ? new ExpectedRefusalError(message) : new Error(message);
@@ -705,6 +724,8 @@ export class ComposioApps {
     if (result.error || result.successfull === false || result.successful === false) {
       const detail = providerErrorDetail(result.error);
       const message = detail ? `App tool execution failed: ${detail}` : 'App tool execution failed';
+      if (input.tool === YOUTUBE_UPLOAD_TOOL && input.toolkit === 'youtube' && clearYouTubeUploadRefusal(result))
+        throw new YouTubeUploadRefusal(message);
       const refusalStatus = appRefusalStatus(result);
       if (refusalStatus) throw new CommandRefusalError(message, refusalStatus);
       throw new Error(message);

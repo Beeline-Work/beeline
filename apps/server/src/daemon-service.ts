@@ -1,5 +1,6 @@
+import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
-import { consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
+import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
@@ -678,6 +679,7 @@ export class DaemonService {
               })
             : undefined;
       const committedTasks: Parameters<AfterCommit>[0][] = [];
+      let appToolExecution: DaemonService['deferredAppTool'];
       const output = await this.database.transaction(async (db) => {
         if (name === 'createCorner' || name === 'reviseCornerBrief')
           await lockCornerLifecycle(db, scopedRoom);
@@ -876,6 +878,7 @@ export class DaemonService {
           committedTasks.push(task);
         };
         let result: Output<Name> = await scoped.execute(name, input, authenticatedAgentId);
+        appToolExecution = scoped.deferredAppTool;
         if (name === 'requestAgentGrant') {
           await db.query(
             `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
@@ -1005,6 +1008,8 @@ export class DaemonService {
           authenticatedAgentId,
         );
       }
+      // Upload reservation and turn authority commit before bytes leave for YouTube.
+      if (appToolExecution) return await appToolExecution(this.database) as Output<Name>;
       return output;
     }
     if (walletCall && this.commandTransaction) {
@@ -7990,6 +7995,8 @@ export class DaemonService {
     return { tools };
   }
 
+  private deferredAppTool?: (database: SqlDatabase) => Promise<Output<'executeAppTool'>>;
+
   private async executeAppTool(input: Input<'executeAppTool'>, agentId: string) {
     if (!this.composio) throw new Error('App tools are unavailable');
     // Room files are checked before any provider request, including the account check.
@@ -8043,15 +8050,28 @@ export class DaemonService {
     if (!args || typeof args !== 'object' || Array.isArray(args) ||
       JSON.stringify(args).length > 65_536)
       throw new Error('App tool arguments are invalid');
-    if (input.tool === 'YOUTUBE_MULTIPART_UPLOAD_VIDEO')
-      await this.database.transaction(db => consumeStarterVideoPost(db, input.roomId, agentId, args));
-    const data = await this.composio.execute({ accountId: row.composio_account_id,
-      userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
-      tool: input.tool, arguments: args, files });
-    await recordAppUsage(this.database, { appId: row.id, agentId,
-      roomId: input.roomId, requesterId: requester.id, transport: 'composio',
-      operation: input.tool, ...(grantId ? { grantId } : {}) });
-    return { status: 'executed' as const, data };
+    const claim = input.tool === 'YOUTUBE_MULTIPART_UPLOAD_VIDEO'
+      ? await this.database.transaction(db => consumeStarterVideoPost(db, input.roomId, agentId, args)) : undefined;
+    const execute = async (database: SqlDatabase) => {
+      let data: unknown;
+      try {
+        data = await this.composio!.execute({ accountId: row.composio_account_id!,
+          userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
+          tool: input.tool, arguments: args, files });
+      } catch (error) {
+        if (claim && error instanceof YouTubeUploadRefusal) await restoreStarterVideoPost(database, claim);
+        throw error;
+      }
+      await recordAppUsage(database, { appId: row.id, agentId,
+        roomId: input.roomId, requesterId: requester.id, transport: 'composio',
+        operation: input.tool, ...(grantId ? { grantId } : {}) });
+      return { status: 'executed' as const, data };
+    };
+    if (claim && this.commandTransaction) {
+      this.deferredAppTool = execute;
+      return { status: 'executed' as const, data: undefined };
+    }
+    return execute(this.database);
   }
 
   /**

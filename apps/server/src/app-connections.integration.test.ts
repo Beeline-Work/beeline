@@ -2084,6 +2084,48 @@ describe('connect_app', () => {
       return { daemon, upload, calls, transport, getObject };
     }
 
+    it.each(['clear refusal', 'ambiguous 503', 'network loss', 'id with error', 'concurrent'])('R1: phone Post approval handles %s', async (failure) => {
+      const { daemon, transport, calls } = await youtubeRoom();
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text,card,created_at)
+        VALUES('starter-welcome',$1,$2,'Welcome','{"starterOnboarding":"welcome","selectedOptionId":"B"}',now()-interval '1 minute')`, [ROOM, HELPER]);
+      const { postRoomChoice } = await import('./room-choice.js');
+      const preview = await postRoomChoice(database, { roomId: ROOM, agentId: HELPER, mode: 'question', prompt: 'Song',
+        options: [{ label: 'Post', consequence: 'Post' }, { label: 'Cancel', consequence: 'Cancel' }] });
+      await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [preview.messageId, JSON.stringify({
+        status: 'answered', selectedOptionId: 'A', videoPreview: { videoObjectId: IN_ROOM, title: 'Song', description: '', visibility: 'private' }
+      })]);
+      const original = transport.getMockImplementation()!;
+      let refused = false;
+      let release!: () => void;
+      let started!: () => void;
+      const pending = new Promise<void>(resolve => { release = resolve; });
+      const entered = new Promise<void>(resolve => { started = resolve; });
+      transport.mockImplementation(async (url, init) => {
+        if (String(url).includes('/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO') && !refused) {
+          refused = true;
+          if (failure === 'concurrent') { started(); await pending; return original(url, init); }
+          if (failure === 'network loss') throw new Error('connection lost after sending bytes');
+          if (failure === 'ambiguous 503') return Response.json({ message: 'upstream unavailable' }, { status: 503 });
+          return Response.json({ ...(failure === 'id with error' ? { data: { id: 'yt-already-created' } } : {}), successful: false, error: { code: 503, message: 'The channel is not properly configured.', errors: [{ reason: 'youtubeSignupRequired' }] } });
+        }
+        return original(url, init);
+      });
+      const call = () => daemon.execute('executeAppTool', { ...turn, appId: YOUTUBE_APP,
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: { title: 'Song', description: '', privacyStatus: 'private', videoFile: { beelineObjectId: IN_ROOM } } }, HELPER);
+      if (failure === 'concurrent') {
+        const first = call();
+        await entered;
+        try { await expect(call()).rejects.toThrow('tap Post'); }
+        finally { release(); }
+        await expect(first).resolves.toMatchObject({ data: { id: 'yt-1' } });
+      } else {
+        await expect(call()).rejects.toThrow(failure === 'network loss' ? 'connection lost' : failure === 'ambiguous 503' ? '503' : 'channel is not properly configured');
+        if (failure === 'clear refusal') await expect(call()).resolves.toMatchObject({ status: 'executed', data: { id: 'yt-1' } });
+      }
+      await expect(call()).rejects.toThrow('tap Post');
+      expect(calls.filter(c => c.url.includes('/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO'))).toHaveLength(['clear refusal', 'concurrent'].includes(failure) ? 1 : 0);
+    });
+
     it.each(['local path', 'broken tool', 'Room object', 'provider 5xx', 'network', 'upload PUT'])(
       'Reproduction APP-FILE-1: daemon HTTP handles %s with the correct capture count', async (failure) => {
         const { daemon, transport, calls } = await youtubeRoom();

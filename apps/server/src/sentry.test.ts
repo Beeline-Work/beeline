@@ -263,6 +263,80 @@ it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
 
+it('R-CHECKIN-ACTIVITY: invalid final output is actionable while unexpected database errors still alert', async () => {
+  const envelopes: string[] = [];
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    envelopes.push(Buffer.concat(chunks).toString());
+    response.end('{}');
+  });
+  await new Promise<void>(r => collector.listen(0, '127.0.0.1', r));
+  try {
+    const port = (collector.address() as AddressInfo).port;
+    const source = `
+      import assert from 'node:assert/strict';
+      import { PgliteDatabase } from './src/test-support.ts';
+      import { migrate } from './src/database.ts';
+      import { DaemonService } from './src/daemon-service.ts';
+      import { LiveHub } from './src/live.ts';
+      import { createAgentCommand, claimAgentCommand } from './src/agent-command.ts';
+      import { createBeelineServer } from './src/server.ts';
+      import { flushServerErrors } from './src/sentry.ts';
+      const db = new PgliteDatabase(); await migrate(db);
+      const agent='b'.repeat(64), human='a'.repeat(64);
+      const room='22222222-2222-4222-8222-222222222222', workspace='11111111-1111-4111-8111-111111111111';
+      await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Worker'),($2,'human','Owner')",[agent,human]);
+      await db.query("INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)",[agent,human]);
+      await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Test')",[workspace]);
+      await db.query("INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Test')",[room,workspace]);
+      await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')",[workspace,room,agent]);
+      const command=await createAgentCommand(db,{roomId:room,agentId:agent,sourceMessageId:null,reason:'free_agent_checkin'});
+      await db.query("INSERT INTO next_day_checkin_candidates(identity_id,first_at,due_at) VALUES($1,now()-interval '1 day',now())",[human]);
+      await db.query("INSERT INTO next_day_checkins(identity_id,due_at,room_id,agent_id,command_id) VALUES($1,now(),$2,$3,$4)",[human,room,agent,command.id]);
+      await claimAgentCommand(db,room,agent,command.id,'proof');
+      const live=new LiveHub(), daemon=new DaemonService(db,live);
+      const server=createBeelineServer({database:db,live,daemon,phone:{},
+        auth:{authenticateDaemon:async()=>agent,authenticatePhone:async()=>null},mediaMaximumBytes:1});
+      await new Promise(r=>server.listen(0,'127.0.0.1',r));
+      const call=async(operation,extra)=>{
+        const response=await fetch('http://127.0.0.1:'+server.address().port+'/v1/daemon/operations/'+operation,{
+          method:'POST',headers:{authorization:'Bearer isolated-checkin-proof','content-type':'application/json'},
+          body:JSON.stringify({roomId:room,requestId:command.turn_request_id,generationId:'proof',...extra})});
+        return {status:response.status,body:await response.json()};
+      };
+      try {
+        const activity={activity:[{kind:'thinking',title:'Working',status:'in_progress'}]};
+        assert.equal((await call('postAgentActivity',activity)).status,200);
+        for (const output of [{text:'   '},{text:'Card',presentation:'card'}]) {
+          const result=await call('postRoomMessage',output);
+          assert.match(result.body.error,/Post nonempty text with message presentation/);
+        }
+        assert.equal((await db.query('SELECT sent_at FROM next_day_checkins')).rows[0].sent_at,null);
+        // Exercise an actual database failure with the old validation wording.
+        await db.query(\`CREATE FUNCTION fail_checkin_activity() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'A check-in must be one plain Room message'; END $$;
+          CREATE TRIGGER checkin_fault BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION fail_checkin_activity();\`);
+        assert.equal((await call('postAgentActivity',activity)).status,503);
+        await flushServerErrors();
+      } finally { await new Promise(r=>server.close(r)); await db.close(); }
+      process.exit(0);`;
+    const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let error = ''; child.stderr.on('data', value => { error += String(value); });
+      child.on('error', reject); child.on('exit', code => done({ code, error }));
+    });
+    expect(result, result.error).toMatchObject({ code: 0 });
+    const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
+      .filter(item => item.exception);
+    expect(events).toHaveLength(1);
+    expect(events[0].exception.values[0].value).toBe('A check-in must be one plain Room message');
+  } finally { await new Promise<void>(r => collector.close(() => r())); }
+}, 60_000);
+
 it.each(['server', 'body'] as const)('R-SENTRY-REPEAT: %s sends one envelope for a changing-PID loop', async (surface) => {
   const events: unknown[] = [];
   const collector = createServer(async (request, response) => {

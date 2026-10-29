@@ -1,6 +1,6 @@
 {
   "feature": "next-day-checkin",
-  "classification": "not a defect report",
+  "reproduction": "R-CHECKIN-ACTIVITY",
   "standIns": [
     "PGlite database",
     "deterministic helper reply instead of live model",
@@ -15,10 +15,10 @@
     {
       "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "due_at": "2026-10-27T13:00:00.000Z",
-      "sent_at": "2026-10-28T00:31:24.817Z",
+      "sent_at": "2026-10-29T13:06:08.135Z",
       "room_id": "22222222-2222-4222-8222-222222222222",
       "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "message_id": "09e7a90fa07e1ab90b86dffddc3044487edf41cdf56e0e0d45d500236f3cb5ee",
+      "message_id": "e29389a55c419831d7c98dd2a269e1db7c4786563e82e3a882d9dfd749cc85eb",
       "email_status": "sent",
       "push_outcomes": [
         {
@@ -49,14 +49,14 @@
     [
       "proof-device",
       {
-        "messageId": "09e7a90fa07e1ab90b86dffddc3044487edf41cdf56e0e0d45d500236f3cb5ee",
+        "messageId": "e29389a55c419831d7c98dd2a269e1db7c4786563e82e3a882d9dfd749cc85eb",
         "workspaceId": "11111111-1111-4111-8111-111111111111",
         "roomId": "22222222-2222-4222-8222-222222222222",
         "channelId": "22222222-2222-4222-8222-222222222222",
         "target": "message",
         "type": "message",
         "text": "Beebee: @outside We were planning your pottery class. Shall we pick the first project?",
-        "collapseId": "09e7a90fa07e1ab90b86dffddc3044487edf41cdf56e0e0d45d500236f3cb5ee",
+        "collapseId": "e29389a55c419831d7c98dd2a269e1db7c4786563e82e3a882d9dfd749cc85eb",
         "title": "#General",
         "action": {
           "kind": "reply",

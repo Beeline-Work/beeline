@@ -703,7 +703,7 @@ function approvalView(
       return view(
         'sign-in',
         'needs you to sign in to',
-        card.harness ? AGENT_SIGN_IN_SERVICE_LABELS[card.harness] : text(card.name),
+        card.harness ? AGENT_SIGN_IN_SERVICE_LABELS[card.harness] : signInService(text(card.name)),
         false,
       );
     case 'squire': {
@@ -720,11 +720,21 @@ function approvalView(
       try { url = new URL(card.approvalUrl); } catch { return result; }
       if (url.protocol !== 'https:') return result;
       return { ...result, actions: [{ kind: 'external', url: url.toString(),
-        label: card.linkKind === 'passkey' ? 'Use passkey' : card.linkKind === 'vouch' ? 'Vouch' : 'Review' }] };
+        label: card.linkKind === 'passkey' ? 'Use passkey' : card.linkKind === 'vouch' ? 'Vouch' : 'Approve' }] };
     }
     default:
       return undefined;
   }
+}
+
+/**
+ * A sign-in card may carry a page title ("Sign in to Trusty Squire?") as its
+ * name; the ask already says "sign in to", so keep only the service.
+ */
+export function signInService(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const service = name.replace(/^(?:sign|log)\s*in\s+(?:to|with)\s+/i, '').replace(/[\s?!.:]+$/, '').trim();
+  return service || name;
 }
 
 /** First visible paint, restricted to the viewer's currently available questions. */

@@ -9,6 +9,7 @@ import {
   isNeedsYouAsk,
   needsYouRowText,
   needsYouSentence,
+  signInService,
   withoutReaderTags,
 } from './needs-you.js';
 import { PgliteDatabase } from './test-support.js';
@@ -741,6 +742,31 @@ describe('PhoneService Needs-you tray', () => {
     ]);
     // A plain member decides none of them.
     expect(await approvals(PEER)).toEqual([]);
+  });
+
+  it('Reproduction R1: a sign-in titled like a page names only the service', async () => {
+    await card(
+      ROOM,
+      'app-sign-in',
+      { agentId: AGENT, ownerId: VIEWER, appId: 'squire', name: 'Sign in to Trusty Squire?', status: 'pending' },
+      10,
+      VIEWER,
+    );
+    expect(await approvals()).toEqual([
+      { kind: 'sign-in', actor: 'Hoots', ask: 'needs you to sign in to', subject: 'Trusty Squire', literal: false },
+    ]);
+    expect(signInService('Log in with GitHub')).toBe('GitHub');
+    expect(signInService('Gmail')).toBe('Gmail');
+    expect(signInService('Sign in to ?')).toBe('Sign in to ?');
+  });
+
+  it('names the Trusty Squire approve link Approve, and keeps Use passkey and Vouch', async () => {
+    const base = { agent: hoots, tool: 'operate_click', title: 'Click Buy', expiresAt: Date.now() + 10 * 60_000, sourceRoomId: CORNER };
+    await card(ROOM, 'squire-approval', { ...base, approvalUrl: 'https://squire.example/a', approvalId: 'a', linkKind: 'approval' }, 30);
+    await card(ROOM, 'squire-approval', { ...base, approvalUrl: 'https://squire.example/v', approvalId: 'v', linkKind: 'vouch' }, 20);
+    await card(ROOM, 'squire-approval', { ...base, approvalUrl: 'https://squire.example/p', approvalId: 'p', linkKind: 'passkey' }, 10);
+    expect((await approvals()).map((approval) => approval?.actions?.map((action) => action.label)).sort())
+      .toEqual([['Approve'], ['Use passkey'], ['Vouch']]);
   });
 
   it('holds a Trusty Squire approval until its decision lands in the source Room', async () => {

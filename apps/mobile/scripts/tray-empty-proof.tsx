@@ -56,23 +56,25 @@ async function readRow() {
 
   const row = document.querySelector<HTMLElement>('[data-testid="bookmark-msg-1"]');
   const line = document.querySelector<HTMLElement>('[data-testid="bookmark-save-line-msg-1"]');
-  assert(row != null && line != null, 'the bookmark row never painted');
-  const saved = Array.from(line!.querySelectorAll<HTMLElement>('*')).find(
-    (element) => element.textContent === 'SAVED 2m',
+  const body = document.querySelector<HTMLElement>('[data-testid="bookmark-text-msg-1"]');
+  const source = document.querySelector<HTMLElement>('[data-testid="bookmark-source-msg-1"]');
+  assert(row != null && line != null && body != null && source != null, 'the bookmark row never painted');
+  const age = Array.from(line!.querySelectorAll<HTMLElement>('*')).find(
+    (element) => element.textContent === '2m',
   );
-  assert(saved != null, `the right stamp reads: ${line!.textContent}`);
+  assert(age != null, `the head line reads: ${line!.textContent}`);
   const rowText = row!.textContent ?? '';
-  assert(rowText.split('SAVED 2m').length === 2, `save age appears more than once: ${rowText}`);
+  assert(!/SAVED|OPEN/.test(rowText), `the row still labels itself: ${rowText}`);
+  assert(rowText.split('2m').length === 2, `save age appears more than once: ${rowText}`);
   assert(!rowText.includes('2h'), `message age still appears: ${rowText}`);
   assert(
-    Math.abs(row!.getBoundingClientRect().right - saved!.getBoundingClientRect().right) <= 18,
+    Math.abs(row!.getBoundingClientRect().right - age!.getBoundingClientRect().right) <= 18,
     'save age is not at the right edge of the row',
   );
-  assert(rowText.includes(desktop ? 'REMOVE' : 'OPEN'), `the row action is missing: ${rowText}`);
-  assert(!/[→↗]/.test(rowText), `the row action types an arrow: ${rowText}`);
-  const chevron = !desktop && row!.querySelector('svg polyline') ? ' + drawn chevron' : '';
-  assert(desktop || Boolean(chevron), 'the OPEN action has no drawn chevron');
-  report(`PASS ${rowText}${chevron}`);
+  const top = (element: HTMLElement) => element.getBoundingClientRect().top;
+  assert(top(line!) < top(body!) && top(body!) < top(source!), 'the row does not read who, words, then where');
+  assert(rowText.includes('REMOVE') === desktop, `the row action is wrong: ${rowText}`);
+  report(`PASS ${line!.textContent} / ${body!.textContent} / ${source!.textContent}`);
 }
 
 /** A link with no communityId paints the Tray or a way back, never only the loader. */

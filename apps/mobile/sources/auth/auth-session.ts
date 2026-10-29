@@ -14,6 +14,7 @@ export function authSessionOptions(
     ...(platform === 'android'
       ? {
           createTask: true,
+          showInRecents: true,
           useProxyActivity: false,
         }
       : {}),

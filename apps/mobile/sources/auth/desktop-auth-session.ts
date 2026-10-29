@@ -37,7 +37,8 @@ export async function openAccountAuthSession(
       if(google && result.type==='success') {
         const error=new URL(result.url).searchParams.get('error');
         void funnelCallback(error ? 'error' : 'success',error ? 'provider_error' : undefined);
-      }else if(google && (result.type==='cancel' || result.type==='dismiss'))void funnelCallback('cancelled');
+      }
+      // The sign-in flow checks server completion before recording a close outcome.
       return result;
     }
     const { openUrl } = await import('@tauri-apps/plugin-opener');

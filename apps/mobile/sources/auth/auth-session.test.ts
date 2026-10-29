@@ -8,6 +8,7 @@ describe('auth browser session', () => {
     ).toEqual({
       preferUniversalLinks: true,
       createTask: true,
+      showInRecents: true,
       useProxyActivity: false,
     });
   });

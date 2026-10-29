@@ -37,6 +37,10 @@ export type TurnSilenceOutcome = {
   readonly reportDelivered?: boolean;
 };
 
+function isModelCapacityFault(reason: string | null | undefined): boolean {
+  return /\b(?:model|provider|server)\b[^.\n]{0,80}\b(?:at capacity|overloaded)\b|\boverloaded_error\b|\bprovider error 529\b/i.test(reason ?? '');
+}
+
 const NO_RESTART: TurnSilenceOutcome = {
   kind: 'hiccup',
   hiccupRestart: false,
@@ -204,19 +208,21 @@ export async function noteFirstSilence(
   // notice's own trigger requirement below would satisfy. Failing a
   // list-bound role or reviewer over must not depend on there being a human
   // further up the chain.
-  await database.transaction((db) =>
-    reassignFailedWorkflowRole(db, {
+  if (!isModelCapacityFault(input.reason)) {
+    await database.transaction((db) =>
+      reassignFailedWorkflowRole(db, {
+        roomId: input.roomId,
+        requestId: input.requestId,
+        agentId: input.agentId,
+        reason: input.reason,
+      }),
+    );
+    await reassignFailedCornerReviewer(database, {
       roomId: input.roomId,
       requestId: input.requestId,
       agentId: input.agentId,
-      reason: input.reason,
-    }),
-  );
-  await reassignFailedCornerReviewer(database, {
-    roomId: input.roomId,
-    requestId: input.requestId,
-    agentId: input.agentId,
-  });
+    });
+  }
 
   // Commands carry their original human source; private orders have no message row.
   // The destination
@@ -260,7 +266,7 @@ export async function noteFirstSilence(
           input.requestId,
           input.agentId,
           input.reasonKind === 'update-interrupted' ||
-            Boolean(input.reason?.startsWith('turn_backstop:')),
+            Boolean(input.reason?.startsWith('turn_backstop:')) || isModelCapacityFault(input.reason),
         ],
       )
     ).rows[0];
@@ -419,6 +425,7 @@ async function inscribeSilence(
       command.id,
       command.generation_id,
       attempt,
+      isModelCapacityFault(input.reason) ? 30 * 2 ** (attempt - 1) : 0,
     );
     hiccupRestart = reopened;
   } else if (classified.kind === 'update-interrupted' && command) {
@@ -466,7 +473,10 @@ async function inscribeSilence(
     await database.query(`UPDATE agent_commands SET review_context=review_context ||
       jsonb_build_object('failureKind',$2::text) WHERE id=$1`, [command.id,renderClassified.kind]);
   if (
-    command && (command.private_payload?.kind === 'order' || Boolean(command.review_context)) &&
+    command && (command.private_payload?.kind === 'order' || Boolean(command.review_context) ||
+      (isModelCapacityFault(input.reason) && (await database.query(
+        'SELECT 1 FROM corner_facts WHERE corner_id=$1', [input.roomId],
+      )).rowCount > 0)) &&
     !hiccupRestart &&
     !updateRequeued &&
     classified.kind !== 'offline'
@@ -495,13 +505,15 @@ async function reopenCommand(
   commandId: string,
   generationId: string | null,
   hiccupAttempts: number,
+  delaySeconds = 0,
 ): Promise<boolean> {
   const updated = await database.query(
     `UPDATE agent_commands SET
        state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,private_payload=private_payload-'reportedGenerationId',
-       completed_at=NULL,hiccup_attempts=$2
+       completed_at=NULL,hiccup_attempts=$2,
+       wake_after=CASE WHEN $4::int>0 THEN now()+make_interval(secs => $4::int) ELSE NULL END
      WHERE id=$1 AND state='claimed' AND generation_id=$3`,
-    [commandId, hiccupAttempts, generationId],
+    [commandId, hiccupAttempts, generationId, delaySeconds],
   );
   if (!updated.rowCount) return false;
   live.publish({

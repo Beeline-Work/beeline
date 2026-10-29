@@ -43,6 +43,11 @@ export async function recordSigninAttempt(database: SqlDatabase, input: SigninAt
       // A late app cancellation cannot relabel an already exchanged session.
       if ((await tx.query(`SELECT 1 FROM signin_attempt_events WHERE attempt_id=$1
         AND stage IN ('ticket_exchanged','cancelled','expired','failed')`, [id])).rows.length) return;
+      if (input.stage === 'continued') {
+        await tx.query(`UPDATE signin_attempt_correlations SET flow_hash=$2,expires_at=$3
+          WHERE attempt_id=$1`, [id, input.nextFlowHash, input.expiresAt]);
+        return;
+      }
       if (input.stage === 'ticket_issued') await tx.query(`UPDATE signin_attempt_correlations
         SET ticket_hash=$2,expires_at=$3 WHERE attempt_id=$1`, [id, input.ticketHash, input.expiresAt]);
       const error = 'errorCode' in input && input.errorCode
@@ -51,7 +56,7 @@ export async function recordSigninAttempt(database: SqlDatabase, input: SigninAt
         (attempt_id,stage,install_id,funnel_attempt_id,provider,platform,version,internal,error_code,occurred_at)
         SELECT attempt_id,$2,install_id,funnel_attempt_id,provider,platform,version,internal,$3,$4
         FROM signin_attempt_events WHERE attempt_id=$1 AND stage='started'
-        ON CONFLICT(attempt_id,stage) DO NOTHING`, [id, input.stage, error, input.at]);
+        ON CONFLICT DO NOTHING`, [id, input.stage, error, input.at]);
     });
   } catch {
     // Do not attach SQL errors or input: drivers can include parameter values.
@@ -72,7 +77,7 @@ export async function compactSigninAttempts(database: SqlDatabase): Promise<void
         WHERE c.expires_at<now() AND s.stage='started' AND NOT EXISTS(
           SELECT 1 FROM signin_attempt_events e WHERE e.attempt_id=c.attempt_id
           AND (e.stage IN ('ticket_exchanged','cancelled','failed') OR (e.stage='provider_returned' AND e.error_code IS NOT NULL)))
-        ON CONFLICT(attempt_id,stage) DO NOTHING`);
+        ON CONFLICT DO NOTHING`);
       await tx.query(`DELETE FROM signin_attempt_correlations WHERE expires_at<now()`);
       await tx.query(`DELETE FROM signin_attempt_events WHERE attempt_id IN (
         SELECT attempt_id FROM signin_attempt_events WHERE stage='started' AND occurred_at<now()-interval '90 days')`);

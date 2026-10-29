@@ -281,7 +281,7 @@ response; receipt by the device cannot be proven by the server.
 WITH history AS (
   SELECT e.*, row_number() OVER (
     PARTITION BY attempt_id
-    ORDER BY occurred_at DESC,
+    ORDER BY occurred_at DESC, error_code IS NOT NULL DESC,
       CASE stage WHEN 'expired' THEN 7 WHEN 'ticket_exchanged' THEN 6
         WHEN 'cancelled' THEN 5 WHEN 'failed' THEN 4 WHEN 'ticket_issued' THEN 3
         WHEN 'provider_returned' THEN 2 ELSE 1 END DESC
@@ -290,7 +290,7 @@ WITH history AS (
 ), checkpoints AS (
   SELECT DISTINCT ON (attempt_id) attempt_id, stage
   FROM signin_attempt_events WHERE stage <> 'expired'
-  ORDER BY attempt_id, occurred_at DESC,
+  ORDER BY attempt_id, occurred_at DESC, error_code IS NOT NULL DESC,
     CASE stage WHEN 'ticket_exchanged' THEN 6 WHEN 'cancelled' THEN 5
       WHEN 'failed' THEN 4 WHEN 'ticket_issued' THEN 3
       WHEN 'provider_returned' THEN 2 ELSE 1 END DESC
@@ -314,6 +314,10 @@ LEFT JOIN signin_funnel_installs i ON i.install_id=h.install_id
 WHERE h.recency=1 AND NOT (h.internal OR COALESCE(i.internal,false))
 ORDER BY started_at DESC;
 ```
+
+GitHub installation onboarding preserves one attempt across both provider callbacks.
+Each callback is appended; a denial at installation reports `provider_returned`
+with `access_denied`, and successful app exchange reports `ticket_exchanged`.
 
 Join `signin_funnel_events` on both `install_id` and
 `attempt_id = funnel_attempt_id`. Internal installs are excluded using their

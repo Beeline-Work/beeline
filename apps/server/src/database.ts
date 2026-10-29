@@ -2582,6 +2582,11 @@ CREATE TABLE IF NOT EXISTS signin_attempt_events (
   occurred_at timestamptz NOT NULL,
   PRIMARY KEY(attempt_id,stage)
 );
+-- Installation onboarding can return from GitHub twice in one attempt.
+ALTER TABLE signin_attempt_events DROP CONSTRAINT IF EXISTS signin_attempt_events_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS signin_attempt_events_once
+  ON signin_attempt_events(attempt_id,stage) WHERE stage <> 'provider_returned';
+CREATE INDEX IF NOT EXISTS signin_attempt_events_attempt ON signin_attempt_events(attempt_id);
 CREATE INDEX IF NOT EXISTS signin_attempt_events_date ON signin_attempt_events(occurred_at);
 CREATE INDEX IF NOT EXISTS signin_attempt_events_install ON signin_attempt_events(install_id,funnel_attempt_id);
 CREATE TABLE IF NOT EXISTS signin_funnel_daily (

@@ -17,6 +17,7 @@ const database = new PgliteDatabase();
 const tenant = { host: 'proof.example', origin: 'https://proof.example', community: 'proof', roomCommunityIds: ['proof-room-community'] };
 let mount;
 let server;
+let installed = false;
 try {
   await migrate(database);
   await new AuthStore(database).migrate();
@@ -28,7 +29,11 @@ try {
       exchangeCode: async () => ({ issuer: 'https://github.com', audience: 'github', subject: '42',
         login: 'proofuser', displayName: 'Proof User', accessToken: 'fixture-provider-token' }),
     },
-    app: {},
+    app: {
+      listUserInstallationIds: async () => installed ? [77] : [],
+      installationAccount: async () => ({ id: '42', login: 'proofuser', type: 'User', repositorySelection: 'all' }),
+      installationUrl: state => `https://provider.example/install?state=${state}`,
+    },
   }, {
     createDaemonExchange: (id, tx) => auth.createDaemonExchange(id, tx),
     env: { NODE_ENV: 'test', BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
@@ -73,6 +78,26 @@ try {
   const denied = await begin();
   const state = new URL(denied.headers.location).searchParams.get('state');
   assert.equal((await get(`/auth/github/callback?state=${state}&error=access_denied`, String(denied.headers['set-cookie']).split(';')[0])).status, 401);
+  // R-GITHUB-INSTALL-HANDOFF: both callbacks belong to one install-bound attempt.
+  const handoff = async () => {
+    installed = false;
+    const start = await get(`/auth/github/start?onboarding=1&app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'a'.repeat(43)}&funnel=${encodeURIComponent(JSON.stringify(context))}`);
+    const state = new URL(start.headers.location).searchParams.get('state');
+    const result = await get(`/auth/github/callback?state=${state}&code=fixture-code`, String(start.headers['set-cookie']).split(';')[0]);
+    assert.equal(result.status, 200);
+    const nextState = result.body.match(/state=(onboarding_[^"&]+)/)[1];
+    const cookie = result.headers['set-cookie'].filter(c => !c.includes('Max-Age=0')).map(c => c.split(';')[0]).join('; ');
+    return { nextState, cookie };
+  };
+  const deniedHandoff = await handoff();
+  const deniedReturn = await get(`/auth/github/callback?state=${deniedHandoff.nextState}&error=access_denied`, deniedHandoff.cookie);
+  assert.equal(deniedReturn.status, 302);
+  assert.match(deniedReturn.headers.location, /error=github_denied/);
+  const successfulHandoff = await handoff();
+  installed = true;
+  const installedReturn = await get(`/auth/github/callback?state=${successfulHandoff.nextState}&code=install-code`, successfulHandoff.cookie);
+  assert.equal(installedReturn.status, 302);
+  await exchange(new URL(installedReturn.headers.location).searchParams.get('ticket'));
   await begin();
   await complete(await begin());
   // Advance the whole ceremony relative to its deadline, not just the deadline.
@@ -81,7 +106,12 @@ try {
   const readme = await readFile(new URL('../apps/auth/README.md', import.meta.url), 'utf8');
   const query = readme.match(/```sql\n(WITH history AS[\s\S]*?)```/)[1];
   const before = (await database.query(query)).rows;
-  assert.deepEqual(before.map(row => row.last_stage).sort(), ['expired', 'expired', 'provider_returned', 'ticket_exchanged']);
+  assert.deepEqual(before.map(row => row.last_stage).sort(), ['expired', 'expired', 'provider_returned', 'provider_returned', 'ticket_exchanged', 'ticket_exchanged']);
+  assert.equal(before.filter(row => row.error_code === 'access_denied').length, 2);
+  assert.equal(before.filter(row => row.last_stage === 'ticket_exchanged').length, 2);
+  assert.ok(before.every(row => row.install_id === context.installId && row.funnel_attempt_id === context.attemptId));
+  const callbacks = (await database.query(`SELECT attempt_id,count(*)::int n FROM signin_attempt_events WHERE stage='provider_returned' GROUP BY attempt_id`)).rows;
+  assert.equal(callbacks.filter(row => row.n === 2).length, 2);
   await compactSigninAttempts(database);
   const after = (await database.query(query)).rows;
   assert.deepEqual(after.map(row => row.last_stage).sort(), before.map(row => row.last_stage).sort());

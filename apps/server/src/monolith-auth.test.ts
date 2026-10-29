@@ -1,5 +1,6 @@
 import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { request } from 'node:http';
+import { readFile } from 'node:fs/promises';
 import type { IncomingHttpHeaders } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +36,7 @@ describe('mounted monolith auth', () => {
   let installationAccess: boolean;
   let availableInstallations: number[];
   let githubSubject: string;
+  let installationLogin: string;
   let repositorySelection: 'selected' | 'all';
   let processWebhook: ReturnType<typeof vi.fn>;
 
@@ -57,6 +59,7 @@ describe('mounted monolith auth', () => {
       },
     );
     githubSubject = '42';
+    installationLogin = 'owner';
     const githubOauth = {
       config: { clientId: 'github-client', clientSecret: 'github-secret' },
       authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
@@ -81,7 +84,7 @@ describe('mounted monolith auth', () => {
       listUserInstallationIds: async () => availableInstallations,
       installationAccount: async () => ({
         id: '42',
-        login: 'owner',
+        login: installationLogin,
         type: 'User' as const,
         repositorySelection,
       }),
@@ -182,6 +185,47 @@ describe('mounted monolith auth', () => {
     expect(JSON.stringify(rows)).not.toContain(recoveryToken);
     await compactSigninAttempts(database);
     expect((await stages()).at(-1)).toMatchObject({ stage: 'cancelled' });
+  });
+
+  it.each(['denied', 'exchanged'])('R-GITHUB-INSTALL-HANDOFF: retains one attempt when installation is %s', async outcome => {
+    availableInstallations = [];
+    const context = funnelContext('github');
+    const query = new URLSearchParams({ onboarding: '1', funnel: JSON.stringify(context),
+      app_state: 's'.repeat(43), app_redirect: 'beeline://beeline/github-callback' });
+    const start = await mountedRequest(`/auth/github/start?${query}`);
+    const state = new URL(String(start.headers.location)).searchParams.get('state');
+    const handoff = await mountedRequest(`/auth/github/callback?state=${state}&code=initial-code`,
+      { cookie: String(start.headers['set-cookie']).split(';', 1)[0]! });
+    expect(handoff.status).toBe(200);
+    const nextState = handoff.body.match(/state=(onboarding_[^"&]+)/)?.[1];
+    expect(nextState).toBeTruthy();
+    const cookie = handoff.headers['set-cookie']!.filter(c => !c.includes('Max-Age=0')).map(c => c.split(';')[0]).join('; ');
+    availableInstallations = [77];
+    installationLogin = 'octocat';
+    repositorySelection = 'all';
+    const callback = await mountedRequest(`/auth/github/callback?state=${nextState}&${outcome === 'denied' ? 'error=access_denied' : 'code=install-code'}`, { cookie });
+    expect(callback.status).toBe(302);
+    if (outcome === 'exchanged') {
+      const ticket = new URL(String(callback.headers.location)).searchParams.get('ticket');
+      const response = await fetch(`${origin}/v1/auth/github/exchange`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ oidcToken: ticket }),
+      });
+      expect(response.status).toBe(200);
+      expect((await response.json() as { accessToken: string }).accessToken).toBeTruthy();
+    } else expect(callback.headers.location).toContain('error=github_denied');
+    const rows = (await database.query('SELECT * FROM signin_attempt_events')).rows;
+    expect(new Set(rows.map(row => row.attempt_id)).size).toBe(1);
+    expect(rows.filter(row => row.stage === 'provider_returned')).toHaveLength(2);
+    expect(rows.every(row => row.install_id === context.installId && row.funnel_attempt_id === context.attemptId)).toBe(true);
+    const readme = await readFile(new URL('../../auth/README.md', import.meta.url), 'utf8');
+    const sql = readme.match(/```sql\n(WITH history AS[\s\S]*?)```/)![1]!;
+    const result = (await database.query(sql)).rows;
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ last_stage: outcome === 'denied' ? 'provider_returned' : 'ticket_exchanged',
+      error_code: outcome === 'denied' ? 'access_denied' : null });
+    await database.query("UPDATE signin_attempt_correlations SET expires_at=now()-interval '1 second'");
+    await compactSigninAttempts(database);
+    expect((await database.query(sql)).rows).toEqual(result);
   });
 
   it('logs the full GitHub HTTP session path and survives a log failure', async () => {
@@ -556,6 +600,7 @@ describe('mounted monolith auth', () => {
     expect((await database.query(`SELECT github_subject FROM identities WHERE id=$1`, [id])).rows[0]?.github_subject).toBe('42');
     expect((await database.query(`SELECT 1 FROM github_user_tokens WHERE subject='43'`)).rows).toHaveLength(0);
     githubSubject = '42';
+    installationLogin = 'owner';
     const other = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
     const conflict = await githubOperations.beginInstallation(other, { redirectUri:'beeline://beeline/github-installation' });

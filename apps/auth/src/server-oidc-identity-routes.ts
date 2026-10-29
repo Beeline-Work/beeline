@@ -567,6 +567,8 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
           ...flow, nonce: `onboarding_user:${identity.subject}`, pkceVerifier: '',
           createdAt: now(), expiresAt: new Date(now().getTime() + flowTtlMs),
         });
+        await observeSigninAttempt({ stage: 'continued', flowHash: sha256(state),
+          nextFlowHash: sha256(installState), expiresAt: new Date(now().getTime() + flowTtlMs), at: now() });
         const headers = reply.getHeader('set-cookie');
         reply.header('set-cookie', [
           ...(Array.isArray(headers) ? headers.map(String) : headers ? [String(headers)] : []),

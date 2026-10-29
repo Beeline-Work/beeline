@@ -30,6 +30,7 @@ import ibmPlexMonoRegular from '@/assets/fonts/IBMPlexMono-Regular.ttf';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
+import { InlineRow } from './IndexRow';
 import { MonoMarkdown } from './MonoMarkdown';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
 import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
@@ -478,7 +479,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
        *  above the name's feet. Baseline alignment is the type rule; the mark
        *  is a picture, not a word, so it stays centred on the row — hence the
        *  nested row, which keeps `alignItems: 'center'` for the tile. */}
-      <View
+      <InlineRow
         style={styles.bylineWords}
         onLayout={(event) => setWordsWidth(event.nativeEvent.layout.width)}
         testID="chat-byline-words"
@@ -507,7 +508,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
             {byline.role}
           </Text>
         ) : null}
-        <View style={styles.bylineStatus} testID="chat-byline-status">
+        <InlineRow style={styles.bylineStatus} testID="chat-byline-status">
           {byline.feedbackReported ? (
             <Text
               accessibilityLabel="Reported to Beeline"
@@ -530,8 +531,8 @@ function Byline({ byline }: { byline: LedgerByline }) {
           <Text numberOfLines={1} style={stampStyle} testID="chat-byline-stamp">
             {byline.stamp}
           </Text>
-        </View>
-      </View>
+        </InlineRow>
+      </InlineRow>
     </Container>
   );
 }

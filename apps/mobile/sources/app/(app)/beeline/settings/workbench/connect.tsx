@@ -393,7 +393,7 @@ function ConnectToolFlow() {
         <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
           {failed ? (
             <>
-              <Button label="Try again" fullWidth onPress={retry} testID="connect-retry" />
+              <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label="Try again" fullWidth onPress={retry} testID="connect-retry" />
               <Text style={styles.footNote}>
                 {failedIndex <= 0 ? `Sign in unlocks once ${machineName} answers.` : 'Sign in unlocks when pairing finishes.'}
               </Text>
@@ -402,7 +402,7 @@ function ConnectToolFlow() {
             <>
               {/* Locked, the primary keeps its fill at a third of its strength (mock v3). */}
               <View pointerEvents={signInReady ? 'auto' : 'none'} style={!signInReady && styles.locked}>
-                <Button label={signInLabel} fullWidth disabled={!signInReady} accessibilityState={{ disabled: !signInReady }}
+                <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={signInLabel} fullWidth disabled={!signInReady} accessibilityState={{ disabled: !signInReady }}
                   onPress={signInReady ? openSignIn : () => undefined} testID="connect-sign-in" />
               </View>
               <Text style={styles.footNote}>
@@ -454,6 +454,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: hull.space.lg, paddingTop: hull.space.md, gap: hull.squireConnect.contentGap,
       borderTopWidth: 1, borderTopColor: hull.appBorder, backgroundColor: hull.appCanvas,
     },
+    primaryButton: { minHeight: 48, borderRadius: hull.radius, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', backgroundColor: hull.appInk, borderWidth: 1, borderColor: hull.appInk },
+    primaryLabel: { ...hull.type.body, fontFamily: 'SpaceGrotesk-Medium', color: hull.appCanvas },
     locked: { opacity: 0.32 },
     footNote: { ...hull.type.meta, color: hull.textMuted, textAlign: 'center' },
   };

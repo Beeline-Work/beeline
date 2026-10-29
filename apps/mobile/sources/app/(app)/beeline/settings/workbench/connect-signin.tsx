@@ -200,14 +200,14 @@ function ConnectorSignInOverlay() {
         </View>
         {failure ? (
           <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
-            <Button label={observed.installMissing ? 'Go back' : 'Try again'} fullWidth
+            <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={observed.installMissing ? 'Go back' : 'Try again'} fullWidth
               onPress={observed.installMissing ? () => router.back() : () => void retry()} testID="signin-retry" />
             {!observed.installMissing && signIn.url
-              ? <Button label="Open in browser" variant="secondary" fullWidth onPress={() => void openBrowser()} testID="signin-open-external" /> : null}
+              ? <Button appearance={{ control: styles.secondaryButton, label: styles.secondaryLabel }} label="Open in browser" variant="secondary" fullWidth onPress={() => void openBrowser()} testID="signin-open-external" /> : null}
           </View>
         ) : loading && signIn.url ? (
           <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
-            <Button label="Open in browser instead" variant="secondary" fullWidth onPress={() => void openBrowser()} testID="signin-open-external" />
+            <Button appearance={{ control: styles.secondaryButton, label: styles.secondaryLabel }} label="Open in browser instead" variant="secondary" fullWidth onPress={() => void openBrowser()} testID="signin-open-external" />
           </View>
         ) : <View style={{ height: insets.bottom }} />}
       </View>
@@ -222,6 +222,10 @@ const PAGE_LOAD_TIMEOUT_MS = 15_000;
 const PAGE_LOAD_ERROR = 'The sign-in page did not load.';
 
 const styles = StyleSheet.create(theme => ({
+  primaryButton: { minHeight: 48, borderRadius: theme.buzz.radius, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.appInk, borderWidth: 1, borderColor: theme.buzz.appInk },
+  primaryLabel: { ...theme.buzz.type.body, fontFamily: 'SpaceGrotesk-Medium', color: theme.buzz.appCanvas },
+  secondaryButton: { minHeight: 48, borderRadius: theme.buzz.radius, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.buzz.borderStrong },
+  secondaryLabel: { ...theme.buzz.type.body, fontFamily: 'SpaceGrotesk-Medium', color: theme.buzz.appInk },
   returnScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.buzz.bgTerminal },
   screen: { flex: 1, backgroundColor: theme.buzz.appCanvas },
   column: { flex: 1 },

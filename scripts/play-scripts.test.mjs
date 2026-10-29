@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -137,6 +138,293 @@ test('play-publish-listing.sh refuses an incomplete metadata dir before any call
   const { calls, stderr } = run('play-publish-listing.sh', { METADATA_DIR: dir, LANGUAGE: 'en-US' }, { expectStatus: 1 });
   assert.equal(calls.length, 0);
   assert.match(stderr, /missing required listing asset: .*title\.txt/);
+});
+
+function writeListing(dir) {
+  const locale = path.join(dir, 'metadata', 'en-US');
+  fs.mkdirSync(path.join(locale, 'images', 'phoneScreenshots'), { recursive: true });
+  fs.writeFileSync(path.join(locale, 'title.txt'), 'Beeline\n');
+  fs.writeFileSync(path.join(locale, 'short_description.txt'), 'Short "quoted" — copy\n');
+  fs.writeFileSync(path.join(locale, 'full_description.txt'), 'Line one.\n\nLine two.\n');
+  fs.writeFileSync(path.join(locale, 'images', 'icon.png'), 'icon');
+  fs.writeFileSync(path.join(locale, 'images', 'featureGraphic.png'), 'feature');
+  fs.writeFileSync(path.join(locale, 'images', 'phoneScreenshots', '02-corner.png'), 'b');
+  fs.writeFileSync(path.join(locale, 'images', 'phoneScreenshots', '01-room.png'), 'a');
+  return locale;
+}
+
+function imageHash(file, encoding) {
+  const digest = createHash(encoding === 'sha1' ? 'sha1' : 'sha256').update(fs.readFileSync(file)).digest();
+  return encoding === 'b64' ? digest.toString('base64') : digest.toString('hex');
+}
+
+function remoteSnapshot(locale, encoding = 'hex') {
+  const field = encoding === 'sha1' ? 'sha1' : 'sha256';
+  const hash = (file) => ({ [field]: imageHash(file, encoding) });
+  const text = (name) => fs.readFileSync(path.join(locale, name), 'utf8').replace(/\n+$/u, '');
+  const shotDir = path.join(locale, 'images', 'phoneScreenshots');
+  return {
+    listing: {
+      language: 'en-US',
+      title: text('title.txt'),
+      shortDescription: text('short_description.txt'),
+      fullDescription: text('full_description.txt'),
+    },
+    icon: { images: [hash(path.join(locale, 'images', 'icon.png'))] },
+    featureGraphic: { images: [hash(path.join(locale, 'images', 'featureGraphic.png'))] },
+    phoneScreenshots: { images: fs.readdirSync(shotDir).sort().map((name) => hash(path.join(shotDir, name))) },
+  };
+}
+
+function assertFullUpload(calls, locale) {
+  assert.equal(calls[0], `POST ${API}/edits -H Content-Type: application/json -d {}`);
+  const [, listingBody] = calls[1].match(/^PUT .*\/listings\/en-US -H Content-Type: application\/json -d (.*)$/s);
+  const text = (name) => fs.readFileSync(path.join(locale, name), 'utf8').replace(/\n+$/u, '');
+  assert.deepEqual(JSON.parse(listingBody), {
+    language: 'en-US',
+    title: text('title.txt'),
+    shortDescription: text('short_description.txt'),
+    fullDescription: text('full_description.txt'),
+  });
+  const listings = `${API}/edits/dry-run-edit/listings/en-US`;
+  const uploads = `${UPLOAD}/edits/dry-run-edit/listings/en-US`;
+  const shotDir = path.join(locale, 'images', 'phoneScreenshots');
+  assert.deepEqual(calls.slice(2), [
+    `DELETE ${listings}/icon`,
+    `POST ${uploads}/icon?uploadType=media -H Content-Type: image/png --data-binary @${path.join(locale, 'images', 'icon.png')}`,
+    `DELETE ${listings}/featureGraphic`,
+    `POST ${uploads}/featureGraphic?uploadType=media -H Content-Type: image/png --data-binary @${path.join(locale, 'images', 'featureGraphic.png')}`,
+    `DELETE ${listings}/phoneScreenshots`,
+    ...fs.readdirSync(shotDir).sort().map((name) =>
+      `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${path.join(shotDir, name)}`),
+    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+  ]);
+}
+
+test('Reproduction PLAY-LISTING-1: unchanged listing makes no Play calls and creates no edit', (t) => {
+  const dir = tempDir(t);
+  const locale = writeListing(dir);
+  const remote = path.join(dir, 'remote.json');
+  fs.writeFileSync(remote, JSON.stringify(remoteSnapshot(locale)));
+  const { calls, stdout, stderr } = run('play-publish-listing.sh', {
+    METADATA_DIR: path.join(dir, 'metadata'),
+    LANGUAGE: 'en-US',
+    PLAY_REMOTE_LISTING: remote,
+  });
+  assert.equal(calls.length, 0);
+  assert.doesNotMatch(stderr, /DRY-RUN/);
+  assert.match(stdout, /Store listing unchanged; skipped/);
+  assert.match(stdout, /Image hash field: sha256/);
+});
+
+test('unchanged listing matches Play sha256 base64 and sha1 hashes', (t) => {
+  for (const encoding of ['b64', 'sha1']) {
+    const dir = tempDir(t);
+    const locale = writeListing(dir);
+    const remote = path.join(dir, `remote-${encoding}.json`);
+    fs.writeFileSync(remote, JSON.stringify(remoteSnapshot(locale, encoding)));
+    const { calls, stdout } = run('play-publish-listing.sh', {
+      METADATA_DIR: path.join(dir, 'metadata'),
+      LANGUAGE: 'en-US',
+      PLAY_REMOTE_LISTING: remote,
+    });
+    assert.equal(calls.length, 0, encoding);
+    assert.match(stdout, /Store listing unchanged; skipped/);
+    assert.match(stdout, new RegExp(`Image hash field: ${encoding === 'sha1' ? 'sha1' : 'sha256'}`), encoding);
+  }
+});
+
+test('Reproduction PLAY-LISTING-1: any one changed listing file runs the full upload', (t) => {
+  const changes = {
+    title: (locale) => fs.appendFileSync(path.join(locale, 'title.txt'), 'X'),
+    short: (locale) => fs.appendFileSync(path.join(locale, 'short_description.txt'), 'X'),
+    full: (locale) => fs.appendFileSync(path.join(locale, 'full_description.txt'), 'X'),
+    icon: (locale) => fs.appendFileSync(path.join(locale, 'images', 'icon.png'), 'X'),
+    feature: (locale) => fs.appendFileSync(path.join(locale, 'images', 'featureGraphic.png'), 'X'),
+    screenshot: (locale) => fs.appendFileSync(path.join(locale, 'images', 'phoneScreenshots', '01-room.png'), 'X'),
+  };
+  for (const [name, change] of Object.entries(changes)) {
+    const dir = tempDir(t);
+    const locale = writeListing(dir);
+    const remote = path.join(dir, 'remote.json');
+    fs.writeFileSync(remote, JSON.stringify(remoteSnapshot(locale)));
+    change(locale);
+    const { calls } = run('play-publish-listing.sh', {
+      METADATA_DIR: path.join(dir, 'metadata'),
+      LANGUAGE: 'en-US',
+      PLAY_REMOTE_LISTING: remote,
+    });
+    assertFullUpload(calls, locale);
+    assert.ok(calls.length > 0, name);
+  }
+});
+
+test('FORCE_LISTING=1 uploads even when the Play listing matches', (t) => {
+  const dir = tempDir(t);
+  const locale = writeListing(dir);
+  const remote = path.join(dir, 'remote.json');
+  fs.writeFileSync(remote, JSON.stringify(remoteSnapshot(locale)));
+  const { calls, stdout } = run('play-publish-listing.sh', {
+    METADATA_DIR: path.join(dir, 'metadata'),
+    LANGUAGE: 'en-US',
+    PLAY_REMOTE_LISTING: remote,
+    FORCE_LISTING: '1',
+  });
+  assert.match(stdout, /FORCE_LISTING=1/);
+  assertFullUpload(calls, locale);
+});
+
+test('a listing image with no hash is uploaded instead of skipped', (t) => {
+  const dir = tempDir(t);
+  const locale = writeListing(dir);
+  const remote = remoteSnapshot(locale);
+  remote.icon.images = [{}];
+  const file = path.join(dir, 'remote.json');
+  fs.writeFileSync(file, JSON.stringify(remote));
+  const { calls } = run('play-publish-listing.sh', {
+    METADATA_DIR: path.join(dir, 'metadata'),
+    LANGUAGE: 'en-US',
+    PLAY_REMOTE_LISTING: file,
+  });
+  assertFullUpload(calls, locale);
+});
+
+test('PLAY_LISTING_CHECK_ONLY reports a difference and does not upload', (t) => {
+  const dir = tempDir(t);
+  const locale = writeListing(dir);
+  const remote = remoteSnapshot(locale);
+  fs.appendFileSync(path.join(locale, 'title.txt'), 'X');
+  const file = path.join(dir, 'remote.json');
+  fs.writeFileSync(file, JSON.stringify(remote));
+  const { calls, stdout } = run('play-publish-listing.sh', {
+    METADATA_DIR: path.join(dir, 'metadata'),
+    LANGUAGE: 'en-US',
+    PLAY_REMOTE_LISTING: file,
+    PLAY_LISTING_CHECK_ONLY: '1',
+  }, { expectStatus: 2 });
+  assert.equal(calls.length, 0);
+  assert.match(stdout, /Store listing differs: differ title/);
+});
+
+test('play-publish.sh still uploads the bundle when the listing is skipped', (t) => {
+  const workflow = fs.readFileSync(path.join(REPO, '.github/workflows/unified-release.yml'), 'utf8');
+  const step = workflow.slice(workflow.indexOf('name: Upload Android to the selected Play track'));
+  const publishAt = step.indexOf('bash scripts/play-publish.sh');
+  const listingAt = step.indexOf('bash scripts/play-publish-listing.sh');
+  assert.ok(publishAt > 0 && listingAt > publishAt);
+  assert.match(step, /FORCE_LISTING:/);
+
+  const dir = tempDir(t);
+  const aab = path.join(dir, 'app.aab');
+  fs.writeFileSync(aab, 'bundle');
+  const changelogs = path.join(dir, 'changelogs');
+  fs.mkdirSync(changelogs);
+  fs.writeFileSync(path.join(changelogs, 'default.txt'), 'notes\n');
+  const published = run('play-publish.sh', {
+    AAB_PATH: aab,
+    TRACK: 'internal',
+    RELEASE_NAME: '1.0.0',
+    RELEASE_STATUS: 'completed',
+    CHANGELOG_DIR: changelogs,
+    PLAY_DRY_RUN_VERSION_CODE: '4',
+  });
+  assert.equal(published.calls.length, 4);
+  assert.match(published.calls[1], /\/bundles\?uploadType=media/);
+
+  const locale = writeListing(dir);
+  const remote = path.join(dir, 'remote.json');
+  fs.writeFileSync(remote, JSON.stringify(remoteSnapshot(locale)));
+  const listing = run('play-publish-listing.sh', {
+    METADATA_DIR: path.join(dir, 'metadata'),
+    LANGUAGE: 'en-US',
+    PLAY_REMOTE_LISTING: remote,
+  });
+  assert.equal(listing.calls.length, 0);
+  assert.match(listing.stdout, /Store listing unchanged; skipped/);
+});
+
+function installPlayCurl(dir, remote) {
+  const bin = path.join(dir, 'bin');
+  const bodyDir = path.join(dir, 'bodies');
+  fs.mkdirSync(bin);
+  fs.mkdirSync(bodyDir);
+  fs.writeFileSync(path.join(bodyDir, 'listing.json'), JSON.stringify(remote.listing));
+  fs.writeFileSync(path.join(bodyDir, 'icon.json'), JSON.stringify(remote.icon));
+  fs.writeFileSync(path.join(bodyDir, 'feature.json'), JSON.stringify(remote.featureGraphic));
+  fs.writeFileSync(path.join(bodyDir, 'shots.json'), JSON.stringify(remote.phoneScreenshots));
+  const log = path.join(dir, 'curl.log');
+  const curl = `#!/usr/bin/env bash
+method=""
+url=""
+prev=""
+for a in "$@"; do
+  if [[ "$prev" == "-X" ]]; then method="$a"; fi
+  case "$a" in
+    https://*) url="$a" ;;
+  esac
+  prev="$a"
+done
+printf '%s %s\\n' "$method" "$url" >> ${JSON.stringify(log)}
+body='{}'
+if [[ "$method" == POST && "$url" == */edits ]]; then body='{"id":"edit-1"}'; fi
+if [[ "$method" == GET && "$url" == */listings/en-US ]]; then body=$(cat ${JSON.stringify(path.join(bodyDir, 'listing.json'))}); fi
+if [[ "$method" == GET && "$url" == */icon ]]; then body=$(cat ${JSON.stringify(path.join(bodyDir, 'icon.json'))}); fi
+if [[ "$method" == GET && "$url" == */featureGraphic ]]; then body=$(cat ${JSON.stringify(path.join(bodyDir, 'feature.json'))}); fi
+if [[ "$method" == GET && "$url" == */phoneScreenshots ]]; then body=$(cat ${JSON.stringify(path.join(bodyDir, 'shots.json'))}); fi
+printf '%s\\n%s' "$body" 200
+`;
+  fs.writeFileSync(path.join(bin, 'curl'), curl);
+  fs.chmodSync(path.join(bin, 'curl'), 0o755);
+  return { bin, log };
+}
+
+function runLiveListing(dir, bin) {
+  return spawnSync('bash', [path.join(REPO, 'scripts', 'play-publish-listing.sh')], {
+    cwd: REPO,
+    encoding: 'utf8',
+    env: {
+      PATH: `${bin}:${process.env.PATH}`,
+      PACKAGE_NAME: PACKAGE,
+      ACCESS_TOKEN: 'test-token',
+      METADATA_DIR: path.join(dir, 'metadata'),
+      LANGUAGE: 'en-US',
+    },
+  });
+}
+
+test('a live unchanged listing is read and the edit is deleted without an upload', (t) => {
+  const dir = tempDir(t);
+  const locale = writeListing(dir);
+  const { bin, log } = installPlayCurl(dir, remoteSnapshot(locale));
+  const result = runLiveListing(dir, bin);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /Store listing unchanged; skipped/);
+  assert.match(result.stdout, /Image hash field: sha256/);
+  assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [
+    `POST ${API}/edits`,
+    `GET ${API}/edits/edit-1/listings/en-US`,
+    `GET ${API}/edits/edit-1/listings/en-US/icon`,
+    `GET ${API}/edits/edit-1/listings/en-US/featureGraphic`,
+    `GET ${API}/edits/edit-1/listings/en-US/phoneScreenshots`,
+    `DELETE ${API}/edits/edit-1`,
+  ]);
+  assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /Bearer|uploadType=media|:commit/);
+});
+
+test('a live changed listing uploads inside the same edit and does not delete it', (t) => {
+  const dir = tempDir(t);
+  const locale = writeListing(dir);
+  const { bin, log } = installPlayCurl(dir, remoteSnapshot(locale));
+  fs.appendFileSync(path.join(locale, 'title.txt'), 'X');
+  const result = runLiveListing(dir, bin);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /Store listing differs \(differ title\); uploading/);
+  assert.match(result.stdout, /Listing updates are live in Play Console/);
+  const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.equal(lines.filter((line) => line === `POST ${API}/edits`).length, 1);
+  assert.ok(lines.some((line) => line.startsWith('PUT ') && line.includes('/listings/en-US')));
+  assert.ok(lines.some((line) => line.includes(':commit')));
+  assert.equal(lines.filter((line) => line === `DELETE ${API}/edits/edit-1`).length, 0);
 });
 
 test('the committed listing publishes through the dry run', () => {

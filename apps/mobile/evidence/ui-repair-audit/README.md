@@ -25,7 +25,10 @@ a 229 px top gap and adds an emoji paste button.
 The same production-control and HTTP-proxy paths now show:
 
 - Browser link and close share the same vertical centre; the row remains 44 px.
-- The original short `Continue sign-in` action returns the card to 245 px.
+- The short `Continue sign-in` action stays right-aligned. The complete connecting
+  note occupies its own single-line footer row; card height is 267 px at both
+  390 and 360 px. This is 22 px taller than the earlier 245 px version because
+  the note and action now have separate rows instead of squeezing the note.
 - The bookmark footer returns to 15 px with a drawn chevron.
 - Pinch-out leaves the page at top 0, retaining horizontal centering.
 - There is no paste button; desktop clipboard shortcut tests still pass.
@@ -116,3 +119,29 @@ uses its existing ended state. The owner's screenshot instead shows a closed
 remote login page inside a share that is still live. Per commander direction,
 this PR neither infers closure from pixels nor opens or edits Squire work.
 Typing inside the remote login window is also outside this PR.
+
+
+## Owner follow-up: continuation footer
+
+Reproduction **UI-AUDIT-FOOTER-1**: the initial repair kept the card at 245 px
+by squeezing CONNECTING FOR SOMEONE into three lines beside the short action.
+The owner requires one line without an ellipsis at both 390 and 360 px.
+The connector continuation footer now opts into a full-width note row; the
+existing ButtonRow retains right alignment below it. Other card footers keep
+their original layout.
+
+`connectorLong-fixed-{390,360}-{bone,obsidian}.png` and their JSON measurements
+prove the note is 15 px tall (one line), the action remains Continue sign-in,
+and its right edge stays 17 px inside the card edge. All four card heights are
+267 px. `connectorLong-fixed-android-release.png` is the same production card
+in a fresh release-mode Android APK; its XML records the native text bounds.
+
+Repeat the four rendered assertions using a prepared working scratch tree:
+
+```sh
+UI_AUDIT_FOOTER=1 UI_AUDIT_MOBILE=/tmp/ui-fixed/apps/mobile \
+UI_AUDIT_DIR=/tmp/ui-captures npx vitest run \
+sources/test/ui-repair-audit.browser.test.ts --maxWorkers=1 --minWorkers=1
+```
+
+`footer-native.tsx.template` is the dedicated release-mode Android fixture.

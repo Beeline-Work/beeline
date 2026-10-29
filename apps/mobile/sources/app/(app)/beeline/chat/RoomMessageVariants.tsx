@@ -402,6 +402,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
               : `connector-offer-${offer.offerId}-waiting`
             : `connector-offer-${offer.offerId}-outcome`
       }
+      footerNoteOwnRow={connecting}
       actions={pending && canAccept && onDecline ? [{ label: 'No', secondary: true, onPress: () => onDecline(offer.offerId), testID: `connector-offer-${offer.offerId}-deny`, disabled: actionId !== null }, ...actions] : actions}
     />
   );

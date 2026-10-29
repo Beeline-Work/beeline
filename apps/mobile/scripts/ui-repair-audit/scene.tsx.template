@@ -617,7 +617,7 @@ function Proof() {
   };
   parts.repoPending = parts.repo;
   return (
-    <View style={{ width: 390, backgroundColor: buzz.bgBase, padding: 16, gap: 16 }}>
+    <View style={{ width: Number(params.get('width') ?? 390), backgroundColor: buzz.bgBase, padding: 16, gap: 16 }}>
       <Text style={{ color: buzz.textPrimary, fontSize: 18 }}>
         {after ? 'After' : 'Before'} · {section}
       </Text>

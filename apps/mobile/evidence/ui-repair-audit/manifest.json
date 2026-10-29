@@ -742,11 +742,27 @@
         "connectorLong-after.png"
       ],
       [
-        "Fixed",
-        "connectorLong-fixed.png"
+        "Fixed \u00b7 390 Obsidian",
+        "connectorLong-fixed-390-obsidian.png"
+      ],
+      [
+        "Fixed \u00b7 390 Bone",
+        "connectorLong-fixed-390-bone.png"
+      ],
+      [
+        "Fixed \u00b7 360 Obsidian",
+        "connectorLong-fixed-360-obsidian.png"
+      ],
+      [
+        "Fixed \u00b7 360 Bone",
+        "connectorLong-fixed-360-bone.png"
+      ],
+      [
+        "Fixed \u00b7 Android release",
+        "connectorLong-fixed-android-release.png"
       ]
     ],
-    "fixedNote": "Restored the original short Continue sign-in wording. Footer action returns beside its note, and total card height returns from (267 px) to (245 px)."
+    "fixedNote": "Owner follow-up: the complete CONNECTING FOR SOMEONE note now has its own single-line footer row. Continue sign-in remains short and right-aligned beneath it. Card height is (267 px) at both (390 px) and (360 px), adding (22 px) to the earlier (245 px) version so neither label is squeezed or truncated."
   },
   {
     "name": "Corner repository access retry",

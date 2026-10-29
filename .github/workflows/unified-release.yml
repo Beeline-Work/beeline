@@ -58,6 +58,11 @@ on:
         type: boolean
         default: false
         required: false
+      force_listing:
+        description: Push the Play store listing even when its text and images already match
+        type: boolean
+        default: false
+        required: false
 
 # Public ingestion configuration; auth tokens stay in the Squire vault.
 env:
@@ -937,6 +942,7 @@ jobs:
           # was then lost in #1241's conflict resolution and run 34873052609 failed the
           # same way). Same value as androidPackage in apps/mobile/app.config.js.
           PACKAGE_NAME: app.usebeeline
+          FORCE_LISTING: ${{ inputs.force_listing && '1' || '0' }}
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }

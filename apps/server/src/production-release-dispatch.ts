@@ -11,7 +11,7 @@ type ReleaseDispatchInput = {
 };
 
 const RECOVERY_INPUTS = new Set([
-  'release_sha', 'release_version', 'selection', 'store_track', 'run_release_proof', 'allow_pin_restore',
+  'release_sha', 'release_version', 'selection', 'store_track', 'run_release_proof', 'allow_pin_restore', 'force_listing',
 ]);
 
 /** Commit provenance before sending the request; never persist provider credentials. */

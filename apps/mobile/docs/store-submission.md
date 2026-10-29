@@ -149,9 +149,11 @@ short-lived Play access token from the service account, then runs
 `scripts/play-publish.sh` (create edit → upload bundle → `tracks.update` with
 `releaseStatus: draft`, notes from
 `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` or `default.txt`
-→ commit) and `scripts/play-publish-listing.sh` (one edit carrying title, short
-and full description, icon, feature graphic and phone screenshots, each image
-type cleared then re-uploaded in filename order, then committed).
+→ commit) and `scripts/play-publish-listing.sh`. The listing script reads the
+live Play listing inside one edit and, when the title, descriptions, icon,
+feature graphic and phone screenshots already match, deletes that edit and
+leaves the listing alone. A changed file, or `force_listing`, still clears and
+re-uploads each image type in filename order, then commits.
 The internal-track release is published as *completed* (rolled out to internal testers with no press in Play
 Console).
 

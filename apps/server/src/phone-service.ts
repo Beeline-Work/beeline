@@ -4768,7 +4768,7 @@ export class PhoneService {
                   ).rows[0];
             const signIn = status && ('sign_in' in status ? status.sign_in : status.signIn);
             if (!signIn?.url)
-              throw new Error('This sign-in is no longer pending. Reconnect to retry.');
+              throw new CommandRefusalError('This sign-in is no longer pending. Reconnect to retry.', 409);
             if (card.connectKind === 'registry-mcp') {
               await this.database.transaction((database) =>
                 recordOwnerGitHubSelection(

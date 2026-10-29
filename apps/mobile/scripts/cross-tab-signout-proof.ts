@@ -1,4 +1,5 @@
 import { clearMobileSurfaceStorage, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { roomTransitionWork } from '@/buzz/room-transition-work';
 
 // Two tabs of one origin: this page, and the same page in a frame that signs out.
 const address = surfaceAddress('https://server.example', 'a'.repeat(64), '/room/r1');
@@ -9,7 +10,11 @@ if (new URLSearchParams(location.search).get('tab') === 'other') {
 } else {
   void (async () => {
     localStorage.clear();
-    await mobileSurfaceCache.write(address, { text: 'first account' }, guard);
+    const seeded = mobileSurfaceCache.write(address, { text: 'first account' }, guard);
+    // Seed the real storage before exercising cross-tab invalidation. The
+    // headless virtual clock can finish without scheduling an idle frame.
+    roomTransitionWork.flush();
+    await seeded;
     const before = mobileSurfaceCache.peek(address, guard)?.text ?? 'none';
     const frame = document.createElement('iframe');
     frame.src = `${location.href.split('?')[0]}?tab=other`;
@@ -28,7 +33,7 @@ if (new URLSearchParams(location.search).get('tab') === 'other') {
     const read = (await mobileSurfaceCache.read(address, guard))?.text ?? 'none';
     const shared = Object.keys(localStorage).filter((key) => key.startsWith('beeline.surface.')).length;
     document.getElementById('result')!.textContent = [
-      hot === 'none' && read === 'none' && shared === 0 ? 'PASS' : 'FAIL',
+      before === 'first account' && hot === 'none' && read === 'none' && shared === 0 ? 'PASS' : 'FAIL',
       `this tab before the other tab signs out: ${before}`,
       `this tab's hot copy after: ${hot}`,
       `this tab's read after: ${read}`,

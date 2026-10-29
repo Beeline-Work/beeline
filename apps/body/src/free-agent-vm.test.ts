@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { runMachineHelper } from './machine-helper.js';
 import { buildAgentEnv, parseEnvFile } from './config.js';
 import { identityFromKey, readRuntimeRecord, runtimeConfigPath, writeRuntimeRecord } from './runtime.js';
@@ -39,6 +39,13 @@ const GRANT: FreeAgentGrant = {
 };
 
 describe('free agent Machine entry', () => {
+  beforeEach(() => {
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn((url, init) => String(url).startsWith('https://openrouter.ai/')
+      ? Promise.resolve(Response.json({ data: { architecture: { input_modalities: ['text'] } } }))
+      : original(url, init)));
+  });
+  afterEach(() => vi.unstubAllGlobals());
   it('points Pi at the scoped proxy with bounded output and an env-only key', async () => {
     const config = JSON.parse(freeAgentPiConfig(GRANT));
     const provider = config.providers.beeline;
@@ -102,8 +109,11 @@ describe('free agent Machine entry', () => {
       expect(JSON.parse(await readFile(join(root, '.pi/agent/models.json'), 'utf8'))).toEqual(JSON.parse(freeAgentPiConfig(GRANT)));
       expect(parseEnvFile(envFile).OPENCODE_CONFIG_CONTENT).toBeUndefined();
       expect(runMachineHelper).toHaveBeenCalledWith(expect.objectContaining({ configPaths: [path] }));
+      vi.mocked(globalThis.fetch).mockResolvedValue(Response.json({ data: { architecture: { input_modalities: ['file', 'image', 'text'] } } }));
       await runFreeAgentCommand(env);
       expect((await readRuntimeRecord(path)).agentKind).toBe('pi');
+      expect(JSON.parse(await readFile(join(root, '.pi/agent/models.json'), 'utf8')).providers.beeline.models[0].input).toEqual(['text', 'image']);
+      expect(globalThis.fetch).toHaveBeenCalledWith(`https://openrouter.ai/api/v1/models/${GRANT.upstreamModel}/endpoints`, expect.anything());
     } finally {
       await rm(root, { recursive: true, force: true });
     }

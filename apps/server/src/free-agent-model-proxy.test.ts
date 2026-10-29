@@ -1,3 +1,4 @@
+import { freeAgentModelTakesImages, IMAGE_TOKEN_RESERVATION } from './free-agent-image-input.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +20,11 @@ import { PgliteDatabase } from './test-support.js';
 import { projectAgentUsage } from './agent-usage.js';
 import { PhoneService } from './phone-service.js';
 
+vi.mock('./free-agent-image-input.js', async importOriginal => ({
+  ...await importOriginal<typeof import('./free-agent-image-input.js')>(),
+  freeAgentModelTakesImages: vi.fn(async () => false),
+}));
+
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -36,6 +42,7 @@ describe('free agent model proxy', () => {
   let config: FreeAgentModelProxyOptions['config'];
 
   beforeEach(async () => {
+    vi.mocked(freeAgentModelTakesImages).mockResolvedValue(false);
     config = { ...CONFIG };
     db = new PgliteDatabase();
     await migrate(db);
@@ -181,6 +188,42 @@ describe('free agent model proxy', () => {
     expect(credits).toBe(32_768);
     expect(admitted.reduce((sum, call) => sum + call.reserved, 0)).toBe(8 * (50_000 + 256) - 32_768);
     expect(Number((await db.query(`SELECT reservation_credit FROM free_agent_usage`)).rows[0]!.reservation_credit)).toBe(32_768);
+  });
+
+  it.each(['deepseek/deepseek-v4.1-flash-1017', 'openai/gpt-6-luna'])(
+    'Reproduction free-agent-images-1: forwards a photo to pinned %s and settles image usage', async model => {
+      vi.mocked(freeAgentModelTakesImages).mockResolvedValue(true);
+      await db.query('UPDATE free_agents SET model=$1 WHERE agent_id=$2', [model, AGENT]);
+      config = { ...CONFIG, dailyTokenCap: 1_000_000, firstDayTokenCap: 1_000_000, lifetimeTokenCap: 0 };
+      const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } };
+      const body = { model: 'attacker/model', messages: [{ role: 'user', content: [
+        { type: 'text', text: 'What is in this picture?' }, image,
+      ] }], max_tokens: 50 };
+      expect(promptTokenBound(body)).toBeGreaterThan(IMAGE_TOKEN_RESERVATION);
+      reply = () => Response.json({ choices: [{ message: { content: 'A photo description' } }],
+        usage: { prompt_tokens: 2200, completion_tokens: 40 } });
+      const response = await call(body);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('A photo description');
+      expect(freeAgentModelTakesImages).toHaveBeenCalledWith(model);
+      expect(upstream[0]!.body).toMatchObject({ model, messages: body.messages });
+      expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(2240);
+      console.log(`Demonstrated free-agent-images-1: ${model} image forwarded unchanged; reported image usage charged (2240 tokens). Provider response is a stand-in.`);
+    });
+
+  it('counts image input against admission when provider usage is absent', async () => {
+    vi.mocked(freeAgentModelTakesImages).mockResolvedValue(true);
+    const body = { messages: [{ role: 'user', content: [{ type: 'image_url',
+      image_url: { url: 'https://example.com/photo.jpg' } }] }], max_tokens: 50 };
+    const refused = await call(body);
+    expect(await refused.text()).toContain("free allowance");
+    expect(upstream).toHaveLength(0);
+    config = { ...CONFIG, dailyTokenCap: 1_000_000, firstDayTokenCap: 1_000_000, lifetimeTokenCap: 0 };
+    reply = () => Response.json({ choices: [{ message: { content: 'photo' } }] });
+    const accepted = await call(body);
+    expect(accepted.status).toBe(200);
+    await accepted.text();
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(promptTokenBound(body) + 50);
   });
 
   it.each([

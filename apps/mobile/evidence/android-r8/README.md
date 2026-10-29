@@ -14,6 +14,8 @@ The first local release build reached R8 and failed on optional Netty desktop TL
 
 Android runtime moves to 43. iOS remains 36. Fingerprint bookkeeping excludes the Android tooling plugin from iOS and explicitly counts its R8 rules on Android; re-recording iOS for that skip-policy correction does not change its binary.
 
+The committed fingerprint baseline is computed after a clean `npm ci --prefix apps/mobile`, before Gradle runs. The masked-view dependency rewrites its own Android manifest during Gradle configuration, removing the legacy package attribute; Expo counts that dependency directory for both platforms. Recording the baseline after the local AAB build incorrectly captured that generated mutation. A clean install reproduced CI's exact hashes on both platforms and corrected the baseline without changing native source or runtime pins.
+
 ## Mapping retention
 
 The release job extracts `BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map` from the exact AAB and rejects a missing/empty map. `play-publish.sh` uploads it to Play under the version code returned by the bundle upload, before committing the track change. It copies the map into a version-code directory and exposes the code to Actions. The `android-mapping-<versionCode>` artifact retains `mapping.txt` for 90 days, including when a later Play operation fails. Archive needed mappings before artifact expiry.

@@ -3601,7 +3601,7 @@ describe('the gate stays shut (AC-8)', () => {
       const peerCommand = (await daemon.execute('getAgentCommands', { roomId: cornerId }, A)).commands.at(-1)!;
       await claim(peerCommand);
       await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId,
-        requestId: peerCommand.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, A)).rejects.toThrow(/above their member standing/);
+        requestId: peerCommand.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, A)).rejects.toThrow(/hold release denied/);
       await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, admin);
       expect((await db.query(`SELECT standing,released_by,released_at IS NOT NULL released FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0])
         .toMatchObject({ standing: 'member', released_by: admin, released: true });
@@ -3615,11 +3615,11 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Reproduction consent-root: a human-rooted objective can release its holder’s hold', async () => {
+  it('Reproduction R8-HOLD: an agent opening a held corner is its holder and can release it', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets', true);
-    const holds = (await db.query(`SELECT id,actor_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;
-    expect(holds).toEqual([{ id: expect.any(String), actor_id: H, standing: 'owner' }]);
+    const holds = (await db.query(`SELECT id,actor_id,set_by_agent_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;
+    expect(holds).toEqual([{ id: expect.any(String), actor_id: H, set_by_agent_id: A, standing: 'owner' }]);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA; githubRollupState = 'passed';
@@ -3631,6 +3631,15 @@ describe('the gate stays shut (AC-8)', () => {
     await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
       generationId: 'g1', releaseHoldId: holds[0]!.id }, A);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, approved: false, open: false });
+    const again = await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId, generationId: 'g1' }, A);
+    expect((await github.prChecksStatus({ cornerId })).holds[0]).toMatchObject({ holderId: A });
+    const humanHold = await phone.execute('setCornerHold', { cornerId }, H);
+    expect((await github.prChecksStatus({ cornerId })).holds).toHaveLength(2);
+    await migrate(db);
+    expect((await github.prChecksStatus({ cornerId })).holds).toHaveLength(2);
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: again.holdId }, H);
+    await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId, generationId: 'g1', releaseHoldId: humanHold.holdId }, A)).rejects.toThrow('Human');
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: humanHold.holdId }, H);
   });
 
   it('Reproduction H1: the holder’s release order in the parent Room releases the hold from that Room turn', async () => {
@@ -3645,11 +3654,11 @@ describe('the gate stays shut (AC-8)', () => {
     await claim(order);
     await daemon.execute('setCornerHold', { cornerId, roomId: R, requestId: order.turnRequestId,
       generationId: 'g1', releaseHoldId: holdId }, A);
-    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: A });
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, approved: false, open: false });
   });
 
-  it('a parent Room release order relayed by steer lets the corner agent release the hold', async () => {
+  it('R8-HOLD: a relayed order does not let another agent release the setter’s hold', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets', true);
     const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
@@ -3664,13 +3673,13 @@ describe('the gate stays shut (AC-8)', () => {
     expect(steer.reason).toBe('order');
     await claim(steer);
     expect(await implementersMerge()).toBe(0);
-    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: steer.turnRequestId,
-      generationId: 'g1', releaseHoldId: holdId }, B);
-    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
-    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, approved: false, open: false });
+    await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: steer.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, B)).rejects.toThrow('hold release denied');
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: null });
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, approved: false, open: false });
   });
 
-  it('a member-standing parent Room release order still fails the standing check', async () => {
+  it('R8-HOLD: the same agent releases its hold under a member requester', async () => {
     const cornerId = await open('owner/widgets', true);
     const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
     const peer = 'f'.repeat(64);
@@ -3681,21 +3690,21 @@ describe('the gate stays shut (AC-8)', () => {
       text: '@hoots release the hold' }, peer);
     const order = (await commands(A, R)).at(-1)!;
     await claim(order);
-    await expect(daemon.execute('setCornerHold', { cornerId, roomId: R, requestId: order.turnRequestId,
-      generationId: 'g1', releaseHoldId: holdId }, A)).rejects.toThrow(/above their owner standing/);
-    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
+    await daemon.execute('setCornerHold', { cornerId, roomId: R, requestId: order.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, A);
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, open: false });
   });
 
-  it('Reproduction consent-root: a delegated command inherits the human holder’s release authority', async () => {
+  it('Reproduction consent-root: R8-HOLD: a delegated command cannot inherit the human holder’s release authority', async () => {
     const cornerId = await approved();
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     const command = await commissioned(cornerId);
     await result(command, '@goosy release the hold');
     const delegated = (await commands(B, cornerId)).at(-1)!;
     await claim(delegated);
-    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: delegated.turnRequestId,
-      generationId: 'g1', releaseHoldId: holdId }, B);
-    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+    await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: delegated.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, B)).rejects.toThrow('hold release denied');
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: null });
   });
 
   it('Reproduction consent-root: an agent-rooted wake cannot release a human hold', async () => {
@@ -3735,7 +3744,7 @@ describe('the gate stays shut (AC-8)', () => {
     const second = (await commands(A, cornerId)).at(-1)!;
     await claim(second);
     await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: second.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, A);
-    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: A });
   });
 
   it('R4: chat alone creates no hold and migration intentionally starts inferred holds clean', async () => {
@@ -3762,7 +3771,7 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Demonstrated HOLD-IDS and consent-root: HTTP service accepts human-rooted release and preserves the merge gate', async () => {
+  it('Demonstrated R8-HOLD and HOLD-IDS: HTTP service separates agent and person hold release', async () => {
     const { createBeelineServer } = await import('../dist/server.js');
     const { PhoneService: BuiltPhone } = await import('../dist/phone-service.js');
     const { DaemonService: BuiltDaemon } = await import('../dist/daemon-service.js');
@@ -3804,7 +3813,7 @@ describe('the gate stays shut (AC-8)', () => {
       await post('daemon', 'claimAgentCommand', { roomId: cornerId, commandId: objective.id, generationId: 'g1' });
       await post('daemon', 'setCornerHold', { cornerId, roomId: cornerId,
         requestId: objective.turnRequestId, generationId: 'g1', releaseHoldId: holdId });
-      expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+      expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: A });
       holdId = (await post('phone', 'setCornerHold', { cornerId })).holdId;
       await post('phone', 'sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Do not proceed until I check this' });
       const held = await post('daemon', 'getPrChecksStatus', { cornerId });
@@ -3827,7 +3836,9 @@ describe('the gate stays shut (AC-8)', () => {
       const direct = (await post('daemon', 'getAgentCommands', { roomId: cornerId })).commands.at(-1);
       await post('daemon', 'claimAgentCommand', { roomId: cornerId, commandId: direct.id, generationId: 'g2' });
       await post('daemon', 'setCornerHold', { cornerId, roomId: cornerId, requestId: direct.turnRequestId,
-        generationId: 'g2', releaseHoldId: holdId });
+        generationId: 'g2', releaseHoldId: holdId }, 503);
+      expect((await post('daemon', 'getPrChecksStatus', { cornerId })).held).toBe(true);
+      await post('phone', 'setCornerHold', { cornerId, releaseHoldId: holdId });
       const released = await post('daemon', 'getPrChecksStatus', { cornerId });
       // The hold is gone; the self-reviewer's corner still waits for a person's yes.
       expect(released).toMatchObject({ held: false, approved: false, mergeAllowed: false, holds: [] });
@@ -3837,7 +3848,7 @@ describe('the gate stays shut (AC-8)', () => {
       expect(refusedMerge).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('no yes on this head') });
       expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
       console.log(`Demonstrated R2199: authenticated HTTP mergeCorner by self-reviewing implementer => ${JSON.stringify(refusedMerge)}, merges=0.`);
-      console.log('Demonstrated consent-root: authenticated HTTP human-rooted release => 200, released_by=human; held=false, holds=[], mergeAllowed=false without yes (fixture GitHub).');
+      console.log('Demonstrated R8-HOLD: agent releases own hold; agent cannot release person hold; person releases hold; held=false, holds=[], mergeAllowed=false without yes (fixture GitHub).');
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }

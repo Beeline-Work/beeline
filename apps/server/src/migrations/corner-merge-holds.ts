@@ -10,6 +10,4 @@ CREATE TABLE IF NOT EXISTS corner_merge_holds (
   released_by text REFERENCES identities(id),
   CHECK ((released_at IS NULL) = (released_by IS NULL))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS corner_merge_holds_active_actor
-  ON corner_merge_holds(corner_id,actor_id) WHERE released_at IS NULL;
 `;

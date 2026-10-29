@@ -1,3 +1,4 @@
+import { CommandRefusalError } from './command-refusal.js';
 import type { ObjectService } from './object-service.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
@@ -62,7 +63,7 @@ export async function consumeStarterVideoPost(database: SqlDatabase, roomId: str
   const card = preview?.card;
   if (!preview || !card?.videoPreview || card?.status !== 'answered' || card.youtubeUploadUsed ||
     card.options?.find(option => option.optionId === card.selectedOptionId)?.label !== 'Post')
-    throw new Error('Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.');
+    throw new CommandRefusalError('Show the video preview with Post and Cancel, and wait for the person to tap Post before uploading.', 403);
   const approved = card.videoPreview;
   const file = args.videoFile;
   if (args.title !== approved.title || args.description !== approved.description ||
@@ -71,7 +72,7 @@ export async function consumeStarterVideoPost(database: SqlDatabase, roomId: str
     (file as Record<string, unknown>).beelineObjectId !== approved.videoObjectId ||
     Object.keys(args).some(key => !['title', 'description', 'privacyStatus', 'videoFile', 'categoryId'].includes(key)) ||
     (args.categoryId !== undefined && args.categoryId !== '22'))
-    throw new Error('Upload arguments must match the approved video preview exactly. Show a new preview for any changes.');
+    throw new CommandRefusalError('Upload arguments must match the approved video preview exactly. Show a new preview for any changes.', 403);
   await database.query(`UPDATE messages SET card=card || '{"youtubeUploadUsed":true}'::jsonb WHERE id=$1`, [preview.id]);
 }
 

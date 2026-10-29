@@ -675,6 +675,8 @@ jobs:
       - name: Run the mobile vitest suite
         working-directory: apps/mobile
         run: npx vitest run
+      - name: Verify Android release shrinking mods
+        run: node --test scripts/android-shrinking.test.mjs
       - name: Typecheck the mobile app
         run: npm run mobile:typecheck
 

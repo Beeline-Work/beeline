@@ -103,13 +103,15 @@ export async function computeNativeFingerprints(projectDir) {
     const ignoredPlugin =
       platform === 'android' ? 'withoutIosPushCapabilities' : 'withAndroidPushRouting';
     const ignoredPlugins =
-      platform === 'android' ? [ignoredPlugin] : [ignoredPlugin, 'expo-navigation-bar'];
+      platform === 'android' ? [ignoredPlugin] : [ignoredPlugin, 'expo-navigation-bar', 'withAndroidBuildTooling'];
     const platformSpecific = {
       ignorePaths: [
         ...(config.ignorePaths ?? []),
         `plugins/${ignoredPlugin}.js`,
-        ...(platform === 'ios' ? ['node_modules/expo-navigation-bar/**'] : []),
+        ...(platform === 'ios' ? ['node_modules/expo-navigation-bar/**', 'plugins/withAndroidBuildTooling.js', 'plugins/android-release.pro'] : []),
       ],
+      // Rules loaded with fs.readFile are not discovered as JS imports.
+      extraSources: platform === 'android' ? [{ type: 'file', filePath: 'plugins/android-release.pro', reasons: ['Android release shrinker rules'] }] : [],
       fileHookTransform(source, chunk, ...rest) {
         const transformed = config.fileHookTransform?.(source, chunk, ...rest) ?? chunk;
         if (

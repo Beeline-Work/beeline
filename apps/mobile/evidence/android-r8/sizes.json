@@ -1,0 +1,14 @@
+{
+  "unshrunk": {
+    "aab_bytes": 68321867,
+    "js_sha256": "fb47b023d1f8e559d1af96aad02f1b77f79d3f151baf870fc7bd6b57a320452b",
+    "dex_bytes": 58263020
+  },
+  "final": {
+    "aab_bytes": 61270787,
+    "js_sha256": "fb47b023d1f8e559d1af96aad02f1b77f79d3f151baf870fc7bd6b57a320452b",
+    "dex_bytes": 12036028
+  },
+  "saved_bytes": 7051080,
+  "saved_percent": 10.32
+}

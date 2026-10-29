@@ -1222,7 +1222,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   // One result record: job results become checkpoints in release_result, not
   // a dozen per-stage artifacts.
   assert.doesNotMatch(source, /release-checkpoint-/);
-  assert.equal((source.match(/actions\/upload-artifact@v4/g) ?? []).length, 8);
+  assert.equal((source.match(/actions\/upload-artifact@v4/g) ?? []).length, 9);
   const result = workflow.jobs.release_result.steps.find((step) => step.id === 'result');
   assert.equal(result.env.NEEDS, '${{ toJSON(needs) }}');
   assert.match(result.run, /unified-release\.mjs job-checkpoints --needs/);

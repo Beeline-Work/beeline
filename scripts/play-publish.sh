@@ -11,6 +11,8 @@
 #   ACCESS_TOKEN     — OAuth access token with the androidpublisher scope
 #   PACKAGE_NAME     — app.usebeeline
 #   AAB_PATH         — path to the .aab built by EAS (signed by the EAS upload key)
+#   MAPPING_PATH     — nonempty R8 mapping extracted from that exact AAB
+#   MAPPING_ARCHIVE_DIR — directory for version-code-named mapping artifacts
 #   TRACK            — internal | alpha | beta | production
 #   RELEASE_NAME     — release name shown in Play Console (the app version)
 #   RELEASE_STATUS   — draft | completed
@@ -38,6 +40,11 @@ if [ ! -f "$AAB_PATH" ]; then
   exit 1
 fi
 
+# Fail before creating a Play edit if the exact build's mapping is absent.
+: "${MAPPING_PATH:?MAPPING_PATH env var is required}"
+test -s "$MAPPING_PATH" || { echo "::error::R8 mapping missing or empty: $MAPPING_PATH" >&2; exit 1; }
+: "${MAPPING_ARCHIVE_DIR:?MAPPING_ARCHIVE_DIR env var is required}"
+
 echo "1/4 Creating edit..."
 edit_id=$(api POST "$API/edits" -H "Content-Length: 0" | json_field id)
 echo "  edit id: $edit_id"
@@ -47,6 +54,16 @@ version_code=$(api POST "$UPLOAD_API/edits/$edit_id/bundles?uploadType=media" \
   -H "Content-Type: application/octet-stream" \
   --data-binary "@${AAB_PATH}" | json_field versionCode)
 echo "  uploaded versionCode: $version_code"
+
+[[ "$version_code" =~ ^[0-9]+$ ]] || { echo '::error::Invalid uploaded version code' >&2; exit 1; }
+mkdir -p "$MAPPING_ARCHIVE_DIR/$version_code"
+cp "$MAPPING_PATH" "$MAPPING_ARCHIVE_DIR/$version_code/mapping.txt"
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+fi
+
+api POST "$UPLOAD_API/edits/$edit_id/apks/$version_code/deobfuscationFiles/proguard?uploadType=media" \
+  -H "Content-Type: application/octet-stream" --data-binary "@${MAPPING_PATH}" >/dev/null
 
 echo "3/4 Setting $TRACK track release ($RELEASE_NAME, status=$RELEASE_STATUS)..."
 # Release notes ("What's new"): the per-versionCode file wins, then default.txt;

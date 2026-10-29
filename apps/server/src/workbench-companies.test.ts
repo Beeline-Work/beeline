@@ -240,7 +240,7 @@ it('Reproduction squire-false-card: projects the signed-in account and active re
     ...view.helpers[0]!, squire: { status: 'connected', reportedAt: 1, signedInAs: 'owner@example.com', reconnecting },
   }] }, origin).rows.find(r => r.kind === 'sign-in-service')!;
   expect(project(false).machines[0]).toMatchObject({ statusText: 'owner@example.com', signedInAs: 'owner@example.com' });
-  expect(project(true)).toMatchObject({ status: 'Reconnecting…', machines: [{ reconnecting: true, statusText: 'Reconnecting…' }] });
+  expect(project(true)).toMatchObject({ status: 'Waiting for sign-in', machines: [{ reconnecting: true, statusText: 'Waiting for sign-in' }] });
 });
 
 it('Reproduction CONNECTOR-SEARCH-REMOVAL: saved keys retain an actionable MCP search option', () => {

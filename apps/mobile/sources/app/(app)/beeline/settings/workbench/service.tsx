@@ -2,6 +2,7 @@ import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
+import { InlineRow } from '@/components/buzz/IndexRow';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
@@ -27,6 +28,9 @@ function param(v: string | string[] | undefined) { return Array.isArray(v) ? v[0
 export const SQUIRE_VAULT_URL = 'https://trustysquire.ai/vault';
 type Machine = WorkbenchCompany['machines'][number];
 const needsFix = (m: Machine) => m.status !== 'connected' || Boolean(m.error);
+/** Signed in means a settled Google session; anything else needs sign-in (mock v3). */
+const signedIn = (m: Machine) => m.status === 'connected' && !m.reconnecting && !m.error;
+const signedInLine = (m: Machine) => m.signedInAs ? `Signed in as ${m.signedInAs}` : 'Signed in';
 export default function ConnectorServiceScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[]; helperId?: string | string[]; service?: string | string[] }>();
   const scope = { workspaceId: param(params.workspaceId) ?? '', viewerId: param(params.viewerId) ?? '' };
@@ -47,7 +51,9 @@ export default function ConnectorServiceScreen() {
   const reconnectMachine = (helperId: string) => {
     setMachine(null); router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', helperId } } as Href);
   };
+
   const topState = row ? connectionViewState(row) : undefined;
+  const needSignIn = row?.machines.filter(item => !signedIn(item)).length ?? 0;
   const keyed = row?.items.some(item => item.target.kind === 'key') ?? false;
   const agents = row?.kind === 'sign-in-service' ? 'Trusty Squire signs up and signs in to websites for your agents. Your computers keep the sign-in sessions.'
     : row?.items.some(item => item.kind === 'connection') ? `Agents use ${row.name} when you ask them to.`
@@ -118,27 +124,30 @@ export default function ConnectorServiceScreen() {
     {loadError && !row ? <NetworkUnavailableState onRetry={() => void refresh()} /> : !view ? <SurfaceGlyphLoader /> : !row ?
       <Text style={styles.note}>This company is no longer connected.</Text> :
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]}>
-        <SettingsRow appBoard title={row.name} description={[row.domain, row.subtitle].filter(Boolean).join(' · ')} leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
-          value={topState === 'error' ? row.status ?? 'Needs attention'
-            : topState === 'connect' ? undefined
-              : row.kind === 'sign-in-service' ? row.status : 'Connected'}
+        {row.kind === 'sign-in-service' ? <SettingsRow appBoard title={row.name} description={row.domain}
+          leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
+          value={needSignIn ? `${needSignIn} need sign-in` : 'Signed in'} valueTone={needSignIn ? 'danger' : undefined}
+          statusGlyph={needSignIn ? 'failed' : 'live'} testID="connector-info-status" />
+          : <SettingsRow appBoard title={row.name} description={[row.domain, row.subtitle].filter(Boolean).join(' · ')} leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
+          value={topState === 'error' ? row.status ?? 'Needs attention' : topState === 'connect' ? undefined : 'Connected'}
           action={topState === 'connect' ? 'Connect' : undefined} onPress={topState === 'connect' ? connectTop : undefined}
           valueTone={topState === 'error' ? 'danger' : undefined}
-          statusGlyph={topState === 'error' ? 'failed' : topState === 'connected' ? 'live' : undefined} testID="connector-info-status" />
+          statusGlyph={topState === 'error' ? 'failed' : topState === 'connected' ? 'live' : undefined} testID="connector-info-status" />}
         <Text style={styles.note} testID="connector-info-agents">{agents}</Text>
-        {row.attention ? <SettingsRow title={row.attention} /> : null}
+        {row.attention && row.kind !== 'sign-in-service' ? <SettingsRow title={row.attention} /> : null}
         {row.kind === 'sign-in-service' ? <View>
-          <RoomListSectionHeader title="Your computers" inset="content" />
-          {row.machines.map(item => {
-            const status = item.statusText ?? (item.reconnecting ? 'Reconnecting…' : item.signedInAs ?? (item.status === 'error' ? 'Google sign-in expired' : item.status === 'connected' ? 'Google signed in' : 'Google sign-in needed'));
-            // An online computer that can retry does it in one tap; an offline one shows why it cannot.
-            return !item.reconnecting && item.online && needsFix(item)
-              ? <SettingsRow appBoard key={item.id} title={item.name} description={[status, item.error].filter(Boolean).join(' · ')} descriptionTone={item.status === 'error' ? 'danger' : undefined}
-                action={item.status === 'not-added' ? 'Set up' : 'Connect'} onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />
-              : <SettingsRow appBoard key={item.id} title={item.name} description={item.error} value={status}
-                valueTone={item.status === 'error' || (item.status === 'connected' && !item.online) ? 'danger' : undefined}
-                chevron="right" disabled={item.reconnecting} onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />;
-          })}
+          <InlineRow style={styles.sectionLine} testID="squire-computers-head">
+            <Text accessibilityRole="header" style={styles.section}>YOUR COMPUTERS</Text>
+            <Text style={[styles.section, styles.sectionCount]}>{row.machines.length}</Text>
+          </InlineRow>
+          {row.machines.map(item => signedIn(item)
+            // A signed-in computer opens its own sheet; every other one connects in one tap.
+            ? <SettingsRow appBoard key={item.id} title={item.name} description={item.statusText ?? signedInLine(item)}
+              descriptionContent={<InlineRow style={styles.signedIn}><View style={styles.signedInDot} testID={`squire-computer-${item.id}-dot`} />
+                <Text numberOfLines={1} style={styles.signedInText}>{item.statusText && item.statusText !== 'Google signed in' && !item.signedInAs ? item.statusText : signedInLine(item)}</Text></InlineRow>}
+              chevron="right" onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />
+            : <SettingsRow appBoard key={item.id} title={item.name} description="Google sign-in needed"
+              action="Connect" onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />)}
         </View> : (['connection', 'login', 'key'] as const).map(kind => {
           const items = row.items.filter(item => item.kind === kind);
           return items.length || kind === 'connection' && row.mcp ? <View key={kind}>
@@ -172,8 +181,8 @@ export default function ConnectorServiceScreen() {
         {error || actions.error ? <SettingsRow title={(error ?? actions.error)!} /> : null}
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
-      {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : manageMachine && !manageMachine.online ? <Text style={styles.error} testID="squire-computer-offline">{manageMachine.error ?? `Turn on ${manageMachine.name} to reconnect it.`}</Text>
-        : machine && manageMachine && needsFix(manageMachine) ? <HullActionSheetRow label={manageMachine.status === 'not-added' ? 'Set up' : 'Connect'} onPress={() => reconnectMachine(machine.id)} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
+      {machine && manageMachine && !signedIn(manageMachine) ? <HullActionSheetRow label="Connect" onPress={() => reconnectMachine(machine.id)} />
+        : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />
     </HullActionSheetModal>
     <HullActionSheetModal visible={Boolean(appOpen)} title={appOpen?.name} onClose={() => setAppOpen(null)}>
@@ -185,5 +194,11 @@ export default function ConnectorServiceScreen() {
 const styles = StyleSheet.create(theme => ({
   screen: { flex: 1, backgroundColor: theme.buzz.appCanvas },
   content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
-  note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet }, error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
+  note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet },
+  section: { ...theme.buzz.squireConnect.sectionType, textTransform: 'uppercase', color: theme.buzz.textMuted, marginBottom: theme.buzz.space.xs },
+  sectionCount: { color: theme.buzz.textDisabled },
+  sectionLine: { gap: theme.buzz.squireConnect.dotGap },
+  signedIn: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.squireConnect.dotGap },
+  signedInDot: { width: 7, height: 7, borderRadius: 7 / 2, backgroundColor: theme.buzz.diffAdded },
+  signedInText: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, flexShrink: 1 }, error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
 }));

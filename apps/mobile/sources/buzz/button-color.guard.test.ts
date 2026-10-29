@@ -51,6 +51,11 @@ const decorativeAccentFills = new Set([
   'components/buzz/VoiceCallCard.tsx:dot',
   // The approved non-interactive pin badge overlays a neutral avatar tile.
   'components/buzz/VoiceBar.tsx:pinBadge',
+  // Trusty Squire mock v3 step marks: done disc, filled bar part, sweep and done rail.
+  'app/(app)/beeline/settings/workbench/connect.tsx:railDone',
+  'components/buzz/ConnectProgress.tsx:dotDone',
+  'components/buzz/ConnectProgress.tsx:barFilled',
+  'components/buzz/ConnectProgress.tsx:sweep',
 ]);
 
 function filesUnder(directory: string): string[] {

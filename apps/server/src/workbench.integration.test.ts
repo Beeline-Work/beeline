@@ -373,7 +373,7 @@ describe('workbench connectors', () => {
     await database.query(`UPDATE agents SET squire_work='{"install":true,"generation":1,"signedInAs":"owner@example.com"}'::jsonb WHERE agent_id=$1`, [HELPER]);
     const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
     const machine = view.companies.rows.find((row: any) => row.kind === 'sign-in-service').machines[0];
-    expect(machine).toMatchObject({ reconnecting: true, signedInAs: 'owner@example.com', statusText: 'Reconnecting…' });
+    expect(machine).toMatchObject({ reconnecting: true, signedInAs: 'owner@example.com', statusText: 'Waiting for sign-in' });
   });
 
   it('Reproduction squire-spinner: failed Google reconnect overrides a healthy broker report', async () => {

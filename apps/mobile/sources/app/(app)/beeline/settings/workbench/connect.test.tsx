@@ -100,11 +100,11 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 
-vi.mock('@/components/buzz/PulsingText', async () => {
+vi.mock('@/components/buzz/ConnectProgress', async () => {
   const ReactModule = await import('react');
-  return {
-    PulsingText: (props: any) => ReactModule.createElement('PulsingText', props),
-  };
+  const host = (name: string) => (props: any) => ReactModule.createElement(name, props);
+  return { RingSpinner: host('RingSpinner'), ConnectStepDot: host('ConnectStepDot'),
+    ConnectStepBar: host('ConnectStepBar'), LoadingBar: host('LoadingBar') };
 });
 
 import ConnectTrustySquireScreen from './connect';
@@ -187,7 +187,7 @@ async function pair(renderer: ReactTestRenderer, helperId = 'helper-squire-box')
 
 async function untilSignin(renderer: ReactTestRenderer): Promise<void> {
   for (let tick = 0; tick < 12; tick += 1) {
-    if (renderer.root.findAllByProps({ testID: 'connect-sign-in' }).length) return;
+    if (renderer.root.findAllByProps({ testID: 'connect-sign-in' }).some((node: any) => !node.props.disabled)) return;
     await advancePolls();
   }
   throw new Error('sign-in step never arrived');
@@ -200,7 +200,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       const renderer = await render();
       const scroll = renderer.root.findByProps({ testID: 'connect-scroll' });
       const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
-      expect(contentStyle.paddingBottom).toBe(48 + 48);
+      expect(contentStyle.paddingBottom).toBe(24 + 48);
     } finally {
       safeArea.bottom = 0;
     }
@@ -209,7 +209,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   it('names the tool under a small Workbench eyebrow', async () => {
     const renderer = await render();
     const header = renderer.root.findByProps({ testID: 'connect-header' });
-    expect(header.props.eyebrow).toBe('Connectors');
+    expect(header.props.eyebrow).toBe('Trusty Squire');
     expect(header.props.title).toBe('Trusty Squire');
   });
 
@@ -270,9 +270,8 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     setWorkbenchSource(source);
     const renderer = await render();
     expect(navigation.push).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: 'connect-machine-picker' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'connect-machine-helper-squire-box' }).props.description)
-      .toMatch(/pairing automatically|paired/);
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-picker' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
     expect(pairing).toHaveBeenCalledTimes(1);
     expect(pairing).toHaveBeenCalledWith({ workspaceId: 'workspace-1',
       connectorId: 'trusty-squire', helperId: 'helper-squire-box' });
@@ -292,14 +291,8 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     setWorkbenchSource(source);
     const renderer = await render();
     expect(pairing).not.toHaveBeenCalled();
-    const selected = renderer.root.findByProps({ testID: 'connect-requested-unavailable' });
-    expect(selected.props.title).toBe(state === 'offline' ? 'Machine A' : 'Selected machine');
-    expect(selected.props.description).toBe('Unavailable — waiting for this machine to come online');
+    expect(renderer.root.findByProps({ testID: 'connect-step-0-detail' }).props.children).toContain('Reconnecting');
     expect(renderer.root.findAllByProps({ testID: 'connect-machine-machine-b' })).toHaveLength(0);
-    console.log('squire-reconnect-target-3 Demonstrated:', JSON.stringify({
-      requestedMachine: 'machine-a', state, automaticPairCalls: pairing.mock.calls,
-      renderedStatus: selected.props.description,
-    }));
     online = true;
     await act(async () => {
       await readSharedWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' }, { refresh: true });
@@ -318,7 +311,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(online.props.description).toBe('online');
     expect(online.props.action).toBe('pair');
     expect(online.props.value).toBeUndefined();
-    expect(online.props.disabled).toBe(false);
+    expect(Boolean(online.props.disabled)).toBe(false);
     expect(renderer.root.findAllByProps({ testID: 'connect-machine-helper-office-mini' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'connect-helper-picker' })).toHaveLength(0);
   });
@@ -341,9 +334,11 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBeUndefined();
     const active = renderer.root.findAll(
-      (node: any) => node.props?.testID === 'connect-step-1-active',
+      (node: any) => node.props?.testID === 'connect-step-1-current',
     );
     expect(active.length).toBeGreaterThan(0);
+    const count = renderer.root.findByProps({ testID: 'connect-progress-count' });
+    expect([count.props.children].flat().join('')).toBe('Step 2 of 4');
     await untilSignin(renderer);
     expect(renderer.root.findByProps({ testID: 'connect-sign-in' })).toBeDefined();
   });
@@ -404,34 +399,26 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { readInstallState }));
     const renderer = await render();
     await advancePolls();
-    const line = renderer.root.findByProps({ testID: 'connect-sign-in-location' });
-    expect([line.props.children].flat().join('')).toBe(
-      'Sign-in page opened on a virtual display · https://tunnel.example.test/#p=x',
-    );
+    expect(renderer.root.findByProps({ testID: 'connect-step-3-detail' }).props.children).toBe('Opens a secure browser on squire-box');
+    expect(renderer.root.findAllByProps({ testID: 'connect-sign-in-location' })).toHaveLength(0);
   });
 
-  it('streams each step’s CLI command and captured output under the checklist', async () => {
+  it('keeps raw commands and tunnel URLs out of the fixed four-step flow', async () => {
     const renderer = await render();
     await pair(renderer);
     await advancePolls(2);
-    const text = (n: any) => [n.props.children].flat().join('');
-    expect(text(renderer.root.findByProps({ testID: 'connect-step-0-command' }))).toContain(
-      'squire status',
-    );
-    expect(text(renderer.root.findByProps({ testID: 'connect-step-0-output' }))).toContain('ok');
-    expect(text(renderer.root.findByProps({ testID: 'connect-step-1-command' }))).toContain(
-      'npm install',
-    );
+    expect(renderer.root.findAllByProps({ testID: 'connect-step-0-command' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'connect-step-bar' }).props.parts).toHaveLength(4);
   });
 
-  it('the running step renders as a pulsing gold marker', async () => {
+  it('the running step carries a loading indicator', async () => {
     const renderer = await render();
     await pair(renderer);
     await advancePolls(2);
-    const pulsing = renderer.root.findAll(
-      (node: any) => node.props?.testID === undefined && node.type === 'PulsingText',
+    const spinners = renderer.root.findAll(
+      (node: any) => typeof node.props?.testID === 'string' && /^connect-step-\d+-dot$/.test(node.props.testID) && node.props.state === 'current',
     );
-    expect(pulsing.length).toBeGreaterThan(0);
+    expect(spinners.length).toBeGreaterThan(0);
   });
 
   it('reports a failed step in red with the helper’s reason and Retry re-pairs', async () => {
@@ -445,15 +432,10 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findByProps({ testID: 'connect-retry' })).toBeDefined();
     const failed = renderer.root.findByProps({ testID: 'connect-step-2-failed' });
     expect(failed).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'connect-step-2-reason' }).props.children).toContain(
+    expect(renderer.root.findByProps({ testID: 'connect-step-2-detail' }).props.children).toContain(
       'helper',
     );
     expect(renderer.root.findAllByProps({ testID: 'connect-sign-in' })).toHaveLength(0);
-    // The failed step carries its own captured output, so a failure never
-    // hangs silently without something to debug.
-    expect(renderer.root.findByProps({ testID: 'connect-step-2-output' }).props.children).toContain(
-      'npm ERR!',
-    );
     await act(async () => {
       renderer.root.findByProps({ testID: 'connect-retry' }).props.onPress();
       await Promise.resolve();
@@ -478,7 +460,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     await advancePolls(8);
     expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain('Install disappeared');
     pairConnector.mockClear();
-    await act(async () => { renderer.root.findByProps({ testID: 'connect-pair-retry' }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-retry' }).props.onPress(); });
     if (kind === 'helper') expect(pairConnector).toHaveBeenCalledTimes(1);
     else expect(phoneOperation).toHaveBeenCalledWith('acceptConnectorOffer', { offerId: 'offer-1' });
   });
@@ -491,7 +473,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       if (navigation.replace.mock.calls.length) break;
       await advancePolls();
     }
-    expect(navigation.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
+    expect(navigation.replace).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/service', params: { workspaceId: 'workspace-1', viewerId: 'human-dani', service: 'trusty-squire' } });
   });
 
   it('returns an in-chat offer ceremony to its Room once the helper reports connected', async () => {
@@ -527,6 +509,17 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       throw new Error('connect-error never appeared');
     }
 
+    it('stops helper discovery when its bounded read fails', async () => {
+      setWorkbenchSource(Object.assign(new MockWorkbenchSource(), {
+        readWorkbench: () => new Promise(() => {}),
+      }));
+      const renderer = await render();
+      expect(renderer.root.findAllByProps({ testID: 'connect-loader' }).length).toBeGreaterThan(0);
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+      expect(renderer.root.findAllByProps({ testID: 'connect-loader' })).toHaveLength(0);
+      expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toBe('Helpers are unavailable right now');
+    });
+
     it('surfaces a pair POST that never settles, and still follows a late resolve', async () => {
       let resolvePair: () => void = () => {};
       const base = new MockWorkbenchSource();
@@ -551,13 +544,12 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       // The transport sets no timeout of its own: the hung await must reach
       // the user through the one error channel, not sit on the picker.
       await act(async () => {
-        vi.advanceTimersByTime(15_000);
+        vi.advanceTimersByTime(60_000);
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain(
-        'pairing',
-      );
+      expect(renderer.root.findByProps({ testID: 'connect-step-0-detail' }).props.children).toContain('didn’t answer for 1 minute');
+      expect(renderer.root.findByProps({ testID: 'connect-step-bar' }).props.parts[0]).toBe('failed');
       // A late resolve still starts the poll and clears the stale notice.
       await act(async () => {
         resolvePair();

@@ -364,20 +364,77 @@ export type ConnectorSignIn = {
   browserLocation?: ConnectorBrowserLocation;
 };
 
-/** One quiet line naming where the sign-in page opened; '' when the report
- *  did not say. */
-export function connectorSignInLocationLine(
-  location: ConnectorBrowserLocation | undefined,
-): string {
-  if (!location) return '';
-  switch (location.kind) {
-    case 'host_screen':
-      return "Sign-in page opened on this machine's screen";
-    case 'virtual':
-      return `Sign-in page opened on a virtual display · ${location.url}`;
-    default:
-      return '';
+/** One stage of the Trusty Squire pairing, in the order the person lives it. */
+type SquirePairingStage = {
+  key: 'reach' | 'install' | 'pair' | 'sign-in' | 'other';
+  label: string;
+  status: 'done' | 'current' | 'pending' | 'failed';
+  reason?: string;
+  command?: string;
+  output?: string;
+};
+
+type SquireStageKey = Exclude<SquirePairingStage['key'], 'other'>;
+
+const SQUIRE_STAGE_MATCH: readonly [SquireStageKey, RegExp][] = [
+  ['reach', /^helper( .+)? reached$/i],
+  ['install', /^(trusty-squire( \S+)? installed|install on helper)$/i],
+  ['pair', /^paired to workspace( .+)?$/i],
+  ['sign-in', /^(waiting for sign-in|connect provider account)$/i],
+];
+
+const squireStageKey = (label: string) =>
+  SQUIRE_STAGE_MATCH.find(([, pattern]) => pattern.test(label.trim()))?.[0];
+
+/**
+ * The helper reports steps in the order it reaches them, and the server seeds
+ * two placeholders, so the raw list changes length and order mid-run. The
+ * person reads four fixed stages instead (plus any extra step the helper
+ * adds after them): the first unfinished one is current.
+ */
+export function squirePairingStages(
+  steps: readonly ConnectorInstallStep[],
+  machineName: string | null | undefined,
+  signInOpen = false,
+): SquirePairingStage[] {
+  const labels: Record<SquireStageKey, string> = {
+    reach: `Reach ${machineName ?? 'your computer'}`,
+    install: 'Install Trusty Squire',
+    pair: 'Pair to this workspace',
+    'sign-in': 'Sign in to Google',
+  };
+  const found = new Map<SquireStageKey, ConnectorInstallStep>();
+  const extras: ConnectorInstallStep[] = [];
+  for (const step of steps) {
+    const key = squireStageKey(step.label);
+    // A later report of the same stage is the newer answer.
+    if (key) found.set(key, step);
+    else extras.push(step);
   }
+  // A published sign-in page, or a later stage that failed, means the helper
+  // got past every earlier stage, even ones its last report no longer lists.
+  const failedAt = SQUIRE_STAGE_MATCH.findIndex(([key]) => found.get(key)?.status === 'failed');
+  const passedBefore = failedAt >= 0 ? failedAt
+    : signInOpen ? SQUIRE_STAGE_MATCH.findIndex(([key]) => key === 'sign-in') : 0;
+  for (const [key] of SQUIRE_STAGE_MATCH.slice(0, passedBefore))
+    if (failedAt >= 0 ? !found.has(key) : found.get(key)?.status !== 'done') found.set(key, { label: key, status: 'done' });
+  let current = false;
+  const stage = (key: SquirePairingStage['key'], label: string, step: ConnectorInstallStep | undefined): SquirePairingStage => {
+    const detail = {
+      ...(step?.reason ? { reason: step.reason } : {}),
+      ...(step?.command ? { command: step.command } : {}),
+      ...(step?.output ? { output: step.output } : {}),
+    };
+    if (step?.status === 'done') return { key, label, status: 'done', ...detail };
+    if (step?.status === 'failed') { current = true; return { key, label, status: 'failed', ...detail }; }
+    if (current) return { key, label, status: 'pending', ...detail };
+    current = true;
+    return { key, label, status: 'current', ...detail };
+  };
+  return [
+    ...SQUIRE_STAGE_MATCH.map(([key]) => stage(key, labels[key], found.get(key))),
+    ...extras.map((step) => stage('other', step.label, step)),
+  ];
 }
 
 export type ConnectorInstallState = {

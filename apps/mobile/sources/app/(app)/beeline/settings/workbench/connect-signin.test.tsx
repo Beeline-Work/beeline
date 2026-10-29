@@ -81,11 +81,11 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
-vi.mock('@/components/AnimatedOverlay', async () => {
+vi.mock('@/components/buzz/ConnectProgress', async () => {
   const ReactModule = await import('react');
-  return {
-    AnimatedBlurBackdrop: (props: any) => ReactModule.createElement('AnimatedBlurBackdrop', props),
-  };
+  const host = (name: string) => (props: any) => ReactModule.createElement(name, props);
+  return { RingSpinner: host('RingSpinner'), ConnectStepDot: host('ConnectStepDot'),
+    ConnectStepBar: host('ConnectStepBar'), LoadingBar: host('LoadingBar') };
 });
 
 vi.mock('@/components/buzz/PageHeader', async () => {
@@ -167,9 +167,74 @@ describe('ConnectorSignInScreen', () => {
     let renderer!: ReactTestRenderer;
     try {
       await act(async () => { renderer = create(<ConnectorSignInScreen />); });
-      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoadEnd());
+      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoad());
       await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
+    } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
+  });
+
+  it('Reproduction squire-browser-fallback: every fallback after timeout ends with recovery actions', async () => {
+    vi.useFakeTimers();
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [] });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoad());
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
+      for (let fallback = 0; fallback < 2; fallback++) {
+        expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
+        await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+        await act(async () => { for (const listener of appStateListeners) listener('active'); });
+        expect(renderer.root.findAllByProps({ testID: 'signin-finishing' }).length).toBeGreaterThan(0);
+        await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
+        expect(renderer.root.findAllByProps({ testID: 'signin-finishing' })).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
+        expect(renderer.root.findAllByProps({ testID: 'signin-open-external' }).length).toBeGreaterThan(0);
+      }
+    } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
+  });
+
+  it('Reproduction squire-browser-fallback: connects automatically during fallback after timeout', async () => {
+    vi.useFakeTimers();
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [] });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoad());
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+      expect(renderer.root.findByProps({ testID: 'signin-finishing' })).toBeDefined();
+      readInstallState.mockResolvedValue({ connected: true, steps: [] });
+      await act(async () => {
+        for (const listener of appStateListeners) listener('active');
+        await Promise.resolve();
+      });
+      expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/service',
+        params: { workspaceId: 'workspace-1', viewerId: '', service: 'trusty-squire' } });
+    } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
+  });
+
+  it('Reproduction tunnel-dns: a page that fails while its name is new reloads itself before failing', async () => {
+    vi.useFakeTimers();
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [], signIn: { method: 'streamed', url: searchParams.url } });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      const first = renderer.root.findByProps({ testID: 'signin-webview' });
+      await act(async () => { first.props.onError(); first.props.onLoad(); });
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' })).toHaveLength(0);
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_001); });
+      const second = renderer.root.findByProps({ testID: 'signin-webview' });
+      expect(second).not.toBe(first);
+      await act(async () => second.props.onLoad());
+      expect(renderer.root.findAllByProps({ testID: 'signin-webview-loading' })).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' })).toHaveLength(0);
     } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
   });
 
@@ -244,6 +309,7 @@ describe('ConnectorSignInScreen', () => {
         ...options,
         mcp: { async call() { return { credentials: [] }; } },
         run: async () => ({ code: 0, stdout: '1.1.17', stderr: '' }),
+        awaitPage: async () => true,
         streamRun: async () => ({
           stdout: '', stderr: '', abort: () => {},
           report: claimed

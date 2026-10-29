@@ -69,6 +69,8 @@ function fixtureJsx(snapshot, entry) {
           else if (name === 'value') expression = text.includes('workspace?.name') ? '"Beeline"' : '"Private"';
           else if (name === 'action') expression = '"Copy"';
           else if (name === 'disabled' || name === 'retrying') expression = 'false';
+          // A live fallback action needs page state the isolated fixture does not hold.
+          else if (name === 'secondaryAction' || name === 'retryLabel') expression = 'undefined';
           else if (name === 'testID') expression = JSON.stringify(entry.id);
           if (expression) {
             // Emit this expression as a synthetic node so its source positions cannot bind to the JSX file.

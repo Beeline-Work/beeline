@@ -101,17 +101,20 @@ it('Reproduction squire-false-card: account replaces Ready and reconnect hides D
   source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, signedInAs: 'owner@example.com', statusText: 'owner@example.com' })) }]);
   setWorkbenchSource(source);
   const renderer = await render();
-  expect(renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.value).toBe('owner@example.com');
+  expect(renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.description).toBe('owner@example.com');
   await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
-  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Reconnecting…' })) }]);
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Waiting for sign-in' })) }]);
   await act(async () => mobileSurfaceCache.clear());
   await act(async () => renderer.unmount());
+  navigation.push.mockClear();
   const reconnecting = await render();
   const computer = reconnecting.root.findByProps({ testID: 'squire-computer-machine-one' });
-  expect(computer.props.value).toBe('Reconnecting…');
-  expect(computer.props.disabled).toBe(true);
+  // A pairing waiting on sign-in is a next step, never a dead row.
+  expect(computer.props.description).toBe('Google sign-in needed');
+  expect(computer.props.action).toBe('Connect');
   await act(async () => computer.props.onPress());
-  expect(reconnecting.root.findAllByType('HullActionSheetRow').filter((r: any) => r.props.label === 'Disconnect')).toHaveLength(0);
+  expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
+    params: { workspaceId: 'ws', viewerId: expect.any(String), connectorId: 'trusty-squire', helperId: 'machine-one' } });
   await act(async () => reconnecting.unmount());
 });
 
@@ -124,25 +127,25 @@ it('Reproduction squire-spinner: an expired online computer offers Connect after
   setWorkbenchSource(source);
   const renderer = await render();
   const computer = renderer.root.findByProps({ testID: 'squire-computer-machine-one' });
-  expect(computer.props.action).toBe('Connect'); expect(computer.props.description).toBe('Google sign-in expired · Google reconnect failed');
+  expect(computer.props.action).toBe('Connect'); expect(computer.props.description).toBe('Google sign-in needed');
   await act(async () => computer.props.onPress());
   expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
     params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire', helperId: 'machine-one' } });
   await act(async () => renderer.unmount());
 });
 
-it('shows the error, not a retry, when the computer that would retry is offline', async () => {
+it('opens reaching progress for an offline computer too', async () => {
   params.service = 'trusty-squire'; navigation.push.mockClear();
   const source = new MockWorkbenchSource(); const row = squireRow();
   source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, online: false, status: 'error' as const, statusText: 'Computer offline' })) }]);
   setWorkbenchSource(source);
   const renderer = await render();
   const computer = renderer.root.findByProps({ testID: 'squire-computer-machine-one' });
-  expect(computer.props.action).toBeUndefined(); expect(computer.props.value).toBe('Computer offline');
+  expect(computer.props.action).toBe('Connect');
+  expect(computer.props.description).toBe('Google sign-in needed');
   await act(async () => computer.props.onPress());
-  expect(renderer.root.findByProps({ testID: 'squire-computer-offline' }).props.children).toBe('Turn on Laptop to reconnect it.');
-  expect(renderer.root.findAllByType('HullActionSheetRow')).toHaveLength(0);
-  expect(navigation.push).not.toHaveBeenCalled();
+  expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
+    params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire', helperId: 'machine-one' } });
   await act(async () => renderer.unmount());
 });
 

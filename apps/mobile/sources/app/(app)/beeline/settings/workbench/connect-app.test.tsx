@@ -98,13 +98,6 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 
-vi.mock('@/components/buzz/PulsingText', async () => {
-  const ReactModule = await import('react');
-  return {
-    PulsingText: (props: any) => ReactModule.createElement('PulsingText', props),
-  };
-});
-
 import { companyWorkbench, companyOption, companyRow } from '@/test/company-workbench';
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-1' }));

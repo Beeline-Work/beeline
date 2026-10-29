@@ -22,9 +22,9 @@ describe('Workbench title hierarchy', () => {
   });
 
   it('puts small Workbench over the tool or key name on every child page', () => {
-    expect(connect).toContain('eyebrow="Connectors"');
-    expect(connect).toContain('title={connectorName}');
-    expect(connect).not.toContain('Connect {connectorName}');
+    // The locked Trusty Squire mock v3 names the parent tool over "Connect <computer>".
+    expect(connect).toContain('eyebrow={connectorName}');
+    expect(connect).toContain('`Connect ${machineName}`');
     expect(wallet).toContain('eyebrow="Connectors"');
     expect(wallet).toContain('title={title}');
     expect(connection).toContain('eyebrow="Connectors"');
@@ -33,7 +33,8 @@ describe('Workbench title hierarchy', () => {
     expect(walletSend).toContain('title="Send"');
     expect(walletReceive).toContain('eyebrow="Wallet"');
     expect(walletReceive).toContain('title="Receive"');
-    expect(signIn).toContain('eyebrow="Connectors"');
+    // Mock v3: the sign-in page is step 4 of the pairing it belongs to.
+    expect(signIn).toContain("eyebrow={squire ? 'Step 4 of 4' : 'Connectors'}");
     expect(signIn).toContain("title={squire ? 'Sign in to Google' : `Sign in to ${connectorName}`}");
     expect(signIn).not.toContain('width: 40, height: 40');
   });

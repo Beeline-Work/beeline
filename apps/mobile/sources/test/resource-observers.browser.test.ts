@@ -57,7 +57,7 @@ describe('resource observers in the desktop web renderer', () => {
           document.querySelector('[data-testid="signin-retry"]')?.click();
           globalThis.__recover = true;
           globalThis.__roomListeners.broken?.({ monolithLive: { type: 'invalidate', roomId: 'broken', reason: 'message' } });
-          document.querySelector('[data-testid="connect-pair-retry"]')?.click(); }, 8500);
+          document.querySelector('[data-testid="connect-retry"]')?.click(); }, 8500);
         setTimeout(() => { output.retryReads = globalThis.__installReads; output.repaired = globalThis.__repaired; output.returnedToInstaller = globalThis.__backs;
           output.recoveredTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           output.workflowReads = globalThis.__workflowReads;
@@ -102,7 +102,8 @@ describe('resource observers in the desktop web renderer', () => {
       console.log('Reproductions R9a–R9c desktop web:', result.result);
       const proof = JSON.parse(result.result);
       expect(proof).toMatchObject({ draftReady: true, pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 1, stoppedReads: 1, retryReads: 2, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
-      expect(proof.signInError).toContain('Retry');
+      // A lost install cannot reload in place; its one action says where it goes.
+      expect(proof.signInError).toContain('Go back');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');
       expect(proof.inspectorRetry).toContain('Retry');

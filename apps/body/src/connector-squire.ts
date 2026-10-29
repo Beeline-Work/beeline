@@ -213,6 +213,9 @@ export type StreamedShellRunner = (
 /** Safety bound for the connect process, and the life of the ceremony it prints. */
 export const CONNECT_TIMEOUT_MS = 300_000;
 
+/** How long a connect that reported `connected` may keep running before it is ended. */
+const CONNECTED_EXIT_GRACE_MS = 2_000;
+
 /**
  * Default streamed runner: spawns the process, reads its NEWLINE-DELIMITED
  * `--json` reports line by line, and resolves with the last one read as soon
@@ -247,6 +250,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     // The one copy of the run's answer: the last report received. Nothing
     // else is remembered and nothing is inferred from it.
     let report: SquireConnectReport | undefined;
+    let finishing: ReturnType<typeof setTimeout> | undefined;
 
     // This timer bounds the ceremony itself, not just the wait for its URL: it
     // stays armed after the surface is published, because nothing downstream
@@ -263,6 +267,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
 
     const abort = () => {
       clearTimeout(safetyTimer);
+      clearTimeout(finishing);
       killConnectTree(child);
     };
 
@@ -330,6 +335,13 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
       if (report && isPublishableConnectReport(report)) {
         finish({ stdout, stderr, pid: child.pid ?? undefined, report, abort });
       }
+      // Squire prints its terminal `connected` report the moment the person
+      // signs in, but its process can outlive it while the remote-login rig
+      // winds down. The exit is what re-drains this helper, so end it here
+      // instead of leaving the row installing until the safety timer.
+      if (resolved && report?.terminal && report.state === 'connected' && !finishing) {
+        finishing = setTimeout(abort, CONNECTED_EXIT_GRACE_MS);
+      }
     };
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
@@ -344,6 +356,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     });
 
     child.on('close', () => {
+      clearTimeout(finishing);
       notifyExit();
       consumeReports(true);
       settle({
@@ -356,6 +369,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, o
     });
 
     child.on('error', () => {
+      clearTimeout(finishing);
       notifyExit();
       settle({ stdout, stderr, pid: child.pid ?? undefined, report, abort: () => {} });
     });
@@ -574,6 +588,8 @@ export type InstallSquireOptions = {
    * shared-browser instead of failing (Squire's own `install/cli.ts`).
    */
   readonly forceReloginProvider?: string;
+  /** Waits until a published sign-in page answers (tests replace it). */
+  readonly awaitPage?: (url: string) => Promise<boolean>;
 };
 
 export type InstallSquireResult = {
@@ -814,7 +830,14 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
         }
       : undefined;
 
-  // Surface the reported sign-in URL immediately so the phone has a page to
+  // A quick-tunnel name is printed before DNS knows it. A phone that looks it
+  // up that early caches the miss for minutes, so publish once it answers.
+  if (signIn && location?.kind === 'virtual' &&
+      !await (options.awaitPage ?? awaitPublicPage)(signIn.url)) {
+    log(`trusty-squire sign-in page ${new URL(signIn.url).host} did not answer in ${PAGE_READY_TIMEOUT_MS / 1000}s; publishing it anyway`);
+  }
+
+  // Surface the reported sign-in URL so the phone has a page to
   // open, with the report's own placement riding beside it. The step settles
   // only when there is nothing left to press: a run that printed a ceremony
   // is still waiting on the human, while the already-connected report has
@@ -863,6 +886,23 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     steps,
     ...(version ? { squireVersion: version } : {}),
   };
+}
+
+/** How long the helper waits for a fresh sign-in page to answer. */
+const PAGE_READY_TIMEOUT_MS = 30_000;
+
+/** True once the page answers below 500; Cloudflare says 530 until the tunnel is up. */
+export async function awaitPublicPage(url: string, timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(5_000) });
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status < 500) return true;
+    } catch { /* not resolvable yet */ }
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+  return false;
 }
 
 /** Probe the mounted Squire MCP to confirm the account is live on this helper. */

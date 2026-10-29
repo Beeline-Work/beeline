@@ -3,15 +3,14 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, Text, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Typography } from '@/constants/Typography';
-import { AnimatedBlurBackdrop } from '@/components/AnimatedOverlay';
 import { Button } from '@/components/buzz/Button';
+import { LoadingBar, RingSpinner } from '@/components/buzz/ConnectProgress';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { useInstallObserver } from '@/buzz/use-observed-resource';
@@ -60,34 +59,68 @@ function ConnectorSignInOverlay() {
     workspaceId?: string | string[]; viewerId?: string | string[];
     connectorId?: string | string[]; connectorName?: string | string[];
     roomId?: string | string[]; offerId?: string | string[]; url?: string | string[]; method?: string | string[];
+    machineName?: string | string[];
   }>();
   const workspaceId = first(params.workspaceId) ?? '';
   const viewerId = first(params.viewerId) ?? '';
   const connectorId = first(params.connectorId) ?? '';
   const connectorName = first(params.connectorName) ?? 'App';
   const roomId = first(params.roomId);
+  const machineName = first(params.machineName) ?? 'your computer';
   const [signIn, setSignIn] = useState({ url: first(params.url) ?? '', method: first(params.method) ?? 'streamed' });
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageLoaded, setPageLoaded] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [fallback, setFallback] = useState(false);
+  // Quick-tunnel names can lag DNS: a load that fails at once usually works a
+  // few seconds later, so the page reloads itself before saying it failed.
+  const [autoReloads, setAutoReloads] = useState(0);
+  const [loadRound, setLoadRound] = useState(0);
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const desktopPageLayout = useDesktopPageLayout();
   const WebView = useSandboxWebView();
 
-  const finish = useCallback(() => router.replace(roomId ? (connectorOfferCompletionRoute(roomId) as Href )
-          : ({ pathname: '/beeline/settings/workbench', params: { workspaceId, viewerId } } as Href),
-      ), [roomId, viewerId, workspaceId],
-  );
   const observed = useInstallObserver(workspaceId, connectorId);
   const squire = connectorId.startsWith('squire:') || connectorName === 'Trusty Squire';
+  // A finished Squire sign-in lands on the Trusty Squire page, where the row now reads signed in.
+  const finish = useCallback(() => router.replace(roomId ? (connectorOfferCompletionRoute(roomId) as Href )
+          : squire ? ({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: 'trusty-squire' } } as Href)
+            : ({ pathname: '/beeline/settings/workbench', params: { workspaceId, viewerId } } as Href),
+      ), [roomId, squire, viewerId, workspaceId],
+  );
+  // The page has 15 seconds to load, reloads included, then says so in full.
   useEffect(() => {
-    const timer = setTimeout(() => setPageError(pageLoaded
-      ? 'Sign-in is still waiting. Retry or open it in your browser.'
-      : 'The sign-in page did not load. Retry or open it in your browser.'), pageLoaded ? 120_000 : 15_000);
+    if (pageLoaded || fallback || signIn.method === 'oauth') return;
+    const timer = setTimeout(() => setPageError(PAGE_LOAD_ERROR), PAGE_LOAD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [signIn.url, attempt, pageLoaded]);
+  }, [signIn.url, signIn.method, pageLoaded, fallback, loadRound]);
+  // A stalled helper completion also ends visibly after the browser loads.
+  useEffect(() => {
+    const timer = setTimeout(() => setPageError('Sign-in has not finished. Try again.'), 120_000);
+    return () => clearTimeout(timer);
+  }, [signIn.url, loadRound]);
+  // Android reports a failed load as finished too; only a clean finish counts.
+  const loadFailed = useRef(false);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(reloadTimer.current), []);
+  const pageFailed = useCallback(() => {
+    if (loadFailed.current) return;
+    // The finish event can arrive before the error that caused it.
+    loadFailed.current = true;
+    setPageLoaded(false);
+    if (autoReloads >= PAGE_AUTO_RELOADS) return;
+    reloadTimer.current = setTimeout(() => {
+      loadFailed.current = false;
+      setAutoReloads(value => value + 1); setAttempt(value => value + 1);
+    }, PAGE_RELOAD_DELAY_MS);
+  }, [autoReloads]);
   const retry = useCallback(async () => {
+    clearTimeout(reloadTimer.current);
+    loadFailed.current = false;
+    setFallback(false);
+    setAutoReloads(0);
+    setLoadRound(value => value + 1);
     setPageLoaded(false);
     setAttempt(value => value + 1);
     setPageError(null);
@@ -106,57 +139,111 @@ function ConnectorSignInOverlay() {
     if (!state) return;
     if (state.connected) { finish(); return; }
     if (state.signIn) setSignIn(current => current.url === state.signIn!.url ? current : { url: state.signIn!.url, method: state.signIn!.method });
-    else if (state.steps?.some(step => step.status === 'failed')) setPageError('Google sign-in could not start. Go back and reconnect this computer.');
-  }, [observed.data, finish]);
+    else if (state.steps?.some(step => step.status === 'failed')) setPageError(`Google sign-in could not start on ${machineName}. Go back and connect it again.`);
+  }, [observed.data, finish, machineName]);
 
   const openBrowser = useCallback(async () => {
     if (!signIn.url) return;
-    await WebBrowser.openBrowserAsync(signIn.url);
+    // Every browser attempt owns a fresh completion deadline, including retries
+    // after the previous deadline has already fired.
+    clearTimeout(reloadTimer.current);
+    setLoadRound(value => value + 1);
+    setPageError(null);
     setFallback(true);
-  }, [signIn.url]);
+    try {
+      await WebBrowser.openBrowserAsync(signIn.url);
+      void observed.retry();
+    } catch { setPageError('Google sign-in could not open. Try again.'); }
+  }, [signIn.url, observed.retry]);
+  useEffect(() => {
+    if (!fallback) return;
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void observed.retry();
+    });
+    return () => subscription.remove();
+  }, [fallback, observed.retry]);
 
+  const failure = observed.error ?? pageError;
+  const errorLine = failure === PAGE_LOAD_ERROR
+    ? `${machineName}’s browser didn’t answer within 15 seconds. Try again, or finish sign-in in your phone’s browser.`
+    : failure;
+  const streamed = signIn.method !== 'oauth';
+  const loading = streamed && !failure && !fallback && !pageLoaded;
   return (
-    <View style={styles.scrim} testID="signin-overlay">
-    <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
-    <View style={[styles.card, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
-      <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Connectors" prominent onBack={() => router.back()} testID="signin-header" title={squire ? 'Sign in to Google' : `Sign in to ${connectorName}`} />
-        {squire ? <Text style={styles.note}>Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.</Text> : null}
-        {observed.error || pageError ? (
-          <View>
-            <SettingsRow title={(observed.error ?? pageError)!} />
-            <Button
-              size="inline"
-              label="Retry"
-              variant="secondary"
-              style={{ alignSelf: 'flex-end' }}
-              onPress={observed.installMissing ? () => router.back() : retry}
-              testID="signin-retry"
-            />
+    <View style={[styles.screen, { paddingTop: insets.top }]} testID="signin-overlay">
+      <View style={[styles.column, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]} testID="signin-card">
+        <PageHeader backAccessibilityLabel="Close sign-in" eyebrow={squire ? 'Step 4 of 4' : 'Connectors'} prominent onBack={() => router.back()} testID="signin-header" title={squire ? 'Sign in to Google' : `Sign in to ${connectorName}`} />
+        {loading ? <LoadingBar testID="signin-loading-bar" /> : null}
+        <View style={styles.body}>
+          {streamed && !failure && !fallback && WebView && signIn.url ? (
+            <View style={[styles.webFrame, !pageLoaded && styles.webHidden]}>
+              {React.createElement(WebView, { key: `${signIn.url}:${attempt}`, onLoad: () => { if (!loadFailed.current) setPageLoaded(true); }, onError: pageFailed, onHttpError: pageFailed, renderError: () => null, source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' })}
+            </View>
+          ) : null}
+          {!streamed && !failure ? (
+            <View style={styles.center} testID="signin-oauth-browser">
+              <Text style={styles.centerLine}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
+              <Button label={`Continue with ${connectorName}`} destination="external" onPress={() => void openBrowser()} testID="signin-open-external" />
+            </View>
+          ) : failure ? (
+            <View style={styles.center} accessibilityLiveRegion="polite" testID="signin-error">
+              <Text style={styles.centerTitle}>{squire ? 'Google sign-in didn’t load' : `${connectorName} sign-in didn’t load`}</Text>
+              <Text style={styles.centerLine}>{errorLine}</Text>
+            </View>
+          ) : fallback ? (
+            <View style={[styles.center, styles.centerBare]} testID="signin-finishing">
+              <RingSpinner size={32} accessibilityLabel="Finishing sign-in" />
+              <Text style={styles.centerTitle}>Finishing sign-in…</Text>
+              <Text style={styles.centerLine}>You signed in on Chrome. {machineName} is saving the session. This page switches to connected by itself.</Text>
+            </View>
+          ) : loading ? (
+            <View style={[styles.center, styles.cover]} testID="signin-webview-loading">
+              <RingSpinner size={32} accessibilityLabel="Loading Google sign-in" />
+              <Text style={styles.centerTitle}>{squire ? 'Loading Google sign-in…' : `Loading ${connectorName} sign-in…`}</Text>
+              <Text style={styles.centerLine}>From {machineName}’s secure browser</Text>
+            </View>
+          ) : null}
+        </View>
+        {failure ? (
+          <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
+            <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={observed.installMissing ? 'Go back' : 'Try again'} fullWidth
+              onPress={observed.installMissing ? () => router.back() : () => void retry()} testID="signin-retry" />
+            {!observed.installMissing && signIn.url
+              ? <Button appearance={{ control: styles.secondaryButton, label: styles.secondaryLabel }} label="Open in browser" variant="secondary" fullWidth onPress={() => void openBrowser()} testID="signin-open-external" /> : null}
           </View>
-        ) : null}
-        {!pageError && signIn.method === 'oauth' ? (
-          <View style={styles.centered} testID="signin-oauth-browser">
-        <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
-        <Button label={`Continue with ${connectorName}`} onPress={() => void openBrowser()} testID="signin-open-external" />
-      </View>
-        ) : !pageError && WebView && signIn.url ? (
-          React.createElement(WebView, { key: `${signIn.url}:${attempt}`, onLoadEnd: () => setPageLoaded(true), onError: () => setPageError('The sign-in page could not load. Retry or open it in your browser.'), onHttpError: () => setPageError('The sign-in page could not load. Retry or open it in your browser.'), source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' })
-        ) : fallback ? (
-          <View style={styles.centered}><Text style={styles.note}>Finish sign-in in the browser, then return here.</Text></View>
-        ) : (
-          <ScrollView contentContainerStyle={styles.centered}>{!pageError && !observed.error ? <ActivityIndicator testID="signin-webview-loading" /> : null}<Button label="Open in browser" disabled={!signIn.url} onPress={() => void openBrowser()} testID="signin-open-external" /></ScrollView>
-        )}
+        ) : loading && signIn.url ? (
+          <View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}>
+            <Button appearance={{ control: styles.secondaryButton, label: styles.secondaryLabel }} label="Open in browser instead" variant="secondary" fullWidth onPress={() => void openBrowser()} testID="signin-open-external" />
+          </View>
+        ) : <View style={{ height: insets.bottom }} />}
       </View>
     </View>
   );
 }
 
+/** A page that fails while its name is new reloads itself inside the 15 seconds. */
+const PAGE_AUTO_RELOADS = 2;
+const PAGE_RELOAD_DELAY_MS = 5_000;
+const PAGE_LOAD_TIMEOUT_MS = 15_000;
+const PAGE_LOAD_ERROR = 'The sign-in page did not load.';
+
 const styles = StyleSheet.create(theme => ({
+  primaryButton: { minHeight: 48, borderRadius: theme.buzz.radius, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.appInk, borderWidth: 1, borderColor: theme.buzz.appInk },
+  primaryLabel: { ...theme.buzz.type.body, fontFamily: 'SpaceGrotesk-Medium', color: theme.buzz.appCanvas },
+  secondaryButton: { minHeight: 48, borderRadius: theme.buzz.radius, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.buzz.borderStrong },
+  secondaryLabel: { ...theme.buzz.type.body, fontFamily: 'SpaceGrotesk-Medium', color: theme.buzz.appInk },
   returnScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.buzz.bgTerminal },
-  error: { ...Typography.default(), color: theme.buzz.dialogDanger },
-  scrim: { flex: 1, justifyContent: 'center' },
-  card: { flex: 1, marginHorizontal: 16, borderRadius: theme.buzz.radius, overflow: 'hidden', backgroundColor: theme.buzz.bgTerminal },
-  centered: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
-  note: { ...theme.buzz.type.body, color: theme.buzz.textSecondary, textAlign: 'center' },
+  screen: { flex: 1, backgroundColor: theme.buzz.appCanvas },
+  column: { flex: 1 },
+  body: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: theme.buzz.squireConnect.contentGap, paddingHorizontal: theme.buzz.squireConnect.centerSide, paddingBottom: theme.buzz.squireConnect.centerBottom },
+  // With no footer below, the same optical centre sits higher in a taller body.
+  centerBare: { paddingBottom: theme.buzz.squireConnect.bareBottom },
+  cover: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.buzz.appCanvas },
+  centerTitle: { ...theme.buzz.squireConnect.titleType, marginTop: theme.buzz.space.sm, color: theme.buzz.appInk, textAlign: 'center' },
+  centerLine: { ...theme.buzz.squireConnect.detailType, color: theme.buzz.appQuiet, maxWidth: 300, textAlign: 'center' },
+  webFrame: { flex: 1 },
+  webHidden: { opacity: 0 },
   webView: { flex: 1 },
+  foot: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.space.md, gap: theme.buzz.squireConnect.contentGap, borderTopWidth: 1, borderTopColor: theme.buzz.appBorder, backgroundColor: theme.buzz.appCanvas },
 }));

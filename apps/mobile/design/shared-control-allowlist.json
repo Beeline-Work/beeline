@@ -547,5 +547,23 @@
     "id": "53eeaf196b24bda43973",
     "control": "<Pressable accessibilityLabel={ viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings' } accessibilityRole=\"button\" accessibilityState={{ selected: profileSettingsSelected }} onPress={() => router.push('/beeline/settings' as Href)} style={({ pressed }) => [ styles.settingsRow, (profileSettingsSelected || pressed) && styles.roomRowSelected, ]} testID=\"profile-settings-navigation\" >",
     "reason": "Workspace identity selector or account avatar navigation; composite content targets."
+  },
+  {
+    "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
+    "line": 202,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "8625f0a4faeb18a2e6d3",
+    "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={observed.installMissing ? 'Go back' : 'Try again'} fullWidth onPress={observed.installMissing ? () => router.back() : () => void retry()} testID=\"signin-retry\" /> {!observed.installMissing && signIn.url ? <Button appearance={",
+    "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
+  },
+  {
+    "file": "app/(app)/beeline/settings/workbench/connect.tsx",
+    "line": 393,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "1c5d737eaeb1f08cfb74",
+    "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> {failed ? ( <> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label=\"Try again\" fullWidth onPress={retry} testID=\"connect-retry\" /> <Text style={styles.footNote}> {failedIndex <= 0 ? `Sign in unlocks once ${machineName} answers.` : 'Sign in unlocks when pairing finishes.'} </Tex",
+    "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
   }
 ]

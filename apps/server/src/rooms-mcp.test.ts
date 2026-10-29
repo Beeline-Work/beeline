@@ -299,6 +299,75 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     q.set('code_challenge_method', 'S256'); q.set('resource', 'https://other.example/mcp');
     expect((await fetch(origin + '/mcp/oauth/authorize?' + q)).status).toBe(400);
   });
+  it('R1: starts sign-in when Cursor omits resource or sends the origin or a trailing slash, and refuses other hosts', async () => {
+    const registered = await (await post('/mcp/oauth/register', { client_name: 'Cursor', redirect_uris: ['cursor://anysphere.cursor-mcp/oauth/callback'], token_endpoint_auth_method: 'none' })).json() as { client_id: string };
+    const start = (resource?: string) => fetch(origin + '/mcp/oauth/authorize?' + new URLSearchParams({ client_id: registered.client_id, redirect_uri: 'cursor://anysphere.cursor-mcp/oauth/callback',
+      response_type: 'code', code_challenge_method: 'S256', code_challenge: createHash('sha256').update(opaque()).digest('base64url'), state: 'r1-state', ...(resource === undefined ? {} : { resource }) }), { redirect: 'manual' });
+    for (const resource of [undefined, origin + '/mcp', origin + '/mcp/', origin, origin + '/']) {
+      const response = await start(resource);
+      expect([resource, response.status, response.headers.get('location')?.startsWith('/mcp/oauth/consent?flow=')]).toEqual([resource, 302, true]);
+    }
+    for (const resource of ['https://other.example/mcp', 'https://other.example', origin + '/other'])
+      expect([resource, (await start(resource)).status]).toEqual([resource, 400]);
+  });
+  it('logs each refused browser sign-in step with its reason, never parameter values', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const registered = await (await post('/mcp/oauth/register', { client_name: 'Logged', redirect_uris: ['https://client.example/callback'] })).json() as { client_id: string };
+      const challenge = createHash('sha256').update(opaque()).digest('base64url');
+      const base = { client_id: registered.client_id, redirect_uri: 'https://client.example/callback', response_type: 'code', code_challenge_method: 'S256',
+        code_challenge: challenge, state: 'state-sentinel-123', resource: origin + '/mcp' };
+      const refused = async (step: string, reason: string, response: Response, params?: string[]) => {
+        expect([step, reason, response.status]).toEqual([step, reason, 400]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        const [label, line] = warn.mock.calls[0] as [string, string];
+        expect(label).toBe(`[rooms-mcp-oauth] ${step} refused`);
+        expect(JSON.parse(line)).toEqual({ error: 'invalid_request', reason, ...(params ? { params } : {}) });
+        for (const value of [registered.client_id, challenge, 'state-sentinel-123', 'client.example', 'evil.example', 'flow-sentinel-123', 'cookie-sentinel-123', 'ticket-sentinel-123'])
+          expect(line).not.toContain(value);
+        warn.mockClear();
+      };
+      const authorizeCases: [Record<string, string>, string][] = [
+        [{ ...base, resource: 'https://evil.example/mcp' }, 'resource_mismatch'],
+        [{ ...base, code_challenge: 'short' }, 'pkce_invalid'],
+        [{ ...base, client_id: 'unknown-client' }, 'client_unknown'],
+        [{ ...base, redirect_uri: 'https://evil.example/callback' }, 'redirect_uri_unregistered'],
+        [{ ...base, response_type: 'token' }, 'response_type_invalid'],
+      ];
+      for (const [input, reason] of authorizeCases)
+        await refused('authorize', reason, await fetch(origin + '/mcp/oauth/authorize?' + new URLSearchParams(input), { redirect: 'manual' }), Object.keys(input).sort());
+      await refused('authorize', 'duplicate_parameter', await fetch(origin + '/mcp/oauth/authorize?' + new URLSearchParams(base) + '&state=state-sentinel-123', { redirect: 'manual' }), Object.keys(base).sort());
+      const stale = { cookie: 'beeline_mcp=cookie-sentinel-123' };
+      await refused('login', 'flow_missing_or_expired', await fetch(`${origin}/mcp/oauth/login?flow=flow-sentinel-123&provider=google`, { headers: stale, redirect: 'manual' }));
+      await refused('callback', 'flow_missing_or_expired', await fetch(`${origin}/mcp/oauth/callback/google?state=flow-sentinel-123&ticket=ticket-sentinel-123`, { headers: stale, redirect: 'manual' }));
+      await refused('consent', 'flow_missing_or_expired', await fetch(`${origin}/mcp/oauth/consent?flow=flow-sentinel-123`, { headers: stale }));
+      await refused('consent submit', 'origin_mismatch', await post('/mcp/oauth/consent', { flow: 'flow-sentinel-123', decision: 'allow' }, { ...stale, origin: 'https://evil.example' }));
+      await refused('consent submit', 'flow_missing_or_expired', await post('/mcp/oauth/consent', { flow: 'flow-sentinel-123', decision: 'allow' }, { ...stale, origin }));
+      // A live flow names the later branches too.
+      const start = await fetch(origin + '/mcp/oauth/authorize?' + new URLSearchParams(base), { redirect: 'manual' });
+      const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+      const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+      const scrub = async (step: string, reason: string, response: Response) => {
+        expect(JSON.parse((warn.mock.calls[0] as [string, string])[1])).not.toHaveProperty('flow');
+        expect((warn.mock.calls[0] as [string, string])[1]).not.toContain(flow);
+        expect((warn.mock.calls[0] as [string, string])[1]).not.toContain(cookie.slice(12));
+        await refused(step, reason, response);
+      };
+      let response = await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=other`, { headers: { cookie }, redirect: 'manual' });
+      await scrub('login', 'provider_invalid', response);
+      response = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+      await scrub('consent submit', 'flow_not_signed_in', response);
+      await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+      response = await fetch(`${origin}/mcp/oauth/callback/github?state=${flow}&ticket=ticket-sentinel-123`, { headers: { cookie }, redirect: 'manual' });
+      await scrub('callback', 'provider_mismatch', response);
+      response = await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=ticket-sentinel-123`, { headers: { cookie }, redirect: 'manual' });
+      await scrub('callback', 'ticket_exchange_failed', response);
+      expect((await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' })).status).toBe(302);
+      response = await post('/mcp/oauth/consent', { flow, decision: 'maybe' }, { cookie, origin });
+      await scrub('consent submit', 'decision_invalid', response);
+      expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
   it('binds single-use authorization codes to the client, redirect, verifier and resource', async () => {
     const grant = await authorize();
     for (const overrides of [{ code_verifier: opaque() }, { client_id: 'other' }, { redirect_uri: 'https://evil.example' }, { resource: origin + '/other' }]) {

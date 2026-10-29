@@ -208,6 +208,7 @@
       "caption",
       "line",
       "name",
+      "toggleWord",
       "withLedgerDayCaption"
     ],
     "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure", "LedgerLogGroup"],

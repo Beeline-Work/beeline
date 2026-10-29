@@ -1461,7 +1461,26 @@ describe('the ledger day caption', () => {
 });
 
 describe('expandable system notices', () => {
-  it('uses native overflow measurement and reveals unchanged text with an accessible brass control', () => {
+  const flatText = (node: unknown): string =>
+    typeof node === 'string'
+      ? node
+      : Array.isArray(node)
+        ? node.map(flatText).join('')
+        : node && typeof node === 'object' && 'children' in node
+          ? flatText((node as { children: unknown }).children)
+          : '';
+  // Stands in for native text layout: a probe fits two lines up to 48 characters.
+  const settleProbes = (renderer: ReactTestRenderer, id: string) => {
+    for (let step = 0; step < 40; step += 1) {
+      const probe = renderer.root.findAllByProps({ testID: `system-line-probe-${id}` })[0];
+      if (!probe) return;
+      const lines = flatText(probe).length <= 48 ? [{}, {}] : [{}, {}, {}];
+      act(() => probe.props.onTextLayout({ nativeEvent: { lines } }));
+    }
+    throw new Error('probe never settled');
+  };
+
+  it('ends a clamped line in "… more" with no chevron and an open line in "less"', () => {
     const text = 'Ruby could not answer · Its owner can run beeline connect on its machine.';
     const renderer = render(
       React.createElement(LedgerSystemLine, { id: 'notice', text, stamp: '17:14' }),
@@ -1476,22 +1495,77 @@ describe('expandable system notices', () => {
     // Android ignores pointerEvents on Text; only a View wrapper keeps the
     // overflowing copy from taking taps meant for the row below.
     expect(measurement.parent?.props.pointerEvents).toBe('none');
+    act(() => measurement.parent?.props.onLayout({ nativeEvent: { layout: { width: 300 } } }));
     act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}] } }));
     expect(controls()).toHaveLength(0);
+    expect(flatText(body())).toBe(text);
     act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}, {}] } }));
+    settleProbes(renderer, 'notice');
     const control = renderer.root.findByProps({ testID: 'system-line-toggle-notice' });
     expect(control.props.accessibilityRole).toBe('button');
+    expect(control.props.accessibilityLabel).toBe('Show full system message');
     expect(control.props.accessibilityState).toEqual({ expanded: false });
     expect(control.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
+    // No chevron: the shared glyph is the only element with a direction.
+    expect(control.findAll((node) => node.props.direction !== undefined)).toHaveLength(0);
+    // The longest word cut whose "… more" still fits two lines.
+    expect(flatText(body())).toBe('Ruby could not answer · Its owner can run…\u00A0more');
+    expect(body().props.numberOfLines).toBe(2);
 
     act(() => control.props.onPress());
     expect(body().props.numberOfLines).toBeUndefined();
-    expect(body().props.children).toBe(text);
+    expect(flatText(body())).toBe(`${text}\u00A0less`);
+    expect(control.props.accessibilityLabel).toBe('Show less of system message');
     expect(control.props.accessibilityState).toEqual({ expanded: true });
     act(() => control.props.onPress());
-    expect(body().props.numberOfLines).toBe(2);
+    expect(flatText(body())).toBe('Ruby could not answer · Its owner can run…\u00A0more');
     act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}] } }));
     expect(controls()).toHaveLength(0);
+    expect(flatText(body())).toBe(text);
+  });
+
+  it('cuts one unbroken word by characters', () => {
+    const text = 'x'.repeat(80);
+    const renderer = render(React.createElement(LedgerSystemLine, { id: 'word', text, stamp: '1' }));
+    const measurement = renderer.root.findByProps({ testID: 'system-line-measurement-word' });
+    act(() => measurement.parent?.props.onLayout({ nativeEvent: { layout: { width: 300 } } }));
+    act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}, {}] } }));
+    settleProbes(renderer, 'word');
+    expect(flatText(renderer.root.findByProps({ testID: 'system-line-text-word' }))).toBe(
+      `${'x'.repeat(42)}…\u00A0more`,
+    );
+  });
+
+  it('keeps name and link taps inside a cut line, and their own handlers', () => {
+    const onOpenIdentity = vi.fn();
+    const renderer = render(
+      React.createElement(LedgerSystemLine, {
+        id: 'cut',
+        text: '',
+        stamp: '16:22',
+        event: {
+          subject: { kind: 'agent', id: 'ruby', name: '@ruby' },
+          verb: 'stopped',
+          object: { id: 'emberus', text: '@emberus' },
+          consequence: 'the turn ran past its budget and nothing new was pushed to the branch',
+        },
+        onOpenIdentity,
+      }),
+    );
+    const measurement = renderer.root.findByProps({ testID: 'system-line-measurement-cut' });
+    act(() => measurement.parent?.props.onLayout({ nativeEvent: { layout: { width: 300 } } }));
+    act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}, {}] } }));
+    settleProbes(renderer, 'cut');
+    const body = renderer.root.findByProps({ testID: 'system-line-text-cut' });
+    expect(flatText(body)).toBe('@ruby stopped @emberus · the turn ran past…\u00A0more');
+    const object = renderer.root.findByProps({ testID: 'system-line-object-cut' });
+    const stopPropagation = vi.fn();
+    act(() => object.props.onPress({ stopPropagation }));
+    expect(onOpenIdentity).toHaveBeenCalledWith('emberus');
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(
+      renderer.root.findByProps({ testID: 'system-line-toggle-cut' }).props.accessibilityState,
+    ).toEqual({ expanded: false });
   });
 });
 

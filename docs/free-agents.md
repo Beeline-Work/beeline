@@ -267,6 +267,16 @@ size, sleep, the reaper, live turns, owner token/rate limits and the shared doll
 
 ## Image and proofs
 
+Hosted VMs include Chrome, the remote sign-in display tools and a real systemd
+user manager started by `infra/free-agent/hosted-services.sh`. Each VM keeps its
+own profile and broker sockets on its private rootfs. The image-owned Squire
+broker unit stays stopped until requested; hosted installation waits for both
+broker sockets before opening sign-in. The phone receives Squire's streamed
+virtual browser page. Owners' personal-computer setup keeps its existing path.
+The isolated entry is `infra/free-agent/hosted-install-proof.mjs`; evidence and
+remaining full-account checks are in [the onboarding connection proof](onboarding-connect-proof.md).
+
+
 The unified release's server leg builds `infra/free-agent/Dockerfile` and pushes
 `registry.fly.io/beeline-free-agents:<label>` and `:latest`. A failed push only
 warns. `scripts/build-free-agent-image.sh` builds the same image by hand.

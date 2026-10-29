@@ -9412,7 +9412,6 @@ export class PhoneService {
            ) online
          ) p ON true
          WHERE a.owner_id=$1
-           AND NOT EXISTS (SELECT 1 FROM free_agents f WHERE f.agent_id=a.agent_id)
          GROUP BY COALESCE(a.machine_id,a.agent_id)
          ORDER BY name`,
         [viewerId],

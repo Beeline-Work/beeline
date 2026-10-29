@@ -4,6 +4,9 @@
 set -u
 export PATH="$HOME/.local/bin:$PATH"
 launcher="$HOME/.local/bin/beeline"
+if [ "${BEELINE_HOSTED_SERVICES:-0}" = 1 ]; then
+  /bin/sh /opt/beeline/hosted-services.sh || exit 78
+fi
 # One budget across refreshes and failed launches, not a new budget per retry.
 BEELINE_FREE_AGENT_START_DEADLINE=$(($(date +%s) + 300))
 BEELINE_FREE_AGENT_READY_FILE=$(mktemp)
@@ -44,6 +47,9 @@ stop() {
     [ -z "$installer_group" ] || /bin/kill -KILL -- "-$installer_group" 2>/dev/null || :
   fi
   [ -n "$child" ] && kill -"$stop_signal" "$child" 2>/dev/null && wait "$child"
+  if [ "${BEELINE_HOSTED_SERVICES:-0}" = 1 ]; then
+    systemctl --user exit 2>/dev/null || :
+  fi
   rm -f "$BEELINE_FREE_AGENT_READY_FILE"
   exit "${1:-0}"
 }

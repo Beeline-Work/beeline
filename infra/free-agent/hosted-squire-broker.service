@@ -1,0 +1,20 @@
+[Unit]
+Description=Trusty Squire broker on this hosted agent VM
+StartLimitIntervalSec=60
+StartLimitBurst=6
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=TRUSTY_SQUIRE_PROFILE_DIR=/root/.trusty-squire/chrome-profile
+Environment=TRUSTY_SQUIRE_BROKER_SOCKET=/root/.trusty-squire/broker.sock
+Environment=TRUSTY_SQUIRE_BROKER_UNIT=1
+Environment=XDG_RUNTIME_DIR=/run/user/0
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus
+ExecStart=/usr/local/bin/node /opt/beeline/squire/node_modules/@trusty-squire/mcp/dist/bin.js broker
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=30
+UMask=0077

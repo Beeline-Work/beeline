@@ -325,6 +325,86 @@ describe('connect_app', () => {
       )
     ).rows;
 
+  it('Reproduction onboarding-connect-1: returns Rooms steps without app rows or cards', async () => {
+    const registry = fakeRegistry([]);
+    const daemon = daemonWith(registry.client);
+    for (const service of ['grok', 'xai', 'grok bot', 'muse', 'meta muse', 'meta ai',
+      'chatgpt', 'openai chatgpt', 'claude', 'cursor', 'mcp', 'beeline connector']) {
+      const result = await daemon.execute('connect', { ...turn, service, reason: 'Join my Room' }, HELPER);
+      expect(result).toMatchObject({ status: 'ready', app: 'Beeline Rooms' });
+      expect(result.next).toContain('https://server.usebeeline.app/mcp');
+      expect(result.next).toContain('Members sheet > +');
+      expect(result.next).toContain('Muse directory listing is still pending');
+    }
+    expect((await database.query('SELECT id FROM workspace_apps')).rowCount).toBe(0);
+    expect((await database.query("SELECT id FROM messages WHERE card_type IS NOT NULL")).rowCount).toBe(0);
+    expect(registry.transport).not.toHaveBeenCalled();
+  });
+
+  it('Reproduction onboarding-connect-1: blocks TikTok before discovery or sign-in', async () => {
+    const registry = fakeRegistry([]);
+    const provider = fakeComposio();
+    const daemon = daemonWith(registry.client, provider);
+    for (const service of ['TikTok', 'tiktok.com', 'https://www.tiktok.com']) {
+      const result = await daemon.execute('connect', { ...turn, service, reason: 'Post a clip' }, HELPER);
+      expect(result.status).toBe('unavailable');
+      expect(result.next).toContain('approval of Beeline');
+    }
+    expect(provider.link).not.toHaveBeenCalled();
+    expect(registry.transport).not.toHaveBeenCalled();
+    expect((await database.query('SELECT id FROM workspace_apps')).rowCount).toBe(0);
+    expect((await database.query("SELECT id FROM messages WHERE card_type='app-sign-in'")).rowCount).toBe(0);
+  });
+
+  it('Reproduction onboarding-connect-1: offers Squire once and continues Shopify after install', async () => {
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const input = { ...turn, service: 'shopify', reason: 'Connect my store', squireAvailable: true };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await daemon.execute('connect', input, HELPER);
+      expect(result.status).toBe('needs_approval');
+      expect(result.next).toContain('hosted machine');
+      expect(result.next).not.toContain('Settings');
+    }
+    expect((await database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rowCount).toBe(1);
+    await connectSquire();
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_squire' });
+    await applyVaultList(database,
+      { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+        reference: 'vault:shopify', service: 'shopify', label: 'Store', fieldNames: ['api_key'],
+        allowedHosts: ['shopify.com'], createdAt: 1, stale: false, state: 'active',
+      }]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'ready' });
+  });
+
+  it('Reproduction onboarding-connect-1: direct Squire requests offer one card before install, including retry', async () => {
+    const daemon = daemonWith(fakeRegistry([]).client);
+    await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
+      [HELPER, JSON.stringify({ status: 'not-added', reportedAt: Date.now() / 1000 })]);
+    for (const input of [{ service: 'trusty-squire' }, { service: 'squire', reconnect: true },
+      { service: 'Trusty Squire' }]) {
+      expect(await daemon.execute('connect', { ...turn, ...input, reason: 'Use the hosted browser' }, HELPER))
+        .toMatchObject({ status: 'needs_approval', app: 'Trusty Squire' });
+    }
+    expect((await database.query("SELECT id FROM messages WHERE card_type='connector-offer'")).rowCount).toBe(1);
+    expect((await database.query('SELECT id FROM workspace_apps')).rowCount).toBe(0);
+    expect((await database.query('SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER]))
+      .rows[0]!.squire_work.install).not.toBe(true);
+    await connectSquire();
+    expect(await daemon.execute('connect', { ...turn, service: 'trusty-squire', reason: 'Use the browser' }, HELPER))
+      .toMatchObject({ status: 'ready', app: 'Trusty Squire' });
+  });
+
+  it('keeps real app names out of the AI-assistant route', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
+    for (const service of ['openai', 'meta ads', 'instagram', 'facebook', 'youtube', 'gmail', 'stripe']) {
+      const result = await daemon.execute('connect', { ...turn, service,
+        reason: 'Connect the app', squireAvailable: true }, HELPER);
+      expect(result.app).not.toBe('Beeline Rooms');
+      expect(result.next).not.toContain('custom connector');
+    }
+  });
+
   it.each(['TikTok', 'Gmail'])('TIKTOK-ROUTE-1: %s vault setup keys do not hide OAuth or require manual completion', async name => {
     await connectSquire();
     const key = name.toLowerCase();

@@ -1,0 +1,101 @@
+# Onboarding connect proof (28 October 2026)
+
+The hosted service-manager and cold-broker failures pass the isolated Fly installation proof. Under brief revision four, the remaining live proof uses lunchboxfortwo's existing hosted agent: offer the Connect Squire card, finish sign-in on the phone, and show that helper connected. No test account, live isolation exercise, or resource measurement is required. Hosted API readiness does not require Google cookies in Chrome. Earlier proof notes below describe historical work, not the current acceptance gates.
+
+## Revision four: direct Squire offer and owner machine
+
+Reproduction `onboarding-connect-1`: Luna's direct `connect(mode:ensure, service:trusty-squire)` and retry returned "Trusty Squire could not connect. Reconnect to retry." without a card. The direct machine route queued installation immediately; the earlier fix offered approval only for dependent apps such as Shopify. Direct setup and retry now offer one Connect Squire card before queuing installation. The built HTTP proof checks the same route, the phone Room reader, no premature install work, and no app row; integration coverage also checks already-connected readiness.
+
+Luna's actual Fly VM (`28744394ad7538`) runs the PR helper built from `27442f2c9`, with SHA256 `3b0961dd9f5647a72bb815883fa538f89639868a369ca75730e1ab6c9394f4ba`. Its helper and broker run as root. The owner's agent row records the failed install reason: "The hosted browser service could not start. Retry the Trusty Squire connection." Chrome reports (156.0.8078.73); Squire is now installed at `/opt/beeline/squire/node_modules/@trusty-squire/mcp` and reports (1.1.38-rc.1). The helper invokes that absolute entry on hosted machines, rather than looking for a global CLI on PATH. Both `/root/.trusty-squire/broker.sock` and `mcp.sock` are ready. The image now pins the same Squire version.
+
+The direct-card correction is server code; changing the hosted helper does not deploy it. The live Room card, phone sign-in, and connected-state screenshots remain outstanding until the server correction is available. No completed phone proof is claimed. The temporary helper and longer idle interval remain for that proof; afterward restore `/opt/beeline/proof-original-settings.json`, resume normal supervision, and confirm temporary helper PID (4185) has exited.
+
+## Reproduction onboarding-connect-1
+
+The closest isolated stand-in uses the built HTTP service, PGlite storage and fixture providers. Run `npm run build -w @beeline/server`, then `node --import tsx scripts/prove-connect-flow.mjs`.
+
+Before the change, the HTTP `connect` operation for `grok` creates a `squire-api` app and returns unavailable with a Squire instruction. The proof fails because the result's app is `grok`, rather than `Beeline Rooms`.
+
+After the change, the same HTTP path for Grok and Meta Muse returns the Beeline Rooms URL and consent/member steps, without an app row. TikTok returns unavailable pending approval without a sign-in card. Repeated Shopify setup returns one Trusty Squire offer, which is also visible through the built phone Room reader. The existing Link sign-in, callback and request-resumption proof still passes. Providers are fixtures; no real TikTok approval or Shopify sign-in is claimed.
+
+The integration suites cover all assistant aliases, real app names, Shopify before and after a fixture Squire install and vault report, and hosted helper visibility. YouTube/Stripe official-publisher regressions remain in the app suite.
+
+## Reproduction hosted-squire-install-1
+
+Read-only production inspection found Luna's machine `185d270c3191e8` suspended with a shared CPU and (2048 MiB) memory. The Beeline machine ID is `1f633752-09ef-425d-875c-b958e5e51c6c`. Its Squire work generation (5) records helper reached, install failed, and `run_failed`; its broker report is `not-added`.
+
+Fly's per-instance logs for the reported period show dead Squire connect-session claims at 17:25:01, 17:27:09 and 17:27:29 UTC. The logs do not contain the underlying installer exception. The GraphQL App object has no `logs` field; the working read route is the Fly REST per-app logs endpoint with the instance filter. No production install or account changes were made.
+
+The isolated hosted-image stand-in invokes the published Squire package's actual `installBrokerService`, which `connect --json` calls before opening sign-in. The current package is `@trusty-squire/mcp` (1.1.37). Its source was inspected before invocation. With dependencies installed in a private container capped to the hosted memory/CPU size, it fails:
+
+```
+Broker user service failed (systemctl --user show --type=service --all
+--no-pager -p Id -p ActiveState -p Environment -p ExecStart):
+spawnSync systemctl ENOENT. A working systemctl user manager is required;
+no direct broker fallback was attempted
+```
+
+The original hosted image installed neither systemd nor a user manager. The Squire package deliberately requires an OS-managed broker. A Docker attempt with a read-only cgroup tree also failed; tracing showed the manager could not create its cgroup. A private writable cgroup tree supports the real manager. Fly already provides its own writable guest cgroup tree.
+
+### Passing hosted installation path
+
+The image now includes a real systemd user manager, dbus, Chrome, Xvfb, noVNC, cloudflared and the published Squire package (1.1.37). Boot starts only the user manager. When hosted installation is requested, Beeline starts the one image-owned broker and waits for both of its sockets before invoking connect. This also avoids Squire's shorter cold-start deadline. Owners' own computers keep their existing path.
+
+A disposable Fly VM (`8045e9c66232d8`, one shared CPU, 2048 MiB) started from the production image with no owner/bootstrap environment. Installing the new image dependencies and exact broker unit there, then running a bundle of the modified Beeline `installSquire`, returned `status: installing`, `hasSignIn: true`, `placement: virtual`. The streamed result exposed the provider sign-in in the hosted Chrome page. A local Squire session opened that remote page for human control. This is a real Fly install and browser handoff, but not a fresh Beeline test account or a completed provider login.
+
+Reproducible build: `docker build --target hosted-services -t hosted-squire-proof -f infra/free-agent/Dockerfile .`. Bundle `infra/free-agent/hosted-install-proof.mjs` with esbuild and copy it into a disposable VM/container. Start `/opt/beeline/hosted-services.sh` with the image's runtime environment, then run the bundle with `BEELINE_HOSTED_SERVICES=1`. Docker requires a private writable cgroup namespace; ordinary read-only Docker cgroups do not model Fly. The proof prints only status/step metadata, never the sign-in URL or browser password.
+
+### Isolation and resources
+
+Each free agent gets a separate Fly VM and private persistent rootfs (`FlyMachines.create`), without shared profile volumes. The image copies only executable packages and helper artifacts, never Squire accounts, cookies or sessions. A marker written inside the proof VM's Chrome profile was absent from a second fresh VM (`82e0d0a7e95658`) using the same base image. The peer VM was deleted after that assertion. This verifies guest filesystem separation, not a completed two-account vault exercise.
+
+During the hosted sign-in page: available memory (1061 MiB), anonymous pages (635 MiB), OOM kills (zero). Disk used (1635 MiB of 7964 MiB); Chrome (446 MiB), Squire package (135 MiB), browser/profile state (79 MiB), noVNC assets (2 MiB). The VM did not also run a free-agent model turn, so peak combined memory remains unverified.
+
+The main proof VM remains temporary for account-level verification; delete it after the remaining proof and remove only its test resources. No production user machine or another user's profile/vault was opened. Fresh Beeline account setup, completed phone login, Shopify connection and full account-level isolation remain outstanding.
+
+## Browser observation
+
+Trusty Squire drove the live web app through Settings > Connectors > Trusty Squire in an existing owner session. The computer list was visible. This was not the GitHub reviewer bypass account and not a local/preview build, so it does not prove the modified helper list or the phone-only story. The browser session was closed.
+
+## Completed local checks
+
+- `npm run corner:prepare` passed.
+- Root `npm run typecheck` passed, including mobile and scripts.
+- App connections and Workbench integration suites passed (160 tests; one pre-existing skip).
+- Built `scripts/prove-connect-flow.mjs` passed, including the phone-visible Squire offer.
+- `git diff --check` passed.
+
+- Hosted body connector tests passed (52), including real socket-readiness coverage.
+- Hosted-services image stage built successfully; shellcheck passed for both entrypoint scripts.
+
+## Hosted API readiness follow-up (28 October)
+
+The approved readiness rule now uses hosted broker sockets and an authenticated `list_credentials` round trip, including an empty vault. Hosted connect uses `--skip-browser` so the pairing link can open in the phone's own browser. A terminal `provider_session_missing` with a bound account is non-fatal. An already authenticated hosted broker completes without starting another pairing ceremony. Personal-computer readiness is unchanged. Browser-provider sign-in is requested only when a later task needs it.
+
+Reproduction hosted-squire-install-1: the disposable Fly VM's separate-browser pairing completed at `/install/done`, but the published CLI ended with `no-browser`, `provider_session_missing`, and an empty providers list. The old installer treated that as an error despite authenticated vault access and a successful real Fly request through the hosted broker.
+
+Demonstrated on the same disposable VM with a bundle of the changed `installSquire`: `status: connected`, all steps done, `hasSignIn: false`. Its MCP adapter sends the real vault probe through one retained MCP connection in the VM. A real hosted MCP `use_credential` request to Fly's Machines API returned HTTP (200) for this VM. The saved Groq key returned HTTP (401), `Invalid API Key`, and is not a passing proof. The Google saved-login attempt was stopped at two-step verification and its hosted session was explicitly closed; no Google provider session is claimed.
+
+This is the owner's existing Squire account on a manual disposable VM, not a fresh Beeline test account. It does not prove `workspace_apps` connected state, the phone card-to-helper path, two-owner account isolation, or the reviewer-bypass browser path. Those remain required before ready-for-review. Do not remove owner vault objects during cleanup.
+
+After pairing, available memory was (939 MiB) with used memory (1029 MiB of 1968 MiB), no swap. Disk used (1722 MiB of 7964 MiB); Chrome installation (446 MiB), Squire package (135 MiB), Chrome profile (165 MiB). These are point-in-time VM figures, not peak Chrome-only RSS or combined free-agent turn measurements.
+
+Connector tests pass (53), covering an empty vault, missing account binding and a failed authenticated probe. Body typecheck passes.
+
+Chrome process memory after the follow-up: aggregate PSS (591353 KiB) across (13) Chrome processes; summed RSS (1576488 KiB) double-counts shared pages. This is a point-in-time measurement with browser tabs open, not a peak.
+
+## Explicit hosted provider re-login follow-up (29 October)
+
+Reproduction hosted-provider-relogin: isolated broker and MCP socket listeners,
+a paired empty vault, and explicit Google re-login bypassed broker Chrome with
+`--skip-browser`. A terminal missing-provider report could then return connected.
+Both regression cases failed on the previous implementation.
+
+Forced re-login now omits `--skip-browser` and cannot use the hosted API-readiness
+exception. The socket-backed regression models the published Squire (1.1.38)
+CLI: separate-browser pairing reports none/unknown placement; broker Chrome can
+report host_screen. A pending broker ceremony reaches the phone handoff, while
+terminal provider_session_missing and requested_provider_missing are errors.
+Ordinary API pairing retains its shortcut. The npm release's install/cli.js
+runInstallClaim and install/connect-report.js were inspected to match these
+responses; no real owner sign-in was started by this stand-in.

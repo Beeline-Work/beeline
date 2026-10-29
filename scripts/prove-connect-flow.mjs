@@ -53,6 +53,34 @@ async function operation(surface, name, input) {
   return response.json();
 }
 try {
+  // Reproduction onboarding-connect-1: the public daemon path and phone Room read.
+  const onboarding = { roomId: room, requestId: 'demo-request', generationId: 'demo-generation', reason: 'Connect for this request' };
+  for (const service of ['grok', 'meta muse']) {
+    const result = await operation('daemon', 'connect', { ...onboarding, service });
+    console.log(`Reproduction onboarding-connect-1: connect(${service}) -> ${result.status}: ${result.next}`);
+    assert.equal(result.app, 'Beeline Rooms');
+    assert.match(result.next, /https:\/\/server.usebeeline.app\/mcp/);
+  }
+  const tiktok = await operation('daemon', 'connect', { ...onboarding, service: 'tiktok' });
+  assert.equal(tiktok.status, 'unavailable');
+  assert.match(tiktok.next, /approval of Beeline/);
+  assert.equal((await database.query('SELECT id FROM workspace_apps')).rowCount, 0);
+  assert.equal((await database.query("SELECT id FROM messages WHERE card_type='app-sign-in'")).rowCount, 0);
+  const squire = await operation('daemon', 'connect', { ...onboarding, service: 'trusty-squire' });
+  assert.equal(squire.status, 'needs_approval');
+  await operation('daemon', 'connect', { ...onboarding, service: 'trusty-squire', reconnect: true });
+  assert.equal((await database.query('SELECT squire_work FROM agents WHERE agent_id=$1', [agent])).rows[0].squire_work.install, undefined);
+  assert.equal((await database.query('SELECT id FROM workspace_apps')).rowCount, 0);
+  const store = await operation('daemon', 'connect', { ...onboarding, service: 'shopify' });
+  assert.equal(store.status, 'needs_approval');
+  await operation('daemon', 'connect', { ...onboarding, service: 'shopify' });
+  const cards = await database.query("SELECT card FROM messages WHERE card_type='connector-offer'");
+  assert.equal(cards.rowCount, 1);
+  assert.equal(cards.rows[0].card.connectorType, 'trusty-squire');
+  const visible = (await phone.readRoom(room, owner)).messages.filter(message => message.connectorOffer);
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].connectorOffer.connectorType, 'trusty-squire');
+  console.log('Reproduction onboarding-connect-1: direct Squire, retry and Shopify share one phone-visible Squire offer; install waits for acceptance');
   const found = await operation('daemon', 'findConnectors', { roomId: room, query: 'add a card' });
   assert.equal(found.matches[0].key, 'link');
   console.log('find_connectors("add a card") -> Link, not connected');

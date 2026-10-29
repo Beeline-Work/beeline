@@ -8,7 +8,10 @@
  * page opened (Squire writes the placement on a later line, always before it
  * waits on the human), or a terminal report.
  *
- * Connect is not given `--skip-browser` or `--force-relogin`: skip-browser signs the
+ * Ordinary hosted connect uses `--skip-browser`: account pairing and an authenticated
+ * vault read establish API readiness without browser provider cookies. Explicit
+ * provider re-login uses broker Chrome and requires its provider session.
+ * Personal-computer connect is not given `--skip-browser` or `--force-relogin`: skip-browser signs the
  * human in outside the bot profile so the shared Chrome never gains the
  * session, and force-relogin clears provider cookies and asserts a
  * single-session precondition the broker does not have. Not passing
@@ -47,7 +50,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
-import { squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
+import { squireBrokerSocketReady, squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
   ConnectionDetail,
   ConnectionGrant,
@@ -662,6 +665,23 @@ export async function resolveSquireConnectSpec(run: ShellRunner): Promise<Squire
   };
 }
 
+/** The hosted broker can cold-start slower than Squire connect's own deadline. */
+export async function prepareHostedSquire(
+  run: ShellRunner,
+  sockets: { brokerSocket: string; mcpSocket: string },
+  timeoutMs = 60_000,
+): Promise<boolean> {
+  const started = await run('systemctl', ['--user', '--no-block', 'start', 'trusty-squire-broker.service']);
+  if (started.code !== 0) return false;
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await squireBrokerSocketReady(sockets.brokerSocket) && await squireBrokerSocketReady(sockets.mcpSocket))
+      return true;
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+  } while (Date.now() < deadline);
+  return false;
+}
+
 /**
  * Install and pair Squire on this helper, reporting every step in order.
  *
@@ -697,36 +717,55 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
   emit();
 
+  const hostedEntry = process.env.BEELINE_HOSTED_SERVICES === '1'
+    ? '/opt/beeline/squire/node_modules/@trusty-squire/mcp/dist/bin.js' : undefined;
+  if (hostedEntry &&
+    !await prepareHostedSquire(run, squireHostPaths(homedir()))) {
+    const reason = 'The hosted browser service could not start. Retry the Trusty Squire connection.';
+    push(step('trusty-squire installed', 'failed', reason));
+    return fail(reason);
+  }
+
   // Stop only the connect ceremony this agent spawned. Squire alone decides
   // whether its profile is busy or connected in the next typed report.
   releaseSquireConnectSession(log, options.workspaceId);
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
   // one against the release this reader is written for.
-  const resolution = await resolveSquireConnectSpec(run);
+  const resolution: SquireConnectResolution = hostedEntry
+    ? { npxArgs: [], reResolved: false,
+        resolvedVersion: (await run(process.execPath, [hostedEntry, '--version'])).stdout.trim() }
+    : await resolveSquireConnectSpec(run);
   if (resolution.reResolved) {
     log(
       `trusty-squire stale copy ${resolution.resolvedVersion ?? 'unknown'} re-resolved against current release ${resolution.currentRelease}`,
     );
   }
 
-  // Connect uses the shared host Chrome (or its headless noVNC URL). The
-  // ordinary pairing path never passes --skip-browser (it signs the human in
-  // OUTSIDE the bot profile — no Chrome-profile provider session lands) or
-  // --force-relogin (it clears cookies the broker can already share, for no
-  // reason on a fresh pairing). `forceReloginProvider` is the one exception,
-  // set only by a login-wall reconnect that already knows the shared
-  // profile's session is stale: verified (`--force-relogin=google` against a
-  // live isolated broker) to run through the SAME shared-broker ceremony —
-  // no second broker, no profile-lock contention. `--json` is what puts the
-  // typed report on stdout.
+  // A paired hosted broker can serve API apps before any browser provider is
+  // signed in. Explicit provider re-login still needs its sign-in ceremony.
+  if (hostedEntry && !options.forceReloginProvider &&
+      (await pairSquire(options.mcp, options.workspaceId)).ok) {
+    push(step(`trusty-squire${resolution.resolvedVersion ? ` ${resolution.resolvedVersion}` : ''} installed`, 'done'));
+    push(step('waiting for sign-in', 'done'));
+    push(step('paired to workspace', 'done'));
+    push(step('Browser provider sign-in is available when a task needs it', 'done'));
+    return { status: 'connected', steps,
+      ...(resolution.resolvedVersion ? { squireVersion: resolution.resolvedVersion } : {}) };
+  }
+
+  // Ordinary hosted pairing can use the API plane without provider cookies.
+  // Explicit provider re-login must open broker Chrome, so never skip its
+  // browser ceremony. Personal-computer pairing also uses broker Chrome.
+  // --json supplies the typed report consumed by the phone handoff.
   const install = await streamRun(
-    'npx',
+    hostedEntry ? process.execPath : 'npx',
     [
-      ...resolution.npxArgs,
+      ...(hostedEntry ? [hostedEntry] : resolution.npxArgs),
       'connect',
       '--target=codex',
       '--json',
+      ...(hostedEntry && !options.forceReloginProvider ? ['--skip-browser'] : []),
       ...(options.forceReloginProvider
         ? [`--force-relogin=${options.forceReloginProvider}`]
         : []),
@@ -751,7 +790,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
   }
-  if (report.state !== 'connected' && !isOutstandingSignIn(report)) {
+  const hostedAccountReady = !!hostedEntry && !options.forceReloginProvider && report.terminal &&
+    report.reason === 'provider_session_missing' && !!report.account?.id;
+  if (report.state !== 'connected' && !hostedAccountReady && !isOutstandingSignIn(report)) {
     const reason = connectBlockedLine(report) ?? 'Trusty Squire could not connect';
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
@@ -780,6 +821,13 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // nobody to wait for.
   push(step('waiting for sign-in', signIn ? 'pending' : 'done'));
 
+  if (hostedEntry) {
+    const sockets = squireHostPaths(homedir());
+    if (!await squireBrokerSocketReady(sockets.brokerSocket) ||
+        !await squireBrokerSocketReady(sockets.mcpSocket)) {
+      return fail('The hosted browser service disconnected. Retry the Trusty Squire connection.');
+    }
+  }
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {
     push(step('paired to workspace', 'failed', pair.reason));
@@ -791,6 +839,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     };
   }
   push(step('paired to workspace', 'done'));
+  if (hostedAccountReady) {
+    push(step('Browser provider sign-in is available when a task needs it', 'done'));
+  }
   // An OUTSTANDING ceremony is not a connected helper. The vault answering
   // `list_credentials` proves the credential plane, never that the shared
   // Chrome carries a provider session — and `installConnector` completes the
@@ -821,7 +872,10 @@ export async function pairSquire(
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (!mcp) return { ok: false, reason: 'the Squire MCP surface is not mounted on this helper' };
   try {
-    await mcp.call('list_credentials', { fields: 'summary' });
+    const result = await mcp.call('list_credentials', { fields: 'summary' });
+    if (isRecord(result) && result.isError === true) {
+      return { ok: false, reason: 'The authenticated Squire vault check failed' };
+    }
     return { ok: true };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };

@@ -4,6 +4,7 @@ import { tmpdir, hostname } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import {
   connectBlockedLine,
   connectBrowserLocation,
@@ -12,6 +13,7 @@ import {
   CONNECT_TIMEOUT_MS,
   defaultStreamedRunner,
   installSquire,
+  prepareHostedSquire,
   isProcessAlive,
   parseConnectReport,
   readConnectionDetail,
@@ -30,6 +32,129 @@ import {
   type StreamedShellRunner,
   type SquireMcpClient,
 } from './connector-squire.js';
+
+describe('hosted broker readiness', () => {
+  it.each([undefined, 'handoff', 'missing', 'requested-missing'])('preserves requested provider re-login (%s) on a paired hosted broker', async (scenario) => {
+    const forceReloginProvider = scenario ? 'google' : undefined;
+    const root = mkdtempSync(join(tmpdir(), 'hosted-relogin-'));
+    mkdirSync(join(root, '.trusty-squire'));
+    const broker = createServer(socket => socket.destroy());
+    const mcpSocket = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => broker.listen(join(root, '.trusty-squire/broker.sock'), resolve));
+    await new Promise<void>(resolve => mcpSocket.listen(join(root, '.trusty-squire/mcp.sock'), resolve));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('BEELINE_HOSTED_SERVICES', '1');
+    try {
+      const streamRun = vi.fn(async (_command: string, args: readonly string[]) => ({
+        stdout: '', stderr: '', abort: () => {}, report: report(
+          scenario?.endsWith('missing') ? {
+            state: 'no-browser', terminal: true,
+            reason: scenario === 'missing' ? 'provider_session_missing' : 'requested_provider_missing',
+            account: { id: 'paired-owner', providers: [] },
+          } : {
+            state: 'needs-sign-in',
+            sign_in_url: 'https://trustysquire.ai/install?token=fixture',
+            // The published CLI leaves broker Chrome untouched with skip-browser.
+            browser_location: args.includes('--skip-browser')
+              ? { kind: 'none' } : { kind: 'host_screen' },
+          }),
+      }));
+      const { client, calls } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
+      const result = await installSquire({
+        workspaceId: 'hosted-relogin-proof', run: okRunner(), streamRun,
+        mcp: client, forceReloginProvider,
+      });
+      expect(calls.filter(call => call.tool === 'list_credentials')).toHaveLength(scenario?.endsWith('missing') ? 0 : 1);
+      if (forceReloginProvider) {
+        expect(streamRun).toHaveBeenCalledTimes(1);
+        expect(streamRun).toHaveBeenCalledWith(process.execPath,
+          expect.arrayContaining(['connect', '--force-relogin=google']),
+          expect.any(Object), 'hosted-relogin-proof');
+        expect(streamRun.mock.calls[0]![1]).not.toContain('--skip-browser');
+        if (scenario?.endsWith('missing')) {
+          expect(result.status).toBe('error');
+          expect(result.signIn).toBeUndefined();
+        } else {
+          expect(result.status).toBe('installing');
+          expect(result.signIn?.url).toBe('https://trustysquire.ai/install?token=fixture');
+          expect(result.signIn?.browserLocation).toEqual({ kind: 'host_screen' });
+          expect(result.steps.find(step => step.label === 'waiting for sign-in')?.status).toBe('pending');
+        }
+      } else {
+        expect(streamRun).not.toHaveBeenCalled();
+        expect(result.status).toBe('connected');
+        expect(result.signIn).toBeUndefined();
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      broker.close(); mcpSocket.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('completes hosted API pairing without provider cookies only after an authenticated vault probe', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hosted-api-ready-'));
+    mkdirSync(join(root, '.trusty-squire'));
+    const broker = createServer(socket => socket.destroy());
+    const mcpSocket = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => broker.listen(join(root, '.trusty-squire/broker.sock'), resolve));
+    await new Promise<void>(resolve => mcpSocket.listen(join(root, '.trusty-squire/mcp.sock'), resolve));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('BEELINE_HOSTED_SERVICES', '1');
+    try {
+      for (const [account, probe, expected] of [
+        [{ id: 'fresh-owner', providers: [] }, { credentials: [] }, 'connected'],
+        [null, { credentials: [] }, 'error'],
+        [{ id: 'fresh-owner', providers: [] }, { isError: true }, 'installing'],
+      ] as const) {
+        let args: readonly string[] = [];
+        let probes = 0;
+        const result = await installSquire({
+          workspaceId: 'hosted-proof', run: okRunner(),
+          streamRun: async (_command, supplied) => {
+            args = supplied;
+            return { stdout: '', stderr: '', abort: () => {}, report: report({
+              state: 'no-browser', terminal: true, reason: 'provider_session_missing', account,
+            }) };
+          },
+          mcp: mockSquire({ list_credentials: () => { if (++probes === 1) throw new Error('not paired yet'); return probe; } }).client,
+        });
+        expect(args).toContain('--skip-browser');
+        expect(result.status).toBe(expected);
+        expect(result.signIn).toBeUndefined();
+        if (expected === 'connected') expect(result.steps.every(step => step.status === 'done')).toBe(true);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      broker.close(); mcpSocket.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for both real socket listeners before allowing connect', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hosted-squire-'));
+    const brokerSocket = join(root, 'broker.sock'), mcpSocket = join(root, 'mcp.sock');
+    const broker = createServer(socket => socket.destroy()), mcp = createServer(socket => socket.destroy());
+    try {
+      await new Promise<void>(resolve => broker.listen(brokerSocket, resolve));
+      let finished = false;
+      const run = vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }));
+      const pending = prepareHostedSquire(run, { brokerSocket, mcpSocket }, 2000).then(ready => { finished = true; return ready; });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(finished).toBe(false);
+      await new Promise<void>(resolve => mcp.listen(mcpSocket, resolve));
+      expect(await pending).toBe(true);
+      expect(run).toHaveBeenCalledWith('systemctl', ['--user', '--no-block', 'start', 'trusty-squire-broker.service']);
+    } finally {
+      broker.close(); mcp.close(); rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds a failed hosted service start without attempting sign-in', async () => {
+    const run = vi.fn(async () => ({ code: 1, stdout: '', stderr: 'manager unavailable' }));
+    expect(await prepareHostedSquire(run, { brokerSocket: '/absent/broker', mcpSocket: '/absent/mcp' }, 1)).toBe(false);
+  });
+});
 
 /** A scripted mock of the Squire MCP: no real Squire, ever. */
 function mockSquire(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {

@@ -8,8 +8,9 @@
  * page opened (Squire writes the placement on a later line, always before it
  * waits on the human), or a terminal report.
  *
- * Hosted connect uses `--skip-browser`: account pairing and an authenticated
- * vault read establish API readiness without browser provider cookies.
+ * Ordinary hosted connect uses `--skip-browser`: account pairing and an authenticated
+ * vault read establish API readiness without browser provider cookies. Explicit
+ * provider re-login uses broker Chrome and requires its provider session.
  * Personal-computer connect is not given `--skip-browser` or `--force-relogin`: skip-browser signs the
  * human in outside the bot profile so the shared Chrome never gains the
  * session, and force-relogin clears provider cookies and asserts a
@@ -753,16 +754,10 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       ...(resolution.resolvedVersion ? { squireVersion: resolution.resolvedVersion } : {}) };
   }
 
-  // Connect uses the shared host Chrome (or its headless noVNC URL). The
-  // ordinary pairing path never passes --skip-browser (it signs the human in
-  // OUTSIDE the bot profile — no Chrome-profile provider session lands) or
-  // --force-relogin (it clears cookies the broker can already share, for no
-  // reason on a fresh pairing). `forceReloginProvider` is the one exception,
-  // set only by a login-wall reconnect that already knows the shared
-  // profile's session is stale: verified (`--force-relogin=google` against a
-  // live isolated broker) to run through the SAME shared-broker ceremony —
-  // no second broker, no profile-lock contention. `--json` is what puts the
-  // typed report on stdout.
+  // Ordinary hosted pairing can use the API plane without provider cookies.
+  // Explicit provider re-login must open broker Chrome, so never skip its
+  // browser ceremony. Personal-computer pairing also uses broker Chrome.
+  // --json supplies the typed report consumed by the phone handoff.
   const install = await streamRun(
     hostedEntry ? process.execPath : 'npx',
     [
@@ -770,7 +765,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
       'connect',
       '--target=codex',
       '--json',
-      ...(hostedEntry ? ['--skip-browser'] : []),
+      ...(hostedEntry && !options.forceReloginProvider ? ['--skip-browser'] : []),
       ...(options.forceReloginProvider
         ? [`--force-relogin=${options.forceReloginProvider}`]
         : []),
@@ -795,7 +790,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     push(step('trusty-squire installed', 'failed', reason));
     return fail(reason);
   }
-  const hostedAccountReady = !!hostedEntry && report.terminal &&
+  const hostedAccountReady = !!hostedEntry && !options.forceReloginProvider && report.terminal &&
     report.reason === 'provider_session_missing' && !!report.account?.id;
   if (report.state !== 'connected' && !hostedAccountReady && !isOutstandingSignIn(report)) {
     const reason = connectBlockedLine(report) ?? 'Trusty Squire could not connect';

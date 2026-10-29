@@ -83,3 +83,19 @@ After pairing, available memory was (939 MiB) with used memory (1029 MiB of 1968
 Connector tests pass (53), covering an empty vault, missing account binding and a failed authenticated probe. Body typecheck passes.
 
 Chrome process memory after the follow-up: aggregate PSS (591353 KiB) across (13) Chrome processes; summed RSS (1576488 KiB) double-counts shared pages. This is a point-in-time measurement with browser tabs open, not a peak.
+
+## Explicit hosted provider re-login follow-up (29 October)
+
+Reproduction hosted-provider-relogin: isolated broker and MCP socket listeners,
+a paired empty vault, and explicit Google re-login bypassed broker Chrome with
+`--skip-browser`. A terminal missing-provider report could then return connected.
+Both regression cases failed on the previous implementation.
+
+Forced re-login now omits `--skip-browser` and cannot use the hosted API-readiness
+exception. The socket-backed regression models the published Squire (1.1.38)
+CLI: separate-browser pairing reports none/unknown placement; broker Chrome can
+report host_screen. A pending broker ceremony reaches the phone handoff, while
+terminal provider_session_missing and requested_provider_missing are errors.
+Ordinary API pairing retains its shortcut. The npm release's install/cli.js
+runInstallClaim and install/connect-report.js were inspected to match these
+responses; no real owner sign-in was started by this stand-in.

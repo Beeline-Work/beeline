@@ -34,7 +34,8 @@ import {
 } from './connector-squire.js';
 
 describe('hosted broker readiness', () => {
-  it.each([undefined, 'google'])('preserves requested provider re-login (%s) on a paired hosted broker', async (forceReloginProvider) => {
+  it.each([undefined, 'handoff', 'missing', 'requested-missing'])('preserves requested provider re-login (%s) on a paired hosted broker', async (scenario) => {
+    const forceReloginProvider = scenario ? 'google' : undefined;
     const root = mkdtempSync(join(tmpdir(), 'hosted-relogin-'));
     mkdirSync(join(root, '.trusty-squire'));
     const broker = createServer(socket => socket.destroy());
@@ -44,25 +45,41 @@ describe('hosted broker readiness', () => {
     vi.stubEnv('HOME', root);
     vi.stubEnv('BEELINE_HOSTED_SERVICES', '1');
     try {
-      const streamRun = vi.fn(async () => ({ stdout: '', stderr: '', abort: () => {}, report: report({
-        state: 'needs-sign-in',
-        sign_in_url: 'https://trustysquire.ai/install?token=fixture',
-        browser_location: { kind: 'virtual', url: 'https://phone.example/vnc.html' },
-      }) }));
+      const streamRun = vi.fn(async (_command: string, args: readonly string[]) => ({
+        stdout: '', stderr: '', abort: () => {}, report: report(
+          scenario?.endsWith('missing') ? {
+            state: 'no-browser', terminal: true,
+            reason: scenario === 'missing' ? 'provider_session_missing' : 'requested_provider_missing',
+            account: { id: 'paired-owner', providers: [] },
+          } : {
+            state: 'needs-sign-in',
+            sign_in_url: 'https://trustysquire.ai/install?token=fixture',
+            // The published CLI leaves broker Chrome untouched with skip-browser.
+            browser_location: args.includes('--skip-browser')
+              ? { kind: 'none' } : { kind: 'host_screen' },
+          }),
+      }));
       const { client, calls } = mockSquire({ list_credentials: () => ({ credentials: [] }) });
       const result = await installSquire({
         workspaceId: 'hosted-relogin-proof', run: okRunner(), streamRun,
         mcp: client, forceReloginProvider,
       });
-      expect(calls.filter(call => call.tool === 'list_credentials')).toHaveLength(1);
+      expect(calls.filter(call => call.tool === 'list_credentials')).toHaveLength(scenario?.endsWith('missing') ? 0 : 1);
       if (forceReloginProvider) {
         expect(streamRun).toHaveBeenCalledTimes(1);
         expect(streamRun).toHaveBeenCalledWith(process.execPath,
           expect.arrayContaining(['connect', '--force-relogin=google']),
           expect.any(Object), 'hosted-relogin-proof');
-        expect(result.status).toBe('installing');
-        expect(result.signIn?.url).toBe('https://phone.example/vnc.html');
-        expect(result.steps.find(step => step.label === 'waiting for sign-in')?.status).toBe('pending');
+        expect(streamRun.mock.calls[0]![1]).not.toContain('--skip-browser');
+        if (scenario?.endsWith('missing')) {
+          expect(result.status).toBe('error');
+          expect(result.signIn).toBeUndefined();
+        } else {
+          expect(result.status).toBe('installing');
+          expect(result.signIn?.url).toBe('https://trustysquire.ai/install?token=fixture');
+          expect(result.signIn?.browserLocation).toEqual({ kind: 'host_screen' });
+          expect(result.steps.find(step => step.label === 'waiting for sign-in')?.status).toBe('pending');
+        }
       } else {
         expect(streamRun).not.toHaveBeenCalled();
         expect(result.status).toBe('connected');

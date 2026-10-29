@@ -54,7 +54,7 @@ function Scene() {
           />
         </View>
       </View>
-      <View style={{ width: 390, alignSelf: 'center', padding: 16 }}>
+      <View style={{ width: '100%', alignSelf: 'center', padding: 16 }}>
         <ConnectorOfferCard
           message={
             {

@@ -56,19 +56,6 @@ export function connectorOfferOutcomeLine(
   return `${offer.intent === 'switch' ? 'switched' : offer.intent === 'reconnect' ? 'signed in' : 'added'} by ${who}${stamp}`;
 }
 
-/** `connecting for @zeke` (`switching for` for a `'switch'` offer) — the
- *  accepted offer whose sign-in is not complete yet. */
-export function connectorOfferConnectingLine(
-  offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'intent'>,
-): string | null {
-  if (offer.status !== 'connecting') return null;
-  if (offer.intent === 'reconnect' && !offer.acceptedBy) return 'Reconnecting…';
-  const who = offer.acceptedBy?.handle
-    ? `@${offer.acceptedBy.handle.replace(/^@/, '')}`
-    : (offer.acceptedBy?.name ?? 'someone');
-  return `${offer.intent === 'switch' ? 'switching' : 'connecting'} for ${who}`;
-}
-
 /** `waiting for @zeke` — what a reader who cannot act sees under an open offer. */
 export function connectorOfferWaitingLine(
   offer: Pick<ConnectorOfferCardView, 'addressee'>,

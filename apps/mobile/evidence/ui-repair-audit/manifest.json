@@ -742,27 +742,27 @@
         "connectorLong-after.png"
       ],
       [
-        "Fixed \u00b7 390 Obsidian",
-        "connectorLong-fixed-390-obsidian.png"
+        "Fixed",
+        "connectorLong-fixed.png"
       ],
       [
-        "Fixed \u00b7 390 Bone",
-        "connectorLong-fixed-390-bone.png"
+        "Android 390 bone",
+        "connectorLong-android-390-bone.png"
       ],
       [
-        "Fixed \u00b7 360 Obsidian",
-        "connectorLong-fixed-360-obsidian.png"
+        "Android 390 obsidian",
+        "connectorLong-android-390-obsidian.png"
       ],
       [
-        "Fixed \u00b7 360 Bone",
-        "connectorLong-fixed-360-bone.png"
+        "Android 360 bone",
+        "connectorLong-android-360-bone.png"
       ],
       [
-        "Fixed \u00b7 Android release",
-        "connectorLong-fixed-android-release.png"
+        "Android 360 obsidian",
+        "connectorLong-android-360-obsidian.png"
       ]
     ],
-    "fixedNote": "Owner follow-up: the complete CONNECTING FOR SOMEONE note now has its own single-line footer row. Continue sign-in remains short and right-aligned beneath it. Card height is (267 px) at both (390 px) and (360 px), adding (22 px) to the earlier (245 px) version so neither label is squeezed or truncated."
+    "fixedNote": "Owner decision removes connecting-for text and its separate row. Continue sign-in remains right-aligned; reconnect and outcome text remain. Card 244 px at both widths (the removed wrapped note previously made it 245 px). Four release Android viewports and four browser geometry captures cover both themes."
   },
   {
     "name": "Corner repository access retry",

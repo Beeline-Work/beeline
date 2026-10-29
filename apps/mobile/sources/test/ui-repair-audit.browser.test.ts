@@ -117,11 +117,10 @@ for (const width of footerOnly ? [390, 360] : [390])
                 const note = metric('connector-offer-proof-connecting'),
                   button = metric('connector-offer-proof-continue'),
                   card = metric('connector-offer-connecting');
-                expect(note.height).toBe(15);
-                expect(note.text.toUpperCase()).toBe('CONNECTING FOR SOMEONE');
+                expect(note).toBeUndefined();
                 expect(button.text).toBe('Continue sign-in');
                 expect(card.x + card.width - (button.x + button.width)).toBe(17);
-                expect(card.height).toBe(267);
+                expect(card.height).toBe(244);
               }
               if (section === 'trayFooter') expect(metric('audit-tray-footer').height).toBe(15);
             }

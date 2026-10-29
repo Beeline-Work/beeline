@@ -30,7 +30,6 @@ import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken }
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { emojiTextStyle } from '@/buzz/emoji-text';
 import {
-  connectorOfferConnectingLine,
   connectorOfferWaitingLine,
 } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
@@ -386,7 +385,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
       stamp={ledgerStamp(message.timestamp)}
       footerNote={
         connecting
-          ? (connectorOfferConnectingLine(offer) ?? undefined)
+          ? (offer.intent === 'reconnect' && !offer.acceptedBy ? 'Reconnecting…' : undefined)
           : pending
             ? canAccept
               ? undefined
@@ -402,7 +401,6 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
               : `connector-offer-${offer.offerId}-waiting`
             : `connector-offer-${offer.offerId}-outcome`
       }
-      footerNoteOwnRow={connecting}
       actions={pending && canAccept && onDecline ? [{ label: 'No', secondary: true, onPress: () => onDecline(offer.offerId), testID: `connector-offer-${offer.offerId}-deny`, disabled: actionId !== null }, ...actions] : actions}
     />
   );

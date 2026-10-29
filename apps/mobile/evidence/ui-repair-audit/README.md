@@ -25,10 +25,10 @@ a 229 px top gap and adds an emoji paste button.
 The same production-control and HTTP-proxy paths now show:
 
 - Browser link and close share the same vertical centre; the row remains 44 px.
-- The short `Continue sign-in` action stays right-aligned. The complete connecting
-  note occupies its own single-line footer row; card height is 267 px at both
-  390 and 360 px. This is 22 px taller than the earlier 245 px version because
-  the note and action now have separate rows instead of squeezing the note.
+- The short `Continue sign-in` action stays right-aligned. The owner-requested
+  removal of the connecting-for line restores the original single-row footer.
+  The card is 244 px at both widths: removing the old 45 px wrapped note leaves
+  the unchanged 44 px button as the footer height. Reconnect and outcome lines remain.
 - The bookmark footer returns to 15 px with a drawn chevron.
 - Pinch-out leaves the page at top 0, retaining horizontal centering.
 - There is no paste button; desktop clipboard shortcut tests still pass.
@@ -123,25 +123,28 @@ Typing inside the remote login window is also outside this PR.
 
 ## Owner follow-up: continuation footer
 
-Reproduction **UI-AUDIT-FOOTER-1**: the initial repair kept the card at 245 px
-by squeezing CONNECTING FOR SOMEONE into three lines beside the short action.
-The owner requires one line without an ellipsis at both 390 and 360 px.
-The connector continuation footer now opts into a full-width note row; the
-existing ButtonRow retains right alignment below it. Other card footers keep
-their original layout.
+Reproduction **UI-AUDIT-FOOTER-1**: the first short-action version squeezed
+CONNECTING FOR SOMEONE into three lines. A separate note row made the card
+267 px tall. The owner's subsequent decision removes that connecting line
+entirely, including the switching-for variant, and removes the new row option.
+Automatic Reconnecting… and settled outcome lines are unchanged.
 
-`connectorLong-fixed-{390,360}-{bone,obsidian}.png` and their JSON measurements
-prove the note is 15 px tall (one line), the action remains Continue sign-in,
-and its right edge stays 17 px inside the card edge. All four card heights are
-267 px. `connectorLong-fixed-android-release.png` is the same production card
-in a fresh release-mode Android APK; its XML records the native text bounds.
+`connectorLong-fixed-{390,360}-{bone,obsidian}.png` and JSON prove there is no
+connecting note, the action remains Continue sign-in with a 17 px right inset,
+and card height is 244 px at both widths. This is one pixel below the earlier
+245 px because the removed three-line note was 45 px tall; the button is 44 px.
+No compensating spacing or type changes were added.
 
-Repeat the four rendered assertions using a prepared working scratch tree:
+`connectorLong-android-{390,360}-{bone,obsidian}.png` are fresh release-mode
+Android captures of this production card while sign-in is in progress. Each
+viewport is exact: emulator density 480, width 1170 or 1080 physical pixels.
+The native card is 242 dp tall at both widths (Android font metrics differ from the browser); its action keeps a 17 dp right inset. The matching XML records native accessibility bounds. The dedicated fixture
+is `footer-native.tsx.template`; it changes no production navigation.
+
+Repeat rendered assertions with a prepared working scratch tree:
 
 ```sh
 UI_AUDIT_FOOTER=1 UI_AUDIT_MOBILE=/tmp/ui-fixed/apps/mobile \
 UI_AUDIT_DIR=/tmp/ui-captures npx vitest run \
 sources/test/ui-repair-audit.browser.test.ts --maxWorkers=1 --minWorkers=1
 ```
-
-`footer-native.tsx.template` is the dedicated release-mode Android fixture.

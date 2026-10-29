@@ -110,8 +110,6 @@ export type TranscriptCardProps = {
   codeLabel?: string;
   facts?: readonly { label: string; value: string }[];
   footerNote?: ReactNode;
-  /** Reserve a full footer row for a note that must not compete with actions. */
-  footerNoteOwnRow?: boolean;
   footerNoteTestID?: string;
   footerNoteTone?: 'quiet' | 'failed';
   decisionNote?: boolean;
@@ -264,7 +262,6 @@ export function TranscriptCard({
   codeLabel,
   facts = [],
   footerNote,
-  footerNoteOwnRow = false,
   footerNoteTestID,
   footerNoteTone = 'quiet',
   decisionNote = false,
@@ -542,7 +539,6 @@ export function TranscriptCard({
                   testID={footerNoteTestID}
                   style={[
                     styles.footerNote,
-                    footerNoteOwnRow && styles.footerNoteOwnRow,
                     decisionNote && styles.decisionNote,
                     footerNoteTone === 'failed' && styles.footerNoteFailed,
                   ]}
@@ -898,7 +894,6 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textTransform: 'none', textAlign: 'right', flexBasis: 'auto', flexShrink: 0, flexGrow: 1 },
-    footerNoteOwnRow: { flexBasis: '100%', flexGrow: 0, flexShrink: 0 },
     footerNoteFailed: { color: card.diffRemoved },
     actions: { flexShrink: 1, flexGrow: 1 },
   };

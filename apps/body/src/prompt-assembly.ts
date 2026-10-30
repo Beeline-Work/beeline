@@ -1,3 +1,4 @@
+import type { CodexPromptDelivery } from './codex-prompt-delivery.js';
 import { renderFreeAgentCheckpoint, type FreeAgentCheckpoint } from './free-agent-continuation.js';
 import { boundReplyExcerpt, subscriptionActionPrompt, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -538,7 +539,8 @@ export interface AssembledSessionPrompt {
   /**
    * The same text again for a harness that drops the session prompt
    * (`harnessHonorsSessionSystemPrompt`): it rides at the top of every turn,
-   * so a Codex, Pi, or Grok session gets the corner rules too. Empty otherwise.
+   * so a legacy Codex, Pi, or Grok session gets the corner rules too. Empty
+   * otherwise. Confirmed Codex delivery removes the duplicate at assembly.
    */
   readonly turnPrefix: string;
   readonly report: readonly SectionReport[];
@@ -616,6 +618,8 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
 }
 
 export interface TurnPromptContext {
+  /** Present only for a confirmed Codex session with compaction notifications. */
+  readonly delivery?: CodexPromptDelivery;
   /** Current server eligibility for onboarding, refreshed each turn. */
   readonly onboarding?: boolean;
   readonly surface: PromptSurface;
@@ -945,10 +949,13 @@ export function assembleTurnPrompt(context: TurnPromptContext): {
     ...boundedContext,
     transcript: boundedContext.transcript ? { ...boundedContext.transcript, lines } : undefined,
   });
+  const delivered = context.delivery
+    ? context.delivery.select(entries.map(({ section, text }) => ({ id: section.id, text })))
+    : entries.map(({ section, text }) => ({ id: section.id, text }));
   return {
-    text: entries.map((entry) => entry.text).join('\n\n'),
-    report: entries.map(({ section, text }) => ({
-      id: section.id,
+    text: delivered.map((entry) => entry.text).join('\n\n'),
+    report: delivered.map(({ id, text }) => ({
+      id,
       bytes: Buffer.byteLength(text),
       hash: createHash('sha256').update(text).digest('hex'),
     })),

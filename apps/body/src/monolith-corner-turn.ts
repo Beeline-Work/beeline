@@ -1942,6 +1942,7 @@ export class MonolithCornerTurnLoop {
                   ...briefContext,
                   task: { body: followup },
                 } : {
+                  delivery: this.client?.promptDelivery(this.sessionId),
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
                   ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),

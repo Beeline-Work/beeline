@@ -1920,6 +1920,7 @@ export class MonolithRoomTurnLoop {
                   this.agent.publicKey,
                 );
                 const assembled = assembleTurnPrompt({
+                  delivery: this.client?.promptDelivery(this.sessionId),
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
                   ...(freeAgent ? { timeLimitCheckpoint: this.freeContinuation.context } : {}),

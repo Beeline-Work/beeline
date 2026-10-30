@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
+import { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
+import { workflowRunLockKey } from './workflow-runs.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { routeSystemCommand } from './agent-command.js';
-import { advanceCorner, claimCornerMergeAttempt, cornerMergeGate } from './corner-lifecycle.js';
+import { advanceCorner, claimCornerMergeAttempt, cornerMergeGate, reassignFailedCornerReviewer } from './corner-lifecycle.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const H = 'a'.repeat(64);
@@ -18,7 +21,12 @@ const W = '11111111-1111-4111-8111-111111111112';
 const R = '22222222-2222-4222-8222-222222222223';
 const C = '33333333-3333-4333-8333-333333333334';
 
-let db: PgliteDatabase;
+let db: SqlDatabase;
+let closeDatabase: () => Promise<void>;
+const postgresUrl = process.env.BEELINE_REVIEW_RECOVERY_TEST_POSTGRES_URL;
+if (postgresUrl && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(postgresUrl).hostname))
+  throw new Error('review recovery proof requires isolated loopback PostgreSQL');
+afterEach(async () => { vi.restoreAllMocks(); await closeDatabase?.(); }, 30_000);
 let phone: PhoneService;
 let daemon: DaemonService;
 
@@ -61,7 +69,20 @@ async function greenCheck() {
 }
 
 beforeEach(async () => {
-  db = new PgliteDatabase();
+  if (postgresUrl) {
+    const databaseName = `review_recovery_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl });
+    await admin.query(`CREATE DATABASE ${databaseName}`);
+    const isolatedUrl = new URL(postgresUrl);
+    isolatedUrl.pathname = `/${databaseName}`;
+    const pg = new PostgresDatabase('', 5, { mode: 'migration', pool: new Pool({
+      connectionString: isolatedUrl.toString(),
+    }) });
+    db = pg;
+    closeDatabase = async () => { await pg.close(); await admin.query(`DROP DATABASE ${databaseName}`); await admin.end(); };
+  } else {
+    const lite = new PgliteDatabase(); db = lite; closeDatabase = () => lite.close();
+  }
   await migrate(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
@@ -105,7 +126,7 @@ beforeEach(async () => {
   daemon = new DaemonService(db, new LiveHub());
   // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
-});
+}, 30_000);
 
 async function failTurn(c: AgentCommand) {
   await claim(c);
@@ -415,5 +436,93 @@ describe('the end of a fallback reviewer\'s review', () => {
       [C],
     );
     expect(state.rows[0]).toEqual({ workflow_state: 'review', workflow_outcome: 'passing' });
+  });
+});
+
+
+describe('Reproduction REVIEW-RECOVERY-DEADLOCK', () => {
+  async function receiptFixture() {
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await greenCheck();
+    const [first] = await reviews(REVIEWER_A);
+    await claim(first!);
+    await daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: first!.turnRequestId,
+      generationId: 'g1', status: 'working' }, REVIEWER_A);
+    return { roomId: C, requestId: first!.turnRequestId, generationId: 'g1', status: 'failed' as const,
+      reasonKind: 'wrong-model' as const, reason: 'the selected model is no longer available' };
+  }
+
+  it.each(['lock', 'after-wake', 'exhausted', 'other-error'])('rolls back the owning receipt transaction: %s', async point => {
+    const input = await receiptFixture();
+    const original = db.transaction.bind(db);
+    const fault = Object.assign(new Error('injected recovery contention'), { code: point === 'other-error' ? '57014' : '40P01' });
+    let attempts = 0;
+    let faults = 0;
+    const statements: { sql: string; values?: unknown[] }[][] = [];
+    const spy = vi.spyOn(db, 'transaction').mockImplementation(work => original(async tx => {
+      attempts++;
+      const sqls: { sql: string; values?: unknown[] }[] = []; statements.push(sqls);
+      const wrapped: SqlDatabase = {
+        query: async (sql, values) => {
+          sqls.push({ sql, values });
+          if (sql.includes('pg_advisory_xact_lock') && values?.[0] === workflowRunLockKey(C) &&
+              point !== 'after-wake' && (faults === 0 || point === 'exhausted')) {
+            faults++; throw fault;
+          }
+          return tx.query(sql, values);
+        },
+        transaction: async nested => nested(wrapped),
+      };
+      const result = await work(wrapped);
+      if (point === 'after-wake' && faults === 0) {
+        expect((await tx.query('SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [C, REVIEWER_B])).rowCount).toBe(1);
+        faults++; throw fault;
+      }
+      return result;
+    }));
+    if (point === 'exhausted' || point === 'other-error') {
+      await expect(daemon.execute('postAgentTurnReceipt', input, REVIEWER_A)).rejects.toBe(fault);
+      expect(attempts).toBe(point === 'exhausted' ? 3 : 1);
+      spy.mockRestore();
+      expect((await db.query('SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2', [C, REVIEWER_A])).rows[0]?.status).toBe('working');
+      expect(await reviews(REVIEWER_B)).toHaveLength(0);
+    } else {
+      await daemon.execute('postAgentTurnReceipt', input, REVIEWER_A);
+      expect(attempts).toBe(2);
+      spy.mockRestore();
+      expect((await db.query('SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2', [C, REVIEWER_A])).rows[0]?.status).toBe('failed');
+      expect(await reviews(REVIEWER_B)).toHaveLength(1);
+      await reassignFailedCornerReviewer(db, { roomId: C, requestId: input.requestId, agentId: REVIEWER_A });
+      expect(await reviews(REVIEWER_B)).toHaveLength(1);
+      expect(statements[1]![0]).toMatchObject({
+        sql: expect.stringContaining('pg_advisory_xact_lock'), values: [workflowRunLockKey(C)],
+      });
+    }
+    console.info(`Reproduction REVIEW-RECOVERY-DEADLOCK: ${point}, attempts=${attempts}; rollback and reviewer assignment verified`);
+  });
+
+  it.runIf(Boolean(postgresUrl))('serializes a lifecycle holder updating the receipt turn', async () => {
+    const input = await receiptFixture();
+    let release!: () => void;
+    let ready!: () => void;
+    const held = new Promise<void>(resolve => { ready = resolve; });
+    const proceed = new Promise<void>(resolve => { release = resolve; });
+    const holder = db.transaction(async tx => {
+      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [workflowRunLockKey(C)]);
+      ready(); await proceed;
+      await tx.query("UPDATE agent_turns SET created_at=now() WHERE room_id=$1 AND agent_id=$2", [C, REVIEWER_A]);
+    });
+    await held;
+    const receipt = daemon.execute('postAgentTurnReceipt', input, REVIEWER_A);
+    // Wait until the receipt actually waits on the held lifecycle lock.
+    try {
+      await vi.waitFor(async () => {
+        const waits = await db.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory' AND query LIKE '%pg_advisory_xact_lock%'");
+        expect(waits.rowCount).toBeGreaterThan(0);
+      });
+    } finally { release(); }
+    await Promise.all([holder, receipt]);
+    expect(await reviews(REVIEWER_B)).toHaveLength(1);
+    console.info('Reproduction REVIEW-RECOVERY-DEADLOCK: concurrent lifecycle/receipt transactions both committed; one fallback wake');
   });
 });

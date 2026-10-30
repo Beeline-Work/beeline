@@ -1,0 +1,52 @@
+name: Temporary read-only OTA store proof
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  asc-read-only:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read live ASC status and planned iOS runtimes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          node scripts/read-store-runtimes.mjs > "$RUNNER_TEMP/ota-store-status.json"
+          node --input-type=module - <<'NODE' | tee "$RUNNER_TEMP/asc-proof.txt"
+          import { readFileSync } from 'node:fs';
+          import { storeRuntimeTargets } from './apps/mobile/scripts/store-runtime-targets.mjs';
+          const status = JSON.parse(readFileSync(process.env.RUNNER_TEMP + '/ota-store-status.json', 'utf8'));
+          for (const name of ['EXPO_ASC_KEY_ID', 'EXPO_ASC_ISSUER_ID', 'EXPO_ASC_API_KEY_P8']) {
+            if (!process.env[name]) console.log(`ASC_CHECK_UNAVAILABLE: ${name} is unavailable`);
+          }
+          console.log('ASC_STORE_STATUS=' + JSON.stringify(status.stores.ios));
+          const targets = storeRuntimeTargets({ pins: { android: '43', ios: '36' },
+            stores: status.stores, previouslyLive: status.previouslyLive,
+            previousTargets: ['34', '35', '36'].map(runtimeVersion => ({ platform: 'ios', runtimeVersion })) });
+          console.log('IOS_PLAN_TARGETS=' + targets.filter(t => t.platform === 'ios').map(t => `ios@${t.runtimeVersion}`).join(','));
+          NODE
+      - name: Preserve existing Android proof outside the shipped tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/ota-store-proof"
+          git archive bbee29ceb0121b5e93e1b969d2de920b2b9aaaec apps/mobile/evidence/ota-store-runtime | tar -x -C "$RUNNER_TEMP/ota-store-proof"
+          cp "$RUNNER_TEMP/asc-proof.txt" "$RUNNER_TEMP/ota-store-proof/"
+          cp "$RUNNER_TEMP/ota-store-status.json" "$RUNNER_TEMP/ota-store-proof/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ota-store-runtime-proof
+          path: ${{ runner.temp }}/ota-store-proof
+          retention-days: 90

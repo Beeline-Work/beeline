@@ -12,5 +12,5 @@ export function seedPlayHistory(text, builds) {
 }
 
 export function publicationSeed(builds) {
-  return seedPlayHistory(readFileSync(new URL('../apps/mobile/evidence/ota-store-runtime/play-production-history.txt', import.meta.url), 'utf8'), builds);
+  return seedPlayHistory(readFileSync(new URL('../apps/mobile/store/play-production-history.txt', import.meta.url), 'utf8'), builds);
 }

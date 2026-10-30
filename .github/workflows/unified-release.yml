@@ -62,8 +62,8 @@ on:
         description: 'Explicit store minimums as JSON, e.g. {"android":{"minVersion":"0.2.24","reason":"This version can no longer sign in."}}; empty leaves both unchanged'
         type: string
         required: false
-      force_listing:
-        description: Push the Play store listing even when its text and images already match
+      publish_listing:
+        description: Explicitly upload changed Play listing text and images (default releases upload only the build)
         type: boolean
         default: false
         required: false
@@ -952,12 +952,32 @@ jobs:
           # was then lost in #1241's conflict resolution and run 34873052609 failed the
           # same way). Same value as androidPackage in apps/mobile/app.config.js.
           PACKAGE_NAME: app.usebeeline
-          FORCE_LISTING: ${{ inputs.force_listing && '1' || '0' }}
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
-          METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
+      - name: Publish the Play listing only when explicitly requested
+        if: inputs.publish_listing
+        env:
+          ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline
+          METADATA_DIR: apps/mobile/fastlane/metadata/android
+          LANGUAGE: en-US
+        run: bash scripts/play-publish-listing.sh
+      - name: Check the Play listing without uploading
+        if: ${{ !inputs.publish_listing }}
+        env:
+          ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline
+          METADATA_DIR: apps/mobile/fastlane/metadata/android
+          LANGUAGE: en-US
+          PLAY_LISTING_CHECK_ONLY: '1'
+        run: |
+          status=0
+          bash scripts/play-publish-listing.sh || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+            echo "::warning::Could not compare the Play listing; listing was not uploaded"
+          fi
       - name: Retain R8 mapping by Play version code
         if: always() && steps.play-upload.outputs.version_code != ''
         uses: actions/upload-artifact@v4

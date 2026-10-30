@@ -1140,7 +1140,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   // Diagnostics and self-retry inputs are gone; recovery pins and consent stay.
   assert.deepEqual(Object.keys(inputs), [
     'dispatched_by', 'release_sha', 'release_version', 'selection', 'store_track',
-    'run_release_proof', 'allow_pin_restore', 'mobile_store_minimum', 'force_listing',
+    'run_release_proof', 'allow_pin_restore', 'mobile_store_minimum', 'publish_listing',
   ]);
   assert.equal(inputs.dispatched_by.required, true);
   assert.equal(inputs.release_sha.required, false);

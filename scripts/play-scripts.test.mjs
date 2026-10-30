@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { parse } from 'yaml';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -329,7 +330,7 @@ test('play-publish.sh still uploads the bundle when the listing is skipped', (t)
   const publishAt = step.indexOf('bash scripts/play-publish.sh');
   const listingAt = step.indexOf('bash scripts/play-publish-listing.sh');
   assert.ok(publishAt > 0 && listingAt > publishAt);
-  assert.match(step, /FORCE_LISTING:/);
+  assert.doesNotMatch(step, /FORCE_LISTING:/);
 
   const dir = tempDir(t);
   const aab = path.join(dir, 'app.aab');
@@ -339,13 +340,15 @@ test('play-publish.sh still uploads the bundle when the listing is skipped', (t)
   fs.writeFileSync(path.join(changelogs, 'default.txt'), 'notes\n');
   const published = run('play-publish.sh', {
     AAB_PATH: aab,
+    MAPPING_PATH: aab,
+    MAPPING_ARCHIVE_DIR: dir,
     TRACK: 'internal',
     RELEASE_NAME: '1.0.0',
     RELEASE_STATUS: 'completed',
     CHANGELOG_DIR: changelogs,
     PLAY_DRY_RUN_VERSION_CODE: '4',
   });
-  assert.equal(published.calls.length, 4);
+  assert.equal(published.calls.length, 5);
   assert.match(published.calls[1], /\/bundles\?uploadType=media/);
 
   const locale = writeListing(dir);
@@ -601,4 +604,58 @@ test('release retains the mapping artifact under the uploaded version code', () 
   assert.match(workflow, /BUNDLE-METADATA\/com.android.tools.build.obfuscation\/proguard.map/);
   assert.match(workflow, /name: android-mapping-\$\{\{ steps.play-upload.outputs.version_code \}\}/);
   assert.match(workflow, /android-mappings\/\$\{\{ steps.play-upload.outputs.version_code \}\}\/mapping.txt\n\s+if-no-files-found: error\n\s+retention-days: 90/);
+});
+
+// Reproduction PLAY-LISTING-1: run the workflow's actual shell with a fake Play API.
+// Real production proof would require dispatching a release, which is out of scope.
+test('Reproduction PLAY-LISTING-1: default releases leave changed listings alone; explicit consent uploads changes only', (t) => {
+  const workflow = parse(fs.readFileSync(path.join(REPO, '.github/workflows/unified-release.yml'), 'utf8'));
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.equal(inputs.publish_listing.default, false);
+  assert.equal(inputs.force_listing, undefined);
+  const steps = workflow.jobs.mobile_native_android.steps;
+  const upload = steps.find(step => step.name === 'Publish the Play listing only when explicitly requested');
+  const check = steps.find(step => step.name === 'Check the Play listing without uploading');
+  const bundle = steps.find(step => step.name === 'Upload Android to the selected Play track');
+  assert.equal(upload.if, 'inputs.publish_listing');
+  assert.equal(check.if, '${{ !inputs.publish_listing }}');
+  assert.doesNotMatch(bundle.run, /play-publish-listing/);
+  assert.match(bundle.run, /play-publish.sh/);
+  assert.equal(upload.env.FORCE_LISTING, undefined);
+  for (const consent of [false, true]) {
+    for (const changed of [false, true]) {
+      const dir = tempDir(t);
+      const locale = writeListing(dir);
+      const { bin, log } = installPlayCurl(dir, remoteSnapshot(locale));
+      if (changed) fs.appendFileSync(path.join(locale, 'full_description.txt'), 'Changed');
+      const step = consent ? upload : check;
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+        cwd: REPO, encoding: 'utf8',
+        env: { PATH: bin + ':' + process.env.PATH, PACKAGE_NAME: PACKAGE,
+          ACCESS_TOKEN: 'test-token', METADATA_DIR: path.join(dir, 'metadata'),
+          LANGUAGE: 'en-US', PLAY_LISTING_CHECK_ONLY: step.env.PLAY_LISTING_CHECK_ONLY ?? '' },
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const calls = fs.readFileSync(log, 'utf8');
+      if (consent && changed) {
+        assert.match(calls, /PUT .*\/listings\/en-US/);
+        assert.match(calls, /uploadType=media/);
+        assert.match(calls, /:commit/);
+      } else {
+        assert.doesNotMatch(calls, /PUT |uploadType=media|:commit/);
+        assert.match(calls, /DELETE .*\/edits\/edit-1/);
+      }
+      if (!consent && changed)
+        assert.match(result.stdout, /Store listing differs:.*not uploaded/);
+    }
+  }
+  // Even a failed comparison must leave the build release successful.
+  const dir = tempDir(t);
+  const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', check.run], {
+    cwd: REPO, encoding: 'utf8', env: { PATH: process.env.PATH,
+      PLAY_DRY_RUN: '1', PACKAGE_NAME: PACKAGE, LANGUAGE: 'en-US',
+      METADATA_DIR: dir, PLAY_LISTING_CHECK_ONLY: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Could not compare.*not uploaded/);
 });

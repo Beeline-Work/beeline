@@ -6,7 +6,6 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import ts from 'typescript';
-import { deferredPrompt, deniesAvailableTool, FIND_TOOLS, findTools, runToolComparison } from './prompt-tool-loading.mjs';
 import { check, loadCases, loadSource, replayPrompt, toolsFor } from './prompt-cases.ts';
 import { evaluateRule, skillPath, shellCommand } from './prompt-case-rules.ts';
 
@@ -348,12 +347,8 @@ function safetyViolation(rule, transcript) {
   }
 }
 
-export async function replaySample({ prompt, skills, rule, model, request, ledger, testCase = {}, tools = [], seed = 1, structured = true, toolMode = 'full' }) {
-  const deferred = toolMode === 'deferred';
-  const setup = deferred ? deferredPrompt(prompt, tools) : undefined;
-  const loaded = new Set(deferred ? setup.core : tools.map(t => t.name));
-  const callable = deferred ? [...tools, FIND_TOOLS] : tools;
-  const messages = [{ role: 'user', content: setup?.prompt ?? prompt }];
+export async function replaySample({ prompt, skills, rule, model, request, ledger, testCase = {}, tools = [], seed = 1, structured = true }) {
+  const messages = [{ role: 'user', content: prompt }];
   const transcript = { calls: [], text: '' };
   const requests = [], rounds = [], invalidCalls = [], attemptedCalls = [];
   let tokens = 0, cost = 0;
@@ -366,9 +361,6 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
     let verdict = { pass: null, reason };
     if (status === 'behavior') verdict = unsafe || terminal === 'invalid-call'
       ? { pass: false, reason: unsafe ?? reason } : evaluateRule(rule, transcript);
-    if (deferred && status === 'behavior' && deniesAvailableTool(transcript.text, tools)) {
-      verdict = { pass: false, reason: 'Denied an available tool instead of loading it' };
-    }
     return { ...verdict, status, terminal, transcript, attemptedCalls, invalidCalls, tokens, cost, requests, rounds, seed,
       truthfulness: testCase.truthfulness ? evaluateRule(testCase.truthfulness, transcript) : undefined };
   };
@@ -405,25 +397,15 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
     attemptedCalls.push(...answer.calls);
     const validCalls = [];
     for (const call of answer.calls) {
-      const definition = callable.find(t => t.name === call.name);
-      if (deferred && definition && call.name !== 'find_tools' && !loaded.has(call.name)) {
-        invalidCalls.push({ round, call, result: { error: 'unloaded_tool' } });
-        return { ...finish('behavior', 'Called an unloaded tool', 'unloaded-tool'), pass: false, reason: 'Called an unloaded tool' };
-      }
+      const definition = tools.find(t => t.name === call.name);
       if (!definition || !validSchema(definition.inputSchema, call.args)) {
         const result = { error: 'validation_error', message: definition ? `Arguments must match ${JSON.stringify(definition.inputSchema)}` : `Unknown tool: ${call.name}` };
         invalidCalls.push({ round, call, result });
         trace.results.push({ call, result });
       } else validCalls.push(call);
     }
-    transcript.calls.push(...validCalls.filter(call => call.name !== 'find_tools'));
+    transcript.calls.push(...validCalls);
     for (const call of validCalls) {
-      if (deferred && call.name === 'find_tools') {
-        const matches = findTools(tools, call.args.query);
-        matches.forEach(t => loaded.add(t.name));
-        trace.results.push({ call, result: matches });
-        continue;
-      }
       // These calls end the assigned turn; trailing calls are never silently dropped.
       if (['order', 'report', 'no_reply_needed'].includes(call.name)) {
         if (answer.calls.at(-1) !== call) return { ...finish('behavior', undefined, 'invalid-sequence'), pass: false, reason: 'Calls after terminal action' };
@@ -743,15 +725,12 @@ export async function runCli(args, { run = runNightly } = {}) {
   const models = option('--models', DEFAULT_MODELS.join(',')).split(',').map((model) => model.trim()).filter(Boolean);
   if (!models.length) throw new Error('--models needs at least one model');
   const patch = option('--candidate-patch');
-  const toolMode = option('--tool-mode', 'full');
-  if (!['full', 'deferred'].includes(toolMode)) throw new Error('--tool-mode must be full or deferred');
-  if (toolMode === 'deferred' && patch) throw new Error('Tool comparison cannot use a candidate patch');
   // SIGKILL cannot be caught; every other exit records why the run stopped.
   const signals = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
   const onSignal = (signal) => { markTerminal(out, 'killed', `Controller received ${signal}`); process.exit(signals[signal]); };
   for (const signal of Object.keys(signals)) process.on(signal, onSignal);
   try {
-    const result = await (toolMode === 'deferred' ? runToolComparison : run)({ out, history, request, tokenCap, costCap, models,
+    const result = await run({ out, history, request, tokenCap, costCap, models,
       candidatePatch: patch && resolve(patch), label: option('--label', 'nightly replay') });
     if (!['complete', 'skipped'].includes(result.status)) process.exitCode = 1;
     return result;

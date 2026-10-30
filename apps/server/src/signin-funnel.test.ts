@@ -29,6 +29,8 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 const today = () => new Date().toISOString().slice(0, 10);
+// Rows keep microseconds; a millisecond window end can exclude a row written in the same millisecond.
+const windowEnd = () => new Date(Date.now() + 1000).toISOString();
 it('attributes viewer milestones only to the onboarding artifact posted on the signup attempt', async () => {
   const identity = 'd'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Person','customer')`, [identity]);
@@ -44,7 +46,7 @@ it('attributes viewer milestones only to the onboarding artifact posted on the s
       await recordSigninFunnelEvent(db, { ...attempt, provider: undefined, event, artifactId: id,
         ...(event === 'game_viewer_closed' ? { durationMs: 1500 } : {}) }, 'client', identity);
     }
-    const funnel = await dashboardOnboarding(db, `${today()}T00:00:00Z`, new Date().toISOString());
+    const funnel = await dashboardOnboarding(db, `${today()}T00:00:00Z`, windowEnd());
     return funnel.paths.game.slice(1).map(step => step.count);
   };
   expect(await milestones()).toEqual([0, 0]);
@@ -66,7 +68,7 @@ it('joins onboarding to the authenticated signup attempt, excludes team accounts
       await recordOnboardingEvent(db, identity!, 'game_posted');
     }
   }
-  const dashboard = await dashboardOnboarding(db, `${today()}T00:00:00Z`, new Date().toISOString());
+  const dashboard = await dashboardOnboarding(db, `${today()}T00:00:00Z`, windowEnd());
   expect(dashboard.steps.find(step => step.key === 'welcome_shown')?.count).toBe(1);
   expect(dashboard.steps.find(step => step.key === 'option_picked')).toMatchObject({ samples: 1, medianSecondsFromPrevious: null });
   expect(dashboard.byOption.special!.steps.find(step => step.key === 'option_picked')?.count).toBe(1);

@@ -1043,10 +1043,12 @@ export class PhoneService {
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
-  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>;
+  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove' | 'cleanupRemoved'>;
 
   /** Give every newly created Workspace a free starter agent. */
-  setFreeAgents(freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>): void {
+  setFreeAgents(
+    freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove' | 'cleanupRemoved'>,
+  ): void {
     this.freeAgents = freeAgents;
   }
 
@@ -8303,6 +8305,7 @@ export class PhoneService {
    *     are deleted outright — nobody else relies on them;
    *   - every Composio connected account the person owns is revoked at the
    *     provider first; a revocation failure aborts before anything is erased;
+   *   - every free agent's Machine is deleted next, for the same reason;
    *   - sign-in identity links (`beeline_identity_links`) for the person's
    *     subjects and keys are deleted;
    *   - sessions, access/refresh/daemon tokens, push devices, media bytes,
@@ -8334,12 +8337,32 @@ export class PhoneService {
       throw new Error('App connections cannot be revoked now; try again later');
     for (const row of providerAccounts.rows)
       await this.composio!.deleteAccount(row.composio_account_id);
+    // Free agents run on their own Machines. The identity delete cascades the
+    // free_agents row the leader's removal sweep would need, so retire each
+    // agent and delete its Machine first; anything left aborts for a retry.
+    const freeAgentIds = (
+      await this.database.query<{ agent_id: string }>(
+        `UPDATE free_agents SET removed_at=coalesce(removed_at,now()),updated_at=now()
+         WHERE owner_id=$1 OR agent_id IN (SELECT agent_id FROM agents WHERE owner_id=$1)
+         RETURNING agent_id`,
+        [viewerId],
+      )
+    ).rows.map((row) => row.agent_id);
+    if (this.freeAgents)
+      for (const agentId of freeAgentIds) await this.freeAgents.cleanupRemoved(agentId);
+    const machinesLeft = await this.database.query(
+      `SELECT 1 FROM free_agents WHERE agent_id=ANY($1) AND removal_cleaned_at IS NULL
+         AND (fly_machine_id IS NOT NULL OR $2::boolean)`,
+      [freeAgentIds, Boolean(this.freeAgents)],
+    );
+    if (machinesLeft.rowCount) throw new Error('Agent machines are still stopping; try again shortly');
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
       if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount)
         return;
       const owned = await database.query<{ agent_id: string }>(
-        `SELECT agent_id FROM agents WHERE owner_id=$1`,
+        `SELECT agent_id FROM agents WHERE owner_id=$1
+         UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`,
         [viewerId],
       );
       // Everything erased by this deletion: the person and each agent it owned.
@@ -8472,6 +8495,54 @@ export class PhoneService {
         gone,
         DELETED_ACCOUNT_IDENTITY_ID,
       ]);
+      // Active merge holds stay active under the tombstone holder. A corner
+      // keeps one active hold per holder, so when several holds on one corner
+      // now share the tombstone, only the hardest to release stays. Any member
+      // may release an agent's hold, while a person's hold needs standing above
+      // its own, so person holds outrank agent holds before standing does.
+      await database.query(
+        `WITH tombstoned AS (
+           SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY set_by_agent_id IS NOT NULL,
+             CASE standing WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,set_at,id) rank
+           FROM corner_merge_holds
+           WHERE released_at IS NULL
+             AND (coalesce(set_by_agent_id,actor_id)=ANY($1) OR coalesce(set_by_agent_id,actor_id)=$2))
+         UPDATE corner_merge_holds SET released_at=now(),released_by=$2
+         WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
+        [gone, DELETED_ACCOUNT_IDENTITY_ID],
+      );
+      // Corner records, workflow transfers and installed apps are shared
+      // history: they keep the tombstone as author, like messages do.
+      for (const [table, column] of [
+        ['messages', 'deleted_by'],
+        ['corner_brief_revisions', 'author_id'],
+        ['corner_validation_stages', 'actor_id'],
+        ['corner_merge_holds', 'actor_id'],
+        ['corner_merge_holds', 'released_by'],
+        ['corner_merge_holds', 'set_by_agent_id'],
+        ['corner_apps', 'author_agent_id'],
+        ['corner_app_installations', 'installed_by'],
+        ['corner_app_bindings', 'bound_by'],
+        ['workflow_owner_transfers', 'actor_id'],
+        ['workflow_owner_transfers', 'previous_owner_id'],
+        ['workflow_owner_transfers', 'new_owner_id'],
+      ])
+        await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
+          gone,
+          DELETED_ACCOUNT_IDENTITY_ID,
+        ]);
+      // Optional attributions simply lose the deleted id.
+      for (const [table, column] of [
+        ['corner_facts', 'reviewer_agent_id'],
+        ['rooms', 'reviewer_agent_id'],
+        ['corner_app_installations', 'developer_agent_id'],
+        ['connector_offers', 'accepted_by'],
+        ['agent_schedules', 'owner_id'],
+        ['agent_schedules', 'updated_by'],
+        ['workspace_skills', 'creator_agent_id'],
+        ['workspace_skills', 'owner_agent_id'],
+      ])
+        await database.query(`UPDATE ${table} SET ${column}=NULL WHERE ${column}=ANY($1)`, [gone]);
 
       // DM Rooms nobody else relies on (person↔own-agent) go with the account;
       // the rest lose the deleted participant from their participant list.
@@ -8496,6 +8567,16 @@ export class PhoneService {
       await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM computer_sessions WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(
+        `DELETE FROM starter_onboarding_runs
+         WHERE user_id=ANY($1) OR beebee_id=ANY($1) OR luna_id=ANY($1)`,
+        [gone],
+      );
+      await database.query(`DELETE FROM free_agents WHERE agent_id=ANY($1) OR owner_id=ANY($1)`, [
+        gone,
+      ]);
       await database.query(`DELETE FROM work_schedules WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_mandates WHERE agent_id=ANY($1)`, [gone]);

@@ -33,6 +33,7 @@ import { resolveCurrentMemberMentions } from './message-mentions.js';
 import { LiveHub } from './live.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { PhoneService } from './phone-service.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { GitHubOperations } from './github-operations.js';
 import { ObjectService } from './object-service.js';
 import { PgliteDatabase, MemoryObjectStorage } from './test-support.js';
@@ -582,6 +583,37 @@ describe('free starter agents', () => {
         ])
       ).rows.map((row) => row.kind),
     ).toEqual(['created', 'provisioned']);
+  });
+
+  it('R-DELETE-NEW-USER: deletes a new account with its starter pair, onboarding run and turn traces, and deletes their Machines', async () => {
+    await new AuthStore(db as unknown as TransactionalDatabase).migrate();
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Fresh' }, OWNER) as { id: string; roomId: string };
+    await finishWelcome(roomId, OWNER);
+    const team = (await db.query<{ agent_id: string }>(
+      `SELECT agent_id FROM free_agents WHERE workspace_id=$1 ORDER BY starter_role`, [id],
+    )).rows.map((row) => row.agent_id);
+    expect(team).toHaveLength(2);
+    expect((await db.query(`SELECT 1 FROM starter_onboarding_runs WHERE user_id=$1`, [OWNER])).rowCount).toBe(1);
+    // Beebee has done work: a running Machine and a stored turn trace.
+    await createAgentCommand(db, { roomId, agentId: team[0]!, sourceMessageId: null, reason: 'human_tag' });
+    await freeAgents.provision(team[0]!);
+    await settle();
+    expect((await freeAgentOf(id)).fly_machine_id).toBe('m1');
+    for (const agentId of team)
+      await db.query(
+        `INSERT INTO agent_turn_traces(room_id,request_id,agent_id,outcome,trace) VALUES($1,'req-1',$2,'replied','{}'::jsonb)`,
+        [roomId, agentId],
+      );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    for (const [table, column] of [
+      ['identities', 'id'], ['free_agents', 'agent_id'], ['agent_turn_traces', 'agent_id'],
+      ['starter_onboarding_runs', 'beebee_id'],
+    ] as const)
+      expect((await db.query(`SELECT 1 FROM ${table} WHERE ${column}=ANY($1)`, [[OWNER, ...team]])).rowCount, table).toBe(0);
+    expect(machines.calls).toContain('destroy m1');
+    expect(machines.states.get('m1')).toBe('destroyed');
   });
 
   it('keeps the Beebee name and de-duplicates its handle against existing members', async () => {

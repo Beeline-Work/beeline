@@ -3,6 +3,7 @@ import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
+import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
@@ -398,6 +399,139 @@ describe('deleteAccount', () => {
     // Every token the account held is dead: the access token authenticates to
     // nothing and the refresh family is gone.
     expect(await auth.authenticatePhone(ownerToken)).toBeNull();
+  });
+
+  it('clears every non-cascading reference to identities (R-ACCOUNT-FKS)', async () => {
+    // Each foreign key to identities that neither cascades nor sets null must
+    // be cleared by deleteAccount before the identity row goes; otherwise the
+    // delete fails for any account with such a row. A new foreign key fails
+    // here until deleteAccount handles it and it is listed below.
+    const handled = [
+      'agent_commands.agent_id', 'agent_grants.decided_by', 'agent_grants.requested_by',
+      'agent_mandates.agent_id', 'agent_pairing_codes.claimed_by',
+      'agent_pairing_codes.created_by', 'agent_schedules.agent_id',
+      'agent_schedules.creator_id', 'agent_schedules.owner_id', 'agent_schedules.updated_by',
+      'agent_turn_traces.agent_id', 'agent_turns.agent_id', 'agents.owner_id',
+      'computer_sessions.agent_id', 'connector_offers.accepted_by',
+      'corner_app_bindings.bound_by', 'corner_app_installations.developer_agent_id',
+      'corner_app_installations.installed_by', 'corner_apps.author_agent_id',
+      'corner_brief_revisions.author_id', 'corner_facts.commissioned_by',
+      'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
+      'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',
+      'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
+      'corner_merge_holds.set_by_agent_id', 'corner_validation_stages.actor_id',
+      'free_agents.owner_id', 'github_installations.owner_id',
+      'identity_successions.new_identity_id', 'identity_successions.old_identity_id',
+      'invites.created_by', 'live_outputs.agent_id', 'messages.author_id',
+      'messages.deleted_by', 'mission_authority.principal_id', 'objects.owner_id',
+      'permission_authority.principal_id', 'rooms.created_by', 'rooms.reviewer_agent_id',
+      'schedule_receipts.agent_id', 'starter_onboarding_runs.beebee_id',
+      'starter_onboarding_runs.luna_id', 'starter_onboarding_runs.user_id',
+      'work_schedules.agent_id', 'workflow_owner_transfers.actor_id',
+      'workflow_owner_transfers.new_owner_id', 'workflow_owner_transfers.previous_owner_id',
+      'workspace_deletions.deleted_by', 'workspace_skills.creator_agent_id',
+      'workspace_skills.owner_agent_id',
+    ];
+    const references = await database.query<{ reference: string }>(
+      `SELECT c.conrelid::regclass::text||'.'||a.attname AS reference
+       FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1]
+       WHERE c.contype='f' AND c.confrelid='identities'::regclass AND c.confdeltype IN ('a','r')
+       ORDER BY 1`,
+    );
+    expect(references.rows.map((row) => row.reference)).toEqual([...handled].sort());
+    // Nothing reached through a cascade from identities is itself held by a
+    // non-cascading reference.
+    const indirect = await database.query(
+      `WITH RECURSIVE reached(tbl) AS (
+         SELECT 'identities'::regclass
+         UNION SELECT c.conrelid FROM pg_constraint c JOIN reached ON c.confrelid=reached.tbl
+         WHERE c.contype='f' AND c.confdeltype='c')
+       SELECT c.conname FROM pg_constraint c
+       WHERE c.contype='f' AND c.confdeltype IN ('a','r') AND c.confrelid<>'identities'::regclass
+         AND c.confrelid IN (SELECT tbl FROM reached)`,
+    );
+    expect(indirect.rows).toEqual([]);
+  });
+
+  it('keeps shared corner records and active merge holds under the tombstone', async () => {
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
+    await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
+    await database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'brief',$2,$3)`,
+      [CORNER, AGENT, ROOM],
+    );
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`,
+      [CORNER, OWNER],
+    );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND reviewer_agent_id IS NULL`, [ROOM], 1);
+    await expectRowCount(`SELECT 1 FROM messages WHERE id='m3' AND deleted_by=$1`, [DELETED_ACCOUNT_IDENTITY_ID], 1);
+    await expectRowCount(
+      `SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1 AND author_id=$2 AND content='brief'`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+    await expectRowCount(
+      `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND actor_id=$2
+         AND set_by_agent_id IS NULL AND released_by IS NULL AND released_at IS NULL`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+  });
+
+  it('keeps a person hold\'s release rule when the account and its agent both held a surviving corner (R-DELETE-HOLD-AUTHORITY)', async () => {
+    // A partner agent owns the corner, so the corner survives the deletion.
+    const partnerAgent = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Partner Bee')`, [partnerAgent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2,worker_agent_id=$2 WHERE corner_id=$1`, [
+      CORNER,
+      partnerAgent,
+    ]);
+    // A plain member stays a member after the deletion promotes the partner.
+    const member = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Member','member')`, [member]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, member],
+    );
+    // Historical standings can differ: the person hold is weaker by standing
+    // but, unlike the agent hold, only someone above member may release it.
+    const personHold = (
+      await database.query<{ id: string }>(
+        `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'member') RETURNING id::text`,
+        [CORNER, OWNER],
+      )
+    ).rows[0]!.id;
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id) VALUES($1,$2,'owner',$3)`,
+      [CORNER, OWNER, AGENT],
+    );
+    await expect(setCornerHold(database, { cornerId: CORNER, releaseHoldId: personHold }, member)).rejects.toThrow(
+      'hold release denied',
+    );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`, [CORNER], 1);
+    const kept = (
+      await database.query<{ id: string }>(
+        `SELECT id::text FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL
+           AND actor_id=$2 AND set_by_agent_id IS NULL AND standing='member'`,
+        [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      )
+    ).rows;
+    expect(kept).toEqual([{ id: personHold }]);
+    await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
+    await expect(setCornerHold(database, { cornerId: CORNER, releaseHoldId: personHold }, member)).rejects.toThrow(
+      'hold release denied',
+    );
+    await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
   });
 
   it('is idempotent: a second call resolves without effect', async () => {

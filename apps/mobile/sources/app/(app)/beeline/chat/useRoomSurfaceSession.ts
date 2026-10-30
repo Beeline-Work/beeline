@@ -438,10 +438,11 @@ export function useRoomSurfaceSession({
   // boundary the reader actually reached; the Room switching out from under it
   // drops whatever it was still holding, because that belongs to the old Room.
   const readCursorRef = useRef<ReadCursorAdvancer | null>(null);
+  const readCursorViewerRef = useRef(userPubkey);
   if (readCursorRef.current === null) {
     readCursorRef.current = new ReadCursorAdvancer((messageId) => {
       void roomClientRef.current?.markRead(channelIdRef.current, messageId).catch(() => undefined);
-    });
+    }, undefined, () => roomClientRef.current !== null);
   }
   useEffect(() => {
     channelIdRef.current = channelId;
@@ -453,6 +454,14 @@ export function useRoomSurfaceSession({
     // one.
     return () => readCursorRef.current?.cancel();
   }, [channelId]);
+  useEffect(() => {
+    const previous = readCursorViewerRef.current;
+    readCursorViewerRef.current = userPubkey;
+    if (previous && previous !== userPubkey) readCursorRef.current?.cancel();
+  }, [userPubkey]);
+  useEffect(() => {
+    if (roomClient) readCursorRef.current?.retry();
+  }, [roomClient]);
   // A VISIT begins and ends with focus, not with the Room id. Re-arming on
   // `channelId` alone left the advancer suspended forever once mark-unread
   // stopped it: the reader leaves and reopens the same Room, the id never

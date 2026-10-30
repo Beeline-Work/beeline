@@ -9,6 +9,17 @@ import { execFileSync, spawnSync } from 'node:child_process';
 
 test('unrelated pull requests need no latency evidence', () => {
   assert.doesNotThrow(() => checkProof(['docs/agent-mobile.md'], ''));
+  assert.doesNotThrow(() => checkProof(['apps/mobile/sources/app/(app)/beeline/settings/profile.tsx'], ''));
+});
+
+test('the listed push, cache, screen, send, transport and foreground paths require proof', () => {
+  for (const file of ['apps/mobile/plugins/withAndroidPushRouting.js',
+    'packages/buzz-client/src/surface-cache.ts',
+    'apps/mobile/sources/app/(app)/beeline/chat/_chat-surface.tsx',
+    'apps/mobile/sources/components/buzz/ConversationComposer.tsx',
+    'apps/mobile/sources/sync/transport/monolith-rig-transport.ts',
+    'apps/mobile/sources/components/StoreUpdateGate.tsx'])
+    assert.throws(() => checkProof([file], 'No rig report.'));
 });
 test('sensitive changes require every case with numeric before and after values', () => {
   const files = ['apps/mobile/sources/push/notification-response.ts'];

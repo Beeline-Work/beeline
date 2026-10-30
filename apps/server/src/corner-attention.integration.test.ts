@@ -207,7 +207,7 @@ it('Reproduction CORNER-STATE: the Room list and corner inspection agree that CI
   console.info('Demonstrated CORNER-STATE: live work is Working, pending CI is Review, failing checks alone are Idle');
 });
 it.each(['pending', 'passing'])(
-  'Reproduction CI-REVIEW: a human merge-yes request stays Waiting with %s checks',
+  'Reproduction HEADER-STATE-4: a human merge-yes request with %s checks',
   async (checks) => {
     await ci(checks);
     await db.query(
@@ -216,17 +216,18 @@ it.each(['pending', 'passing'])(
     );
     const { reportToCommander } = await import('./commander.js');
     await reportToCommander(db, C, WORKER, 'needs-decision: Please approve this merge?');
-    expect(await state()).toBe('waiting');
+    const expected = checks === 'pending' ? 'review' : 'waiting';
+    expect(await state()).toBe(expected);
     const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
-    expect(deck).toMatchObject({ waitingCornerCount: 1 });
-    expect(deck!.openCorners[0]).toMatchObject({ state: 'waiting', blocker: { kind: 'message' } });
+    expect(deck).toMatchObject({ waitingCornerCount: checks === 'pending' ? 0 : 1 });
+    expect(deck!.openCorners[0].state).toBe(expected);
   },
 );
 it.each([
   ['agent', 'pending', 'review'],
-  ['human', 'pending', 'waiting'],
+  ['human', 'pending', 'review'],
   ['agent', 'unreported', 'review'],
-  ['human', 'unreported', 'waiting'],
+  ['human', 'unreported', 'review'],
 ] as const)(
   'Reproduction R1: a %s commander blocked report during %s checks is %s',
   async (kind, checks, expected) => {
@@ -539,8 +540,8 @@ it('Reproduction CORNER-REVIEW-ROLE: a dispatched reviewer stays Review after Ro
     sourceMessageId:'review-source',reason:'corner_review_dispatch'});
   expect(dispatch).toBeTruthy();
   const serviceStates=async()=>[await state(),(await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state];
-  // A queued dispatch is not an active reviewer turn.
-  expect(await serviceStates()).toEqual(['working','working']);
+  // A queued reviewer keeps the corner in review during its pickup window.
+  expect(await serviceStates()).toEqual(['review','review']);
   await daemon.execute('claimAgentCommand',{roomId:C,commandId:dispatch!.id,generationId:'review-proof'},REVIEWER);
   expect(await serviceStates()).toEqual(['review','review']);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`,[ROOM]);
@@ -945,4 +946,37 @@ it('Reproduction idle-1: an opening idle alert is discarded when delivered durin
   expect(queued.some(c=>c.source.body.includes('is idle'))).toBe(true);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[C,JSON.stringify({checks:'pending',pr:{number:3101,headSha:'0db9eaa0713c7dc8d3027b7c045bbe1760cd391a'},checksSummary:{status:'pending',total:14,checks:[{name:'SHARED PACKAGE TESTS',status:'pending'},{name:'Build auth container',status:'pending'}]}})]);
   expect((await daemon.execute('getAgentCommands',{roomId:C},COMMANDER)).commands).toEqual([]);
+});
+
+
+it('Reproduction HEADER-STATE-3: simultaneous implementer and reviewer display working', async () => {
+  await turn(WORKER);
+  await turn(REVIEWER);
+  expect(await state()).toBe('working');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('working');
+});
+it('Reproduction HEADER-STATE-5: queued reviewer displays review during pickup window', async () => {
+  await wake(REVIEWER, 'queued-review');
+  expect(await state()).toBe('review');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('review');
+  await db.query("UPDATE agent_turns SET created_at=now()-interval '31 seconds' WHERE room_id=$1", [C]);
+  expect(await state()).toBe('idle');
+});
+
+it('Reproduction HEADER-STATE-4: pending CI wins over a human question with a hold', async () => {
+  await post('scope-question', '@owner Which scope should I implement?');
+  await db.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable,blocking)
+    VALUES($1,$2,'scope-question',now(),true,true) ON CONFLICT DO NOTHING`, [C,HUMAN]);
+  await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
+  await ci('pending');
+  expect(await state()).toBe('review');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('review');
+  await ci('passing');
+  expect(await state()).toBe('waiting');
+});
+it('queued implementer keeps the existing pickup window', async () => {
+  await wake(WORKER, 'queued-implementer');
+  expect(await state()).toBe('working');
+  await db.query("UPDATE agent_turns SET created_at=now()-interval '31 seconds' WHERE room_id=$1", [C]);
+  expect(await state()).toBe('idle');
 });

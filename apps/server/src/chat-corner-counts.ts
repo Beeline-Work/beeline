@@ -18,6 +18,7 @@ export type CornerStateRow = {
   waiting_kind?: 'message' | 'merge-hold' | 'report' | null;
   waiting_person_name?: string | null;
   archived_at: Date | null;
+  locked?: boolean;
   lifecycle: CornerLifecycleView | null;
   /** The corner lifecycle's projected state (`corner_facts.workflow_state`). */
   workflow_state?: string | null;
@@ -25,36 +26,26 @@ export type CornerStateRow = {
   latest_turn_status: string | null;
   worker_active?: boolean;
   last_turn_ended_at?: Date | null;
-  ci_started_at?: Date | null;
   reviewer_active?: boolean;
   blocking?: boolean;
   waiting_item_id?: string | null;
   waiting_reason?: CornerStateReason | null;
   waiting_person_id?: string | null;
-  waiting_since?: Date | null;
-  /** Selected blocker is a report addressed to the agent commander. */
-  agent_commander?: boolean | null;
-  /** Another blocker in the same corner is addressed to a person; merge holds do not count. */
-  human_blocker?: boolean | null;
-  /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
-  owed?: boolean | null;
   owed_viewer?: boolean | null;
   /** `followsCornerSql`: the push Followed rule for this viewer. */
   follows_viewer?: boolean | null;
 };
 
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {
-  const agentCommander = row.agent_commander === true && row.human_blocker !== true;
   return deriveCornerState({
     archived: Boolean(row.archived_at),
-    turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
+    locked: row.locked,
+    turnRunning: row.worker_active === true,
     reviewerActive: row.reviewer_active,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
-    owed: row.blocking ?? false,
-    ...(agentCommander ? { agentCommanderReport: true } : {}),
     ...(row.waiting_item_id && row.waiting_reason
       ? {
           blocker: {
@@ -107,17 +98,16 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
+    columns: `f.locked,f.lifecycle,f.workflow_state,f.workflow_outcome,
       activity.worker_active,activity.reviewer_active,
-      span.last_turn_ended_at,span.ci_started_at,
+      span.last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
-      blocker.person_id waiting_person_id,blocker.created_at waiting_since,
-      blocker.agent_commander,blocker.human_blocker,
+      blocker.person_id waiting_person_id,
       turn.status latest_turn_status,turn.created_at latest_turn_created_at,
       lm.created_at latest_created_at,
       ${followsCornerSql('c', viewerExpr)} follows_viewer,
-      owed.owed,owed.owed_viewer,owed.attention`,
+      owed.owed_viewer,owed.attention`,
     joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
     ${cornerWorkSql()}
     LEFT JOIN corner_attention_spans span ON span.corner_id=c.id
@@ -144,14 +134,13 @@ export function cornerWorkSql(ignoreCommander = false): string {
           OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'
             AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'))))`;
   return `LEFT JOIN rooms parent ON parent.id=c.parent_id
-    LEFT JOIN LATERAL (WITH turns AS MATERIALIZED (SELECT ${reviewerTurn} review,
-        COALESCE(t.generation_id,'') LIKE 'pending:%' pending
+    LEFT JOIN LATERAL (WITH turns AS MATERIALIZED (SELECT ${reviewerTurn} review
         FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
           ${ignoreCommander ? 'AND t.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND (COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
             OR t.created_at>now()-interval '30 seconds'))
-      SELECT COALESCE(bool_or(pending OR NOT review),false) worker_active,
-        COALESCE(bool_or(NOT pending AND review),false) reviewer_active FROM turns
+      SELECT COALESCE(bool_or(NOT review),false) worker_active,
+        COALESCE(bool_or(review),false) reviewer_active FROM turns
     ) activity ON true`;
 }
 
@@ -163,13 +152,12 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
   const direction = newestFirst ? 'DESC' : 'ASC';
   return `LEFT JOIN LATERAL (
     SELECT ranked.* FROM (
-      SELECT blockers.*,person.name person_name,
-        bool_or(NOT blockers.agent_commander AND blockers.kind<>'merge-hold') OVER () human_blocker
+      SELECT blockers.*,person.name person_name
       FROM (
       SELECT owed.message_id item_id,owed.person_id,owed.created_at,
         CASE WHEN item.card_type IN ('squire-approval','permission','grant-request') THEN 'approve'
           WHEN item.card_type IN ('connector-offer','app-sign-in','agent-sign-in') THEN 'connect'
-          ELSE 'question' END reason,'message'::text kind,false agent_commander
+          ELSE 'question' END reason,'message'::text kind
       FROM corner_owed owed
       JOIN messages item ON item.id=owed.message_id
       JOIN memberships current_member ON current_member.room_id=c.parent_id
@@ -179,12 +167,12 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
         CASE WHEN report.return_room_id=c.id AND report.message_id IS NOT NULL THEN 'message'
-          ELSE 'report' END,recipient.kind='agent' FROM corner_report_blockers report
+          ELSE 'report' END FROM corner_report_blockers report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
       WHERE report.corner_id=c.id
       UNION ALL
-      SELECT hold.id::text,hold.actor_id,hold.set_at,'approve','merge-hold',false FROM corner_merge_holds hold
+      SELECT hold.id::text,hold.actor_id,hold.set_at,'approve','merge-hold' FROM corner_merge_holds hold
       JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
     ) blockers LEFT JOIN identities person ON person.id=blockers.person_id

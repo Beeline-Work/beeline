@@ -12,27 +12,13 @@ export type CornerRunFacts = {
 
 export type CornerStateFacts = {
   readonly archived: boolean;
+  readonly locked?: boolean;
   /** Running worker receipts; reviewer work has its own input. */
   readonly turnRunning: boolean;
-  readonly workerQueued?: boolean;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
   readonly lifecycle?: CornerLifecycleView;
-  /**
-   * Whether an unresolved blocker is present. Who it is owed to is
-   * `agentCommanderReport`. A workflow stage or an ordinary tag alone never
-   * establishes a blocker.
-   */
-  readonly owed?: boolean;
-  /**
-   * Every unresolved blocker is a blocked or needs-decision report to the
-   * agent commander, taken from that report's recipient. Pending checks on
-   * the current head stay review until a final result or a new push. A
-   * human-owed blocker leaves this unset, including when an agent-commander
-   * report is also open. A human merge hold does not count as human-owed.
-   */
-  readonly agentCommanderReport?: boolean;
   /**
    * The selected blocker. Merge holds are selected only when no other blocker
    * is open, so a `merge-hold` blocker means the hold is all that remains.
@@ -47,30 +33,22 @@ export type DerivedCornerState = {
   readonly blocker?: CornerBlocker;
 };
 
-/**
- * Recover the workflow stage when no handoff card records one. Displayed state
- * uses live work and human blockers separately; a stage alone is not activity.
- *
- * - ended (archived, merged, done, abandoned) -> `landed` or `closed`
- * - a PR with failing checks -> `implement`, reached by `failing`
- * - a PR with passing checks -> `review`
- * - a PR with pending or unknown checks -> `checks`
- * - a question waiting on a person -> `ask_human`
- * - a failed turn -> `implement`, reached by `failed` (no contract edge)
- * - anything else -> `implement`
+/** Recover a workflow stage from persisted lifecycle facts when no run is known.
+ * Locked corners retain live stages after merges; actual archival always ends them.
+ * Check results select implement/review/checks without establishing activity.
  */
 export function cornerRunFromLifecycle(input: {
   readonly archived: boolean;
+  readonly locked?: boolean;
   readonly lifecycle?: CornerLifecycleView;
 }): CornerRunFacts {
   const lifecycle = input.lifecycle;
   const rawState = String(lifecycle?.lifecycle ?? '').trim().toLowerCase();
   const merged = Boolean(lifecycle?.pr?.mergedAt) || lifecycle?.outcome === 'landed';
-  if (merged || rawState === 'merged') return { state: 'landed' };
+  if (!input.locked && merged) return { state: 'landed' };
   if (
     input.archived ||
-    lifecycle?.outcome === 'abandoned' ||
-    ['done', 'concluded', 'closed', 'abandoned', 'cleaned'].includes(rawState)
+    (!input.locked && (lifecycle?.outcome === 'abandoned' || rawState === 'done'))
   )
     return { state: 'closed' };
   if (lifecycle?.pr) {
@@ -79,40 +57,27 @@ export function cornerRunFromLifecycle(input: {
     if (checks === 'passing') return { state: 'review' };
     return { state: 'checks' };
   }
-  const rawReason = lifecycle?.reason?.trim().toLowerCase();
-  if (rawReason === 'question' || rawState === 'question') return { state: 'ask_human' };
-  if (['failure', 'failed'].includes(rawReason ?? '') || ['failure', 'failed'].includes(rawState))
-    return { state: 'implement', outcome: 'failed' };
   return { state: 'implement' };
 }
 
 /**
- * Precedence, first match. Workflow stages do not add activity of their own.
- *
- * 1. `archived` — the corner is archived, or its run or lifecycle is landed or closed.
- * 2. `review` — a reviewer turn is active, regardless of checks.
- * 3. `working` — a worker turn is running. A queued worker is not running.
- * 4. `waiting` — an unresolved blocker, unless checks are pending on the
- *    current head and every blocker is an agent-commander report or a merge
- *    hold. A hold blocks the merge, not the checks or review before it.
- * 5. `review` — pending or not-yet-reported checks, until a final result or push.
- * 6. `idle` — the fall-through, including failing checks without work or a blocker.
- *    A turn that just ended is idle at once: `working` needs a live or queued turn.
+ * Precedence, first match. Workflow stages alone do not establish activity.
+ * 1. archived — actually archived, or an ended run/lifecycle on an unlocked corner.
+ * 2. working — a live non-reviewer turn, including its queued pickup window.
+ * 3. review — a live reviewer turn, or pending/not-yet-reported CI.
+ * 4. waiting — an unresolved blocker, including reports and human merge holds.
+ * 5. idle — everything else, including schedules and failing checks alone.
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
-  const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
-  if (facts.archived || terminal.state === 'landed' || terminal.state === 'closed' ||
-      facts.run?.state === 'landed' || facts.run?.state === 'closed')
+  const ended = [facts.run?.state, cornerRunFromLifecycle(facts).state]
+    .some(state => state === 'landed' || state === 'closed');
+  if (facts.archived || (!facts.locked && ended))
     return { state: 'archived' };
-  const lifecycle = facts.lifecycle;
-  const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
-  const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
-  if (facts.reviewerActive) return { state: 'review' };
   if (facts.turnRunning) return { state: 'working' };
-  const deferredByCi = facts.agentCommanderReport || facts.blocker?.blocker?.kind === 'merge-hold';
-  if ((facts.blocker || facts.owed === true) && !(deferredByCi && pendingCi))
-    return { state: 'waiting', ...facts.blocker };
-  if (pendingCi) return { state: 'review' };
+  const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
+  if (facts.reviewerActive || checks === 'pending' || checksNotReported(facts.lifecycle))
+    return { state: 'review' };
+  if (facts.blocker) return { state: 'waiting', ...facts.blocker };
   return { state: 'idle' };
 }
 

@@ -8,7 +8,6 @@ import type {
 import {
   roomViewParentId,
   cornerDisplayState,
-  cornerHeaderStateLabel,
   cornerDisplayItems,
   cornerHeaderAgent,
   cornerHeaderItem,
@@ -34,7 +33,6 @@ describe('server-owned corner display state', () => {
   ] as const)('renders %s without deriving a replacement state', (state, tone, glyph) => {
     expect(cornerDisplayState(item(state))).toMatchObject({
       status: state,
-      word: state,
       tone,
       glyph,
       terminal: state === 'archived',
@@ -42,8 +40,7 @@ describe('server-owned corner display state', () => {
   });
 
   it.each(['approve', 'connect', 'question'] as const)('keeps %s off the list label', (reason) => {
-    expect(cornerDisplayState(item('waiting', reason)).word).toBe('waiting');
-    expect(cornerHeaderStateLabel(cornerDisplayState(item('waiting', reason)))).toBe('waiting');
+    expect(cornerDisplayState(item('waiting', reason)).status).toBe('waiting');
   });
 
   it('uses lifecycle only for PR/check narration', () => {

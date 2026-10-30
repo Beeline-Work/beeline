@@ -2,23 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { deriveCornerState, type CornerStateFacts } from './corner-state.js';
 import type { CornerLifecycleView, CornerState } from './phone-types.js';
 
-/**
- * Invariants for `deriveCornerState`, including precedence when they overlap.
- *
- * 1. `archived` iff the corner, its run, or its lifecycle is landed or closed.
- * 2. `review` iff a reviewer turn is active, or
- *    checks are pending on the current head with no human-owed blocker other
- *    than a merge hold and no worker turn running.
- * 3. `working` is a running worker turn only; a turn that just ended is not
- *    work. It never overrides archived or an explicit wait. A live reviewer
- *    beats worker work regardless of checks.
- * 4. `waiting` is a blocker, except agent-only reports or a lone merge hold
- *    during pending CI.
- * 5. Everything else is `idle`; failing checks alone establish no activity.
- *
- * Queued work alone must not change the result.
- */
-
 const PR = {
   number: 1,
   url: 'https://github.com/o/r/pull/1',
@@ -90,26 +73,20 @@ function lifecycleFor(shape: CheckShape, prPresent: boolean, closure: Closure): 
   return lifecycle;
 }
 
-function blockerFacts(kind: BlockerKind): Pick<CornerStateFacts, 'owed' | 'agentCommanderReport' | 'blocker'> {
-  if (kind === 'none') return { owed: false };
+function blockerFacts(kind: BlockerKind): Pick<CornerStateFacts, 'blocker'> {
+  if (kind === 'none') return {};
   if (kind === 'agent') {
     return {
-      owed: true,
-      agentCommanderReport: true,
       blocker: { reason: 'question', blocker: { kind: 'report', personId: 'commander' } },
     };
   }
   if (kind === 'merge-hold') {
     return {
-      owed: true,
       blocker: { reason: 'approve', blocker: { kind: 'merge-hold', personId: 'human' } },
     };
   }
-  // A human item beside an agent report is not agent-only. `cornerRowState`
-  // leaves `agentCommanderReport` unset when any blocker is owed to a human.
   const reason = kind === 'human-approve' ? 'approve' : kind === 'human-connect' ? 'connect' : 'question';
   return {
-    owed: true,
     blocker: { reason, blocker: { kind: 'message', personId: 'human' } },
   };
 }
@@ -123,7 +100,7 @@ function pendingOnHead(facts: CornerStateFacts): boolean {
     summary?.status === 'unknown' &&
     summary.total === 0 &&
     summary.fetchStartedAt === undefined;
-  return checks !== 'failing' && (checks === 'pending' || unreported);
+  return checks === 'pending' || unreported;
 }
 
 function isClosed(facts: CornerStateFacts): boolean {
@@ -131,23 +108,22 @@ function isClosed(facts: CornerStateFacts): boolean {
   if (facts.run?.state === 'landed' || facts.run?.state === 'closed') return true;
   const lifecycle = facts.lifecycle;
   const raw = String(lifecycle?.lifecycle ?? '').trim().toLowerCase();
-  if (lifecycle?.pr?.mergedAt || lifecycle?.outcome === 'landed' || raw === 'merged') return true;
+  if (lifecycle?.pr?.mergedAt || lifecycle?.outcome === 'landed') return true;
   if (lifecycle?.outcome === 'abandoned') return true;
-  if (['done', 'concluded', 'closed', 'abandoned', 'cleaned'].includes(raw)) return true;
+  if (raw === 'done') return true;
   return false;
 }
 
 function scan(
   failures: string[],
   closures: readonly Closure[],
-  queuedValues: readonly boolean[],
 ): number {
   let count = 0;
   for (const archived of [false, true]) {
     for (const run of RUNS) {
       for (const closure of closures) {
         for (const turnRunning of [false, true]) {
-            for (const workerQueued of queuedValues) {
+            for (const locked of [false, true]) {
               for (const reviewerActive of [false, true]) {
                 for (const shape of CHECKS) {
                   for (const prPresent of [false, true]) {
@@ -156,28 +132,26 @@ function scan(
                       count += 1;
                       const facts: CornerStateFacts = {
                         archived,
+                        locked,
                         turnRunning,
-                        workerQueued,
                         reviewerActive,
                         ...(run ? { run } : {}),
                         lifecycle: lifecycleFor(shape, prPresent, closure),
                         ...blockerFacts(blocker),
                       };
                       const actual: CornerState = deriveCornerState(facts).state;
-                      const closed = isClosed(facts);
+                      const closed = facts.archived || (!locked && isClosed(facts));
                       const pending = pendingOnHead(facts);
                       const anyBlocker = blocker !== 'none';
-                      const deferred = blocker === 'agent' || blocker === 'merge-hold';
                       let expected: CornerState;
                       if (closed) expected = 'archived';
-                      else if (reviewerActive) expected = 'review';
                       else if (turnRunning) expected = 'working';
-                      else if (anyBlocker && !(pending && deferred)) expected = 'waiting';
-                      else if (pending) expected = 'review';
+                      else if (reviewerActive || pending) expected = 'review';
+                      else if (anyBlocker) expected = 'waiting';
                       else expected = 'idle';
                       if (actual !== expected && failures.length < 8) {
                         failures.push(
-                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
+                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} locked=${locked} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
                         );
                       }
                     }
@@ -196,7 +170,7 @@ describe('deriveCornerState invariants', () => {
   it('enumerates archived, turns, checks, pull requests, and blockers', () => {
     const failures: string[] = [];
     const started = performance.now();
-    const count = scan(failures, ['none', 'landed', 'done', 'abandoned', 'merged'], [false, true]);
+    const count = scan(failures, ['none', 'landed', 'done', 'abandoned', 'merged']);
     const elapsed = performance.now() - started;
     expect(failures).toEqual([]);
     expect(count).toBeGreaterThan(20_000);

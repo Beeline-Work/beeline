@@ -991,7 +991,6 @@ export class GitHubOperations {
        WHERE room.id=$1 AND room.archived_at IS NULL
          AND ${cornerImplementerSql('fact', 'room')}=$2
          AND fact.lifecycle->'pr'->>'number' IS NULL
-         AND COALESCE(fact.lifecycle->>'lifecycle','')<>'landed'
          AND fact.feature_branch IS NOT NULL`, [cornerId, agentId],
     )).rows[0];
     if (!corner || (await currentCornerBrief(this.database, cornerId))?.repositoryWork === false) return;
@@ -1005,8 +1004,7 @@ export class GitHubOperations {
       // A webhook or close may have won while the provider read was in flight.
       await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb,updated_at=now()
         FROM rooms room WHERE fact.corner_id=$1 AND room.id=fact.corner_id AND room.archived_at IS NULL
-          AND fact.feature_branch=$2 AND fact.lifecycle->'pr'->>'number' IS NULL
-          AND COALESCE(fact.lifecycle->>'lifecycle','')<>'landed'`,
+          AND fact.feature_branch=$2 AND fact.lifecycle->'pr'->>'number' IS NULL`,
       [cornerId, corner.feature_branch, JSON.stringify({ lifecycle: 'in-review', branch: corner.feature_branch,
         pr: { number: pr.number, url: pr.url, title: pr.title ?? `Pull request #${pr.number}`,
           headSha: pr.headSha, targetBranch: pr.baseRef, mergeability: 'unknown',
@@ -3120,15 +3118,16 @@ export class GitHubOperations {
       if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
         `UPDATE corner_facts SET close_requested=$3,merge_attempt_head=NULL,
-           lifecycle=(lifecycle-'mergeRecovery'-'mergeQueue')||$2::jsonb,
+           lifecycle=((lifecycle-'mergeRecovery'-'mergeQueue') -
+             CASE WHEN $4 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb,
            updated_at=now() WHERE corner_id=$1`,
         [
           target.corner_id,
           JSON.stringify({
             lifecycle: locked ? 'working' : 'done',
-            checks: 'passing',
-            outcome: 'landed',
-            ...(mergedPr
+            checks: locked ? 'unknown' : 'passing',
+            ...(!locked ? { outcome: 'landed' } : {}),
+            ...(!locked && mergedPr
               ? {
                   pr: {
                     ...mergedPr,
@@ -3142,6 +3141,7 @@ export class GitHubOperations {
               : {}),
           }),
           !locked,
+          locked,
         ],
       );
       const merged: SystemPhrase = {
@@ -3170,7 +3170,7 @@ export class GitHubOperations {
         },
       });
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
-      if (!locked) await advanceCorner(database, target.corner_id, {
+      await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });

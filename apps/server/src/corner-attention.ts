@@ -173,10 +173,9 @@ type Row = CornerStateRow & {
 };
 function attentionSql() {
   return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
-    activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
+    f.locked,activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
-    blocker.agent_commander,blocker.human_blocker,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,span.reported_episode::text,
     EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL) held,
     EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id

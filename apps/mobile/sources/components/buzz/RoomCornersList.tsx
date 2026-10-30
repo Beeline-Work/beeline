@@ -181,7 +181,7 @@ export function RoomCornersList({
   };
 
   const stateWord = (display: ReturnType<typeof cornerDisplayState>) => (
-    <CornerWaitingPulse state={display.word}>
+    <CornerWaitingPulse state={display.status}>
       <Text
         style={[
           styles.state,
@@ -192,7 +192,7 @@ export function RoomCornersList({
               : styles.stateQuiet,
         ]}
       >
-        {display.word}
+        {display.status}
       </Text>
     </CornerWaitingPulse>
   );
@@ -220,7 +220,7 @@ export function RoomCornersList({
     const runs = liveRuns?.(item.corner.id) ?? [];
     return (
       <Pressable
-        accessibilityLabel={`${label}. ${display.word}${objective ? `. ${objective}` : ''}`}
+        accessibilityLabel={`${label}. ${display.status}${objective ? `. ${objective}` : ''}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
         style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]}
@@ -258,7 +258,7 @@ export function RoomCornersList({
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
     return (
       <Pressable
-        accessibilityLabel={`${label}. ${display.word}. ${line}`}
+        accessibilityLabel={`${label}. ${display.status}. ${line}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
         style={styles.row}

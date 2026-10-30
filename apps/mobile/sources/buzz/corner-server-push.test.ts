@@ -11,7 +11,6 @@ import { apnsPushRequest } from '../../../server/src/apns-push';
 import { createTranscriptScrollController, requestMessageJump } from './transcript-scroll-controller';
 import { pushMessageData, firebasePushMessage } from '../../../server/src/firebase-push';
 import { cornerHeaderItem, cornerDisplayState } from './corner-display-state';
-import { roomRowPresentation } from './room-list-row';
 
 vi.mock('react-native', async () => {
   const react = await import('react');
@@ -76,8 +75,7 @@ it.each([
   const state = reason ? 'waiting' : 'idle';
   expect(cornerDisplayState(header).status).toBe(state);
   expect(page.state).toBe(state);
-  const roomProjection = roomRowPresentation({ corners: [{ ...row, openerPubkey: agent }] }, new Map());
-  expect(roomProjection.corners[0]?.state).toBe(state);
+  expect(row.state).toBe(state);
 
   const before = send.mock.calls.length;
   expect(await loop.runOnce()).toBe(1);

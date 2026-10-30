@@ -13,6 +13,7 @@
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { reportClientError } from './client-error-report';
 import { dictationWaveformLevel } from './waveform-level';
 import {
   getRecognitionModule,
@@ -131,6 +132,7 @@ export function useSpeechInput(
   const sessionGotResultRef = React.useRef(false);
   const pendingPartialRef = React.useRef('');
   const restartCountRef = React.useRef(0);
+  const errorReportedRef = React.useRef(false);
   const silenceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalizationTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopSettlementRef = React.useRef<{
@@ -268,17 +270,15 @@ export function useSpeechInput(
       startOptions.lang,
     );
     let text = onDevice;
-    // A server-only recorder has no on-device text to judge the take by.
-    if (onDevice || modRef.current?.transcribesOnServerOnly) {
-      const transcribed = await take.upload.finish();
-      if (takeId !== takeIdRef.current) return;
-      if (transcribed) text = correctorRef.current.correct([transcribed]);
-    } else {
-      take.upload.discard();
-    }
+    // Recorded speech remains useful even when the native recognizer is empty.
+    // finish() also flushes short buffered pieces and handles missing audio.
+    const transcribed = await take.upload.finish();
+    if (takeId !== takeIdRef.current) return;
+    if (transcribed) text = correctorRef.current.correct([transcribed]);
     const captured = finishStopWithCapture(text);
     if (stopSettlementRef.current) {
       settleExplicitStop(captured);
+      if (!captured) setState('nothing-recognised');
       return;
     }
     stopRequestedRef.current = false;
@@ -394,6 +394,13 @@ export function useSpeechInput(
     };
 
     const onError = (event: any) => {
+      if ((listeningRef.current || stopRequestedRef.current) && !errorReportedRef.current) {
+        errorReportedRef.current = true;
+        const recognizer = startOptions.androidRecognitionServicePackage ?? 'platform-default';
+        void reportClientError('app', new Error(
+          `dictation-error: ${String(event.error)}: ${String(event.message ?? '')}; platform=${Platform.OS}; recognizer=${recognizer}`,
+        ));
+      }
       if (event.error === 'not-allowed') {
         takeRef.current.upload?.discard();
         takeRef.current = NO_TAKE;
@@ -487,6 +494,7 @@ export function useSpeechInput(
     restartIfStillListening,
     settleExplicitStop,
     startOptions.lang,
+    startOptions.androidRecognitionServicePackage,
   ]);
 
   const start = React.useCallback(async () => {
@@ -536,6 +544,7 @@ export function useSpeechInput(
       };
       setVolumeLevel(0);
       sessionGotResultRef.current = false;
+      errorReportedRef.current = false;
       restartCountRef.current = 0;
       stopRequestedRef.current = false;
       listeningRef.current = true;

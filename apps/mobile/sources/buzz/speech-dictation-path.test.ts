@@ -131,6 +131,32 @@ afterEach(async () => {
 });
 
 describe('long dictation from the composer hook through the server to Groq', () => {
+  it('Reproduction DICTATION-EMPTY: commits Whisper text when Android returns nothing', async () => {
+    const calls: GroqCall[] = [];
+    await startServer(fakeGroq(calls, 0) as typeof fetch);
+    // A short piece stays buffered until finish(), matching a brief mic take.
+    recordings.set('file:///cache/empty-native.wav', pcmWav(1));
+    const onResult = vi.fn();
+    let renderer: any;
+    act(() => { renderer = create(React.createElement(Harness, { onResult })); });
+    const speech = () => renderer.root.findByType('div').props.speechRef;
+    try {
+      await act(async () => { await speech().start(); });
+      await act(async () => {
+        emit('result', { results: [], isFinal: true });
+        const stopped = speech().stop();
+        emit('audioend', { uri: 'file:///cache/empty-native.wav' });
+        emit('end');
+        expect(await stopped).toBe(true);
+      });
+      expect(calls).toEqual([{ seconds: 1, status: 200 }]);
+      expect(onResult).toHaveBeenCalledExactlyOnceWith('Part 1.');
+      expect(speech().state).toBe('idle');
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+
   it('sends every piece to Groq, retries the one Groq refused, and commits Groq text', async () => {
     const calls: GroqCall[] = [];
     // Groq refuses the first upload, as a timeout, 429 or 502 would.

@@ -1,0 +1,78 @@
+[
+  {
+    "phase": "before",
+    "theme": "bone",
+    "row": [
+      63,
+      2053,
+      1017,
+      2169
+    ],
+    "text": [
+      63,
+      2074,
+      960,
+      2124
+    ],
+    "chevronCenter": 2111.0,
+    "textCenter": 2099.0,
+    "offset": 12.0
+  },
+  {
+    "phase": "before",
+    "theme": "obsidian",
+    "row": [
+      63,
+      2053,
+      1017,
+      2169
+    ],
+    "text": [
+      63,
+      2074,
+      960,
+      2124
+    ],
+    "chevronCenter": 2111.0,
+    "textCenter": 2099.0,
+    "offset": 12.0
+  },
+  {
+    "phase": "after",
+    "theme": "bone",
+    "row": [
+      63,
+      2053,
+      1017,
+      2169
+    ],
+    "text": [
+      63,
+      2085,
+      960,
+      2135
+    ],
+    "chevronCenter": 2111.0,
+    "textCenter": 2110.0,
+    "offset": 1.0
+  },
+  {
+    "phase": "after",
+    "theme": "obsidian",
+    "row": [
+      63,
+      2053,
+      1017,
+      2169
+    ],
+    "text": [
+      63,
+      2085,
+      960,
+      2135
+    ],
+    "chevronCenter": 2111.0,
+    "textCenter": 2110.0,
+    "offset": 1.0
+  }
+]

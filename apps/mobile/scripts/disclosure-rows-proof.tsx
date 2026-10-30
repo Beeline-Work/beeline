@@ -5,6 +5,7 @@ import { TurnStepsLine } from '../sources/components/buzz/ActivityTimeline';
 import { NotificationLifecycleCard } from '../sources/components/buzz/PrLifecycleCard';
 import { LedgerGhostLine, LedgerRoomUpdate, LedgerSystemLine } from '../sources/components/buzz/Ledger';
 import { TranscriptCard } from '../sources/components/buzz/TranscriptCard';
+import { LedgerDisclosure } from '../sources/components/buzz/LedgerDisclosure';
 import { CornerStatusLine } from '../sources/components/buzz/CornerStatusLine';
 import { LifecycleRecordCard } from '../sources/components/buzz/LifecycleCard';
 import { foldPrLifecycleRuns } from '../sources/buzz/pr-lifecycle';
@@ -96,6 +97,11 @@ export function DisclosureRowsProof() {
         <LedgerRoomUpdate id="proof-update" line="Merge approved" stamp="16:22" />
         <LedgerSystemLine id="proof-system" text="Speedy joined the corner" stamp="16:21" />
         <CornerStatusLine archived={false} lifecycle={{ lifecycle: 'in-review', checks: 'pending', pr: { number: 2859, url: 'https://github.com/Beeline-Work/beeline/pull/2859', title: 'Review', targetBranch: 'main', headSha: 'a'.repeat(40) } }} onOpenPullRequest={() => {}} />
+      </View>
+      <View style={{ width: 240 }}>
+        <LedgerDisclosure expanded={false} onPress={() => {}} accessibilityLabel="Wrapped check summary" accessibilityState={{ expanded: false }} rowTestID="wrapped-check-summary">
+          31 checks passed · 3 checks failed · 2 checks running
+        </LedgerDisclosure>
       </View>
     </View>
   );

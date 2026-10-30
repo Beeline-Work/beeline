@@ -39,6 +39,8 @@ const styles = StyleSheet.create((theme) => {
     },
     copy: {
       ...hull.type.meta,
+      // Match the chevron centre within the navigation row's existing padding.
+      marginVertical: (44 - 2 * hull.space.sm - hull.type.meta.lineHeight) / 2,
       flexShrink: 1,
       minWidth: 0,
       color: hull.ledgerQuiet,

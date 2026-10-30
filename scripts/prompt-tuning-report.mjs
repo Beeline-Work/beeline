@@ -45,12 +45,13 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
       const pairedPassRate = scoredPairs.length ? scoredPairs.filter(r => r.pass).length / scoredPairs.length : null;
       const baseRate = basePairs.length ? basePairs.filter(r => r.pass).length / basePairs.length : null;
       if (baseRate !== null && pairedPassRate < baseRate - 0.05 - 1e-12) regressions.push(model);
-      complete &&= Boolean(entry && rows.length === entry.expected && rows.every(r => r.status === 'behavior' && r.telemetry?.status === 'complete' && r.telemetry.initialExposure === 'explicit-replay-definitions') &&
+      complete &&= Boolean(entry && rows.length === entry.expected && rows.every(r => r.status === 'behavior' && r.telemetry?.status === 'complete' &&
+        r.telemetry.initialExposure === (configs.get(name).mode === 'full' ? 'explicit-replay-definitions' : 'purpose-index-only')) &&
         scoredPairs.length && scoredPairs.every(r => Number.isFinite(r.inputTokens) && Number.isFinite(r.modelRequests)));
       inputs.push(...scoredPairs.map(r => r.inputTokens).filter(Number.isFinite));
       owned.push(...scoredPairs.flatMap(r => r.telemetry?.calls ?? []).map(c => c.beelineOwnedTokensPerCall).filter(Number.isFinite));
       requests.push(...scoredPairs.map(r => r.modelRequests).filter(Number.isFinite));
-      perModel[model] = { ...summarize(rows), attempted: rows.length, expected: entry?.expected ?? null,
+      perModel[model] = { ...summarize(rows, configs.get(name)), attempted: rows.length, expected: entry?.expected ?? null,
         pairedPassed: scoredPairs.filter(r => r.pass).length, pairedScored: scoredPairs.length, pairedPassRate };
     }
     const rates = Object.values(perModel).map(m => m.pairedPassRate);

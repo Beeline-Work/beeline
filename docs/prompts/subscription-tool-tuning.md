@@ -47,12 +47,13 @@ The child Codex starts in an empty temporary directory with user config, rules,
 hooks, apps, plugins, shell, browser, image, and subagent capabilities disabled.
 It retains its existing login and its built-in harness instructions. A local
 stdio MCP server advertises the case's real full tool definitions or the core
-plus find_tools; the prompt carries the remaining names and short purposes.
-The initial listing is also rendered verbatim as JSON in the replay input.
-Thus full includes all case schemas and deferred includes only its core plus
-find_tools, even when Codex internally defers its MCP catalog. Description caps
-apply consistently to the listing and find_tools responses. The rollout's
-`firstCallBeelineBlocks.renderedToolNames` proves the actual initial exposure.
+plus find_tools; the deferred prompt carries every name and a short purpose.
+The full listing is rendered verbatim as JSON in the full replay input. The
+deferred first request has only a purpose index for every tool and find_tools,
+with no full Beeline schemas. The core still controls which MCP operations are
+already loaded when the model discovers definitions after its first request.
+Description caps apply consistently to the listing and find_tools responses.
+The rollout's `renderedToolNames` and `purposeIndexToolNames` prove exposure.
 The actual saved surface is case-dependent: the canonical ordinary tools plus
 the runner/file-read tools and fixture-advertised extras (commonly 29 definitions).
 It preserves the nightly case-specific tool exposure rather than inventing tools
@@ -90,9 +91,11 @@ calls per case, first-call block/tool counts, and unsupported-boundary cases
 are separate measurements. Missing telemetry prevents frontier eligibility.
 
 Codex can itself defer the native MCP catalog in both arms. `initialExposure`
-records the explicit replay definitions; `nativeCatalogExposure` separately
-records Codex's transport behavior. Historical runs without explicit definitions
-remain invalid for the full-versus-deferred comparison. The legacy multi-agent
+must be `explicit-replay-definitions` for full or `purpose-index-only` for
+deferred; `nativeCatalogExposure` separately records Codex's transport behavior.
+The deferred purpose index must cover every tool and find_tools, without
+native inline replay schemas. Incorrectly exposed historical rows are not reused
+or eligible for the frontier. The legacy multi-agent
 flag is supplemented by `agents.enabled=false` and
 `features.multi_agent_v2=false` so model defaults cannot enable native agents
 outside the simulator. This isolation applies equally to every variant.
@@ -113,7 +116,7 @@ node --import tsx scripts/prompt-subscription-replay.mjs \
   --repair-from <original-round-0-luna>/result.json --out <repaired-round-0-luna>
 ```
 
-Already graded samples with complete telemetry and explicit exposure proof are
+Already graded samples with complete telemetry and the correct arm exposure are
 reused. Only absent, ungraded, telemetry-missing, or incorrectly exposed samples
 are run; replacements cite their original
 result. Original results are never rewritten. Resuming a repair archives any

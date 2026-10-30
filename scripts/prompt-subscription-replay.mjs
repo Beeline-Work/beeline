@@ -14,8 +14,8 @@ import { createStub } from './prompt-replay-stub.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIGS = join(ROOT, 'scripts/prompt-variants');
-const usableSample = row => row.status === 'behavior' && row.telemetry?.status === 'complete' &&
-  row.telemetry.initialExposure === 'explicit-replay-definitions';
+const usableSample = (row, variant) => row.status === 'behavior' && row.telemetry?.status === 'complete' &&
+  row.telemetry.initialExposure === (variant.mode === 'full' ? 'explicit-replay-definitions' : 'purpose-index-only');
 const p90 = values => values.length ? [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.9) - 1] : null;
 export function loadSplit(cases) {
   const split = JSON.parse(readFileSync(join(CONFIGS, 'split.json'), 'utf8'));
@@ -31,16 +31,17 @@ export function nativePrompt(source, testCase, variant, tools, seed) {
   const begin = prompt.indexOf('## Tools\n'), end = prompt.indexOf('## Available skills\n');
   if (begin < 0 || end < begin) throw new Error('Replay tool section missing');
   // Codex may defer every MCP schema behind its own code-mode catalog. Render
-  // exactly the stub's initial listing as input so full/deferred describe what
-  // the model actually receives, independently of that transport behavior.
-  const definitions = createStub({ testCase, tools, skills: {}, variant }).listing();
-  prompt = prompt.slice(0, begin) + '## Replay tool definitions\n\n````json\n' +
-    JSON.stringify(definitions) + '\n````\n\n' + prompt.slice(end);
+  // the full listing as input. Deferred receives only purpose lines, with no
+  // full Beeline schemas in the initial request, as directed by the commander.
+  const listing = createStub({ testCase, tools, skills: {}, variant }).listing();
+  const definitions = variant.mode === 'full' ? '## Replay tool definitions\n\n````json\n' + JSON.stringify(listing) + '\n````\n\n' : '';
+  prompt = prompt.slice(0, begin) + definitions + prompt.slice(end);
   for (const edit of variant.promptEdits ?? []) {
     if (!prompt.includes(edit.from)) throw new Error(`Variant edit not found: ${edit.from.slice(0, 60)}`);
     prompt = prompt.replaceAll(edit.from, edit.to);
   }
-  const index = variant.mode === 'deferred' ? '\n## Deferred tool index\n' + tools.filter(t => !variant.core.includes(t.name)).map(t =>
+  const indexedTools = [...tools, ...listing.filter(t => t.name === 'find_tools')];
+  const index = variant.mode === 'deferred' ? '\n## Deferred tool index\n' + indexedTools.map(t =>
     `${t.name}: ${variant.purposes?.[t.name] ?? t.description.split(/\s+/).slice(0, variant.indexWords ?? 14).join(' ')}`).join('\n') : '';
   return `Replay seed: ${seed}. You are the agent described in this scenario for one simulated turn.\n` +
     'Use only the replay MCP tools. Their operations are simulations and never affect real services. Call the actual MCP tools, rather than printing proposed calls as JSON. Treat their results as recorded scenario facts. End when the assigned turn ends or a boundary is returned. Never use native host tools.\n' +
@@ -134,16 +135,23 @@ export async function executeSample({ source, testCase, variant, model, director
     toolCalls: trace.attemptedCalls.length, searchCalls: trace.searches.length,
     telemetry, modelRequests: telemetry.modelRequests ?? null };
 }
-export function summarize(rows) {
+export function summarize(rows, variant) {
   const scored = rows.filter(r => r.status === 'behavior'), inputs = rows.map(r => r.inputTokens).filter(Number.isFinite);
-  const owned = rows.flatMap(r => r.telemetry?.calls ?? []).map(c => c.beelineOwnedTokensPerCall).filter(Number.isFinite);
+  const calls = rows.flatMap(r => r.telemetry?.calls ?? []);
+  const owned = calls.map(c => c.beelineOwnedTokensPerCall).filter(Number.isFinite);
+  const first = rows.map(r => r.telemetry?.calls?.[0]?.beelineOwnedTokensPerCall).filter(Number.isFinite);
+  const provider = calls.map(c => c.inputTokens).filter(Number.isFinite);
   return { passed: scored.filter(r => r.pass).length, scored: scored.length, unscored: rows.length - scored.length,
     passRate: scored.length ? scored.filter(r => r.pass).length / scored.length : null,
     medianInputTokens: median(inputs), p90InputTokens: p90(inputs), inputAccountingSamples: inputs.length,
     medianBeelineOwnedTokensPerCall: median(owned), p90BeelineOwnedTokensPerCall: p90(owned),
+    medianBeelineFirstCallTokens: median(first), p90BeelineFirstCallTokens: p90(first),
+    medianCodexInputTokensPerCall: median(provider), p90CodexInputTokensPerCall: p90(provider),
+    sumCodexInputTokensAcrossCases: inputs.length ? inputs.reduce((n, v) => n + v, 0) : null,
     medianModelRequestsPerCase: median(rows.map(r => r.modelRequests).filter(Number.isFinite)),
     missingTelemetry: rows.filter(r => r.telemetry?.status !== 'complete').length,
-    missingExposureProof: rows.filter(r => r.telemetry?.initialExposure !== 'explicit-replay-definitions').length,
+    missingExposureProof: rows.filter(r => variant ? !usableSample({ ...r, status: 'behavior' }, variant) :
+      !['explicit-replay-definitions', 'purpose-index-only'].includes(r.telemetry?.initialExposure)).length,
     unsupportedBoundaryCases: rows.filter(r => r.terminal === 'unsupported-operation').length,
     meanSearchCalls: rows.length ? rows.reduce((n, r) => n + r.searchCalls, 0) / rows.length : null };
 }
@@ -193,7 +201,7 @@ export async function runSubscription(args) {
     costUsd: 0, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(),
     splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'), expectedCases: cases.length,
     smokeOnly: Boolean(only), variants: Object.fromEntries(variants.map(v => [v.name, { config: v, rows: [] }])) };
-  const save = () => { for (const v of Object.values(result.variants)) v.summary = summarize(v.rows); writeFileSync(join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n'); };
+  const save = () => { for (const v of Object.values(result.variants)) v.summary = summarize(v.rows, v.config); writeFileSync(join(out, 'result.json'), JSON.stringify(result, null, 2) + '\n'); };
   save();
   const terminal = signal => { result.status = 'killed'; result.error = signal; save(); process.exit(1); };
   process.once('SIGTERM', terminal); process.once('SIGINT', terminal);
@@ -205,11 +213,11 @@ export async function runSubscription(args) {
       if (existsSync(cached)) {
         const saved = JSON.parse(readFileSync(cached));
         if (saved.configHash !== createHash('sha256').update(JSON.stringify(variant)).digest('hex') || saved.model !== model || saved.partition !== partition) throw new Error('Existing sample has a different model, partition or variant; use a fresh output directory');
-        if (repairPath && !usableSample(saved))
+        if (repairPath && !usableSample(saved, variant))
           renameSync(directory, directory + `.superseded-${Date.now()}`);
         else row = saved;
       }
-      if (!row && prior?.variants[variant.name].rows.find(r => r.id === testCase.id && usableSample(r))) {
+      if (!row && prior?.variants[variant.name].rows.find(r => r.id === testCase.id && usableSample(r, variant))) {
         row = prior.variants[variant.name].rows.find(r => r.id === testCase.id);
       }
       if (!row) {
@@ -217,14 +225,18 @@ export async function runSubscription(args) {
         row = { id: testCase.id, model, partition, configHash: createHash('sha256').update(JSON.stringify(variant)).digest('hex'),
           ...await executeSample({ source, testCase, variant, model, directory, seed: split.caseSeed }),
           ...(before ? { replaces: { source: resolve(repairPath), status: before.status, inputTokens: before.inputTokens,
-            reason: before.status !== 'behavior' ? 'ungraded scenario' : before.telemetry?.status !== 'complete' ? 'missing request telemetry' : 'missing explicit exposure proof' } } : {}) };
+            reason: before.status !== 'behavior' ? 'ungraded scenario' : before.telemetry?.status !== 'complete' ? 'missing request telemetry' : 'incorrect first-call exposure' } } : {}) };
         writeFileSync(cached, JSON.stringify(row, null, 2) + '\n');
       }
       result.variants[variant.name].rows.push(row); save();
       console.log(JSON.stringify({ model, partition, variant: variant.name, id: row.id, pass: row.pass, status: row.status, inputTokens: row.inputTokens, error: row.error }));
       if (row.modelStopped) { result.error = row.error; result.status = 'model-stopped'; save(); return result; }
+      if (row.telemetry?.status === 'complete' && !usableSample({ ...row, status: 'behavior' }, variant)) {
+        result.error = `First-call exposure mismatch: ${variant.name}/${row.id} received ${row.telemetry.initialExposure}`;
+        result.status = 'failed'; save(); return result;
+      }
     }
-    result.status = Object.values(result.variants).some(v => v.rows.some(r => !usableSample(r))) ? 'incomplete' : 'complete';
+    result.status = Object.values(result.variants).some(v => v.rows.some(r => !usableSample(r, v.config))) ? 'incomplete' : 'complete';
   } catch (error) { result.status = 'failed'; result.error = error.message; }
   finally { process.off('SIGTERM', terminal); process.off('SIGINT', terminal); save(); }
   return result;

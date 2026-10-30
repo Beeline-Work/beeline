@@ -90,8 +90,9 @@ definitions per call and requires complete rollout telemetry and grading.
 Existing variants remain unchanged. Only missing-data repairs are authorized;
 new tuning rounds and held-out evaluation remain paused for the owner's report.
 
-The exposure correction now renders the stub's exact initial listing into each
-replay input and records the rendered names in the rollout telemetry. Full and
-deferred must show their different schema sets in the first Codex request before
+The exposure correction renders the stub's exact full listing into full input
+and only the complete purpose index into deferred input, per the latest
+commander clarification. Telemetry records rendered schemas and indexed names.
+Full and deferred must show those different first-request contents before
 any historical matrix is repaired. Description caps also apply to loaded
 find_tools responses; the named variant configurations themselves are unchanged.

@@ -6,7 +6,8 @@ const row = (id, pass, inputTokens = 100, status = 'behavior') => ({ id, pass, s
   toolCalls: 1, searchCalls: 0, searches: [], transcript: { calls: [{ name: 'read', args: {} }], text: '' } });
 const config = name => ({ name, mode: name === 'full' ? 'full' : 'deferred', core: ['read'] });
 const run = (model, full, deferred) => ({ model, partition: 'tune', splitHash: 'fixed', expectedCases: full.length,
-  status: 'complete', variants: { full: { config: config('full'), rows: full }, deferred: { config: config('deferred'), rows: deferred } } });
+  status: 'complete', variants: { full: { config: config('full'), rows: full }, deferred: { config: config('deferred'),
+    rows: deferred.map(r => ({ ...r, telemetry: r.telemetry ? { ...r.telemetry, initialExposure: 'purpose-index-only' } : r.telemetry })) } } });
 
 test('frontier compares the same scored pairs while preserving raw exclusions', () => {
   const runs = MODELS.map(model => run(model, [row('a', true), row('b', false)], [row('a', true, 80), row('b', null, 60, 'incomplete')]));
@@ -39,6 +40,9 @@ test('frontier uses Beeline tokens rather than aggregate Codex usage, and legacy
   assert.equal(report.variants[0].medianBeelineOwnedTokensPerCall, 100);
   assert.equal(report.variants[1].medianBeelineOwnedTokensPerCall, 20);
   assert.ok(report.frontier.includes('deferred'));
+  for (const r of runs) r.variants.deferred.rows[0].telemetry.initialExposure = 'explicit-replay-definitions';
+  assert.equal(tuningReport(runs, 'tune').variants[1].complete, false);
+  assert.equal(tuningReport(runs, 'tune').frontier.includes('deferred'), false);
   for (const r of runs) for (const v of Object.values(r.variants)) delete v.rows[0].telemetry;
   assert.deepEqual(tuningReport(runs, 'tune').frontier, []);
 });

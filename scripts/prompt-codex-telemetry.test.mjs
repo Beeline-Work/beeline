@@ -71,3 +71,17 @@ test('explicit replay definitions are counted on the tool axis and kept separate
   assert.equal(result.nativeCatalogExposure, 'codex-deferred-replay-definitions');
   assert.deepEqual(result.firstCallBeelineBlocks.renderedToolNames, ['read']);
 });
+
+test('deferred first-call proof requires the complete purpose index and no exposed schemas', () => {
+  const indexed = prompt + '## Deferred tool index\nread: Read facts\nfind_tools: Load definitions\n';
+  const result = parseRollout(serialize([message('user', indexed), modern('one', 100)]), { ...context, prompt: indexed, variant: { mode: 'deferred' } });
+  assert.equal(result.initialExposure, 'purpose-index-only');
+  assert.deepEqual(result.firstCallBeelineBlocks.renderedToolNames, []);
+  assert.deepEqual(result.firstCallBeelineBlocks.purposeIndexToolNames, ['read', 'find_tools']);
+  const incomplete = indexed.replace('read: Read facts\n', '');
+  assert.notEqual(parseRollout(serialize([message('user', incomplete), modern('one', 100)]), { ...context, prompt: incomplete }).initialExposure, 'purpose-index-only');
+  const embedded = row('response_item', { type: 'additional_tools', tools: [{ name: 'functions', tools: [
+    { name: 'exec', description: '### `mcp__replay__read`\nFull replay schema' },
+  ] }] });
+  assert.notEqual(parseRollout(serialize([embedded, message('user', indexed), modern('one', 100)]), { ...context, prompt: indexed }).initialExposure, 'purpose-index-only');
+});

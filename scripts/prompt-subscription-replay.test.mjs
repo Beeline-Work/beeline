@@ -108,11 +108,18 @@ test('full and deferred initial inputs expose exactly their advertised schemas d
   for (const name of ['full', 'r0-deferred', 'r1-short']) {
     const config = JSON.parse(readFileSync(`scripts/prompt-variants/${name}.json`));
     const prompt = nativePrompt(source, c, config, actual, 1000);
-    const definitions = JSON.parse(/## Replay tool definitions\n\n````json\n([\s\S]*?)\n````/.exec(prompt)[1]);
+    const match = /## Replay tool definitions\n\n````json\n([\s\S]*?)\n````/.exec(prompt);
+    const definitions = match ? JSON.parse(match[1]) : [];
     const stub = createStub({ testCase: c, tools: actual, skills: {}, variant: config });
-    assert.deepEqual(definitions, stub.listing());
-    if (config.mode === 'full') assert.deepEqual(definitions.map(t => t.name), actual.map(t => t.name));
-    else assert.deepEqual(definitions.map(t => t.name), [...actual.filter(t => config.core.includes(t.name)).map(t => t.name), 'find_tools']);
+    if (config.mode === 'full') {
+      assert.deepEqual(definitions, stub.listing());
+      assert.deepEqual(definitions.map(t => t.name), actual.map(t => t.name));
+    } else {
+      assert.equal(match, null);
+      const names = [...prompt.matchAll(/^([A-Za-z0-9_]+): /gm)].map(m => m[1]);
+      for (const tool of actual) assert.ok(names.includes(tool.name));
+      assert.ok(names.includes('find_tools'));
+    }
     if (config.descriptionWords) {
       const loaded = stub.call('find_tools', { query: 'Read' });
       assert.ok(stub.trace.searches[0].names.includes('Read'));
@@ -127,6 +134,13 @@ test('usage and frontier exclude unscored samples and reject per-model regressio
   assert.equal(result.passRate, 1);
   assert.equal(result.unscored, 1);
   assert.equal(result.p90InputTokens, 10);
+  const measured = summarize([{ status: 'behavior', pass: true, inputTokens: 100, modelRequests: 2, searchCalls: 0,
+    telemetry: { calls: [{ inputTokens: 40, beelineOwnedTokensPerCall: 20 }, { inputTokens: 60, beelineOwnedTokensPerCall: 30 }] } }]);
+  assert.equal(measured.medianBeelineFirstCallTokens, 20);
+  assert.equal(measured.medianBeelineOwnedTokensPerCall, 25);
+  assert.equal(measured.medianCodexInputTokensPerCall, 50);
+  assert.equal(measured.sumCodexInputTokensAcrossCases, 100);
+  assert.equal(measured.medianModelRequestsPerCase, 2);
   const a = { name: 'a', complete: true, regressionModels: [], meanPassRate: .8, medianBeelineOwnedTokensPerCall: 100 };
   const b = { ...a, name: 'b', meanPassRate: .9, medianBeelineOwnedTokensPerCall: 90 };
   const c = { ...b, name: 'c', medianBeelineOwnedTokensPerCall: 80, regressionModels: ['luna'] };

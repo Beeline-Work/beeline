@@ -776,34 +776,6 @@ export class DaemonService {
           await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [command.id]);
           return { ...this.writeResult(), id: command.id, skipped: true } as Output<Name>;
         }
-        // A lost receipt response may be replayed after the fallback consumed
-        // this generation. Never replace its stored failed outcome with success.
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
-          await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
-          // A published reply completes the command before the terminal receipt.
-          // Still settle its workflow attempt, but preserve a stored failed outcome.
-          if (command.source_message_id && (await db.query(
-            `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
-               AND status='complete'`,
-            [scopedRoom, authenticatedAgentId, requestId],
-          )).rowCount)
-            committedTasks.push((database) => database.transaction((db) =>
-              failOverUnansweredTurn(db, {
-                roomId: scopedRoom!,
-                agentId: authenticatedAgentId,
-                sourceMessageId: command.source_message_id!,
-              }),
-            ));
-          return this.writeResult() as Output<Name>;
-        }
-        // Silence is a server-owned terminal outcome, including private return
-        // routes. Older helpers may still submit final text after the tool.
-        if (name === 'postRoomMessage' && (await db.query(
-          `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
-             AND completion_kind='no-reply'`,
-          [scopedRoom, authenticatedAgentId, requestId],
-        )).rowCount)
-          return this.writeResult() as Output<Name>;
         // Helpers cannot impose an order outcome on an informational wake.
         // The stored command and its delivered receipt own that obligation.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed' &&
@@ -815,6 +787,36 @@ export class DaemonService {
           delete candidate.reason;
           delete candidate.reasonKind;
         }
+        // Queue the existing workflow completion hook for both a fresh receipt
+        // and a receipt whose published reply already completed the command.
+        // A replay must preserve any stored failed outcome.
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.source_message_id &&
+          (command.state !== 'complete' || (await db.query(
+            `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+               AND status='complete'`,
+            [scopedRoom, authenticatedAgentId, requestId],
+          )).rowCount))
+          committedTasks.push((database) => database.transaction((db) =>
+            failOverUnansweredTurn(db, {
+              roomId: scopedRoom!,
+              agentId: authenticatedAgentId,
+              sourceMessageId: command.source_message_id!,
+            }),
+          ));
+        // A lost receipt response may be replayed after the fallback consumed
+        // this generation. Never replace its stored failed outcome with success.
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
+          await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
+          return this.writeResult() as Output<Name>;
+        }
+        // Silence is a server-owned terminal outcome, including private return
+        // routes. Older helpers may still submit final text after the tool.
+        if (name === 'postRoomMessage' && (await db.query(
+          `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+             AND completion_kind='no-reply'`,
+          [scopedRoom, authenticatedAgentId, requestId],
+        )).rowCount)
+          return this.writeResult() as Output<Name>;
         // A corner is the ordered work's own address: its viewers watch the
         // turn's live work and progress there. Urgent terminal prose still
         // reports privately; done uses the explicit guarded report tool.
@@ -980,15 +982,6 @@ export class DaemonService {
               candidate.status === 'complete',
               String(candidate.status),
             );
-            // A failed workflow hook must never roll back the terminal receipt.
-            if (candidate.status === 'complete' && command.source_message_id)
-              committedTasks.push((database) => database.transaction((db) =>
-                failOverUnansweredTurn(db, {
-                  roomId: scopedRoom!,
-                  agentId: authenticatedAgentId,
-                  sourceMessageId: command.source_message_id!,
-                }),
-              ));
           }
         }
         return result;

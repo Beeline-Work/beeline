@@ -617,7 +617,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await post('/mcp/oauth/revoke', { client_id: grant.clientId, token });
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
   });
-  it('keeps the wake chain across member replies so a tag loop still stops at the depth limit', async () => {
+  it.each(['send_message', 'post'])('keeps the wake chain across member replies through %s so a tag loop still stops at the depth limit', async replyTool => {
     const { client, grant, member } = await connected();
     await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/loop' WHERE id=$1`, [grant.clientId]);
     const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
@@ -642,8 +642,12 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await latestMemberCommand()).toBeUndefined();
     expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
     // The member replies again: depth three, the last depth the limit allows.
-    const second = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
-    const secondId = JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId as string;
+    const second = await client.callTool(replyTool === 'post'
+      ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step two' } }
+      : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
+    expect(second.isError).not.toBe(true);
+    const secondId = (await db.query<{ id: string }>(
+      'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, member])).rows[0]!.id;
     const secondCommand = await agentCommand(secondId);
     expect(secondCommand.agent_depth).toBe(3);
     // The demo agent's next tag cannot open a new member turn: the loop stops.

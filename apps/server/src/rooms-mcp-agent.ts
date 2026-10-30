@@ -6,7 +6,8 @@ import type { SqlDatabase } from './database.js';
 import type { DaemonService } from './daemon-service.js';
 import type { ObjectService } from './object-service.js';
 import { ExpectedRefusalError } from './command-refusal.js';
-import { McpToolError } from './rooms-mcp-members.js';
+import { McpToolError, mcpProvenance } from './rooms-mcp-members.js';
+import { COMMAND_MAX_DEPTH } from './agent-command.js';
 
 /**
  * Agent tools a connected AI app does not get, with the plain reason it is
@@ -267,6 +268,15 @@ export class RoomsMcpAgentTools {
    */
   private async begin(member: string, roomId: string, order: boolean): Promise<McpTurn> {
     const generationId = `mcp:${randomUUID()}`;
+    // Continue the wake chain behind the latest tag, as send_message does, so
+    // tags in this turn count toward the same depth limit.
+    let incoming: Awaited<ReturnType<typeof mcpProvenance>> | null = null;
+    if (!order) try {
+      incoming = await mcpProvenance(this.db, member, roomId);
+    } catch (error) {
+      console.error('[rooms-mcp] provenance lookup failed; starting the turn without a parent', error);
+    }
+    const chain = incoming?.command;
     return this.db.transaction(async tx => {
       if (order) {
         const bound = (await tx.query<{ id: string; turn_request_id: string }>(
@@ -289,8 +299,9 @@ export class RoomsMcpAgentTools {
       await tx.query(
         `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,
            root_source_message_id,agent_depth,state,generation_id,lease_expires_at,claimed_at)
-         VALUES($1,$2,$3,NULL,$1,'input','mcp_call',$1,$4,0,'claimed',$5,now()+interval '90 seconds',now())`,
-        [id, roomId, member, requester ?? id, generationId]);
+         VALUES($1,$2,$3,NULL,$1,'input','mcp_call',$4,$5,$6,'claimed',$7,now()+interval '90 seconds',now())`,
+        [id, roomId, member, chain?.root_command_id ?? id, chain?.root_source_message_id ?? requester ?? id,
+          chain ? Math.min(chain.agent_depth + 1, COMMAND_MAX_DEPTH) : 0, generationId]);
       await this.startTurn(tx, roomId, member, id, generationId);
       return { roomId, requestId: id, generationId, commandId: id, order: false };
     });

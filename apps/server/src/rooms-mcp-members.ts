@@ -518,7 +518,7 @@ export async function setMcpMemberWebhook(
  * latest message addressed to it in this Room, read from the mentions ledger
  * by index. Bounded, so a slow read can never hold a wake.
  */
-async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId: string) {
+export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId?: string) {
   return db.transaction(async tx => {
     await tx.query("SET LOCAL statement_timeout='2s'");
     return (await tx.query<{ command: CommandRow | null }>(
@@ -527,9 +527,9 @@ async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, 
        LEFT JOIN LATERAL (SELECT c.* FROM agent_commands c
          WHERE c.room_id=m.room_id AND c.agent_id=m.author_id AND c.turn_request_id=m.request_id
          ORDER BY c.created_at DESC,c.id DESC LIMIT 1) command ON true
-       WHERE mention.member_id=$1 AND mention.room_id=$2 AND mention.message_id<>$3
+       WHERE mention.member_id=$1 AND mention.room_id=$2 AND ($3::text IS NULL OR mention.message_id<>$3)
        ORDER BY mention.seq DESC LIMIT 1`,
-      [memberId, roomId, messageId],
+      [memberId, roomId, messageId ?? null],
     )).rows[0];
   });
 }

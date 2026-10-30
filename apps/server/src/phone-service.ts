@@ -8495,10 +8495,19 @@ export class PhoneService {
         gone,
         DELETED_ACCOUNT_IDENTITY_ID,
       ]);
-      // A merge hold its setter can no longer clear is released by the deletion.
+      // Active merge holds stay active under the tombstone holder. A corner
+      // keeps one active hold per holder, so when several holds on one corner
+      // now share the tombstone, only the strongest stays; the corner is
+      // still held exactly as before.
       await database.query(
-        `UPDATE corner_merge_holds SET released_at=now(),released_by=$2
-         WHERE released_at IS NULL AND coalesce(set_by_agent_id,actor_id)=ANY($1)`,
+        `WITH tombstoned AS (
+           SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY
+             CASE standing WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,set_at,id) rank
+           FROM corner_merge_holds
+           WHERE released_at IS NULL
+             AND (coalesce(set_by_agent_id,actor_id)=ANY($1) OR coalesce(set_by_agent_id,actor_id)=$2))
+         UPDATE corner_merge_holds SET released_at=now(),released_by=$2
+         WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
         [gone, DELETED_ACCOUNT_IDENTITY_ID],
       );
       // Corner records, workflow transfers and installed apps are shared
@@ -8509,6 +8518,7 @@ export class PhoneService {
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
+        ['corner_merge_holds', 'set_by_agent_id'],
         ['corner_apps', 'author_agent_id'],
         ['corner_app_installations', 'installed_by'],
         ['corner_app_bindings', 'bound_by'],
@@ -8522,7 +8532,6 @@ export class PhoneService {
         ]);
       // Optional attributions simply lose the deleted id.
       for (const [table, column] of [
-        ['corner_merge_holds', 'set_by_agent_id'],
         ['corner_facts', 'reviewer_agent_id'],
         ['rooms', 'reviewer_agent_id'],
         ['corner_app_installations', 'developer_agent_id'],

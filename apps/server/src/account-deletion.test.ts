@@ -417,7 +417,7 @@ describe('deleteAccount', () => {
     expect(indirect.rows).toEqual([]);
   });
 
-  it('keeps shared corner records under the tombstone and releases the account\'s merge holds', async () => {
+  it('keeps shared corner records and active merge holds under the tombstone', async () => {
     await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
     await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
     await database.query(
@@ -442,10 +442,31 @@ describe('deleteAccount', () => {
     );
     await expectRowCount(
       `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND actor_id=$2
-         AND released_by=$2 AND released_at IS NOT NULL`,
+         AND set_by_agent_id IS NULL AND released_by IS NULL AND released_at IS NULL`,
       [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
       1,
     );
+  });
+
+  it('keeps a corner held when the account and its agent both held it', async () => {
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'member')`,
+      [CORNER, OWNER],
+    );
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id) VALUES($1,$2,'owner',$3)`,
+      [CORNER, OWNER, AGENT],
+    );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    await expectRowCount(
+      `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL
+         AND standing='owner' AND actor_id=$2 AND set_by_agent_id=$2`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+    await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
   });
 
   it('is idempotent: a second call resolves without effect', async () => {

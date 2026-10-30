@@ -2777,9 +2777,8 @@ export class GitHubOperations {
         }));
         const providerCheck = check;
         let noteInserted = false;
-        const refresh = () => database.transaction(async (database) => {
-          // Each replay starts with the provider fact, not a label from an aborted attempt.
-          let check = providerCheck;
+        // Each replay starts with the provider fact, not a label from an aborted attempt.
+        const refresh = (check = providerCheck) => database.transaction(async (database) => {
           noteInserted = false;
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after

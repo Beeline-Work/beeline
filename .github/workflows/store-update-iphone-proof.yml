@@ -12,7 +12,7 @@ jobs:
   iphone:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feature/corner-3d29e4aa1138'
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       EXPO_PUBLIC_BUZZY_MONOLITH_URL: http://127.0.0.1:8788
       CI: '1'
@@ -46,7 +46,7 @@ jobs:
             -configuration Release -sdk iphonesimulator \
             -destination "id=$PROOF_SIMULATOR" \
             -derivedDataPath "$RUNNER_TEMP/store-update-build" \
-            -jobs 2 CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/iphone-build.log" 2>&1 || {
+            ONLY_ACTIVE_ARCH=YES ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/iphone-build.log" 2>&1 || {
               tail -200 "$RUNNER_TEMP/iphone-build.log"
               exit 1
             }

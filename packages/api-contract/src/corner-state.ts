@@ -15,8 +15,6 @@ export type CornerStateFacts = {
   /** Running worker receipts; reviewer work has its own input. */
   readonly turnRunning: boolean;
   readonly workerQueued?: boolean;
-  readonly now?: number;
-  readonly lastTurnEndedAt?: number;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
@@ -98,8 +96,8 @@ export function cornerRunFromLifecycle(input: {
  *    current head and every blocker is an agent-commander report or a merge
  *    hold. A hold blocks the merge, not the checks or review before it.
  * 5. `review` — pending or not-yet-reported checks, until a final result or push.
- * 6. `working` — the last turn ended within 30 seconds.
- * 7. `idle` — the fall-through, including failing checks without work or a blocker.
+ * 6. `idle` — the fall-through, including failing checks without work or a blocker.
+ *    A turn that just ended is idle at once: `working` needs a live or queued turn.
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
@@ -108,7 +106,6 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
     return { state: 'archived' };
   const lifecycle = facts.lifecycle;
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
-  const now = facts.now ?? Date.now() / 1000;
   const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
   if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
   if (facts.turnRunning) return { state: 'working' };
@@ -116,8 +113,6 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if ((facts.blocker || facts.owed === true) && !(deferredByCi && pendingCi))
     return { state: 'waiting', ...facts.blocker };
   if (pendingCi) return { state: 'review' };
-  if (facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
-    return { state: 'working' };
   return { state: 'idle' };
 }
 

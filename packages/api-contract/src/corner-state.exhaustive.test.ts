@@ -9,8 +9,8 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  * 2. `review` iff a reviewer turn is active and checks are not failing, or
  *    checks are pending on the current head with no human-owed blocker other
  *    than a merge hold and no worker turn running.
- * 3. `working` is a running worker turn or the existing 30-second post-turn
- *    grace. It never overrides archived or an explicit wait. A live reviewer
+ * 3. `working` is a running worker turn only; a turn that just ended is not
+ *    work. It never overrides archived or an explicit wait. A live reviewer
  *    beats worker work while checks are not failing.
  * 4. `waiting` is a blocker, except agent-only reports or a lone merge hold
  *    during pending CI.
@@ -19,7 +19,6 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  * Queued work alone must not change the result.
  */
 
-const NOW = 1_700_000_000;
 const PR = {
   number: 1,
   url: 'https://github.com/o/r/pull/1',
@@ -38,7 +37,6 @@ type BlockerKind =
   | 'merge-hold'
   | 'agent'
   | 'human+agent';
-type Grace = 'within' | 'outside' | 'absent';
 
 const RUNS = [
   undefined,
@@ -60,7 +58,6 @@ const BLOCKERS: readonly BlockerKind[] = [
   'agent',
   'human+agent',
 ];
-const GRACES: readonly Grace[] = ['within', 'outside', 'absent'];
 
 function lifecycleFor(shape: CheckShape, prPresent: boolean, closure: Closure): CornerLifecycleView {
   const checks =
@@ -150,7 +147,6 @@ function scan(
     for (const run of RUNS) {
       for (const closure of closures) {
         for (const turnRunning of [false, true]) {
-          for (const grace of GRACES) {
             for (const workerQueued of queuedValues) {
               for (const reviewerActive of [false, true]) {
                 for (const shape of CHECKS) {
@@ -163,10 +159,7 @@ function scan(
                         turnRunning,
                         workerQueued,
                         reviewerActive,
-                        now: NOW,
                         ...(run ? { run } : {}),
-                        ...(grace === 'within' ? { lastTurnEndedAt: NOW - 10 } : {}),
-                        ...(grace === 'outside' ? { lastTurnEndedAt: NOW - 40 } : {}),
                         lifecycle: lifecycleFor(shape, prPresent, closure),
                         ...blockerFacts(blocker),
                       };
@@ -183,15 +176,10 @@ function scan(
                       else if (turnRunning) expected = 'working';
                       else if (anyBlocker && !(pending && deferred)) expected = 'waiting';
                       else if (pending) expected = 'review';
-                      else if (
-                        facts.lastTurnEndedAt !== undefined &&
-                        NOW - facts.lastTurnEndedAt < 30
-                      )
-                        expected = 'working';
                       else expected = 'idle';
                       if (actual !== expected && failures.length < 8) {
                         failures.push(
-                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} grace=${grace} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
+                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
                         );
                       }
                     }
@@ -203,18 +191,17 @@ function scan(
         }
       }
     }
-  }
   return count;
 }
 
 describe('deriveCornerState invariants', () => {
-  it('enumerates archived, turns, grace, checks, pull requests, and blockers', () => {
+  it('enumerates archived, turns, checks, pull requests, and blockers', () => {
     const failures: string[] = [];
     const started = performance.now();
     const count = scan(failures, ['none', 'landed', 'done', 'abandoned', 'merged'], [false, true]);
     const elapsed = performance.now() - started;
     expect(failures).toEqual([]);
-    expect(count).toBeGreaterThan(50_000);
+    expect(count).toBeGreaterThan(20_000);
     expect(elapsed).toBeLessThan(1_000);
   });
 });

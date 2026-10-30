@@ -212,7 +212,12 @@ export async function refreshCornerAttention(
       await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
       return { parentId: row.parent_id, deadlines: [] };
     }
-    const state = cornerRowState(row).state;
+    // The display reads idle as soon as a turn ends. The alert still waits out
+    // the post-turn gap, so a reply or new order inside it opens no episode.
+    const derived = cornerRowState(row).state;
+    const inGap = derived === 'idle' && row.last_turn_ended_at !== null && row.last_turn_ended_at !== undefined &&
+      Date.now() - new Date(row.last_turn_ended_at).getTime() < 30_000;
+    const state = inGap ? 'working' : derived;
     const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
     await tx.query(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,

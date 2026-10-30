@@ -49,9 +49,6 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
     archived: Boolean(row.archived_at),
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
     reviewerActive: row.reviewer_active,
-    lastTurnEndedAt: row.last_turn_ended_at
-      ? new Date(row.last_turn_ended_at).getTime() / 1000
-      : undefined,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),

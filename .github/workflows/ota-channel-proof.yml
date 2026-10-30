@@ -1,4 +1,4 @@
-# TEMPORARY proof for the release-pipeline corner; removed before merge (attempt 2).
+# TEMPORARY proof for the release-pipeline corner; removed before merge (attempt 3).
 # Exercises the new phone OTA path against TEST EAS channels and branches only
 # (never `production`, never `beta`), plus the release identity/plan and the
 # server reconcile plan as dry runs. Nothing here deploys or releases.
@@ -128,7 +128,8 @@ jobs:
           export TMPDIR
           sha=$(git rev-parse HEAD)
           branch="release-proof-${sha:0:12}-b"
-          count() { "$EAS_CLI_PATH" update:list --branch "$branch" --limit 50 --json --non-interactive 2>/dev/null \
+          # A branch with no updates yet makes update:list exit non-zero; that means 0, not a failed step.
+          count() { { "$EAS_CLI_PATH" update:list --branch "$branch" --limit 50 --json --non-interactive 2>/dev/null || true; } \
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).currentPage.length)}catch{console.log(0)}})'; }
           node scripts/ota-release.mjs publish --sha "$sha" --branch "$branch" --channel release-proof-beta \
             --targets "$RUNNER_TEMP/ota/targets.json" --output "$RUNNER_TEMP/ota/b-killed.json" &

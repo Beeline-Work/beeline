@@ -50,6 +50,7 @@
     "prove:two-agent-onboarding": "npm run build -w @beeline/server && node --import tsx scripts/prove-two-agent-onboarding.mjs",
     "prove:onboarding": "node scripts/onboarding-walkthrough.mjs",
     "prove:repository-card": "npm run build && node --import tsx scripts/prove-repository-card.mjs",
+    "prove:approval-card-avatar": "npm run build -w @beeline/server && node --import tsx scripts/prove-approval-card-avatar.mjs",
     "prove:free-agent": "node scripts/prove-free-agent.mjs",
     "prove:free-agent-images": "npm run build -w @beeline/server && node --import tsx scripts/prove-free-agent-images.mjs",
     "prove:free-agent-instructions": "node --import tsx scripts/prove-free-agent-instructions.ts",

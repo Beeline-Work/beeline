@@ -942,11 +942,12 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "report",
-    "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion.",
+    "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong.",
     "inputSchema": {
       "type": "object",
       "required": ["status", "text"],
       "properties": {
+        "to": {"type": "string", "minLength": 1, "description": "Member handle or id to receive this report."},
         "ask": {"type": "string", "minLength": 1, "maxLength": 140, "description": "Optional plain text ask: one sentence on one line, at most 140 characters."},
         "status": {"type": "string", "enum": ["done", "blocked", "failed", "needs_decision"]},
         "text": {"type": "string", "minLength": 1, "maxLength": 16000}

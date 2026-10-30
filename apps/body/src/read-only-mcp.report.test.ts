@@ -10,6 +10,7 @@ it('Reproduction report-schema: accepts complete multi-paragraph reports on ever
   for (const tools of [agentToolsFor(true, false), agentToolsFor(true, true), agentToolsFor(true, false, true)]) {
     const schema = tools.find(tool => tool.name === 'report')!.inputSchema;
     expect(Check(schema, { status: 'blocked', text })).toBe(true);
+    expect(Check(schema, { status: 'blocked', text, to: '@ruby' })).toBe(true);
     // Constrained generation clients may require patterns to match the entire value.
     expect(schema.properties.text).not.toHaveProperty('pattern');
     expect(Check(schema, { status: 'blocked', text: 'blocked: ' + 'x'.repeat(16000) })).toBe(false);
@@ -83,4 +84,15 @@ it('keeps a queue failure visible to report and clears it for the next generatio
   setupTurn('next-generation');
   await expect(callAgentTool('report', { status: 'done', text: 'done: next assignment' }, 'report-next')).resolves.toContain('delivered');
   expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it('forwards an explicit report recipient through the tool to the daemon', async () => {
+  setupTurn('report-to');
+  let input: unknown;
+  vi.stubGlobal('fetch', async (_url: URL, init: RequestInit) => {
+    input = JSON.parse(String(init.body));
+    return Response.json({ delivered: true });
+  });
+  await callAgentTool('report', { status: 'done', text: 'done: release finished', to: '@ruby' }, 'report-to');
+  expect(input).toMatchObject({ to: '@ruby', status: 'done', text: 'done: release finished' });
 });

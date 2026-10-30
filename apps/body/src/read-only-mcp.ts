@@ -3509,7 +3509,7 @@ async function executeAgentOperation(
       return JSON.stringify({ acknowledged: true });
     }
     case 'report':
-      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined }));
+      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined, to: args.to as string | undefined }));
     case 'read':
       return JSON.stringify(await daemonExecute('read', { address: args.address as string, limit: args.limit as number | undefined }));
     case 'inspect_corner': {

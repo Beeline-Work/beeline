@@ -240,6 +240,64 @@ it('a configured reviewer can record PASS from its DM without changing the revie
   await expect(daemon.execute('approveCornerMerge', { cornerId: opened.cornerId, headSha }, WORKER))
     .rejects.toThrow('configured reviewer');
 });
+it.each(['@ruby', RUBY, '@opener', '@captain', undefined])('Reproduction R1: a scheduled report uses explicit recipient %s and preserves the default', async (to) => {
+  const opener = '8'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Opener','opener') ON CONFLICT DO NOTHING`, [opener]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [opener, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, opener]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, DM, opener]);
+  const opened = await open();
+  await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, opener]);
+  const initial = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
+  await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Watch the release and report back' }, RUBY);
+  const assigned = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order')!;
+  await claim(assigned);
+  const schedule = await daemon.execute('createAgentSchedule', { ...authority(assigned), title: 'Check release',
+    prompt: 'Finish watching the release', cadence: { kind: 'interval', everyMinutes: 1 }, maxRuns: 1 }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(assigned), agentId: WORKER, status: 'complete' }, WORKER);
+  await db.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE id=$1`, [schedule.scheduleId]);
+  expect(await new AgentScheduleLoop(db).runOnce()).toBe(1);
+  const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'schedule')!;
+  await claim(wake);
+  for (const invalid of ['@missing']) {
+    await expect(daemon.execute('report', { ...authority(wake), to: invalid, status: 'done', text: 'done: release finished' }, WORKER))
+      .rejects.toThrow('current member handle or id');
+  }
+  expect((await db.query(`SELECT id FROM agent_commands WHERE reason='report'`)).rows).toEqual([]);
+  await expect(daemon.execute('report', { ...authority(wake), to, status: 'done', text: 'done: release finished' }, WORKER))
+    .resolves.toMatchObject({ delivered: true });
+  if (to === '@captain') {
+    expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text=$2`, [opened.cornerId, 'done: release finished'])).rows)
+      .toEqual([{ text: 'done: release finished' }]);
+  } else {
+    const recipient = to === '@opener' || !to ? opener : RUBY;
+    const returnRoom = to === '@opener' ? opened.cornerId : DM;
+    expect((await commands(returnRoom, recipient)).filter(c => c.reason === 'report'))
+      .toEqual([expect.objectContaining({ source: expect.objectContaining({ body: 'done: release finished', authorId: WORKER }) })]);
+    expect((await db.query(`SELECT id FROM agent_commands WHERE agent_id=$1 AND reason='report'`, [recipient === RUBY ? opener : RUBY])).rows).toEqual([]);
+  }
+  if (to === '@ruby' || to === RUBY) await expect(daemon.execute('report', { ...authority(wake), to, status: 'done', text: 'done: release finished' }, WORKER))
+    .resolves.toMatchObject({ skipped: true });
+
+});
+it('report to answers the latest human command from a later system wake', async () => {
+  const opened = await open(), initial = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
+  const messageId = randomBytes(32).toString('hex');
+  await phone.execute('sendRoomMessage', { roomId: opened.cornerId, messageId, text: '@worker finish my check' }, HUMAN);
+  const directed = (await commands(opened.cornerId, WORKER)).find(c => c.sourceMessageId === messageId)!;
+  await claim(directed);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(directed), agentId: WORKER, status: 'complete' }, WORKER);
+  await systemLine(db, { roomId: opened.cornerId, authorId: HUMAN, subject: { kind: 'system', name: 'Scheduler' },
+    verb: 'ran a schedule', kind: 'schedule-ran', wakes: [WORKER] });
+  const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'schedule')!;
+  await claim(wake);
+  await expect(daemon.execute('report', { ...authority(wake), to: '@captain', status: 'done', text: 'done: human check finished' }, WORKER))
+    .resolves.toMatchObject({ delivered: true });
+  expect((await db.query(`SELECT report_outcome FROM agent_commands WHERE id=$1`, [directed.id])).rows[0])
+    .toMatchObject({ report_outcome: 'done' });
+});
 it.each([false, true])('REPORT-RETURN-403: scheduled completion uses opening commander and enforces revocation=%s', async (revoked) => {
   const opened = await open();
   const initial = await worker(opened.cornerId);

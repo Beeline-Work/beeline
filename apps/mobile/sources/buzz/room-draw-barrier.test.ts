@@ -4,6 +4,7 @@ import { abandonRoomDraw, beginRoomDraw, finishRoomDraw, isOptionalRoomRequest,
   requireOpeningRoomResponse, roomDrawGeneration, waitForRoomDraw } from './room-draw-barrier';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   abandonRoomDraw(roomDrawGeneration());
 });
@@ -66,6 +67,7 @@ it('releases on leaving an unfinished open without releasing the next visit', as
 });
 
 it('holds all optional requests until after the Room frame and releases together', async () => {
+  vi.useFakeTimers();
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
   beginRoomDraw();
@@ -86,6 +88,7 @@ it('holds all optional requests until after the Room frame and releases together
   await Promise.resolve();
   expect(sent).toEqual([]);
   frames.shift()!(16);
+  await vi.advanceTimersByTimeAsync(100);
   await Promise.all(requests);
   expect(sent).toEqual(paths);
   expect(isOptionalRoomRequest('https://test/v1/phone/rooms/room')).toBe(false);
@@ -94,6 +97,7 @@ it('holds all optional requests until after the Room frame and releases together
 });
 
 it('requires the current Room viewport before the commit margin', async () => {
+  vi.useFakeTimers();
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
   beginRoomDraw('current');
@@ -110,11 +114,13 @@ it('requires the current Room viewport before the commit margin', async () => {
   await Promise.resolve();
   expect(sent).not.toHaveBeenCalled();
   frames.shift()!(16);
+  await vi.advanceTimersByTimeAsync(100);
   await waiting;
   expect(sent).toHaveBeenCalledOnce();
 });
 
 it('an old Room frame cannot release a newer open; aborted requests stop waiting', async () => {
+  vi.useFakeTimers();
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
   beginRoomDraw();
@@ -124,6 +130,7 @@ it('an old Room frame cannot release a newer open; aborted requests stop waiting
   const waiting = waitForRoomDraw()!.then(sent);
   frames.shift()!(0);
   frames.shift()!(16);
+  await vi.advanceTimersByTimeAsync(100);
   await Promise.resolve();
   expect(sent).not.toHaveBeenCalled();
   const abort = new AbortController();
@@ -133,6 +140,7 @@ it('an old Room frame cannot release a newer open; aborted requests stop waiting
   finishRoomDraw();
   frames.shift()!(32);
   frames.shift()!(48);
+  await vi.advanceTimersByTimeAsync(100);
   await waiting;
   expect(sent).toHaveBeenCalledOnce();
 });

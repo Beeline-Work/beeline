@@ -76,7 +76,8 @@ export function finishRoomDraw(newest?: string, id?: string): void {
   };
   // Visible rows establish readiness; leave a frame-commit margin without
   // waiting on interaction handles that can survive an interrupted transition.
-  if (!scheduleAnimationFrame(() => { if (!scheduleAnimationFrame(finish)) finish(); })) finish();
+  const committed = () => { globalThis.setTimeout(finish, 100); };
+  if (!scheduleAnimationFrame(() => { if (!scheduleAnimationFrame(committed)) finish(); })) finish();
 }
 
 export function waitForRoomDraw(signal?: AbortSignal | null): Promise<void> | undefined {

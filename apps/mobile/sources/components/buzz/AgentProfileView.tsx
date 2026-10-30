@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
 import { ProfileIdentity } from './ProfileIdentity';
 import { Button } from './Button';
+import { ButtonRow } from './ButtonRow';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { SettingsRow } from './SettingsRow';
 import { PageHeader } from './PageHeader';
@@ -310,7 +311,7 @@ export function AgentProfileView({
                       onChangeText={setWakeKey} secureTextEntry autoCapitalize="none" autoCorrect={false}
                       autoComplete="off" placeholder={detail.wake.keySet ? 'Set — enter a replacement' : 'Not set'}
                       maxLength={512} editable={!wakeSaving} />
-                    <HullDialogActions actions={[
+                    <ButtonRow actions={[
                       { label: 'Cancel', variant: 'quiet', disabled: wakeSaving,
                         onPress: () => { setWakeKey(''); setWakeOpen(false); } },
                       { label: wakeSaving ? 'Saving…' : 'Save', disabled: wakeSaving || !wakeUrl.trim() || Boolean(detail.wake?.keySet && !wakeKey),

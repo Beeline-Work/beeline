@@ -1,0 +1,2 @@
+Starting: Intent { act=android.intent.action.SEND typ=text/plain pkg=app.usebeeline (has extras) }
+Error: Activity not started, unable to resolve Intent { act=android.intent.action.SEND typ=text/plain flg=0x10000000 xflg=0x4 pkg=app.usebeeline (has extras) }

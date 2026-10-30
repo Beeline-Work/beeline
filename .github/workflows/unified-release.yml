@@ -902,6 +902,8 @@ jobs:
           bash ../../scripts/npm-ci-timed.sh
           "$EAS_CLI_PATH" build --local --platform android --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline.aab"
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'local EAS build did not produce a non-empty aab' >&2; exit 1; }
+          unzip -p "$RUNNER_TEMP/beeline.aab" BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map > "$RUNNER_TEMP/mapping.txt"
+          test -s "$RUNNER_TEMP/mapping.txt" || { echo 'R8 mapping missing from AAB' >&2; exit 1; }
           sha256=$(sha256sum "$RUNNER_TEMP/beeline.aab" | awk '{print $1}')
           node - "$RUNNER_TEMP/android-build.json" "$RUNNER_TEMP/beeline.aab" "$sha256" <<'NODE'
           const fs = require('node:fs');
@@ -924,6 +926,7 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build.json
             ${{ runner.temp }}/beeline.aab
+            ${{ runner.temp }}/mapping.txt
           if-no-files-found: error
           retention-days: 1
       - name: Authenticate to Google Play
@@ -933,8 +936,11 @@ jobs:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: node scripts/play-token.mjs
       - name: Upload Android to the selected Play track
+        id: play-upload
         if: inputs.store_track != 'none'
         env:
+          MAPPING_ARCHIVE_DIR: ${{ runner.temp }}/android-mappings
+          MAPPING_PATH: ${{ runner.temp }}/mapping.txt
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           TRACK: ${{ inputs.store_track }}
           # scripts/play-api.sh refuses to run without the Play package name (release
@@ -948,6 +954,14 @@ jobs:
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
+      - name: Retain R8 mapping by Play version code
+        if: always() && steps.play-upload.outputs.version_code != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-mapping-${{ steps.play-upload.outputs.version_code }}
+          path: ${{ runner.temp }}/android-mappings/${{ steps.play-upload.outputs.version_code }}/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
       - name: Remove Android build output
         if: always()
         run: rm -rf "$RUNNER_TEMP/beeline.aab" apps/mobile/android/app/build apps/mobile/android/build 2>/dev/null || true

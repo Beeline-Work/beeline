@@ -1,4 +1,6 @@
-const { withGradleProperties } = require('@expo/config-plugins');
+const { withGradleProperties, withAppBuildGradle, withDangerousMod } = require('@expo/config-plugins');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const withAndroidSplashTheme = require('./android-splash-theme');
 
 /**
@@ -10,6 +12,8 @@ const withAndroidSplashTheme = require('./android-splash-theme');
 const GRADLE_PROPERTIES = {
   'org.gradle.jvmargs': '-Xmx8g -XX:MaxMetaspaceSize=1g',
   'org.gradle.caching': 'true',
+  'android.enableMinifyInReleaseBuilds': 'true',
+  'android.enableShrinkResourcesInReleaseBuilds': 'true',
 };
 
 function upsert(properties, key, value) {
@@ -26,6 +30,31 @@ function upsert(properties, key, value) {
 
 module.exports = function withAndroidBuildTooling(config) {
   config = withAndroidSplashTheme(config);
+  config = withAppBuildGradle(config, (mod) => {
+    mod.modResults.contents = mod.modResults.contents.replace(
+      'getDefaultProguardFile("proguard-android.txt")',
+      'getDefaultProguardFile("proguard-android-optimize.txt")',
+    );
+    return mod;
+  });
+  config = withDangerousMod(config, ['android', async (mod) => {
+    const app = path.join(mod.modRequest.platformProjectRoot, 'app');
+    const rulesPath = path.join(app, 'proguard-rules.pro');
+    const marker = '# Beeline release reflection rules';
+    const existing = await fs.readFile(rulesPath, 'utf8');
+    const rules = await fs.readFile(path.join(__dirname, 'android-release.pro'), 'utf8');
+    const endMarker = '# End Beeline release reflection rules';
+    const block = `${marker}\n${rules.trimEnd()}\n${endMarker}`;
+    const pattern = /# Beeline release reflection rules\n[\s\S]*?# End Beeline release reflection rules/g;
+    await fs.writeFile(rulesPath, existing.includes(endMarker)
+      ? existing.replace(pattern, block)
+      : `${existing.trimEnd()}\n\n${block}\n`);
+    const raw = path.join(app, 'src/main/res/raw');
+    await fs.mkdir(raw, { recursive: true });
+    await fs.writeFile(path.join(raw, 'beeline_keep.xml'),
+      '<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@drawable/notification_icon,@drawable/splashscreen_logo,@color/splashscreen_background" />\n');
+    return mod;
+  }]);
   return withGradleProperties(config, (mod) => {
     for (const [key, value] of Object.entries(GRADLE_PROPERTIES)) {
       upsert(mod.modResults, key, value);

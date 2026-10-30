@@ -42,6 +42,8 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
 
   const { calls, stdout } = run('play-publish.sh', {
     AAB_PATH: aab,
+    MAPPING_PATH: aab,
+    MAPPING_ARCHIVE_DIR: dir,
     TRACK: 'internal',
     RELEASE_NAME: '0.2.18',
     RELEASE_STATUS: 'draft',
@@ -49,13 +51,16 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
     PLAY_DRY_RUN_VERSION_CODE: '28',
   });
 
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
+  assert.match(calls[2], /apks\/28\/deobfuscationFiles\/proguard/);
+  assert.equal(fs.readFileSync(path.join(dir, "28/mapping.txt"), "utf8"), fs.readFileSync(aab, "utf8"));
+  assert.doesNotMatch(calls.join("\n"), /SENTRY/);
   assert.equal(calls[0], `POST ${API}/edits -H Content-Length: 0`);
   assert.equal(
     calls[1],
     `POST ${UPLOAD}/edits/dry-run-edit/bundles?uploadType=media -H Content-Type: application/octet-stream --data-binary @${aab}`,
   );
-  const [, trackBody] = calls[2].match(/^PUT .*\/tracks\/internal -H Content-Type: application\/json --data (.*)$/s);
+  const [, trackBody] = calls[3].match(/^PUT .*\/tracks\/internal -H Content-Type: application\/json --data (.*)$/s);
   assert.deepEqual(JSON.parse(trackBody), {
     track: 'internal',
     releases: [
@@ -68,7 +73,7 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
     ],
   });
   assert.equal(
-    calls[3],
+    calls[4],
     `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
   );
   assert.match(stdout, /release notes from: .*default\.txt/);
@@ -85,15 +90,27 @@ test('play-publish.sh prefers the per-versionCode changelog and refuses a missin
   fs.mkdirSync(changelogs);
   fs.writeFileSync(path.join(changelogs, 'default.txt'), 'default');
   fs.writeFileSync(path.join(changelogs, '31.txt'), 'exact notes for 31');
-  const env = { AAB_PATH: aab, TRACK: 'beta', RELEASE_NAME: '0.2.19', RELEASE_STATUS: 'completed', CHANGELOG_DIR: changelogs };
+  const env = { AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: dir, TRACK: 'beta', RELEASE_NAME: '0.2.19', RELEASE_STATUS: 'completed', CHANGELOG_DIR: changelogs };
 
   const { calls } = run('play-publish.sh', { ...env, PLAY_DRY_RUN_VERSION_CODE: '31' });
-  assert.match(calls[2], /"text": "exact notes for 31"/);
-  assert.match(calls[2], /"status": "completed"/);
+  assert.match(calls[3], /"text": "exact notes for 31"/);
+  assert.match(calls[3], /"status": "completed"/);
 
   const missing = run('play-publish.sh', { ...env, AAB_PATH: path.join(dir, 'nope.aab') }, { expectStatus: 1 });
   assert.equal(missing.calls.length, 0);
   assert.match(missing.stderr, /AAB file not found/);
+});
+
+test('mapping is mandatory before any Play call', (t) => {
+  const dir = tempDir(t);
+  const aab = path.join(dir, 'app.aab');
+  fs.writeFileSync(aab, 'bundle');
+  for (const mapping of ['', path.join(dir, 'missing.txt')]) {
+    const result = run('play-publish.sh', { AAB_PATH: aab, MAPPING_PATH: mapping,
+      TRACK: 'internal', RELEASE_NAME: 'test', RELEASE_STATUS: 'draft' }, { expectStatus: 1 });
+    assert.equal(result.calls.length, 0);
+    assert.match(result.stderr, /MAPPING_PATH|mapping missing/);
+  }
 });
 
 test('play-publish-listing.sh: one edit carrying text, cleared+uploaded images, validate, commit', (t) => {
@@ -577,4 +594,11 @@ test('api() succeeds on the first 200 without touching the retry path', (t) => {
   assert.equal(result.stdout.trim(), '200');
   assert.doesNotMatch(result.stderr, /retrying/);
   assert.equal(calls, 1);
+});
+
+test('release retains the mapping artifact under the uploaded version code', () => {
+  const workflow = fs.readFileSync(path.join(REPO, '.github/workflows/unified-release.yml'), 'utf8');
+  assert.match(workflow, /BUNDLE-METADATA\/com.android.tools.build.obfuscation\/proguard.map/);
+  assert.match(workflow, /name: android-mapping-\$\{\{ steps.play-upload.outputs.version_code \}\}/);
+  assert.match(workflow, /android-mappings\/\$\{\{ steps.play-upload.outputs.version_code \}\}\/mapping.txt\n\s+if-no-files-found: error\n\s+retention-days: 90/);
 });

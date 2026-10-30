@@ -98,7 +98,8 @@ describe.skipIf(!existsSync(CHROME))('bookmark rows in a browser', () => {
       });
       expect(status, stderr).toBe(0);
       expect(result).toContain('PASS');
-      expect(result).toContain('SAVED 2m');
+      expect(result).toContain('PASS Avery2m');
+      expect(result).not.toMatch(/SAVED|OPEN/);
     },
     90_000,
   );

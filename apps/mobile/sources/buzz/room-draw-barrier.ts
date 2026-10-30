@@ -4,11 +4,15 @@ let release: (() => void) | undefined;
 let generation = 0;
 let awaitingResponse = false;
 let expectedNewest: string | undefined;
+let sawDraw = false;
+let drawnNewest: string | undefined;
 
 export function beginRoomDraw(): void {
   generation += 1;
   awaitingResponse = false;
   expectedNewest = undefined;
+  sawDraw = false;
+  drawnNewest = undefined;
   if (!pending) pending = new Promise<void>(resolve => { release = resolve; });
 }
 
@@ -24,6 +28,7 @@ export function openingRoomResponseReady(newest?: string, visit = generation): v
   if (visit !== generation) return;
   awaitingResponse = false;
   expectedNewest = newest;
+  if (sawDraw && (newest === undefined || drawnNewest === newest)) finishRoomDraw(drawnNewest);
 }
 
 export function roomDrawGeneration(): number { return generation; }
@@ -38,6 +43,9 @@ export function abandonRoomDraw(visit: number): void {
 }
 
 export function finishRoomDraw(newest?: string): void {
+  if (!pending) return;
+  sawDraw = true;
+  drawnNewest = newest;
   if (awaitingResponse || (expectedNewest !== undefined && newest !== expectedNewest)) return;
   const current = generation;
   const finish = () => {
@@ -74,7 +82,9 @@ export function waitForRoomDraw(signal?: AbortSignal | null): Promise<void> | un
 
 export function isOptionalRoomRequest(input: string): boolean {
   const path = new URL(input).pathname;
-  return /^\/v1\/phone\/workspaces(?:\/[^/]+(?:\/chats)?)?$/.test(path) ||
+  // Workspace discovery is required during cold sign-in; only the Room's
+  // roster and list enrichment are optional.
+  return /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test(path) ||
     /^\/v1\/phone\/rooms\/[^/]+\/read$/.test(path) ||
     path === '/v1/phone/operations/readStarPrompt';
 }

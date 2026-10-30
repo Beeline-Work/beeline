@@ -76,7 +76,7 @@ export function summarizeSample(sample) {
     canonicalMs: sample.canonicalMs === undefined ? null : finite(sample.canonicalMs, 'canonicalMs') - startMs,
     prepaintHttpCount: prepaint.length,
     prepaintOptionalCount: prepaint.filter(span =>
-      /^\/v1\/phone\/workspaces(?:\/[^/]+(?:\/chats)?)?$/.test((span.operation ?? '').split('?')[0]) ||
+      /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test((span.operation ?? '').split('?')[0]) ||
       /^\/v1\/phone\/rooms\/[^/]+\/read$/.test((span.operation ?? '').split('?')[0]) ||
       span.operation === '/v1/phone/operations/readStarPrompt').length,
     prepaintHttpDepth: serialDepth(prepaint),

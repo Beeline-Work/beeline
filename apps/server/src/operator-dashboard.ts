@@ -51,7 +51,8 @@ export async function recordOperatorFunctionEvent(
     await database.query(
       `INSERT INTO operator_function_events(function_name,duration_ms,failed,network_rtt_residual_ms,js_response_delay_ms)
        VALUES($1,$2,$3,$4,$5)`,
-      [name, boundedDuration, failed, networkRttResidualMs, jsResponseDelayMs ?? null],
+      [name, boundedDuration, failed, networkRttResidualMs,
+        jsResponseDelayMs === undefined ? null : Math.round(jsResponseDelayMs)],
     );
   }
   // Event-triggered retention keeps the operational ledger bounded without a

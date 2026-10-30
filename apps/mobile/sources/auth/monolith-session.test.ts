@@ -58,15 +58,17 @@ describe('monolith phone session', () => {
         '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/room-a/read'];
       const requests = optional.map(path => session.fetch(`https://server.example${path}`));
       await session.fetch('https://server.example/v1/phone/rooms/room-a');
-      expect(fetcher.mock.calls.map(call => call[0])).toEqual(['https://server.example/v1/phone/rooms/room-a']);
+      await session.fetch('https://server.example/v1/phone/workspaces');
+      const required = ['https://server.example/v1/phone/rooms/room-a', 'https://server.example/v1/phone/workspaces'];
+      expect(fetcher.mock.calls.map(call => call[0])).toEqual(required);
       markRoomOpen('newest-frame', 'newest-row');
       frames.shift()!(0);
       await Promise.resolve();
-      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
       frames.shift()!(16);
       await Promise.all(requests);
       expect(fetcher.mock.calls.map(call => call[0])).toEqual([
-        'https://server.example/v1/phone/rooms/room-a', ...optional.map(path => `https://server.example${path}`),
+        ...required, ...optional.map(path => `https://server.example${path}`),
       ]);
     } finally {
       abandonRoomDraw(roomDrawGeneration());

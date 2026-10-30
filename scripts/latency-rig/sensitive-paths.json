@@ -1,5 +1,6 @@
 [
   "apps/mobile/sources/push/",
+  "apps/mobile/plugins/withAndroidPushRouting.js",
   "apps/mobile/sources/app/_layout.tsx",
   "apps/mobile/sources/app/(app)/beeline/chat/",
   "apps/mobile/sources/buzz/room-",
@@ -9,6 +10,8 @@
   "apps/mobile/sources/components/buzz/ConversationComposer",
   "apps/mobile/sources/buzz/surface-storage",
   "packages/buzz-client/src/signed-event-outbox",
+  "packages/buzz-client/src/surface-cache",
+  "packages/buzz-client/src/surface-refresh",
   "packages/buzz-client/src/room",
   "packages/buzz-client/src/sync"
 ]

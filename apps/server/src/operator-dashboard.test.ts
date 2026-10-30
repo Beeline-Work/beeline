@@ -758,7 +758,7 @@ describe('private operator dashboard', () => {
       body: JSON.stringify({
         durationMs: 120,
         failed: false,
-        network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2, jsResponseDelayMs: 250 },
+        network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2, jsResponseDelayMs: 250.4 },
       }),
     });
     expect(accepted.status).toBe(204);

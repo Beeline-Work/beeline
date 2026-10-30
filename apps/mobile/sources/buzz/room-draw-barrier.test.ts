@@ -4,6 +4,28 @@ import { abandonRoomDraw, beginRoomDraw, finishRoomDraw, isOptionalRoomRequest,
 
 afterEach(() => { vi.unstubAllGlobals(); finishRoomDraw(); });
 
+it('a failed opening response never releases work before a frame', async () => {
+  beginRoomDraw();
+  requireOpeningRoomResponse();
+  const sent = vi.fn();
+  const waiting = waitForRoomDraw()!.then(sent);
+  openingRoomResponseReady(undefined);
+  await Promise.resolve();
+  expect(sent).not.toHaveBeenCalled();
+  finishRoomDraw('cached-row');
+  await waiting;
+  expect(sent).toHaveBeenCalledOnce();
+});
+
+it('a failed read releases optional work after an already drawn cached frame', async () => {
+  beginRoomDraw();
+  requireOpeningRoomResponse();
+  const waiting = waitForRoomDraw()!;
+  finishRoomDraw('cached-row');
+  openingRoomResponseReady(undefined);
+  await waiting;
+});
+
 it('holds requests past a stale cached frame until the opening response draws', async () => {
   beginRoomDraw();
   requireOpeningRoomResponse();
@@ -57,6 +79,7 @@ it('holds all optional requests until after the Room frame and releases together
   await Promise.all(requests);
   expect(sent).toEqual(paths);
   expect(isOptionalRoomRequest('https://test/v1/phone/rooms/room')).toBe(false);
+  expect(isOptionalRoomRequest('https://test/v1/phone/workspaces')).toBe(false);
   expect(isOptionalRoomRequest('https://test/v1/phone/operations/sendRoomMessage')).toBe(false);
 });
 

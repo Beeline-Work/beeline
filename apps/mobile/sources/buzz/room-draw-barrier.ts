@@ -1,4 +1,6 @@
 /** Optional Room reads share one gate, independent of diagnostic tracing. */
+import { scheduleAnimationFrame } from './host-scheduler';
+
 let pending: Promise<void> | undefined;
 let release: (() => void) | undefined;
 let generation = 0;
@@ -6,18 +8,29 @@ let awaitingResponse = false;
 let expectedNewest: string | undefined;
 let sawDraw = false;
 let drawnNewest: string | undefined;
+let roomId: string | undefined;
+let visibleIds = new Set<string>();
+let releaseScheduled = false;
+let afterTransition: (visit: number, work: () => void) => void = (_visit, work) => work();
 
-export function beginRoomDraw(): void {
+export function configureRoomDrawScheduler(schedule: typeof afterTransition): void {
+  afterTransition = schedule;
+}
+
+export function beginRoomDraw(id?: string): void {
   generation += 1;
   awaitingResponse = false;
   expectedNewest = undefined;
   sawDraw = false;
   drawnNewest = undefined;
+  roomId = id;
+  visibleIds = new Set();
+  releaseScheduled = false;
   if (!pending) pending = new Promise<void>(resolve => { release = resolve; });
 }
 
-export function ensureRoomDraw(): void {
-  if (!pending) beginRoomDraw();
+export function ensureRoomDraw(id?: string): void {
+  if (!pending || (id !== undefined && id !== roomId)) beginRoomDraw(id);
 }
 
 /** A stale cached transcript must not release work ahead of the tapped row. */
@@ -26,9 +39,16 @@ export function requireOpeningRoomResponse(visit = generation): void {
 }
 export function openingRoomResponseReady(newest?: string, visit = generation): void {
   if (visit !== generation) return;
+  if (awaitingResponse) expectedNewest = newest;
   awaitingResponse = false;
-  expectedNewest = newest;
-  if (sawDraw && (newest === undefined || drawnNewest === newest)) finishRoomDraw(drawnNewest);
+  if (sawDraw) finishRoomDraw(drawnNewest);
+}
+
+/** A data-ready animation callback alone does not prove that the row mounted. */
+export function observeVisibleRoomRows(id: string, ids: readonly string[]): void {
+  if (!pending || (roomId !== undefined && roomId !== id)) return;
+  visibleIds = new Set(ids);
+  if (sawDraw) finishRoomDraw(drawnNewest);
 }
 
 export function roomDrawGeneration(): number { return generation; }
@@ -42,24 +62,29 @@ export function abandonRoomDraw(visit: number): void {
   resolve?.();
 }
 
-export function finishRoomDraw(newest?: string): void {
-  if (!pending) return;
+export function finishRoomDraw(newest?: string, id?: string): void {
+  if (!pending || (id !== undefined && roomId !== id)) return;
   sawDraw = true;
   drawnNewest = newest;
-  if (awaitingResponse || (expectedNewest !== undefined && newest !== expectedNewest)) return;
+  const ready = () => !awaitingResponse && (expectedNewest !== undefined
+    ? visibleIds.has(expectedNewest) : drawnNewest === undefined || visibleIds.size > 0);
+  if (releaseScheduled || !ready()) return;
+  releaseScheduled = true;
   const current = generation;
   const finish = () => {
-    if (current !== generation) return;
+    if (current !== generation || !pending) return;
+    if (!ready()) { releaseScheduled = false; return; }
     const resolve = release;
     pending = undefined;
     release = undefined;
     resolve?.();
   };
-  // The Room's JS ready mark precedes native frame commitment. Leave two
-  // further frames for that buffer before optional work competes with it.
-  if (typeof requestAnimationFrame === 'function')
-    requestAnimationFrame(() => requestAnimationFrame(finish));
-  else finish();
+  // Wait for visible content and native navigation, then leave a frame-commit
+  // margin before optional work competes with that frame.
+  afterTransition(current, () => {
+    if (current !== generation || !pending) return;
+    if (!scheduleAnimationFrame(() => { if (!scheduleAnimationFrame(finish)) finish(); })) finish();
+  });
 }
 
 export function waitForRoomDraw(signal?: AbortSignal | null): Promise<void> | undefined {

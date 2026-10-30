@@ -93,15 +93,16 @@ export function roomOpenTraceEnabled(): boolean {
   return !tracingOff();
 }
 
-export function markRoomOpen(phase: string, detail?: string): void {
-  if (phase === RUN_START_PHASE) beginRoomDraw();
-  else if (phase === 'route-mount') ensureRoomDraw();
-  else if (phase === 'newest-frame') finishRoomDraw(detail);
+export function markRoomOpen(phase: string, detail?: string, roomId?: string): void {
+  if (phase === 'newest-frame' && roomId !== undefined && pageRoomId !== undefined && roomId !== pageRoomId) return;
+  if (phase === RUN_START_PHASE) beginRoomDraw(detail);
+  else if (phase === 'route-mount') ensureRoomDraw(detail);
+  else if (phase === 'newest-frame') finishRoomDraw(detail, roomId);
   if (phase === 'newest-frame') markLatencyRouteFrame('/beeline/chat/[channelId]');
   // Operational page timing is independent of the optional diagnostic trace.
   // Only the navigation and first painted frame matter; no Room identifier or
   // trace detail is sent. A failed covering read is the terminal failure event.
-  if (phase === RUN_START_PHASE || (phase === 'route-mount' && (pageStartedAt === null || pageReported))) {
+  if (phase === RUN_START_PHASE || (phase === 'route-mount' && (pageStartedAt === null || pageReported || pageRoomId !== detail))) {
     pageStartedAt = performance.now();
     pageReported = false;
     pageRoomId = detail;

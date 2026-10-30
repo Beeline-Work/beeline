@@ -37,6 +37,8 @@ import {
 import { offerRoomTurns, roomTurns, stampRoomMessageRows, useRoomTurnRecords, writeRoomMessage, writeRoomTurn } from '@/buzz/room-message-records';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
+import { observeVisibleRoomRows, waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import { messageBoundaryIds } from '@/buzz/room-new-message-boundary';
 import { liveDraftRowId } from '@/buzz/draft-settle';
 import {
   applyLiveOverlayStructure,
@@ -117,10 +119,10 @@ function logLiveTrace(phase: string, traces: readonly ReceivedLiveTrace[], at = 
 
 export { markRoomOpen };
 
-function queueNewestFrameMark(detail?: string): void {
+function queueNewestFrameMark(detail?: string, roomId?: string): void {
   if (
     !scheduleAnimationFrame(() => {
-      scheduleAnimationFrame(() => markRoomOpen('newest-frame', detail));
+      scheduleAnimationFrame(() => markRoomOpen('newest-frame', detail, roomId));
     })
   ) {
     markRoomOpen('newest-js', detail);
@@ -302,7 +304,7 @@ export function useRoomSurfaceSession({
     return view ? { ...viewer, view, scope: identityScope(viewer.relayUrl, viewer.viewerPubkey) } : null;
   });
   useEffect(() => {
-    if (openingCache) queueNewestFrameMark(openingCache.view.messages.at(-1)?.id);
+    if (openingCache) queueNewestFrameMark(openingCache.view.messages.at(-1)?.id, channelId);
   }, [openingCache]);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
@@ -432,6 +434,7 @@ export function useRoomSurfaceSession({
 
   const channelIdRef = useRef(channelId);
   const isFocusedRef = useRef(isFocused);
+  const readVisitFocusRef = useRef(isFocused);
   const isCornerRef = useRef(false);
   isFocusedRef.current = isFocused;
   // One advancer per visit. It debounces the viewport's reports and writes the
@@ -439,6 +442,8 @@ export function useRoomSurfaceSession({
   // drops whatever it was still holding, because that belongs to the old Room.
   const readCursorRef = useRef<ReadCursorAdvancer | null>(null);
   const readCursorViewerRef = useRef(userPubkey);
+  const readViewportRef = useRef<{ roomId: string; viewer: string;
+    chronological: readonly ChatDisplayMessage[]; visible: readonly ChatDisplayMessage[] } | null>(null);
   if (readCursorRef.current === null) {
     readCursorRef.current = new ReadCursorAdvancer((messageId) => {
       void roomClientRef.current?.markRead(channelIdRef.current, messageId).catch(() => undefined);
@@ -454,7 +459,7 @@ export function useRoomSurfaceSession({
     // one.
     return () => readCursorRef.current?.cancel();
   }, [channelId]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = readCursorViewerRef.current;
     readCursorViewerRef.current = userPubkey;
     if (previous && previous !== userPubkey) readCursorRef.current?.cancel();
@@ -470,14 +475,32 @@ export function useRoomSurfaceSession({
   // So: arriving re-arms, leaving publishes what was seen. A debounce still
   // holding a boundary when the visit ends is not less read for it.
   useEffect(() => {
+    const becameFocused = isFocused && !readVisitFocusRef.current;
+    readVisitFocusRef.current = isFocused;
     liveDraftDrainStore.setActive(isFocused);
     if (isFocused) {
       readCursorRef.current?.resume();
-      schedulerRef.current?.signal();
+      const viewport = readViewportRef.current;
+      if (viewport?.roomId === channelId && viewport.viewer === readCursorViewerRef.current) {
+        observeVisibleRoomRows(channelId, viewport.visible.flatMap(messageBoundaryIds));
+        if (!isCornerRef.current && AppState.currentState === 'active')
+          readCursorRef.current?.observe(viewport.chronological, viewport.visible);
+      }
+      const view = reconciledViewRef.current;
+      if (becameFocused && view?.room.id === channelId)
+        queueNewestFrameMark(view.messages.at(-1)?.id, channelId);
+      const scheduler = schedulerRef.current;
+      if (scheduler) {
+        const draw = waitForRoomDraw();
+        if (draw) void draw.then(() => {
+          if (isFocusedRef.current && schedulerRef.current === scheduler) scheduler.signal();
+        });
+        else scheduler.signal();
+      }
       return;
     }
     readCursorRef.current?.flush();
-  }, [isFocused, liveDraftDrainStore]);
+  }, [channelId, isFocused, liveDraftDrainStore]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') readCursorRef.current?.flush();
@@ -487,6 +510,9 @@ export function useRoomSurfaceSession({
 
   const advanceReadCursor = useCallback(
     (chronological: readonly ChatDisplayMessage[], visible: readonly ChatDisplayMessage[]) => {
+      readViewportRef.current = { roomId: channelIdRef.current, viewer: readCursorViewerRef.current, chronological, visible };
+      if (isFocusedRef.current)
+        observeVisibleRoomRows(channelIdRef.current, visible.flatMap(messageBoundaryIds));
       if (isCornerRef.current) return;
       if (!isFocusedRef.current) return;
       if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
@@ -719,7 +745,7 @@ export function useRoomSurfaceSession({
       if (fresh) {
         const newest = stableView.messages.at(-1)?.id;
         markRoomOpen('fresh-apply', newest);
-        queueNewestFrameMark(newest);
+        queueNewestFrameMark(newest, channelId);
       }
       setHydrationFailed(false);
       setHydrationError(null);
@@ -1119,7 +1145,7 @@ export function useRoomSurfaceSession({
         const view = mobileSurfaceCache.peek(address, isRoomView);
         if (view && view !== reconciledViewRef.current) {
           paintView(view, false);
-          queueNewestFrameMark(view.messages.at(-1)?.id);
+          queueNewestFrameMark(view.messages.at(-1)?.id, channelId);
         }
       };
       // A missing-row reply may arrive while the cached frame is committing.
@@ -1163,7 +1189,7 @@ export function useRoomSurfaceSession({
           paintedCache = paintView(cached, false);
           const cachedNewest = cached.messages.at(-1)?.id;
           markRoomOpen('cache-apply', cachedNewest);
-          queueNewestFrameMark(cachedNewest);
+          queueNewestFrameMark(cachedNewest, channelId);
         }
         markRoomOpen('occupancy-yield-start');
         if (!openingFrame || cached !== openingCache.view) await yieldToPaint();
@@ -1279,7 +1305,8 @@ export function useRoomSurfaceSession({
               // the live watch during that GET delayed the response until the
               // subscribe completed on Android. The first subscribed frame
               // forces a covering read for writes in the read/watch gap.
-              void yieldToPaint().then(() => {
+              void yieldToPaint().then(async () => {
+                await waitForRoomDraw();
                 if (cancelled) return;
                 markRoomOpen('watch-install');
                 void installWatch().catch((error) => {

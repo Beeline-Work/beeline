@@ -1,8 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { abandonRoomDraw, beginRoomDraw, finishRoomDraw, isOptionalRoomRequest,
-  openingRoomResponseReady, requireOpeningRoomResponse, roomDrawGeneration, waitForRoomDraw } from './room-draw-barrier';
+  configureRoomDrawScheduler, observeVisibleRoomRows, openingRoomResponseReady,
+  requireOpeningRoomResponse, roomDrawGeneration, waitForRoomDraw } from './room-draw-barrier';
 
-afterEach(() => { vi.unstubAllGlobals(); finishRoomDraw(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  abandonRoomDraw(roomDrawGeneration());
+  configureRoomDrawScheduler((_visit, work) => work());
+});
 
 it('a failed opening response never releases work before a frame', async () => {
   beginRoomDraw();
@@ -13,6 +18,7 @@ it('a failed opening response never releases work before a frame', async () => {
   await Promise.resolve();
   expect(sent).not.toHaveBeenCalled();
   finishRoomDraw('cached-row');
+  observeVisibleRoomRows('room', ['cached-row']);
   await waiting;
   expect(sent).toHaveBeenCalledOnce();
 });
@@ -22,6 +28,7 @@ it('a failed read releases optional work after an already drawn cached frame', a
   requireOpeningRoomResponse();
   const waiting = waitForRoomDraw()!;
   finishRoomDraw('cached-row');
+  observeVisibleRoomRows('room', ['cached-row']);
   openingRoomResponseReady(undefined);
   await waiting;
 });
@@ -32,12 +39,14 @@ it('holds requests past a stale cached frame until the opening response draws', 
   const sent = vi.fn();
   const waiting = waitForRoomDraw()!.then(sent);
   finishRoomDraw('old-row');
+  observeVisibleRoomRows('room', ['old-row']);
   await Promise.resolve();
   expect(sent).not.toHaveBeenCalled();
   openingRoomResponseReady('new-row');
   finishRoomDraw('old-row');
   await Promise.resolve();
   expect(sent).not.toHaveBeenCalled();
+  observeVisibleRoomRows('room', ['new-row']);
   finishRoomDraw('new-row');
   await waiting;
   expect(sent).toHaveBeenCalledOnce();
@@ -71,7 +80,9 @@ it('holds all optional requests until after the Room frame and releases together
   });
   await Promise.resolve();
   expect(sent).toEqual([]);
-  finishRoomDraw();
+  finishRoomDraw('row');
+  expect(frames).toHaveLength(0);
+  observeVisibleRoomRows('room', ['row']);
   frames.shift()!(0);
   await Promise.resolve();
   expect(sent).toEqual([]);
@@ -81,6 +92,31 @@ it('holds all optional requests until after the Room frame and releases together
   expect(isOptionalRoomRequest('https://test/v1/phone/rooms/room')).toBe(false);
   expect(isOptionalRoomRequest('https://test/v1/phone/workspaces')).toBe(false);
   expect(isOptionalRoomRequest('https://test/v1/phone/operations/sendRoomMessage')).toBe(false);
+});
+
+it('requires the current Room viewport and waits for navigation before the commit margin', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+  let settled: (() => void) | undefined;
+  configureRoomDrawScheduler((_visit, work) => { settled = work; });
+  beginRoomDraw('current');
+  const sent = vi.fn();
+  const waiting = waitForRoomDraw()!.then(sent);
+  finishRoomDraw('row', 'previous');
+  observeVisibleRoomRows('previous', ['row']);
+  expect(settled).toBeUndefined();
+  finishRoomDraw('row', 'current');
+  expect(settled).toBeUndefined();
+  observeVisibleRoomRows('current', ['row']);
+  expect(settled).toBeTypeOf('function');
+  expect(frames).toHaveLength(0);
+  settled!();
+  frames.shift()!(0);
+  await Promise.resolve();
+  expect(sent).not.toHaveBeenCalled();
+  frames.shift()!(16);
+  await waiting;
+  expect(sent).toHaveBeenCalledOnce();
 });
 
 it('an old Room frame cannot release a newer open; aborted requests stop waiting', async () => {

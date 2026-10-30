@@ -155,14 +155,17 @@ synchronize phone and server clocks. It does not capture radio packet RTT.
 `js_response_delay_ms` stores JavaScript handling minus native body completion,
 separating bridge/JS queue delay from both the network and body transfer. It is
 an arrival-to-handling delay, not a CPU-utilization measurement. Both values
-ride the same sampled page observation.
+ride the same sampled page observation. Rows without a JS response delay can
+come from legacy clients that measured header handling in JavaScript; exclude
+those rows when deriving native wire timing.
 Once that release has real traffic, export at least 20 content-free values
 read-only and run `derive-rtt.mjs` on one JSON object per line:
 
 ```sql
-SELECT network_rtt_residual_ms
+SELECT network_rtt_residual_ms, js_response_delay_ms
 FROM operator_function_events
 WHERE function_name='page_load' AND network_rtt_residual_ms IS NOT NULL
+  AND js_response_delay_ms IS NOT NULL
   AND created_at >= now()-interval '1 day'
 ORDER BY id DESC LIMIT 1000;
 ```

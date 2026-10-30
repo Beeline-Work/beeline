@@ -304,6 +304,7 @@ vi.mock('@beeline/buzz-client', async () => {
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
+import { abandonRoomDraw, finishRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { roomMessageRecord, useRoomMessageRecords, writeRoomBookmark } from '@/buzz/room-message-records';
@@ -427,6 +428,8 @@ afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  abandonRoomDraw(roomDrawGeneration());
+  roomTransitionWork.flush();
   controls.focused = true;
   controls.focusListeners.clear();
   controls.navigationListeners.clear();
@@ -1844,6 +1847,15 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch()));
     expect(session.roomSurface?.room.id).toBe('room-a');
     expect(controls.roomReads).toBe(1);
+    expect(controls.subscriptions).toHaveLength(0);
+    // The headless harness has no native viewport. Supply its empty-Room draw
+    // and settle navigation before the optional watch can cover the read gap.
+    await act(async () => {
+      finishRoomDraw(undefined, 'room-a');
+      const tasks = [...controls.interactionTasks];
+      controls.interactionTasks.clear();
+      tasks.forEach(work => work());
+    });
     await flushEffects();
     await act(async () => controls.subscriptions[0]!.emit({
       monolithLive: { type: 'subscribed', roomId: 'room-a' },

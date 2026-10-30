@@ -32,7 +32,7 @@ import { migrate } from '../../../server/src/database';
 import { PgliteDatabase } from '../../../server/src/test-support';
 import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
 import { markRoomOpen } from '@/buzz/room-open-trace';
-import { abandonRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
+import { abandonRoomDraw, observeVisibleRoomRows, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 
 const tokens = (generation: number) => ({
   accessToken: `access-${generation}`,
@@ -66,6 +66,8 @@ describe('monolith phone session', () => {
         'https://server.example/v1/phone/observations/page-load'];
       expect(fetcher.mock.calls.map(call => call[0])).toEqual(required);
       markRoomOpen('newest-frame', 'newest-row');
+      expect(frames).toHaveLength(0);
+      observeVisibleRoomRows('room-a', ['newest-row']);
       frames.shift()!(0);
       await Promise.resolve();
       expect(fetcher).toHaveBeenCalledTimes(3);

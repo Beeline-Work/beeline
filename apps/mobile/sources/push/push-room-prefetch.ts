@@ -7,8 +7,8 @@ import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset
 import { readPushedMonolithRoom } from '@/sync/transport/room-view-client';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
-import { ensureRoomDraw, openingRoomResponseReady,
-  requireOpeningRoomResponse, roomDrawGeneration } from '@/buzz/room-draw-barrier';
+import { beginRoomDraw, openingRoomResponseReady,
+  requireOpeningRoomResponse, roomDrawGeneration, waitForRoomDraw } from '@/buzz/room-draw-barrier';
 import { reconcileRoomView } from '@/buzz/room-view-presentation';
 
 type PendingRoom = {
@@ -35,8 +35,9 @@ subscribeClientReset(() => {
 export function prefetchPushRoom(responseId: string, roomId: string, messageId?: string): void {
   const config = getBuzzRuntimeConfig();
   if (pending?.responseId === responseId && pending.roomId === roomId) return;
-  ensureRoomDraw();
+  beginRoomDraw(roomId);
   const drawVisit = roomDrawGeneration();
+  requireOpeningRoomResponse(drawVisit);
   markRoomOpen('prefetch-start');
   markRoomOpen('prefetch-target', messageId ?? 'unspecified');
   const generation = clientResetGeneration();
@@ -61,8 +62,10 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     // starts its read now, rather than waiting for navigation or a handshake.
     const received = Boolean(cached && (!newestId || cached.messages.some((message) => message.id === newestId)));
     markRoomOpen('prefetch-cache', `${received ? 'received' : 'missing'}:${cached?.messages.at(-1)?.id ?? 'empty'}`);
-    if (received) return afterPaint.then(read);
-    requireOpeningRoomResponse(drawVisit);
+    if (received) {
+      openingRoomResponseReady(undefined, drawVisit);
+      return afterPaint.then(async () => { await waitForRoomDraw(); return read(); });
+    }
     if (!address) return read();
     // An opening read can finish before the Room's asynchronous session setup.
     // Publish its authorized response now so that setup sees the fresh rows.

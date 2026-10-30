@@ -96,7 +96,7 @@
     "prompt:nightly": "node --import tsx scripts/prompt-nightly.mjs",
     "test:prompt-nightly": "node --import tsx --test scripts/prompt-nightly.test.mjs",
     "test:prompt-cases": "node --import tsx --test scripts/prompt-case-rules.test.ts && node --import tsx scripts/prompt-cases.ts",
-    "test:deploy": "node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/release-record.test.mjs scripts/ota-release.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/mobile-store-minimum.test.mjs scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/gh-release-retry.test.mjs scripts/landing-page.test.mjs scripts/pages-site.test.mjs scripts/legacy-production-routing.test.mjs",
+    "test:deploy": "node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/mobile-store-minimum.test.mjs scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/gh-release-retry.test.mjs scripts/landing-page.test.mjs scripts/pages-site.test.mjs scripts/legacy-production-routing.test.mjs",
     "test:pages": "node --test scripts/desktop-download.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs",
     "test:web-deploy": "node --test scripts/verify-web-deployment.test.mjs",
     "check:app-association-drift": "node scripts/check-app-association-drift.mjs",

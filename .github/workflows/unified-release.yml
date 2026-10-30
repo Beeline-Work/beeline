@@ -1370,3 +1370,42 @@ jobs:
           echo "Release failed (${{ steps.result.outputs.failure_class }}): ${{ steps.result.outputs.incomplete }}" >&2
           echo 'Rerun the release: the same commit resumes its draft identity and every leg skips what already shipped.' >&2
           exit 1
+
+  # Delivery bookkeeping (merges delivered, OTA runtimes, owner phone receipt,
+  # job timings) goes to the Loops/insights data store. Nothing in the release
+  # reads it back, and continue-on-error keeps any failure here out of the
+  # release result.
+  bookkeeping:
+    needs: [initialize, mobile_ota, mobile_ota_after_proof, release_result]
+    if: "!cancelled() && needs.initialize.result == 'success'"
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Write release bookkeeping to the insights data store
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          PREVIOUS_RECORD: ${{ needs.initialize.outputs.previous_record }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
+          GH_TOKEN: ${{ github.token }}
+          INSIGHTS_TOKEN: ${{ secrets.BEELINE_INSIGHTS_TOKEN }}
+          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+        run: |
+          printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+          printf '%s' "$PREVIOUS_RECORD" > "$RUNNER_TEMP/previous-release.json"
+          NEEDS_FILE="$RUNNER_TEMP/needs.json" PREVIOUS_RECORD_FILE="$RUNNER_TEMP/previous-release.json" \
+            node scripts/release-bookkeeping.mjs

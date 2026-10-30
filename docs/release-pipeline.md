@@ -282,6 +282,26 @@ desktop installers, the R8 mapping, and proof evidence.
 local actions they use, and CI fails on any other upload, download, cache,
 cross-run download or Actions-artifact lookup.
 
+## Release bookkeeping
+
+Delivery bookkeeping lives in the Loops/insights data store, not in the
+release path. After each attempt, the `bookkeeping` job runs
+`scripts/release-bookkeeping.mjs`. It writes one file,
+`Beeline-Work/beeline-insights` `releases/<version>.json`, which records:
+
+- the commits since the previous release;
+- the phone OTA branch and runtimes, and the time from trigger to phone;
+- whether the owner's physical phone reported this exact release
+  (`/update-receipts`);
+- each job's duration and result.
+
+A rerun replaces the file. Nothing in the release reads it back. A missing
+`BEELINE_INSIGHTS_TOKEN` secret, an unreachable receipt server or a failed
+GitHub write only logs a warning. The job also has `continue-on-error`, so
+bookkeeping never fails a release. This replaces the old cumulative
+`mobile-ota-delivery-index` artifact (4.2 MB), owner-receipt confirmation and
+stage-timing files.
+
 ## Phone OTA by channel pointer
 
 Each release publishes to its own EAS branch, `release-<version>`, one update

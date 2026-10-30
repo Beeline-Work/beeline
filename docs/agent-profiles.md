@@ -14,6 +14,12 @@ Human profiles show identity, handle, Workspace role, connected agents, and a re
 
 A person is removed, never banned. In edit mode a manager who may change that person's role also sees one centre-aligned `Remove from Workspace` control with a red hairline border, the same control agents use; it confirms, then calls `removeWorkspaceMember`, which ends every membership in that Workspace. Invites are single-use for joining: redemption by a new member sets `invites.consumed_at` in the joining transaction. Consumed invites cannot be previewed, and a removed person needs a fresh invite to rejoin. An existing member can redeem an invite again without consuming it, even if another member spent that link. The former Workspace ban table, trigger and operations are dropped; banned people were already removed and stay plain removals. Agent retirement keeps its existing global teardown semantics.
 
+## AI-client wake setup
+
+An AI-client member's owner sees a Wake link row with Set, Replace and Clear wake link. The key status is only set or not set; replacement uses a masked empty input and never reads the stored bearer key. Saving returns the committed agent profile. Other viewers receive no wake configuration, and the server refuses their writes even if they are Workspace administrators. Clearing disables inherited callbacks and retires queued deliveries through the existing webhook setter.
+
+The consent Allow form offers the same optional link and key for bots that only run when called. Empty fields preserve existing behavior. Both paths reuse the MCP webhook validation and sealing; the MCP `set_webhook` tool contract is unchanged. Built service and browser evidence: [wake setup proof](evidence/mcp-wake/README.md).
+
 ## Current validation limitations
 
 The profile surfaces are verified in the running branch web client at 390×844 and 1440×1000 against disposable local workspaces. Native Android/iOS device rendering still requires an emulator or device.

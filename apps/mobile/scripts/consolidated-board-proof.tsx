@@ -52,6 +52,7 @@ const agent = {
     : [{ title: 'Illustrative merged pull request', url: 'https://github.com/acme/repo/pull/1' }],
   watchFilters: [],
 } as AgentDetailView;
+if (params.has('wake')) Object.assign(agent, { wake: { url: 'https://hooks.example/hosted-bot', keySet: true } });
 // Usage proof fixtures render the production profile and Members components (mock r7 states).
 const usageState = params.get('usage');
 const usageNow = Date.now() / 1000;

@@ -1,3 +1,4 @@
+import { setMcpMemberWebhook, McpToolError } from './rooms-mcp-members.js';
 import { disconnectMcp, MCP_SCOPES } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
@@ -3496,6 +3497,13 @@ export class PhoneService {
     // An AI-client member's instructions live in its own app, so its profile
     // names that app instead of a made-up animal soul.
     const mcpClient = config.mcp_client_name;
+    const wake = mcpClient && config.owner_id === viewerId
+      ? (await this.database.query<{ url: string | null; keySet: boolean }>(
+        `SELECT NULLIF(COALESCE(member.callback_url,client.callback_url),'') url,
+          member.callback_secret IS NOT NULL "keySet"
+         FROM rooms_mcp_members member JOIN rooms_mcp_clients client ON client.id=member.client_id
+         WHERE member.member_id=$1`, [agentId])).rows[0]
+      : undefined;
     const member = this.projectMembers([{
       id: config.member_id,kind: 'agent',name: config.member_name,
       handle: config.member_handle,avatar: config.member_avatar,
@@ -3509,6 +3517,7 @@ export class PhoneService {
     const lastWork = workPage.at(-1);
     return {
       workspaceId,
+      ...(wake ? { wake } : {}),
       ...(config?.harness ? { harness: config.harness } : {}),
       ...(config?.owner_id === viewerId ? { usage: projectAgentUsage(config) } : {}),
       ...(config?.config_version ? { configVersion: config.config_version } : {}),
@@ -4541,6 +4550,32 @@ export class PhoneService {
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return (await this.readAgent((input as Input<'updateAgentYolo'>).workspaceId,
           (input as Input<'updateAgentYolo'>).agentId, viewerId)) as Output<Name>;
+      case 'updateAgentWake': {
+        const request = input as Input<'updateAgentWake'>;
+        await this.requireWorkspaceMember(request.workspaceId, viewerId);
+        const member = (await this.database.query<{ owner_id: string }>(
+          `SELECT m.owner_id FROM rooms_mcp_members m JOIN memberships membership
+           ON membership.identity_id=m.member_id AND membership.workspace_id=$2
+           AND membership.room_id IS NULL AND membership.removed_at IS NULL
+           WHERE m.member_id=$1`, [request.agentId, request.workspaceId])).rows[0];
+        if (!member) throw new Error('AI-client member not found');
+        if (member.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
+        if (typeof request.url !== 'string') throw new Error('Wake link is invalid');
+        try {
+          await this.database.transaction(async tx => {
+            await setMcpMemberWebhook(tx, request.agentId, { url: request.url, secret: request.key });
+            await tx.query('UPDATE agents SET updated_at=now() WHERE agent_id=$1', [request.agentId]);
+          });
+        } catch (error) {
+          if (error instanceof McpToolError) {
+            if (error.message.includes('not enabled'))
+              throw new Error('Wake keys are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.');
+            throw new Error('Wake setup is invalid. Use a public HTTPS link and a key without spaces or control characters.');
+          }
+          throw error;
+        }
+        return (await this.readAgent(request.workspaceId, request.agentId, viewerId)) as Output<Name>;
+      }
       case 'updateAgentAccessPolicy':
         await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
         return (await this.readAgent((input as Input<'updateAgentAccessPolicy'>).workspaceId,
@@ -11078,6 +11113,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'refreshAgentModelCatalog',
   'completeAgentSignIn',
   'updateAgentYolo',
+  'updateAgentWake',
   'updateAgentAccessPolicy',
   'removeAgent',
   'updatePersonProfile',

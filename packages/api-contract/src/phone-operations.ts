@@ -190,6 +190,7 @@ export type PhoneOperationMap = {
   /** Owner-only: relay the code pasted into an `@agent /login` card to the agent's machine. */
   completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: AgentDetailView };
+  updateAgentWake: { input: WorkspaceAgentInput & { readonly url: string; readonly key?: string }; output: AgentDetailView };
   updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: AgentDetailView };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };

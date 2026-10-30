@@ -6,7 +6,7 @@ import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
-import { ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
+import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
 import { agentHandleFromName } from '@beeline/api-contract/phone';
 
 export const MCP_READ = 'rooms:read';
@@ -348,7 +348,7 @@ export class RoomsMcpOAuth {
           const plate = flow.logo ? `<img class="plate" src="${escape(flow.logo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Wake link (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called.</p></div><div class="field"><label for="wake_key">Wake key (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
         }
         return true;
       }
@@ -377,6 +377,15 @@ export class RoomsMcpOAuth {
             const member = await mcpMemberId(db, flow.client_id, flow.identity_id);
             if (member && (flow.joiner_name || flow.joiner_handle))
               await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined }, false);
+            if (member && (input.wake_url || input.wake_key)) {
+              try {
+                await setMcpMemberWebhook(db, member, { url: input.wake_url, secret: input.wake_key || undefined });
+              } catch (error) {
+                if (error instanceof McpToolError)
+                  throw new Refusal('invalid_request', error.message.includes('not enabled') ? 'wake_unavailable' : 'wake_invalid');
+                throw error;
+              }
+            }
             const code = opaque();
             await db.query(`INSERT INTO rooms_mcp_codes(hash,client_id,identity_id,redirect_uri,challenge,scope,expires_at)
               VALUES($1,$2,$3,$4,$5,$6,now()+interval '10 minutes')`, [tokenHash(code), flow.client_id, flow.identity_id, flow.redirect_uri, flow.challenge, flow.scope]);
@@ -486,6 +495,8 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   invalid_json: 'The form data is not valid JSON.',
   joiner_invalid: 'The name or handle is not valid. A handle uses only lowercase letters, digits and underscores.',
   flow_not_signed_in: 'You have not signed in to Beeline for this connection yet.',
+  wake_unavailable: 'Wake keys are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',
+  wake_invalid: 'The wake link must be a public HTTPS URL. A wake key needs a link and cannot contain spaces or control characters.',
   decision_invalid: 'The page sent an answer other than Allow or Cancel.',
   invalid_parameter: 'Beeline hit an unexpected problem on this step.',
 };

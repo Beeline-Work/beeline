@@ -895,6 +895,13 @@ describe('agent profile recent work', () => {
       { id: 'opus', name: 'Opus 5.5' },
     ]);
   });
+  it('projects wake status without ever retaining a bearer key', () => {
+    const wake = { url: 'https://hooks.example/wake', keySet: true, key: 'private-key' };
+    expect(readAgentDetailView({ ...profile, wake })?.wake).toEqual({ url: wake.url, keySet: true });
+    expect(readAgentDetailView(profile)?.wake).toBeUndefined();
+    expect(readAgentDetailView({ ...profile, wake: { url: null, keySet: false } })?.wake).toEqual({ url: null, keySet: false });
+    expect(readAgentDetailView({ ...profile, wake: { url: wake.url, keySet: 'true' } })?.wake).toBeUndefined();
+  });
   it('preserves only boolean login verdicts and fails closed on missing or malformed values', () => {
     expect(readAgentDetailView({ ...profile, canLogin: true })?.canLogin).toBe(true);
     expect(readAgentDetailView({ ...profile, canLogin: false })?.canLogin).toBe(false);

@@ -42,9 +42,9 @@ async function easBuildInventory() {
 export async function readStores({ builds, env = process.env, fetchImpl = fetch, appleApi } = {}) {
   const stores = {};
   await Promise.all(['android', 'ios'].map(async platform => {
+    let numbers = [];
+    const historicalNumbers = [];
     try {
-      let numbers;
-      const historicalNumbers = [];
       if (platform === 'android') {
         const token = await mintAccessToken(env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, { fetchImpl });
         const response = await fetchImpl('https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.usebeeline/tracks/production/releases', {
@@ -85,7 +85,8 @@ export async function readStores({ builds, env = process.env, fetchImpl = fetch,
       })[0];
       stores[platform] = { status: 'readable', live, historical, latestRuntimeVersion: newest?.runtimeVersion, buildNumbers: numbers };
     } catch (error) {
-      stores[platform] = { status: 'unavailable', reason: error.message };
+      stores[platform] = { status: 'unavailable', reason: error.message,
+        buildNumbers: numbers, historicalBuildNumbers: historicalNumbers };
     }
   }));
   return stores;

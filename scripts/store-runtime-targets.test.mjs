@@ -50,3 +50,30 @@ test('missing ASC binary identity fails closed instead of silently omitting live
   const stores = await readStores({ builds: [], env: {}, appleApi: async () => ({ data: [{ attributes: { appVersionState: 'READY_FOR_DISTRIBUTION' } }] }) });
   assert.equal(stores.ios.status, 'unavailable');
 });
+
+test('known current ASC build with an unresolved historical build remains unverified', async () => {
+  const version = (state, id) => ({ attributes: { appVersionState: state }, relationships: { build: { data: { id } } } });
+  const stores = await readStores({ builds: [{ platform: 'ios', buildNumber: '98', runtimeVersion: '36' }], env: {},
+    appleApi: async () => ({ data: [version('READY_FOR_DISTRIBUTION', 'b98'), version('REPLACED_WITH_NEW_VERSION', 'b97')],
+      included: [{ type: 'builds', id: 'b98', attributes: { version: '98' } }, { type: 'builds', id: 'b97', attributes: { version: '97' } }] }) });
+  assert.equal(stores.ios.status, 'unavailable');
+  assert.match(stores.ios.reason, /Cannot prove runtime of ios store build 97/);
+  assert.deepEqual(stores.ios.buildNumbers, ['98']);
+  assert.deepEqual(stores.ios.historicalBuildNumbers, ['97']);
+  assert.equal(stores.ios.live, undefined);
+  const previousTargets = ['34', '35', '36'].map(runtimeVersion => ({ platform: 'ios', runtimeVersion }));
+  assert.deepEqual(storeRuntimeTargets({ pins: { android: '43', ios: '36' }, stores, previousTargets }), previousTargets);
+});
+
+test('verified local IPA identities resolve ASC current and prior published runtimes', async () => {
+  const builds = JSON.parse(readFileSync(new URL('../apps/mobile/store/native-runtime-builds.json', import.meta.url), 'utf8'));
+  const version = (state, id) => ({ attributes: { appVersionState: state }, relationships: { build: { data: { id } } } });
+  const stores = await readStores({ builds, env: {}, appleApi: async () => ({
+    data: [version('READY_FOR_DISTRIBUTION', 'b98'), version('REPLACED_WITH_NEW_VERSION', 'b97'), version('REPLACED_WITH_NEW_VERSION', 'b81')],
+    included: ['98', '97', '81'].map(version => ({ type: 'builds', id: `b${version}`, attributes: { version } })),
+  }) });
+  assert.equal(stores.ios.status, 'readable');
+  assert.deepEqual(stores.ios.live.map(t => t.runtimeVersion), ['36']);
+  assert.deepEqual(storeRuntimeTargets({ pins: { android: '43', ios: '36' }, stores })
+    .filter(t => t.platform === 'ios').map(t => t.runtimeVersion), ['36', '35', '31']);
+});

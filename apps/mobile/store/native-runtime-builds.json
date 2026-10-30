@@ -16,5 +16,53 @@
     "buildNumber": "138",
     "runtimeVersion": "40",
     "evidence": "Play production available build 138; upload receipt in run 40028613502 at 2026-10-23T21:51:07Z; source 62a2695724540f2a300bb2f06fd9994fd72ab713 pins android@40"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "76",
+    "runtimeVersion": "29",
+    "evidence": "Unified production release run 35802330273: source c095ca344f7b68d53375c1393235932ef3d5b806 pins ios@29; native job increments buildNumber 75 to 76"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "81",
+    "runtimeVersion": "31",
+    "evidence": "Unified production release run 36593389428: source 885f7b90b5eece8e99481d988611415a03f435ba pins ios@31; native job increments buildNumber 80 to 81"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "90",
+    "runtimeVersion": "35",
+    "evidence": "Unified production release run 38638236337: IPA verified at 2026-10-14T21:51:36Z; App Store build 2c0eee7a-ccb3-43f3-bd13-32b797a8616c VALID"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "92",
+    "runtimeVersion": "35",
+    "evidence": "Unified production release run 38662034119: IPA verified at 2026-10-15T01:10:04Z; App Store build 16c17a6e-d3b1-47fd-86be-87f3ddb92b29 VALID"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "95",
+    "runtimeVersion": "35",
+    "evidence": "Unified production release run 38992852990: IPA verified at 2026-10-17T02:34:52Z"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "97",
+    "runtimeVersion": "35",
+    "evidence": "Unified production release run 39047023529: IPA verified at 2026-10-17T16:26:25Z; App Store build 7b67e991-6f97-449b-bf86-05886c319b49 VALID"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "98",
+    "runtimeVersion": "36",
+    "evidence": "Unified production release run 39150151270: IPA verified at 2026-10-18T18:06:08Z: app.usebeeline.mobile 0.2.23 (98), iOS runtime 36"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "99",
+    "runtimeVersion": "36",
+    "evidence": "Unified production release run 39154561183: IPA verified at 2026-10-18T19:10:07Z; App Store build 0e6766d8-bce8-405e-9f71-1c00d5d0c7a2 VALID"
   }
 ]

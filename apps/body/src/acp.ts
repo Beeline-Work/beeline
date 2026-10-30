@@ -1,3 +1,4 @@
+import { CodexPromptDelivery } from './codex-prompt-delivery.js';
 import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
 /**
  * Minimal ACP client over stdio for an ACP coding agent.
@@ -809,6 +810,12 @@ export class AcpClient extends EventEmitter {
   private supportsSessionLoading = false;
   private supportsImagePrompts = false;
   private supportsStructuredSystemPrompt = false;
+  private codexBlockDelivery = false;
+  private readonly promptDeliveries = new Map<string, CodexPromptDelivery>();
+
+  promptDelivery(sessionId: string | undefined): CodexPromptDelivery | undefined {
+    return sessionId ? this.promptDeliveries.get(sessionId) : undefined;
+  }
   private alive = false;
   /**
    * Byte length of the last prompt handed to the harness, measured here because
@@ -929,6 +936,7 @@ export class AcpClient extends EventEmitter {
 
   async start(timeoutMs = 60_000): Promise<void> {
     if (this.alive) return;
+    this.promptDeliveries.clear();
     // Record the cgroup's OOM counter before this child can be its victim, so
     // an OOM kill later is measured against this run rather than the first
     // probe at exit time (which would miss it).
@@ -1027,9 +1035,12 @@ export class AcpClient extends EventEmitter {
         'initialize',
         {
           protocolVersion: 1,
-          clientCapabilities: this.backgroundTasks
-            ? { _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } } }
-            : {},
+          clientCapabilities: {
+            ...(/(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(this.agentLabel)
+              ? { session: { compaction: {} } } : {}),
+            ...(this.backgroundTasks
+              ? { _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } } } : {}),
+          },
         },
         timeoutMs,
       )) as Record<string, unknown>;
@@ -1071,6 +1082,12 @@ export class AcpClient extends EventEmitter {
     this.supportsSessionLoading = agentCapabilities?.loadSession === true;
     this.supportsImagePrompts = agentCapabilities?.promptCapabilities?.image === true;
     this.supportsStructuredSystemPrompt = agentCapabilities?.sessionCapabilities?.systemPrompt != null;
+    const info = initResult.agentInfo as { version?: string } | undefined;
+    // This adapter version was verified to emit all automatic and manual
+    // compactions when the client advertises session.compaction. Unknown
+    // adapters keep full delivery until their behavior is measured.
+    this.codexBlockDelivery = /(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(this.agentLabel) &&
+      this.supportsStructuredSystemPrompt && info?.version === '2.3.0';
     this.emit('initialized', initResult);
     // ACP defines no `initialized` notification; pi-acp answers it with -32601
     // and dumps the notification to stderr on every session. Do not send it to
@@ -1256,6 +1273,8 @@ export class AcpClient extends EventEmitter {
     if (/(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(this.agentLabel) && opts.systemPrompt)
       this.piSessionInstructions.remember(sessionId, opts.systemPrompt);
     await this.applySessionMode(sessionId, raw, opts.mode);
+    if (this.codexBlockDelivery)
+      this.promptDeliveries.set(sessionId, new CodexPromptDelivery(opts.systemPrompt));
     return { sessionId, raw };
   }
 
@@ -1286,9 +1305,12 @@ export class AcpClient extends EventEmitter {
     };
     const meta = sessionToolScopeMeta(this.agentLabel);
     if (meta) params._meta = meta;
+    this.promptDeliveries.delete(opts.sessionId);
     const result = await this.request('session/load', params);
     const raw = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
     await this.applySessionMode(opts.sessionId, raw, opts.mode);
+    if (this.codexBlockDelivery)
+      this.promptDeliveries.set(opts.sessionId, new CodexPromptDelivery());
     return { sessionId: opts.sessionId, raw };
   }
 
@@ -1520,6 +1542,7 @@ export class AcpClient extends EventEmitter {
         ...(tokenUsage ? { tokenUsage } : {}),
       };
     } finally {
+      this.promptDeliveries.get(sessionId)?.complete(completed);
       if (!completed) this.piSessionInstructions.failed(sessionId);
       if (hardTimer) clearTimeout(hardTimer);
       watcher?.close();
@@ -1723,6 +1746,9 @@ export class AcpClient extends EventEmitter {
     if (method === 'session/update') {
       const params = msg.params as { sessionId?: string; update?: Record<string, unknown> };
       if (params?.sessionId && params.update) {
+        if (params.update.sessionUpdate === 'compaction_update' ||
+            params.update.sessionUpdate === 'compaction_summary_chunk')
+          this.promptDeliveries.get(params.sessionId)?.invalidate();
         // Harness-advertised slash commands/skills: captured here so the daemon
         // can republish them as the agent's durable command list (see
         // `agent-commands.ts` in buzz-client). Arrival is adapter-driven — all

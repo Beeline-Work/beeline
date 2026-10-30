@@ -1,0 +1,185 @@
+{
+  "proof": "CODEX-ONCE",
+  "date": "2026-10-30",
+  "adapterVersion": "2.3.0",
+  "sessionRulesO200kBase": 1225,
+  "tokenizer": "tiktoken 0.14.0 / o200k_base",
+  "fixture": "generated owner and twelve stable example corners; disposable cwd; inherited Codex config",
+  "measurements": [
+    {
+      "mode": "before",
+      "turn": "first",
+      "promptBytes": 7888,
+      "sections": [
+        "turn.session",
+        "turn.capabilities",
+        "turn.members",
+        "turn.memory",
+        "turn.corners",
+        "turn.task"
+      ],
+      "reply": "AMBER",
+      "tokens": {
+        "input_tokens": 17416,
+        "cached_input_tokens": 11264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 17422
+      },
+      "acpTokens": {
+        "inputTokens": 17416,
+        "outputTokens": 6
+      },
+      "beelineTokensO200kBase": 1685
+    },
+    {
+      "mode": "before",
+      "turn": "warm",
+      "promptBytes": 7888,
+      "sections": [
+        "turn.session",
+        "turn.capabilities",
+        "turn.members",
+        "turn.memory",
+        "turn.corners",
+        "turn.task"
+      ],
+      "reply": "AMBER",
+      "tokens": {
+        "input_tokens": 22293,
+        "cached_input_tokens": 11264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 22299
+      },
+      "acpTokens": {
+        "inputTokens": 22293,
+        "outputTokens": 6
+      },
+      "beelineTokensO200kBase": 1685
+    },
+    {
+      "mode": "before",
+      "turn": "changed",
+      "promptBytes": 7889,
+      "sections": [
+        "turn.session",
+        "turn.capabilities",
+        "turn.members",
+        "turn.memory",
+        "turn.corners",
+        "turn.task"
+      ],
+      "reply": "COBALT",
+      "tokens": {
+        "input_tokens": 23990,
+        "cached_input_tokens": 22144,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 7,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 23997
+      },
+      "acpTokens": {
+        "inputTokens": 23990,
+        "outputTokens": 7
+      },
+      "beelineTokensO200kBase": 1685
+    },
+    {
+      "mode": "after",
+      "turn": "first",
+      "promptBytes": 2029,
+      "sections": [
+        "turn.capabilities",
+        "turn.members",
+        "turn.memory",
+        "turn.corners",
+        "turn.task"
+      ],
+      "reply": "AMBER",
+      "tokens": {
+        "input_tokens": 16191,
+        "cached_input_tokens": 11264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 16197
+      },
+      "acpTokens": {
+        "inputTokens": 16191,
+        "outputTokens": 6
+      },
+      "beelineTokensO200kBase": 460
+    },
+    {
+      "mode": "after",
+      "turn": "warm",
+      "promptBytes": 87,
+      "sections": [
+        "turn.task"
+      ],
+      "reply": "AMBER",
+      "tokens": {
+        "input_tokens": 19402,
+        "cached_input_tokens": 16000,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 19408
+      },
+      "acpTokens": {
+        "inputTokens": 19402,
+        "outputTokens": 6
+      },
+      "beelineTokensO200kBase": 19
+    },
+    {
+      "mode": "after",
+      "turn": "changed",
+      "promptBytes": 145,
+      "sections": [
+        "turn.memory",
+        "turn.task"
+      ],
+      "reply": "COBALT",
+      "tokens": {
+        "input_tokens": 19446,
+        "cached_input_tokens": 19200,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 7,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 19453
+      },
+      "acpTokens": {
+        "inputTokens": 19446,
+        "outputTokens": 7
+      },
+      "beelineTokensO200kBase": 32
+    },
+    {
+      "mode": "after",
+      "turn": "after-compaction",
+      "promptBytes": 7889,
+      "sections": [
+        "turn.session",
+        "turn.capabilities",
+        "turn.members",
+        "turn.memory",
+        "turn.corners",
+        "turn.task"
+      ],
+      "reply": "COBALT",
+      "tokens": {
+        "input_tokens": 19378,
+        "cached_input_tokens": 11264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 7,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 19385
+      },
+      "beelineTokensO200kBase": 1685
+    }
+  ]
+}

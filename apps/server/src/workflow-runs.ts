@@ -2155,7 +2155,7 @@ export async function assignWorkflowRole(
     if (scope.ended || !state) throw new Error('this workflow run has already ended');
     const currentRole = (state as WorkflowHandoffState | WorkflowGateState).role;
     if (currentRole !== input.role) {
-      throw new Error(`this run is currently at the ${currentRole} role, not ${input.role}`);
+      throw new ExpectedRefusalError(`this run is currently at the ${currentRole} role, not ${input.role}`);
     }
     const member = await db.query(
       `SELECT 1 FROM memberships member

@@ -563,7 +563,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       }
       if (!installed) {
         const installState = `onboarding_${randomToken()}`;
-        await options.store.createFlow(sha256(installState), {
+        await options.store.continueFlow(sha256(state), sha256(installState), {
           ...flow, nonce: `onboarding_user:${identity.subject}`, pkceVerifier: '',
           createdAt: now(), expiresAt: new Date(now().getTime() + flowTtlMs),
         });

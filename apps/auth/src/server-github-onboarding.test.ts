@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { onboardingCookie } from './onboarding-rollout.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { alphaTenant, app, startCookie, state as fixture, useAuthServerFixture } from './server-test-fixture.js';
+import { alphaTenant, app, database, startCookie, state as fixture, useAuthServerFixture } from './server-test-fixture.js';
 
 describe('installation-aware native GitHub onboarding', () => {
   useAuthServerFixture();
@@ -69,6 +70,32 @@ describe('installation-aware native GitHub onboarding', () => {
       url:`/auth/github/callback?state=${installState}&code=install-code`});
     expect(installed.statusCode).toBe(302);
     expect(installed.headers.location).toContain('ticket=');
+  });
+  it('R1: moves the Android recovery challenge to the install continuation and recovers after install', async () => {
+    fixture.githubUserInstallations = [];
+    const recoveryToken = 'r'.repeat(43);
+    const recoveryChallenge = createHash('sha256').update(recoveryToken).digest('hex');
+    const start = await app.inject({method:'GET',headers:{host:alphaTenant.host},
+      url:`/auth/github/start?onboarding=1&app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'g'.repeat(43)}&app_recovery_challenge=${recoveryChallenge}`});
+    const state = new URL(start.headers.location!).searchParams.get('state');
+    const callback = await app.inject({method:'GET',headers:{host:alphaTenant.host,cookie:startCookie(start.headers['set-cookie'])},
+      url:`/auth/github/callback?state=${state}&code=github-code`});
+    expect(callback.statusCode).toBe(200);
+    expect(callback.body).toContain('Connect your GitHub repositories');
+    const installState = callback.body.match(/state=([^"&]+)/)?.[1];
+    const holders = await database.query<{ state_hash: string }>(
+      `SELECT state_hash FROM beeline_oidc_flows WHERE app_recovery_hash = $1`, [recoveryChallenge]);
+    expect(holders.rows.map(row => row.state_hash)).toEqual([createHash('sha256').update(installState!).digest('hex')]);
+    fixture.githubUserInstallations = [77];
+    const cookieHeader = (callback.headers['set-cookie'] as string[]).filter(c => !c.includes('Max-Age=0')).map(c => c.split(';')[0]).join('; ');
+    const installed = await app.inject({method:'GET',headers:{host:alphaTenant.host,cookie:cookieHeader},
+      url:`/auth/github/callback?state=${installState}&code=install-code`});
+    expect(installed.statusCode).toBe(302);
+    expect(installed.headers.location).toContain('completed=1');
+    const recovered = await app.inject({method:'POST',url:'/auth/github/completion',headers:{host:alphaTenant.host},
+      payload:{recoveryToken}});
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toMatchObject({ ticket: recoveryToken, subject: '123' });
   });
   it('advertises repository onboarding to every user without an eligibility cookie', async () => {
     for (const cookieValue of ['', 'beeline_onboarding=123.forged', cookie()]) {

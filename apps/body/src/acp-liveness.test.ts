@@ -142,13 +142,40 @@ describe('ACP turn liveness over real stdio', () => {
     console.log('Reproduction LOOP-1: first successful no_reply_needed → prompt ended with no final text');
   });
 
+  it.each(['content', 'rawOutput', 'tool_result'])('Reproduction LAT-0730: changing %s results keep identical capture polls alive', async format => {
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
+    for (let i = 0; i < 7; i++) {
+      const toolCallId = 'capture-' + i;
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId,
+        title: 'write_stdin', rawInput: { session_id: 27079, chars: '', yield_time_ms: 60000, max_output_tokens: 1000 },
+        status: 'in_progress' }));
+      const content = [{ type: 'content', content: { type: 'text', text: `warm ${i + 14}/20` } }];
+      await client.setModel(sessionId, JSON.stringify({
+        sessionUpdate: format === 'tool_result' ? 'tool_result' : 'tool_call_update', toolCallId,
+        ...(format === 'tool_result' ? {} : { status: 'completed' }),
+        ...(format === 'rawOutput' ? { rawOutput: { progress: i + 14 } } : { content }),
+      }));
+    }
+    expect(cancel).not.toHaveBeenCalled();
+    await client.setModel(sessionId, JSON.stringify({ complete: true }));
+    expect((await prompt).stopReason).toBe('end_turn');
+    console.log(`Demonstrated LAT-0730: seven identical polls with changing ${format} results → normal completion`);
+  });
+
   it.each(['mcp__agent__read', 'execute', 'custom_external_tool'])('stops five identical %s calls and releases the next prompt', async title => {
     const opened = once(client, 'session/update');
     const prompt = client.sessionPrompt(sessionId, 'tool');
     await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
     for (let i = 0; i < 5; i++) {
       await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId: 'repeat-' + i,
         title, rawInput: i % 2 ? { b: 2, a: 1 } : { a: 1, b: 2 }, status: 'in_progress' }));
+      expect(cancel).not.toHaveBeenCalled();
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call_update', toolCallId: 'repeat-' + i,
+        status: 'completed', rawOutput: { result: 'unchanged' } }));
     }
     expect(await prompt).toMatchObject({ stopReason: 'repeated-tool-call', agentText: '' });
     await writeFile(join(root, 'turn.json'), JSON.stringify({ roomId: 'room', requestId: 'next-turn', generationId: 'generation', commandReason: 'report' }));

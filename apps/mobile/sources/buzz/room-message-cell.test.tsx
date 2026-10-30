@@ -3,9 +3,11 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  archiveActionPresentation,
   liveCardPresentation,
   messageRosterPresentation,
   RoomMessageCell,
+  type ArchiveActionInputs,
   type LiveCardInputs,
   type RoomMessageRenderContext,
   type RoomMessageRenderer,
@@ -649,6 +651,102 @@ describe('RoomMessageCell', () => {
     expect(renderer.root.findByProps({ id: 'kept' }).props).toMatchObject({
       name: 'Kept', avatar: 'https://cdn.example/kept.png', role: 'member',
     });
+    act(() => renderer.unmount());
+  });
+
+  it('turns proposal choices and corner swipe off when a cached Room is archived', () => {
+    const kept: ChatDisplayMessage = {
+      id: 'kept',
+      text: 'Allow this edit',
+      isUser: false,
+      timestamp: 1,
+      writePermission: {
+        permissionId: 'permission',
+        requestId: 'request',
+        agentPubkey: 'agent',
+        requesterPubkey: 'requester',
+        tool: 'edit_file',
+        status: 'pending',
+      },
+    };
+    const proposal: ChatDisplayMessage = {
+      id: 'proposal',
+      text: 'Proposed corner: Faster reads — Bound query latency under load',
+      isUser: false,
+      timestamp: 2,
+      isAgentAuthor: true,
+    };
+    const swipe: ChatDisplayMessage = {
+      id: 'swipe', text: 'Move this work', isUser: false, timestamp: 3,
+    };
+    const rows = [kept, proposal, swipe];
+    const counts = new Map<string, number>();
+    const open: ArchiveActionInputs = {
+      roomArchived: false,
+      cornerSwipeOffered: true,
+      cornerProposalOffered: true,
+    };
+    expect(archiveActionPresentation(kept, open)).toEqual({});
+    expect(archiveActionPresentation(swipe, open)).toEqual({
+      roomArchived: false,
+      cornerSwipeEnabled: true,
+    });
+    expect(archiveActionPresentation(proposal, open)).toEqual({
+      roomArchived: false,
+      cornerSwipeEnabled: true,
+      cornerProposalEnabled: true,
+    });
+    expect(archiveActionPresentation(swipe, { ...open, cornerSwipeOffered: false })).toEqual({});
+
+    function Harness({ archived }: { archived: boolean }) {
+      const inputs: ArchiveActionInputs = { ...open, roomArchived: archived };
+      const render: RoomMessageRenderer = (item, context) => {
+        counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+        return React.createElement('message-row', {
+          id: item.id,
+          proposal: context.cornerProposalEnabled === true,
+          swipe: context.cornerSwipeEnabled === true,
+          archived: context.roomArchived === true,
+        });
+      };
+      const renderItem = useRoomMessageRenderItem({
+        render,
+        presentationForMessage: (item) => archiveActionPresentation(item, inputs),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return React.createElement(React.Fragment, null,
+        ...rows.map((item) => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    const show = (archived: boolean) => {
+      act(() => {
+        const node = React.createElement(Harness, { archived });
+        if (renderer) renderer.update(node);
+        else renderer = create(node);
+      });
+    };
+    show(false);
+    expect(renderer.root.findByProps({ id: 'proposal' }).props).toMatchObject({
+      proposal: true, swipe: true, archived: false,
+    });
+    expect(renderer.root.findByProps({ id: 'swipe' }).props).toMatchObject({
+      proposal: false, swipe: true, archived: false,
+    });
+    expect(counts.get('kept')).toBe(1);
+
+    show(true);
+    expect(renderer.root.findByProps({ id: 'proposal' }).props).toMatchObject({
+      proposal: false, swipe: false, archived: true,
+    });
+    expect(renderer.root.findByProps({ id: 'swipe' }).props).toMatchObject({
+      proposal: false, swipe: false, archived: true,
+    });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('proposal')).toBe(2);
+    expect(counts.get('swipe')).toBe(2);
     act(() => renderer.unmount());
   });
 });

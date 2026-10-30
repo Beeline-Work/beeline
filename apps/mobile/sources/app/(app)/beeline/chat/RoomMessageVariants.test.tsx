@@ -14,7 +14,7 @@ import {
   conversationIdentityByPubkey,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
-import { liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { archiveActionPresentation, liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
 import { beginReplyTarget } from '@/buzz/message-reply';
@@ -1498,6 +1498,113 @@ describe('Room message variant components', () => {
     const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
     act(() => { vi.useFakeTimers(); swipe.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onReply).toHaveBeenCalledWith(proposal);
+  });
+
+  it('disables cached proposal buttons and turns corner swipe off when the Room is archived', () => {
+    const kept = message({
+      id: 'kept-card',
+      text: 'Allow this edit',
+      writePermission: {
+        permissionId: 'permission',
+        requestId: 'request',
+        agentPubkey: 'agent',
+        requesterPubkey: 'requester',
+        tool: 'edit_file',
+        status: 'pending',
+      },
+    });
+    const proposal = message({
+      id: 'proposal',
+      text: 'Proposed corner: Faster reads — Bound query latency under load',
+      pubkey: 'agent-sol',
+      isAgentAuthor: true,
+    });
+    const swipeRow = message({ id: 'swipe', text: 'Move this work', pubkey: 'ada' });
+    const rows = [kept, proposal, swipeRow];
+    const counts = new Map<string, number>();
+    function Harness({ archived }: { archived: boolean }) {
+      const renderItem = useRoomMessageRenderItem({
+        render: (item, context) => {
+          counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+          if (item.writePermission) {
+            return React.createElement('message-row', { id: item.id });
+          }
+          return (
+            <OrdinaryLedgerMessage
+              message={item}
+              {...(item.isAgentAuthor
+                ? { agent: { pubkey: 'agent-sol', displayName: 'Sol' } }
+                : { personName: 'Ada' })}
+              desktopLayout={false}
+              participantsHydrated
+              viewerPubkey="viewer"
+              speakerWorking={false}
+              continued={false}
+              participantHandles={[]}
+              channelIndex={{ rooms: [], corners: [] }}
+              deliveryFailed={false}
+              onChannelReference={() => undefined}
+              onReply={() => undefined}
+              onCopy={() => undefined}
+              onRetry={() => undefined}
+              onDismiss={() => undefined}
+              {...(context.cornerSwipeEnabled
+                ? { onForwardToNewCorner: () => undefined }
+                : {})}
+              {...(context.cornerProposalEnabled
+                ? { onCornerProposalDecision: () => undefined }
+                : {})}
+            />
+          );
+        },
+        presentationForMessage: (item) => archiveActionPresentation(item, {
+          roomArchived: archived,
+          cornerSwipeOffered: true,
+          cornerProposalOffered: true,
+        }),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return (
+        <>
+          {rows.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </>
+      );
+    }
+    const shown = render(<Harness archived={false} />);
+    const choice = (decision: string) =>
+      shown.root.findByProps({
+        testID: `transcript-card-choice-corner-proposal-${decision}-proposal`,
+      });
+    const swipe = (id: string) => shown.root.findByProps({ testID: `swipe-reply-${id}` });
+    expect(choice('open').props.onPress).toEqual(expect.any(Function));
+    expect(choice('open').props.accessibilityState).toMatchObject({ disabled: false });
+    expect(choice('cancel').props.onPress).toEqual(expect.any(Function));
+    expect(swipe('proposal').props.renderLeftActions).toEqual(expect.any(Function));
+    expect(swipe('swipe').props.renderLeftActions).toEqual(expect.any(Function));
+    expect(swipe('swipe').props.renderRightActions).toEqual(expect.any(Function));
+    expect(counts.get('kept-card')).toBe(1);
+
+    act(() => {
+      shown.update(<Harness archived />);
+    });
+    expect(choice('open').props.onPress).toBeUndefined();
+    expect(choice('open').props.accessibilityState).toBeUndefined();
+    expect(choice('cancel').props.onPress).toBeUndefined();
+    expect(shown.root.findByProps({ testID: 'corner-proposal-proposal' }).props.tier).toBe('record');
+    expect(swipe('proposal').props.renderLeftActions).toBeUndefined();
+    expect(swipe('swipe').props.renderLeftActions).toBeUndefined();
+    expect(swipe('swipe').props.renderRightActions).toEqual(expect.any(Function));
+    expect(counts.get('kept-card')).toBe(1);
+    expect(counts.get('proposal')).toBe(2);
+    expect(counts.get('swipe')).toBe(2);
+    expect(conversationSource).toContain('archiveActionPresentation');
+    expect(conversationSource).toContain('rowCornerSwipeEnabled');
+    expect(conversationSource).toContain('rowCornerProposalEnabled');
+    expect(conversationSource).toContain('rowRoomArchived');
   });
 
   it('shows the pick and who opened it once a corner proposal is answered', () => {

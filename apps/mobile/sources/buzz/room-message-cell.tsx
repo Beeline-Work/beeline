@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
+import { parseCornerProposal } from './corner-proposal';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { messageContainsBoundary } from './room-new-message-boundary';
 import { arrivalFlashTiming } from './room-arrival-flash';
@@ -65,6 +66,15 @@ export type RoomMessagePresentation = {
   replyAuthorHandle?: string;
   /** Room and corner names this transcript can turn into links. */
   channelReferenceKey?: string;
+  /**
+   * The Room was archived after this row was cached. Only a row that paints
+   * a proposal or a corner swipe receives it, so other rows stay mounted.
+   */
+  roomArchived?: boolean;
+  /** This row's swipe-to-corner action. Absent when the row never offers one. */
+  cornerSwipeEnabled?: boolean;
+  /** This row's proposal choices accept a tap. Absent when the row is not a proposal. */
+  cornerProposalEnabled?: boolean;
 };
 
 /** Parent state that can change a card's buttons without changing its message. */
@@ -136,6 +146,75 @@ export function liveCardPresentation(
     };
   }
   return {};
+}
+
+/**
+ * Room-wide gates for the two actions an archived Room must take off a cached
+ * row. The booleans exclude archive; `roomArchived` turns the actions off.
+ */
+export type ArchiveActionInputs = {
+  roomArchived: boolean;
+  /** Phone Room or corner: not a DM, not desktop, and the viewer is a person. */
+  cornerSwipeOffered: boolean;
+  /** A Room where a person can answer a proposal: not a corner or a read-only DM. */
+  cornerProposalOffered: boolean;
+};
+
+/**
+ * Cards and system lines return before the ledger row, so they never paint
+ * these actions. A new card field belongs in this list; prose stays in.
+ */
+function skipsArchiveActions(item: ChatDisplayMessage): boolean {
+  if (item.isArchivedNotice || item.isSystemNotice || item.durableFact) return true;
+  if (item.voiceCall && !item.voiceCall.endedAt) return true;
+  return (
+    item.vaultSave != null ||
+    item.roomUpdate != null ||
+    item.writePermission != null ||
+    item.grantRequest != null ||
+    item.squireApproval != null ||
+    item.computerSession != null ||
+    item.onboarding != null ||
+    item.choice != null ||
+    item.appSignIn != null ||
+    item.agentSignIn != null ||
+    item.connectorOffer != null ||
+    item.notificationLifecycleRun != null ||
+    item.walletTx != null ||
+    item.walletInsufficient != null ||
+    item.walletDelegation != null ||
+    item.targetBranchProposal != null ||
+    item.cornerApp != null ||
+    item.corner != null ||
+    item.githubEvent != null ||
+    item.daemonFact != null
+  );
+}
+
+function isCornerProposalRow(item: ChatDisplayMessage): boolean {
+  if (item.isAgentActivity || item.isAgentDraft || skipsArchiveActions(item)) return false;
+  return parseCornerProposal(item.text) !== null;
+}
+
+/**
+ * Archive state for one row. Ordinary cards get nothing, so archiving the
+ * Room does not repaint them. A proposal or a swipe row receives the archived
+ * flag and the action it paints, both false once the Room is archived.
+ */
+export function archiveActionPresentation(
+  item: ChatDisplayMessage,
+  inputs: ArchiveActionInputs,
+): RoomMessagePresentation {
+  const swipe =
+    inputs.cornerSwipeOffered && !item.isAgentDraft && !skipsArchiveActions(item);
+  const proposal = inputs.cornerProposalOffered && isCornerProposalRow(item);
+  if (!swipe && !proposal) return {};
+  const enabled = !inputs.roomArchived;
+  return {
+    roomArchived: inputs.roomArchived,
+    ...(swipe ? { cornerSwipeEnabled: enabled } : {}),
+    ...(proposal ? { cornerProposalEnabled: enabled } : {}),
+  };
 }
 
 export type RoomRosterPerson = {

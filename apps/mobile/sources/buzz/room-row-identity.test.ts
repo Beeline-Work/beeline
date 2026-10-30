@@ -9,7 +9,7 @@ const chatSource = readFileSync(
 describe('Room row identity', () => {
   it('memoizes unchanged cells while passing context identities through FlatList', () => {
     expect(chatSource).toContain(
-      "import { liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';",
+      "import { archiveActionPresentation, liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';",
     );
     expect(chatSource).toContain('continuedIds: continuedAttributionIds');
     expect(chatSource).toContain('precedingMessageById: immediatelyPrecedingVisibleMessageById');

@@ -311,7 +311,7 @@ import {
 } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
-import { liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { archiveActionPresentation, liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
@@ -5708,6 +5708,9 @@ export function BuzzChatSurface({
         speakerWorking: rowSpeakerWorking = false,
         cornerProposalAnswer,
         cornerProposalAction: rowCornerProposalAction,
+        roomArchived: rowRoomArchived,
+        cornerSwipeEnabled: rowCornerSwipeEnabled,
+        cornerProposalEnabled: rowCornerProposalEnabled,
         permissionActionId: rowPermissionActionId,
         grantActionId: rowGrantActionId,
         choiceActionId: rowChoiceActionId,
@@ -5735,9 +5738,11 @@ export function BuzzChatSurface({
       // Roster fields that cross the memo boundary: participantsHydrated,
       // person name/avatar/face/handle, agent pubkey/name/avatar/face/handle,
       // agent model (byline role), speakerRole (room role), mentionHandles,
-      // reply author name/handle, and channelReferenceKey. The closure still
-      // supplies handlers, layout flags, viewer pubkey, room name, and the
-      // full handle list; mentionHandles is what makes a row read that list again.
+      // reply author name/handle, and channelReferenceKey. Archive fields:
+      // roomArchived, cornerSwipeEnabled, and cornerProposalEnabled. The
+      // closure still supplies handlers, layout flags, viewer pubkey, room
+      // name, and the full handle list; mentionHandles is what makes a row
+      // read that list again.
       const rowViewer = rowViewerIsAgent !== undefined ? rowViewerIsAgent : viewerIsAgent;
       const rowManage = rowCanManage !== undefined ? rowCanManage : canManageWorkspace;
       const rowPermission = rowPermissionActionId !== undefined ? rowPermissionActionId : permissionActionId;
@@ -6086,14 +6091,18 @@ export function BuzzChatSurface({
           onForward={rowActions.beginForward}
           onBookmark={handleBookmarkMessage}
           onReportIssue={handleReportMessage}
-          {...(!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
+          {...((rowCornerSwipeEnabled ??
+            (!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience)) &&
+          rowRoomArchived !== true
             ? { onForwardToNewCorner: rowActions.handleForwardToNewCorner }
             : {})}
-          {...(!isCorner &&
-          !isArchived &&
-          !viewerIsAgent &&
-          !isReadOnlyDirectMessage &&
-          !cornerProposalAnswer
+          {...((rowCornerProposalEnabled ??
+            (!isCorner &&
+              !isArchived &&
+              !viewerIsAgent &&
+              !isReadOnlyDirectMessage &&
+              !cornerProposalAnswer)) &&
+          rowRoomArchived !== true
             ? { onCornerProposalDecision: handleCornerProposalDecision }
             : {})}
           cornerProposalAnswer={cornerProposalAnswer}
@@ -6203,6 +6212,11 @@ export function BuzzChatSurface({
       },
       item.replyToId ? visibleMessageById.get(item.replyToId) : undefined,
     ),
+    ...archiveActionPresentation(item, {
+      roomArchived: isArchived,
+      cornerSwipeOffered: !isDirectMessage && !viewerIsAgent && !desktopExperience,
+      cornerProposalOffered: !isCorner && !viewerIsAgent && !isReadOnlyDirectMessage,
+    }),
     channelReferenceKey,
   }), [
     bylineOpeners,
@@ -6229,6 +6243,11 @@ export function BuzzChatSurface({
     roomParticipants,
     visibleMessageById,
     channelReferenceKey,
+    isArchived,
+    isDirectMessage,
+    desktopExperience,
+    isCorner,
+    isReadOnlyDirectMessage,
   ]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,

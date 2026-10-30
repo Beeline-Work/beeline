@@ -412,3 +412,95 @@ parent Room, owned by Speedy:
 > last pass; save the post receipt. Report skipped setup too. Never use a GitHub
 > runner, webhook or new token. Preserve all samples and clean up only this
 > wake's emulator/server. On pass, remain silent.
+
+### Durable history and cumulative drift
+
+`nightly-run.sh` assigns a unique directory/run ID and freezes the Eastern night
+before capture starts. Each comparison appends its verdict to
+`$rig_state/history.jsonl`, including missing captures and the provisional
+first-attempt failure. `final: false` means the single rerun is still required;
+a pass or the second attempt is final. A repeated `(runId, attempt)` is an
+immutable replay: it returns the recorded verdict without adding another entry
+or using changed capture inputs. Use a new run ID for a genuinely new run.
+Direct CLI callers may supply `--run-id`, `--night YYYY-MM-DD`, or
+`--started-at <ISO timestamp>`; the default identity is the absolute output path.
+Keep the same identity and Eastern date for both attempts. The CLI retains the
+first recorded date for that identity even when a rerun crosses midnight.
+
+The state-directory `nightly.lock` excludes concurrent comparator writers. After
+a killed writer, verify no comparison is running before removing a stale lock.
+Journal writes are flushed before advancing the baseline. The next invocation
+repairs `last-pass.json` from the latest journaled final pass if a process stopped
+between those writes. Malformed history fails closed rather than discarding it.
+
+`first-pass.json` never advances. On migration it preserves the existing
+`last-pass.json` as the earliest available passing baseline; older passing nights
+cannot be reconstructed. With no pass yet, the first actual pass establishes it.
+Failures and skips never establish or replace a baseline.
+
+In addition to the unchanged strict budgets and last-pass 20% check, every case
+compares p95 with the original passing baseline and the median of up to seven
+prior passing Eastern nights. Cases match by kind, name and variant. Current,
+future, provisional and failing nights are excluded; multiple passes on one date
+count as one recent night (the last passing final verdict for that date). More
+than 10% slowdown against either reference fails and follows the existing single
+rerun/alert policy. Exactly 10% passes this drift check. Available history is used
+from the first prior pass; each verdict prints the count out of seven and says
+`unavailable` when a reference does not exist. No missing measurement is zero.
+
+### Publishing measured Loops trends
+
+The dashboard README `/api/loops` contract supports arbitrary named chart series;
+no renderer change is needed. `nightly-insights.mjs` adds one chart per measured
+case with `case:<kind>/<name>/<variant>:p50` and `:p95` series (ms), keeping the
+existing `actions`, `actions_max`, `pages`, `pages_max`, fixes and unrelated loops.
+It replaces a point on the same Eastern date instead of duplicating it. Complete,
+calibrated, current-head measurements are charted even when timing/request/drift
+checks fail. Skipped/incomplete/stale/uncalibrated captures add no points. The
+latency note and dated log describe the final result and capture limits.
+
+After **every final verdict**, the scheduled agent publishes through the owner's
+approved first-party `github / beeline-insights-loop` connection. Credentials stay
+in the connection, never in the rig, repository or capture environment:
+
+1. Read the current GitHub contents response for
+   `Beeline-Work/beeline-insights`, `main`, `loops/loops.json` and save its
+   `{sha, content}` as `contents.json` outside the repository. Use the Beeline
+   App for any linked-repository write; never switch to personal credentials
+   following an App denial.
+2. Prepare the optimistic update:
+
+   ```sh
+   node scripts/latency-rig/nightly-insights.mjs \
+     --contents "$run_dir/contents.json" --verdict "$run_dir/nightly.json" \
+     --out "$run_dir/insights-put.json"
+   ```
+
+3. Send that JSON body with an authenticated PUT to the same contents endpoint
+   through the approved first-party connection. Its `sha` is mandatory. On HTTP
+   409, read the latest contents, regenerate the body, and retry (at most three
+   writes); never resend a stale body or replace unrelated concurrent edits.
+   `publishInsights(transport, verdict)` implements this protocol for a sealed
+   transport; the CLI only prepares the request and has no network credentials.
+4. Save the successful publication receipt with the run; a publication failure
+   must be reported and retried from fresh contents, including on a passing night.
+   This does not change the measurement verdict or baseline. Publish only final
+   nightly output, never its provisional attempt. An exact retry of a run is
+   safe; do not replay older independent runs over a newer result for that date.
+
+The schedule must use `nightly-run.sh` (or the equivalent identity/date arguments)
+and perform this publication step after its final comparison, including FAIL or
+skipped capture. Existing alert deduplication still applies independently.
+
+Deterministic checks (no emulator or production credentials):
+
+```sh
+node --test scripts/latency-rig/nightly-*.test.mjs
+node scripts/latency-rig/prove-nightly-drift.mjs
+```
+
+`fixtures/night-2026-10-30-report.json` is the complete local-only attempt-2 report
+from inherited run `night-2026-10-30-EG85he`, main
+`e20fb93ade55d09b4a75f6c309e7c3c170b16119`. It proves failed measurements reach
+history and publication without establishing a passing baseline. The synthetic
+100 → 105 → 110.25 ms fixture proves cumulative drift despite small nightly steps.

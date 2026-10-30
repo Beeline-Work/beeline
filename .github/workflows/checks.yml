@@ -399,6 +399,8 @@ jobs:
       # built dist, the same as every app that imports those packages.
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
+      - name: Protect nightly latency history and measured Loops publication
+        run: node --test scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions
         run: |
           node --test scripts/external-request-deadlines.test.mjs

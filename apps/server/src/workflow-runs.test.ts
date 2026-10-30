@@ -2697,6 +2697,47 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
 });
 
 describe('no handoff: a turn that answered the step and ended without moving it', () => {
+  it('advances after a reply completed the next state wake, while the previous turn finishes late (WORKFLOW-NO-HANDOFF-1)', async () => {
+    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow({
+      version: 1, name: 'reply-failover', description: 'Exercise overlapping workflow turns',
+      roles: ['maker', 'checker'], start: 'script', handoffs: {
+        script: { role: 'maker', requires: [], on: { done: 'video', timeout: 'failed' } },
+        video: { role: 'maker', requires: [], on: { done: 'finished', timeout: 'nudge' } },
+        nudge: { role: 'checker', requires: [], on: { done: 'finished', timeout: 'failed' } },
+        finished: { kind: 'terminal', status: 'done' }, failed: { kind: 'terminal', status: 'failed' },
+      },
+    }) });
+    const { runId } = await startWorkflow(database, await commandFor(WORKER_A), {
+      name: 'reply-failover', roleBindings: { maker: WORKER_A, checker: WORKER_B },
+    });
+    const daemon = new DaemonService(database, new LiveHub());
+    const claim = async (source: string, generationId: string) => {
+      const command = (await database.query<CommandRow>(
+        `SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [source, WORKER_A],
+      )).rows[0]!;
+      await claimAgentCommand(database, ROOM, WORKER_A, command.id, generationId);
+      return { roomId: ROOM, requestId: command.turn_request_id, generationId };
+    };
+    const previous = await claim(runId, 'script-turn');
+    await daemon.execute('handoff', { ...previous, runId, outcome: 'done', contents: {}, attempt: 0 }, WORKER_A);
+    const nextSource = (await runCards(runId)).at(-1)!.id;
+    const next = await claim(nextSource, 'video-turn');
+    await daemon.execute('postRoomMessage', { ...previous, text: 'Script ready' }, WORKER_A);
+    await daemon.execute('postAgentTurnReceipt', { ...previous, status: 'complete' }, WORKER_A);
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('video');
+    await daemon.execute('postRoomMessage', { ...next, text: 'Video signup needs another approach' }, WORKER_A);
+    // Publishing completes the command; the receipt must still run failover.
+    await daemon.execute('postAgentTurnReceipt', { ...next, status: 'complete' }, WORKER_A);
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('nudge');
+    const cards = await runCards(runId);
+    expect(cards.at(-1)!.text).toContain('its turn ended with no handoff');
+    expect(cards.at(-1)!.card).toMatchObject({ toState: 'nudge', outcome: 'timeout' });
+    expect((await database.query(`SELECT id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2 AND state='pending'`,
+      [cards.at(-1)!.id, WORKER_B])).rowCount).toBe(1);
+    await daemon.execute('postAgentTurnReceipt', { ...next, status: 'complete' }, WORKER_A);
+    expect(await runCards(runId)).toHaveLength(cards.length);
+  });
+
   it('moves the step to the next agent with reason no handoff', async () => {
     const { runId } = await startedListRun();
     await failOverUnansweredTurn(database, { roomId: ROOM, agentId: WORKER_A, sourceMessageId: runId });

@@ -710,6 +710,13 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$(find "$RUNNER_TEMP/mobile-export/_expo/static/js/android" -name '*.hbc' -o -name '*.js' | head -n 1)"
+      - name: Reject transcript measurement code in the normal bundle
+        run: |
+          set -euo pipefail
+          if grep -aREl 'transcript-speed/|__transcriptSpeed|__transcriptBuild' "$RUNNER_TEMP/mobile-export/_expo/static/js/android"; then
+            echo 'Normal Android bundle contains transcript measurement code'
+            exit 1
+          fi
 
   # The production replay runs independently because it needs a cached scaled
   # database. The two verdict-only checks below it name tests already executed

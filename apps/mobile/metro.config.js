@@ -9,6 +9,11 @@ const config = getSentryExpoConfig(__dirname, {
   optionsFile: false,
 });
 
+// Babel instrumentation depends on this flag, which Metro does not hash itself.
+if (process.env.BEELINE_TRANSCRIPT_MEASURE === '1') {
+  config.cacheVersion += '-transcript-measure';
+}
+
 // @beeline/buzz-client and @beeline/nostr are file: symlinks to ../../packages/*.
 // Metro must (a) follow symlinks, (b) watch the real package dirs, and
 // (c) resolve their transitive deps from root node_modules.

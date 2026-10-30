@@ -2535,7 +2535,7 @@
     "kind": "wrapper",
     "template": "ensureReviewDispatch(db, cornerId, corner, transition)",
     "literals": [],
-    "occurrences": 3
+    "occurrences": 2
   },
   {
     "id": "src/corner-lifecycle.ts:checksReported:wrapper:6d88c2e74561d48d",

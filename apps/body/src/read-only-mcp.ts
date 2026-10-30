@@ -1697,7 +1697,7 @@ export function namedPrivateFiles(roots: string[], text: string): { named: strin
       resolved = resolveAttachPath(roots, absolute);
     } catch {
       // A named path in our roots still needs a refusal if it cannot be read.
-      if (!inRoots) continue;
+      if (!inRoots && !/^(?:~\/|\/(?:tmp|var\/tmp|home|Users)\/)/.test(named)) continue;
     }
     if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
   }
@@ -2928,10 +2928,10 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
 
 // MCP requests may run concurrently. Register artifact work before the first
 // await so an immediately following report cannot overtake its upload/queue.
-let turnArtifacts: { key: string; uploads: Promise<string>[] } | undefined;
+let turnArtifacts: { key: string; uploads: { name: string; result: Promise<string> }[] } | undefined;
 
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
-  if (name !== 'post_artifact' && name !== 'report') return executeAgentTool(name, args, toolCallId);
+  if (name !== 'post_artifact' && name !== 'report' && name !== 'post') return executeAgentTool(name, args, toolCallId);
   const contextFile = process.env.BEELINE_TURN_CONTEXT_FILE;
   const context = contextFile ? JSON.parse(readFileSync(contextFile, 'utf8')) as Record<string, unknown> : {};
   const key = JSON.stringify([process.env.BEELINE_DAEMON_BASE_URL, process.env.BEELINE_DAEMON_ROOM_ID,
@@ -2940,12 +2940,21 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
   const artifacts = turnArtifacts;
   if (name === 'post_artifact') {
     const upload = executeAgentTool(name, args, toolCallId);
-    artifacts.uploads.push(upload);
-    // Keep failures for report even when the caller has already observed them.
+    const artifactName = typeof args.title === 'string' && args.title.trim()
+      ? args.title.trim() : typeof args.path === 'string' ? basename(args.path) : '';
+    artifacts.uploads.push({ name: artifactName, result: upload });
+    // Retain failures until a later upload has successfully queued a replacement.
     void upload.catch(() => {});
     return upload;
   }
-  await Promise.all(artifacts.uploads);
+  const uploads = [...artifacts.uploads];
+  const results = await Promise.allSettled(uploads.map(upload => upload.result));
+  for (const [index, result] of results.entries()) {
+    if (result.status !== 'rejected') continue;
+    const replaced = results.some((later, laterIndex) => laterIndex > index &&
+      later.status === 'fulfilled' && uploads[laterIndex]!.name === uploads[index]!.name);
+    if (!replaced) throw result.reason;
+  }
   return executeAgentTool(name, args, toolCallId);
 }
 
@@ -2957,6 +2966,13 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       (!args.cursor || typeof args.cursor !== 'object' || Array.isArray(args.cursor)))
     throw new Error('read: pass the returned next object unchanged as cursor');
   validateToolInput(advertisedAgentTool(name), args);
+  if (name === 'order' || name === 'report' || name === 'post') {
+    const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''));
+    if (named.length) throw new Error(
+      `the ${name} names ${named.map(file => file.named).join(', ')}, which recipients cannot open; ` +
+      'upload the file with post_artifact and name its attachment instead, or attach it to the target corner brief with revise_corner',
+    );
+  }
   const addressed = { ...args, ...(typeof args.address === 'string' ? { cornerId: args.address } : {}) };
   const execute = (operation: string, input = args) => executeAgentOperation(operation, input, toolCallId);
   switch (name) {
@@ -3484,13 +3500,6 @@ async function executeAgentOperation(
       });
     }
     case 'order': {
-      const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''));
-      if (named.length)
-        throw new Error(
-          `the order names ${named.map((file) => file.named).join(', ')}, which only you can open; ` +
-            `attach each to the corner brief with revise_corner brief.attachments [{path, purpose, required}], ` +
-            `or name a repository file by its repository-relative path`,
-        );
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
       return JSON.stringify(result);
     }

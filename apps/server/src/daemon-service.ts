@@ -9057,10 +9057,18 @@ export class DaemonService {
       command.room_id === input.cornerId.toLowerCase() ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event)
+        `WITH pending AS (
+           DELETE FROM agent_pending_attachments
+           WHERE room_id=$5 AND agent_id=$3 AND request_id=$6 AND generation_id=$7
+             AND room_id=$2
+           RETURNING url,name,mime_type,size,created_at,id
+         )
+         INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments)
          SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
            CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
-           jsonb_build_object('turnGenerationId',$7::text)
+           jsonb_build_object('turnGenerationId',$7::text),
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('url',url,'name',name,'mimeType',mime_type,'size',size)
+             ORDER BY created_at,id) FROM pending),'[]'::jsonb)
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
          RETURNING id,created_at`,
         [id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId],
@@ -9073,7 +9081,7 @@ export class DaemonService {
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
       stored: true, visible: true, receipt: 'Message stored and visible.' +
         (input.cornerId === command.room_id
-          ? '\nPosted to your current place. Closing text is kept in turn activity; queued files attach to this post when the turn finishes.'
+          ? '\nPosted to your current place. Queued files are attached to this post. Closing text is kept in turn activity.'
           : '') };
   }
 

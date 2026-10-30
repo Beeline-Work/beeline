@@ -2775,7 +2775,12 @@ export class GitHubOperations {
             return { name: item.name, url: item.url, jobId };
           }
         }));
-        await database.transaction(async (database) => {
+        const providerCheck = check;
+        let noteInserted = false;
+        const refresh = () => database.transaction(async (database) => {
+          // Each replay starts with the provider fact, not a label from an aborted attempt.
+          let check = providerCheck;
+          noteInserted = false;
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
           // the provider has replied, under the run lock then the fact row lock.
@@ -2897,7 +2902,7 @@ export class GitHubOperations {
           // check can never be described as the failure.
           const failing = reportFailure && newFailures.length ? newFailures : summary.failing?.length ? summary.failing : [check.name];
           if (!options?.quiet || becamePassing || becameFailing)
-          await this.systemNote(
+          noteInserted = await this.systemNote(
             target.corner_id,
             target.author_id,
             {
@@ -2942,6 +2947,7 @@ export class GitHubOperations {
                 ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : partialRepair ? 'partial' : 'first'}`
               : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`,
             database,
+            true,
           );
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
@@ -2953,6 +2959,13 @@ export class GitHubOperations {
               WHERE corner_id=$1 AND merge_attempt_head=$3`,
             [target.corner_id, currentRow.updated_at, currentRow.merge_attempt_head]);
         });
+        // A supplied transaction belongs to its caller: only the owner can
+        // roll back and replay the complete unit after a deadlock.
+        if (database !== this.database) await refresh();
+        else await retryOnDeadlock(async () => { await refresh(); }, {
+          attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
+        });
+        if (noteInserted) this.onRoomChanged?.(target.corner_id);
     } catch (error) {
       if (transientGitHubError(error)) {
         await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
@@ -3017,6 +3030,7 @@ export class GitHubOperations {
     phrase: SystemPhrase,
     dedupe: string,
     database: SqlDatabase = this.database,
+    deferNotification = false,
   ) {
     const note = await systemLine(database, {
       id: hash(`beeline:${roomId}:${dedupe}`),
@@ -3026,7 +3040,7 @@ export class GitHubOperations {
       cardType: 'github-corner-note',
       card: { source: 'github', dedupe },
     });
-    if (note.inserted) this.onRoomChanged?.(roomId);
+    if (note.inserted && !deferNotification) this.onRoomChanged?.(roomId);
     // A previously written green fact can outlive a lost dispatch. Its note
     // remains idempotent, but the command routing must be retried.
     if (!note.inserted && (phrase.kind === 'check-passed' || phrase.kind === 'check-failed'))
@@ -3038,6 +3052,7 @@ export class GitHubOperations {
         followup: phrase.kind === 'check-failed' &&
           Boolean((phrase.payload as { followup?: unknown } | undefined)?.followup),
       });
+    return note.inserted;
   }
 
   private async mergeCorner(

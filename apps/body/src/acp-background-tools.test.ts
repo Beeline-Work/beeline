@@ -170,7 +170,7 @@ it('terminal guards discard background wakes only for the terminated session', a
     for (let index = 0; index < 5; index++) wire.handleMessage({
       method: 'session/update', params: { sessionId: 'session', update: {
         sessionUpdate: 'tool_call', toolCallId: `loop-${index}`, title: 'Loop',
-        rawInput: { query: 'same' }, status: 'in_progress',
+        rawInput: { query: 'same' }, status: 'completed', rawOutput: 'unchanged',
       } },
     });
     return { stopReason: 'end_turn' };

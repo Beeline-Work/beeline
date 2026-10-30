@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -142,13 +142,60 @@ describe('ACP turn liveness over real stdio', () => {
     console.log('Reproduction LOOP-1: first successful no_reply_needed → prompt ended with no final text');
   });
 
+  it('Reproduction LAT-0730: recorded ACP capture-log polls finish despite identical inputs', async () => {
+    const fixture = JSON.parse(await readFile(new URL('./fixtures/lat-0730-acp.json', import.meta.url), 'utf8'));
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
+    // Native wait is absent from the recorded thread items. Replay all five
+    // rendered command pairs, then the first two again with fresh IDs to exceed six calls.
+    for (let i = 0; i < 7; i++) {
+      for (const update of fixture.updates.slice((i % 5) * 2, (i % 5) * 2 + 2)) {
+        const replay = JSON.parse(JSON.stringify(update).replaceAll(update.toolCallId, `capture-${i}`));
+        await client.setModel(sessionId, JSON.stringify(replay));
+      }
+    }
+    await client.setModel(sessionId, JSON.stringify({ complete: true }));
+    expect((await prompt).stopReason).toBe('end_turn');
+    expect(cancel).not.toHaveBeenCalled();
+    console.log('Demonstrated LAT-0730: recorded ACP log tails; native wait absent; seven calls → end_turn');
+  });
+
+  it.each(['content', 'rawOutput', 'tool_result'])('changing %s results keep identical poll inputs alive', async format => {
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
+    for (let i = 0; i < 7; i++) {
+      const toolCallId = 'capture-' + i;
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId,
+        title: 'write_stdin', rawInput: { session_id: 27079, chars: '', yield_time_ms: 60000, max_output_tokens: 1000 },
+        status: 'in_progress' }));
+      const content = [{ type: 'content', content: { type: 'text', text: `warm ${i + 14}/20` } }];
+      await client.setModel(sessionId, JSON.stringify({
+        sessionUpdate: format === 'tool_result' ? 'tool_result' : 'tool_call_update', toolCallId,
+        ...(format === 'tool_result' ? {} : { status: 'completed' }),
+        ...(format === 'rawOutput' ? { rawOutput: { progress: i + 14 } } : { content }),
+      }));
+    }
+    expect(cancel).not.toHaveBeenCalled();
+    await client.setModel(sessionId, JSON.stringify({ complete: true }));
+    expect((await prompt).stopReason).toBe('end_turn');
+    console.log(`Demonstrated LAT-0730: seven identical polls with changing ${format} results → normal completion`);
+  });
+
   it.each(['mcp__agent__read', 'execute', 'custom_external_tool'])('stops five identical %s calls and releases the next prompt', async title => {
     const opened = once(client, 'session/update');
     const prompt = client.sessionPrompt(sessionId, 'tool');
     await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
     for (let i = 0; i < 5; i++) {
       await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId: 'repeat-' + i,
         title, rawInput: i % 2 ? { b: 2, a: 1 } : { a: 1, b: 2 }, status: 'in_progress' }));
+      expect(cancel).not.toHaveBeenCalled();
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call_update', toolCallId: 'repeat-' + i,
+        status: 'completed', rawOutput: { result: 'unchanged' } }));
     }
     expect(await prompt).toMatchObject({ stopReason: 'repeated-tool-call', agentText: '' });
     await writeFile(join(root, 'turn.json'), JSON.stringify({ roomId: 'room', requestId: 'next-turn', generationId: 'generation', commandReason: 'report' }));

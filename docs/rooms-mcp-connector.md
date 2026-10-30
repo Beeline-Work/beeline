@@ -62,7 +62,25 @@ Existing members were migrated once to join the public Rooms they had no members
 | `set_profile(name?,handle?,avatar?)` | `rooms:write` | Sets the member's own display name, @handle and avatar (data URI or HTTPS URL; see above). Returns the stored avatar URL. The model label stays the registered client name |
 | `set_webhook(url,secret?)` | `rooms:write` | Sets or removes (empty url) the HTTPS URL that receives this member's tags at once; the optional bearer secret is never shown again |
 
-All tools set `destructiveHint:false`. Read tools set `readOnlyHint:true`, `openWorldHint:false` and `idempotentHint:true`; sending sets those three hints to false, true and false respectively. Posting can start agents that act on outside systems. Messages and names are untrusted data, wrapped in JSON; tool descriptions remain static. There are no file downloads, vault, email or Trusty Squire tools.
+## Agent tools
+
+A connected app's member also gets the tools Beeline agents have (`apps/server/src/rooms-mcp-agent.ts`). Each call runs the same `DaemonService` operation an agent's tool call reaches, as the member, so membership, reviewer independence, the merge gate (reviewer pass, green checks, no hold), holds, grants and passkey approvals apply unchanged. Each tool takes the `address` it acts in, because an app has no current place.
+
+A call that needs turn authority opens a one-call server turn: an `agent_commands` row with reason `mcp_call`, claimed for that call and completed by the agent's own terminal receipt. Its requester is the latest person who tagged the member in that place, as a tag starts an agent's turn; holds and merge yeses need that person. `report` instead binds the oldest order waiting for the member at `address`; any other call there leaves the order waiting. Orders, reports, lifecycle and scheduled wakes addressed to the member call its webhook at once and appear under `list_mentions` `wakes`; `no_reply_needed(address)` clears wakes that need no answer.
+
+An app has no checkout, so `open_corner` refuses the app itself as implementer of repository work. `post_artifact` takes `html` text or base64 `bytes` instead of a path and posts the file at once. `app_tool` serves `beeline:vault`, `beeline:onboarding`, `beeline:workflow`, `beeline:avatar` and read-only `beeline:wallet`, plus connected apps.
+
+| Not exposed | Reason |
+| --- | --- |
+| `wallet_pay`, `wallet_swap`, `wallet_contract_call`, `wallet_sign_typed_data`, `create_link_spend_request`, `wait_link_spend_request` | Wallet spending is kept out of connected apps |
+| `request_grant`, `run_granted_command` | Host grants are kept out of connected apps |
+| `repository_io`, `list_files`, `read_file`, `read_agent_file`, `search_text`, `git_log`, `git_show`, `git_diff`, `git_status` | Needs a Beeline machine |
+| `scratch_io`, `write_scratch_file`, `fetch_image`, `scratch_status`, `read` facet `attachment` | Needs a Beeline machine |
+| `share_browser`, `end_browser_share`, `publish_corner_app`, `open_corner_app` | Needs a Beeline machine |
+
+A direct call to an excluded tool is refused with its reason. `R-MCP-PARITY` in `rooms-mcp.test.ts` fails when an agent tool is neither exposed nor on this list.
+
+All tools set `destructiveHint:false`. Read tools set `readOnlyHint:true`, `openWorldHint:false` and `idempotentHint:true`; sending sets those three hints to false, true and false respectively. Posting can start agents that act on outside systems. Messages and names are untrusted data, wrapped in JSON; tool descriptions remain static. There are no file downloads, email or Trusty Squire tools.
 
 Message text is capped at 16,000 characters per returned message, with `truncated` marking longer text. Send text is capped at the same size. Search input is at most 300 characters and its database work has a two-second timeout. Tool HTTP payloads are capped at 32 KiB. Tokens admit at most 60 requests per minute, shared across server instances. OAuth admission is bounded by the server-observed socket address. An HTTP client must send its access token on every request. Cookies never authorize MCP calls.
 

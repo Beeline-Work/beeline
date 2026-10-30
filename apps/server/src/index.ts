@@ -404,7 +404,7 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
-    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live),
+    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService),
     sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),

@@ -1,0 +1,237 @@
+{
+  "reproduction": "LAT-0730",
+  "source": "Original paginated Codex 0.165.0 thread history, 2026-10-30 07:14\u201307:18 UTC; rendered by installed codex-acp 2.3.0 CommandReporter.started/completed and AcpToolCallRenderer with Beeline client capabilities. Only cwd is redacted.",
+  "nativeWait": "Absent from original thread items and therefore absent from ACP tool calls. The visible calls are the nested exec_command capture-log tails, not outer exec or write_stdin.",
+  "updates": [
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "exec-a1a0ad82-38ea-4837-9e37-66b80ac5acf4",
+      "name": "exec_command",
+      "kind": "execute",
+      "title": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "terminal",
+          "terminalId": "exec-a1a0ad82-38ea-4837-9e37-66b80ac5acf4"
+        }
+      ],
+      "rawInput": {
+        "command": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+        "cwd": "/proof/latency-rig"
+      },
+      "_meta": {
+        "terminal_info": {
+          "cwd": "/proof/latency-rig",
+          "terminal_id": "exec-a1a0ad82-38ea-4837-9e37-66b80ac5acf4"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "exec-a1a0ad82-38ea-4837-9e37-66b80ac5acf4",
+      "name": "exec_command",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "push-unseen-1 12/20\npush-unseen-1 13/20\npush-unseen-1 14/20\n"
+          }
+        }
+      ],
+      "_meta": {
+        "terminal_exit": {
+          "exit_code": 0,
+          "signal": null,
+          "terminal_id": "exec-a1a0ad82-38ea-4837-9e37-66b80ac5acf4"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "exec-bd1f7506-6697-4c63-91ce-1070d6c5434d",
+      "name": "exec_command",
+      "kind": "execute",
+      "title": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "terminal",
+          "terminalId": "exec-bd1f7506-6697-4c63-91ce-1070d6c5434d"
+        }
+      ],
+      "rawInput": {
+        "command": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+        "cwd": "/proof/latency-rig"
+      },
+      "_meta": {
+        "terminal_info": {
+          "cwd": "/proof/latency-rig",
+          "terminal_id": "exec-bd1f7506-6697-4c63-91ce-1070d6c5434d"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "exec-bd1f7506-6697-4c63-91ce-1070d6c5434d",
+      "name": "exec_command",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "push-unseen-5 2/20\npush-unseen-5 3/20\npush-unseen-5 4/20\n"
+          }
+        }
+      ],
+      "_meta": {
+        "terminal_exit": {
+          "exit_code": 0,
+          "signal": null,
+          "terminal_id": "exec-bd1f7506-6697-4c63-91ce-1070d6c5434d"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "exec-698baeba-27a6-46c9-bc06-915a8f90f75e",
+      "name": "exec_command",
+      "kind": "execute",
+      "title": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "terminal",
+          "terminalId": "exec-698baeba-27a6-46c9-bc06-915a8f90f75e"
+        }
+      ],
+      "rawInput": {
+        "command": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+        "cwd": "/proof/latency-rig"
+      },
+      "_meta": {
+        "terminal_info": {
+          "cwd": "/proof/latency-rig",
+          "terminal_id": "exec-698baeba-27a6-46c9-bc06-915a8f90f75e"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "exec-698baeba-27a6-46c9-bc06-915a8f90f75e",
+      "name": "exec_command",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "push-unseen-5 12/20\npush-unseen-5 13/20\npush-unseen-5 14/20\n"
+          }
+        }
+      ],
+      "_meta": {
+        "terminal_exit": {
+          "exit_code": 0,
+          "signal": null,
+          "terminal_id": "exec-698baeba-27a6-46c9-bc06-915a8f90f75e"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "exec-70024958-17bf-42a1-b067-3107a129ee65",
+      "name": "exec_command",
+      "kind": "execute",
+      "title": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "terminal",
+          "terminalId": "exec-70024958-17bf-42a1-b067-3107a129ee65"
+        }
+      ],
+      "rawInput": {
+        "command": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+        "cwd": "/proof/latency-rig"
+      },
+      "_meta": {
+        "terminal_info": {
+          "cwd": "/proof/latency-rig",
+          "terminal_id": "exec-70024958-17bf-42a1-b067-3107a129ee65"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "exec-70024958-17bf-42a1-b067-3107a129ee65",
+      "name": "exec_command",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "warm 3/20\nwarm 4/20\nwarm 5/20\n"
+          }
+        }
+      ],
+      "_meta": {
+        "terminal_exit": {
+          "exit_code": 0,
+          "signal": null,
+          "terminal_id": "exec-70024958-17bf-42a1-b067-3107a129ee65"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "exec-ebc51de2-2917-48be-8141-0f74031734dc",
+      "name": "exec_command",
+      "kind": "execute",
+      "title": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "terminal",
+          "terminalId": "exec-ebc51de2-2917-48be-8141-0f74031734dc"
+        }
+      ],
+      "rawInput": {
+        "command": "tail -n 3 \"$XDG_STATE_HOME/beeline/latency-rig-speedy/night-2026-10-30-5nlipY/attempt-1/capture.log\"",
+        "cwd": "/proof/latency-rig"
+      },
+      "_meta": {
+        "terminal_info": {
+          "cwd": "/proof/latency-rig",
+          "terminal_id": "exec-ebc51de2-2917-48be-8141-0f74031734dc"
+        }
+      }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "exec-ebc51de2-2917-48be-8141-0f74031734dc",
+      "name": "exec_command",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "warm 13/20\nwarm 14/20\nwarm 15/20\n"
+          }
+        }
+      ],
+      "_meta": {
+        "terminal_exit": {
+          "exit_code": 0,
+          "signal": null,
+          "terminal_id": "exec-ebc51de2-2917-48be-8141-0f74031734dc"
+        }
+      }
+    }
+  ]
+}

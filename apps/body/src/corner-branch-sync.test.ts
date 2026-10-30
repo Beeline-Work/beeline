@@ -1111,6 +1111,15 @@ setInterval(() => {}, 1000);
     await expect(access(rebasePath)).rejects.toThrow();
   });
 
+  it('checkout-1: preserves uncommitted edits when a peer push would require sync', async () => {
+    const { remote, worktree } = await helperWorktree('beeline-corner-sync-dirty-');
+    await writeFile(resolve(worktree.path, 'opener.txt'), 'unfinished build input\n');
+    await pushToRemote(remote, 'peer work', { file: 'opener.txt', contents: 'peer version\n' });
+    await expect(syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE }))
+      .rejects.toThrow('uncommitted');
+    expect(await readFile(resolve(worktree.path, 'opener.txt'), 'utf8')).toBe('unfinished build input\n');
+  });
+
   it('realigns to the shared remote branch when two unpushed changes conflict', async () => {
     const { remote, worktree } = await helperWorktree('beeline-corner-sync-conflict-');
     await writeFile(resolve(worktree.path, 'shared.txt'), 'mine\n');

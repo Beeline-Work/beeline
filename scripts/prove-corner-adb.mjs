@@ -3,6 +3,9 @@ import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { keepCornerEmulator, prepareCornerAdb, stopKeptCornerEmulator } from '../apps/body/dist/corner-emulator.js';
+import { MonolithCornerTurnLoop } from '../apps/body/dist/monolith-corner-turn.js';
+import { identityFromKey } from '../apps/body/dist/runtime.js';
+const identity = identityFromKey('11'.repeat(32), 'Proof');
 const supervisor = await mkdtemp(join(process.env.HOME, 'corner-adb-proof-'));
 const leaseRoot = join(supervisor,'beeline/workspaces/proof/shared-home/cache/android-leases');
 const ids = ['corner-keep','corner-gone'];
@@ -18,9 +21,21 @@ try {
   await prepareCornerAdb(root,cornerId,env);
   const result=await keepCornerEmulator(cornerId,['-avd','se_test33','-no-window','-gpu','swiftshader_indirect','-memory','1024'],env,host);
   assert.equal(result.ok,true,JSON.stringify(result));
-  const device=execFileSync(join(root,'corner-adb-bin/adb'),['devices'],{env,encoding:'utf8'});
+  // Replay the host-granted command route too: its environment is sanitized,
+  // and the shell was prepared before this boot assigned the real server.
+  let policy;
+  const loop = new MonolithCornerTurnLoop({
+    cornerId, parentRoomId:'proof', workspaceId:'proof', worktreePath:root,
+    runtime:{agent:{name:'Proof',publicKey:identity.publicKey,secretKeyHex:'11'.repeat(32)}},
+    config:{agentBinary:'/unused',agentEnv:{}}, api:{execute:async()=>({})},
+    grantRunner:{register:(_id,room)=>{policy=room.writePolicy;}},
+  });
+  loop.agentEnv=env;
+  const device=execFileSync('/bin/sh',['-c','adb devices'],{
+    env:{PATH:process.env.PATH,HOME:root,...policy().toolEnv},encoding:'utf8',
+  });
   assert.deepEqual(device.trim().split('\n').slice(1),[result.serial+'\tdevice']);
-  console.log('CORNER-ADB-1',cornerId,device.trim());
+  console.log('Reproduction emu-1 / CORNER-ADB-1',cornerId,device.trim());
   await prepareCornerAdb(root,cornerId,env);
   const record=JSON.parse(await readFile(join(leaseRoot,'kept',cornerId+'.json'),'utf8'));
   assert.equal(env.ANDROID_SERIAL,result.serial);
@@ -32,8 +47,8 @@ try {
   const devices=execFileSync(join(root,'corner-adb-bin/adb'),['devices'],{env,encoding:'utf8'});
   assert.deepEqual(devices.trim().split('\n').slice(1),[serial+'\tdevice']);
  }
- console.log('CORNER-ADB-1 PASS: concurrent corners each see exactly their own leased emulator');
+ console.log('Reproduction emu-1 / CORNER-ADB-1 PASS: concurrent corners each see exactly their own leased emulator');
 } finally {
- for (const id of ids) await stopKeptCornerEmulator(supervisor,id);
+ for (const id of ids) await stopKeptCornerEmulator(supervisor,id,'proof cleanup');
  await rm(supervisor,{recursive:true,force:true});
 }

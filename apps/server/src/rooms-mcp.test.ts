@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -13,6 +13,7 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
+import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS } from './rooms-mcp-agent.js';
 import { claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { runMaintenance } from './background.js';
@@ -54,7 +55,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     server = createBeelineServer(options);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth), phone, live);
+    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth), phone, live, daemon);
   }, 60_000);
   beforeEach(async () => {
     // Each independent HTTP scenario starts with its own admission budget.
@@ -592,7 +593,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
-    const tools = await client.listTools(); expect(tools.tools).toHaveLength(9);
+    const tools = await client.listTools(); expect(tools.tools).toHaveLength(9 + MCP_AGENT_TOOLS.length);
     const rooms = await client.callTool({ name: 'list_rooms', arguments: {} });
     expect(JSON.stringify(rooms)).toContain(ROOM); expect(JSON.stringify(rooms)).not.toContain(PRIVATE);
     const posted = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent report the nebula test' } });
@@ -616,7 +617,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await post('/mcp/oauth/revoke', { client_id: grant.clientId, token });
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
   });
-  it('keeps the wake chain across member replies so a tag loop still stops at the depth limit', async () => {
+  it.each(['send_message', 'post'])('keeps the wake chain across member replies through %s so a tag loop still stops at the depth limit', async replyTool => {
     const { client, grant, member } = await connected();
     await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/loop' WHERE id=$1`, [grant.clientId]);
     const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
@@ -641,8 +642,12 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await latestMemberCommand()).toBeUndefined();
     expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
     // The member replies again: depth three, the last depth the limit allows.
-    const second = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
-    const secondId = JSON.parse((second.content as { text: string }[])[0]!.text).data.messageId as string;
+    const second = await client.callTool(replyTool === 'post'
+      ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step two' } }
+      : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
+    expect(second.isError).not.toBe(true);
+    const secondId = (await db.query<{ id: string }>(
+      'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, member])).rows[0]!.id;
     const secondCommand = await agentCommand(secondId);
     expect(secondCommand.agent_depth).toBe(3);
     // The demo agent's next tag cannot open a new member turn: the loop stops.
@@ -1261,5 +1266,140 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         await db.query('ALTER TABLE rooms_mcp_mentions_off RENAME TO rooms_mcp_mentions');
       }
     }, 60_000);
+  });
+  describe('agent tools for a connected app', () => {
+    const call = async (client: Client, name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args }) as { isError?: boolean; content: { text: string }[] };
+      return { error: result.isError === true, text: result.content[0]!.text };
+    };
+    const ok = async (client: Client, name: string, args: Record<string, unknown>) => {
+      const result = await call(client, name, args);
+      expect(result.error, result.text).toBe(false);
+      return JSON.parse(result.text).data;
+    };
+    /** A person's tag starts one demo-agent turn; returns that turn's authority. */
+    async function agentTurn(text: string) {
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text }, USER) as { messageId: string };
+      const command = (await db.query<{ id: string; turn_request_id: string }>(
+        'SELECT id,turn_request_id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [sent.messageId, AGENT])).rows[0]!;
+      const generationId = `gen-${randomBytes(4).toString('hex')}`;
+      await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: command.id, generationId } as never, AGENT);
+      return { roomId: ROOM, requestId: command.turn_request_id, generationId };
+    }
+    it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
+      const surface = await import('../../body/src/minimal-tool-surface.js');
+      const agentTools = new Set([
+        ...surface.minimalTools(true), ...surface.minimalTools(false), surface.RUNNER_TOOL, surface.SILENT_TOOL,
+        ...surface.scratchTools(true), ...surface.repositoryTools(),
+      ].map(definition => definition.name));
+      for (const name of [...Object.values(surface.REPOSITORY_ROUTES), ...Object.values(surface.SCRATCH_ROUTES),
+        ...Object.values(surface.CAPABILITY_ROUTES).flatMap(routes => Object.values(routes))]) agentTools.add(name);
+      const { client } = await connected();
+      const exposed = new Set([...(await client.listTools()).tools.map(definition => definition.name), ...MCP_APP_ROUTE_OPERATIONS]);
+      const missing = [...agentTools].filter(name => !exposed.has(name) && !MCP_AGENT_EXCLUSIONS[name]);
+      expect(missing).toEqual([]);
+      expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => exposed.has(name))).toEqual([]);
+      // Every exclusion names a real agent tool, so the table cannot hide a typo.
+      expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => !agentTools.has(name))).toEqual([]);
+    });
+    it('R-MCP-EXCLUDED: refuses wallet spending and host grants with a plain reason', async () => {
+      const { client } = await connected();
+      for (const name of ['wallet_pay', 'wallet_swap', 'wallet_contract_call', 'wallet_sign_typed_data',
+        'create_link_spend_request', 'wait_link_spend_request', 'request_grant', 'run_granted_command']) {
+        const refused = await call(client, name, {});
+        expect(refused.error, name).toBe(true);
+        expect(refused.text).toMatch(name.includes('grant') ? /host grants are kept out of connected apps/ : /wallet spending is kept out of connected apps/);
+      }
+      for (const tool of ['pay', 'swap', 'contract_call', 'sign_typed_data', 'link_request', 'link_wait']) {
+        const refused = await call(client, 'app_tool', { address: ROOM, app: 'beeline:wallet', tool, args: { amount: '1', to: '0x0' } });
+        expect(refused.error, tool).toBe(true);
+        expect(refused.text).toContain('wallet spending is kept out of connected apps');
+      }
+      const listed = await ok(client, 'app_tool', { address: ROOM, app: 'beeline:wallet' });
+      expect(listed.tools.map((entry: { name: string }) => entry.name)).toEqual(['address', 'balance', 'chains', 'history', 'quote']);
+      expect((await db.query("SELECT 1 FROM agent_grants WHERE kind='mcp' AND target='wallet'")).rowCount).toBe(0);
+    });
+    it('R-MCP-ORDER: orders an agent and receives its report as a wake', async () => {
+      const { client, member } = await connected();
+      const ordered = await ok(client, 'order', { address: ROOM, agent: 'demo-agent', text: 'Check the nebula numbers.' });
+      expect(ordered.accepted).toBe(true);
+      const order = (await db.query<{ id: string; turn_request_id: string; private_payload: { authorId: string } }>(
+        `SELECT id,turn_request_id,private_payload FROM agent_commands WHERE id=$1`, [ordered.id])).rows[0]!;
+      expect(order.private_payload.authorId).toBe(member);
+      // The app's own call left no open turn behind.
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+      const generationId = 'gen-report';
+      await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: order.id, generationId } as never, AGENT);
+      await daemon.execute('report', { roomId: ROOM, requestId: order.turn_request_id, generationId, status: 'done', text: 'done: the numbers match' } as never, AGENT);
+      const wakes = (await ok(client, 'list_mentions', {})).wakes as { address: string; reason: string; text: string }[];
+      expect(wakes).toContainEqual(expect.objectContaining({ address: ROOM, reason: 'report', text: expect.stringContaining('the numbers match') }));
+      expect((await ok(client, 'no_reply_needed', { address: ROOM })).cleared).toBe(1);
+      expect((await ok(client, 'list_mentions', {})).wakes).toEqual([]);
+    });
+    it('R-MCP-REPORT: reports an order back to the agent that sent it', async () => {
+      const { client, member, grant } = await connected();
+      await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/orders' WHERE id=$1`, [grant.clientId]);
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      expect((await call(client, 'report', { address: ROOM, status: 'done', text: 'done: nothing was ordered' })).text)
+        .toContain('no order is waiting for your report');
+      const turn = await agentTurn('@demo-agent hand the audit to the app');
+      const sent = await daemon.execute('order', { ...turn, address: ROOM, agent: handle, text: 'Audit the corner list.' } as never, AGENT) as { id: string };
+      // The order reaches the app's webhook at once; no helper claims it.
+      expect((await db.query<{ body: string }>('SELECT body FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2',
+        [member, sent.id])).rows[0]?.body).toContain('Order (order): Audit the corner list.');
+      const wakes = (await ok(client, 'list_mentions', {})).wakes as { address: string; kind?: string; text?: string }[];
+      expect(wakes).toContainEqual(expect.objectContaining({ address: ROOM, kind: 'order', text: expect.stringContaining('Audit the corner list') }));
+      // Another call in that Room leaves the order waiting for its report.
+      await ok(client, 'read', { facet: 'members', address: ROOM });
+      await ok(client, 'post', { address: ROOM, text: 'Auditing now.' });
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND private_payload->>'kind'='order' AND state='pending'`, [member])).rowCount).toBe(1);
+      expect((await call(client, 'report', { address: ROOM, status: 'done', text: 'finished without a prefix' })).error).toBe(true);
+      await ok(client, 'report', { address: ROOM, status: 'done', text: 'done: three corners, all green' });
+      const back = (await db.query<{ private_payload: { kind: string; text: string } }>(
+        `SELECT private_payload FROM agent_commands WHERE agent_id=$1 AND reason='report' ORDER BY created_at DESC LIMIT 1`, [AGENT])).rows[0]!;
+      expect(back.private_payload).toMatchObject({ kind: 'report', text: expect.stringContaining('three corners, all green') });
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+    });
+    it('R-MCP-GATES: keeps reviewer, merge, hold and implementer gates for the app', async () => {
+      const { client, member } = await connected();
+      // Not the configured reviewer: no PASS.
+      const pass = await call(client, 'approve_merge', { address: PUBLIC_CORNER, headSha: 'a'.repeat(40) });
+      expect(pass.error).toBe(true);
+      expect(pass.text).toMatch(/NOT_CONFIGURED_REVIEWER|reviewer/);
+      // No pull request and no checks: the merge gate stays closed.
+      expect(await ok(client, 'merge_corner', { address: PUBLIC_CORNER })).toMatchObject({ status: 'blocked' });
+      // A hold needs a person's request.
+      const hold = await call(client, 'set_corner_hold', { address: PUBLIC_CORNER });
+      expect(hold.error).toBe(true);
+      expect(hold.text).toContain('hold requires a human requester');
+      // A person's tag makes that person the requester, as it does for an agent turn.
+      const handle0 = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle0} hold the demo corner` }, USER);
+      const held = await ok(client, 'set_corner_hold', { address: PUBLIC_CORNER });
+      expect(held.holdId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(await ok(client, 'set_corner_hold', { address: PUBLIC_CORNER, releaseHoldId: held.holdId })).toBeDefined();
+      // An app has no checkout, so repository work needs another implementer.
+      const repoRoom = randomUUID();
+      await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility,repository_key,repository_remote,repository_resolution)
+        VALUES($1,$2,'Repo','public','acme/repo','https://github.com/acme/repo.git','repository')`, [repoRoom, WORKSPACE]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`, [WORKSPACE, repoRoom, member, AGENT]);
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      const self = await call(client, 'open_corner', { room: repoRoom, implementer: handle, brief: { spec: 'Fix the login copy.' } });
+      expect(self.error).toBe(true);
+      expect(self.text).toContain('cannot implement repository work; name another agent as implementer');
+      expect((await db.query('SELECT 1 FROM rooms WHERE parent_id=$1', [repoRoom])).rowCount).toBe(0);
+    });
+    it('R-MCP-CORNER: opens a corner with another implementer and posts in it', async () => {
+      const { client } = await connected();
+      const opened = await ok(client, 'open_corner', { room: ROOM, name: 'nebula-check', objective: 'Check the nebula numbers',
+        implementer: 'demo-agent', brief: { spec: '## Intent\nCheck the nebula numbers.', repositoryWork: false } });
+      expect(opened.status).toBe('starting');
+      const corner = opened.address as string;
+      expect((await db.query<{ owner_agent_id: string }>('SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1', [corner])).rows[0]?.owner_agent_id).toBeDefined();
+      const posted = await ok(client, 'post', { address: corner, text: 'Numbers attached below.' });
+      expect(posted.stored).toBe(true);
+      await ok(client, 'react_to_message', { address: corner, messageId: posted.id, emoji: '👀' });
+      expect((await ok(client, 'read', { facet: 'brief', address: corner })).revisions?.length ?? 1).toBeGreaterThan(0);
+    });
   });
 });

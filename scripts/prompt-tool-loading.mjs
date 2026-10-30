@@ -20,18 +20,3 @@ export function findTools(tools, query) {
     .filter(t => t.score).sort((a, b) => b.score - a.score || a.t.name.localeCompare(b.t.name));
   return ranked.slice(0, 5).map(({ t }) => definition(t));
 }
-export function coreEvidence(cases) {
-  const counts = {};
-  const walk = value => {
-    if (!value || typeof value !== 'object') return;
-    if (typeof value.call === 'string') counts[value.call] = (counts[value.call] ?? 0) + 1;
-    for (const [key, child] of Object.entries(value)) if (!['not', 'noCall', 'atMostOnce'].includes(key)) walk(child);
-  };
-  cases.forEach(c => {
-    walk(c.pass);
-    for (const line of [...c.messages ?? [], ...c.scenario?.history ?? []]) {
-      for (const match of JSON.stringify(line).matchAll(/Tool result[^a-z_]+([a-zA-Z_]+)\(/g)) counts[match[1]] = (counts[match[1]] ?? 0) + 1;
-    }
-  });
-  return counts;
-}

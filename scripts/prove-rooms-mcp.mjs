@@ -1,5 +1,10 @@
 /** Local-only seeded reviewer fixture. No production credentials or helper are used. */
 import assert from 'node:assert/strict';
+import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { connectMcp } from '../apps/server/dist/rooms-mcp-connections.js';
 import { bundledMcpLogo } from '../apps/server/dist/rooms-mcp-logos.js';
@@ -188,10 +193,11 @@ try {
   response = await browser(response.headers.get('location')); assert.equal(response.status, 302);
   response = await browser(response.headers.get('location'));
   const target = new URL(redirectUrl);
-  assert.ok(response.headers.get('content-security-policy').includes(`form-action 'self' ${target.origin === 'null' ? target.protocol : target.origin};`));
+  assert.ok(!response.headers.get('content-security-policy').includes('form-action'));
   const html = await response.text(); assert.match(html, /Joins as/); assert.match(html, /Read your public Rooms/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
   transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the joining member, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
-  response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow' }) });
+  if (process.argv.includes('--wake-setup')) process.env.BEELINE_MCP_WEBHOOK_KEY = 'synthetic-proof-sealing-key';
+  response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow', ...(process.argv.includes('--wake-setup') ? { wake_url: 'https://hooks.example/proof', wake_key: 'synthetic-wake-key' } : {}) }) });
   assert.equal(response.status, 302);
   const callback = new URL(response.headers.get('location'));
   assert.equal(callback.searchParams.get('state'), 'local-proof-state'); assert.equal(callback.searchParams.get('iss'), origin);
@@ -201,6 +207,54 @@ try {
   // The connection is a member owned by the reviewer; a person adds it to a Room to read and post there.
   const member = (await db.query(`SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1`, [person])).rows[0].member_id;
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [workspace, room, member]);
+  if (process.argv.includes('--wake-setup')) {
+    // HTTPS receiver double: only this proof transport maps a public destination
+    // to loopback. Production postMcpWebhook keeps DNS pinning and TLS validation.
+    const temp = await mkdtemp(join(tmpdir(), 'beeline-wake-proof-'));
+    const received = [];
+    let receiver;
+    try {
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', join(temp, 'tls.key'), '-out', join(temp, 'tls.crt'),
+        '-subj', '/CN=localhost', '-days', '1'], { stdio: 'ignore' });
+      receiver = createHttpsServer({ key: await readFile(join(temp, 'tls.key')), cert: await readFile(join(temp, 'tls.crt')) }, (req, res) => {
+        let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
+          received.push({ authorization: req.headers.authorization, body }); res.end();
+        });
+      });
+      await new Promise(resolve => receiver.listen(0, '127.0.0.1', resolve));
+      const transport = async (url, init) => {
+        assert.equal(url, 'https://hooks.example/proof');
+        return new Promise((resolve, reject) => {
+          const request = httpsRequest({ hostname: '127.0.0.1', port: receiver.address().port,
+            method: 'POST', headers: init.headers, rejectUnauthorized: false }, response => {
+            response.resume(); response.on('end', () => resolve(new Response('', { status: response.statusCode })));
+          });
+          request.on('error', reject); request.end(init.body);
+        });
+      };
+      const handle = (await db.query('SELECT handle FROM identities WHERE id=$1', [member])).rows[0].handle;
+      for (const path of ['consent', 'profile']) {
+        if (path === 'profile') await options.phone.execute('updateAgentWake',
+          { workspaceId: workspace, agentId: member, url: 'https://hooks.example/proof', key: 'synthetic-wake-key' }, person);
+        const wake = await options.phone.execute('sendRoomMessage', { roomId: room, text: `@${handle} wake from ${path}` }, person);
+        assert.equal((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, wake.messageId])).rowCount, 1);
+        assert.equal(await deliverMcpMemberWebhooks(db, transport), 1);
+        assert.equal(received.at(-1).authorization, 'Bearer synthetic-wake-key');
+        const profile = await options.phone.readAgent(workspace, member, person);
+        assert.deepEqual(profile.wake, { url: 'https://hooks.example/proof', keySet: true });
+        assert.ok(!JSON.stringify(profile).includes('synthetic-wake-key'));
+      }
+      assert.equal(received.length, 2);
+      transcript('MCP-WAKE-SETUP PASS: Allow and profile setup each deliver one tag to a local HTTPS receiver with the bearer key; reads contain only key status.');
+      // Continue the pre-existing inherited-callback proof below.
+      await options.phone.execute('updateAgentWake', { workspaceId: workspace, agentId: member, url: '' }, person);
+      await db.query('UPDATE rooms_mcp_members SET callback_url=NULL WHERE member_id=$1', [member]);
+    } finally {
+      if (receiver) await new Promise(resolve => receiver.close(resolve));
+      await rm(temp, { recursive: true, force: true });
+    }
+  }
   const firstRefresh = tokens.refresh_token;
   tokens.expires_in = 0;
   assert.equal(await mcpAuth(provider, { serverUrl: origin + '/mcp', resourceMetadataUrl: new URL(origin + '/.well-known/oauth-protected-resource/mcp') }), 'AUTHORIZED');

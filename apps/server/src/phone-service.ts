@@ -8497,11 +8497,12 @@ export class PhoneService {
       ]);
       // Active merge holds stay active under the tombstone holder. A corner
       // keeps one active hold per holder, so when several holds on one corner
-      // now share the tombstone, only the strongest stays; the corner is
-      // still held exactly as before.
+      // now share the tombstone, only the hardest to release stays. Any member
+      // may release an agent's hold, while a person's hold needs standing above
+      // its own, so person holds outrank agent holds before standing does.
       await database.query(
         `WITH tombstoned AS (
-           SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY
+           SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY set_by_agent_id IS NOT NULL,
              CASE standing WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,set_at,id) rank
            FROM corner_merge_holds
            WHERE released_at IS NULL

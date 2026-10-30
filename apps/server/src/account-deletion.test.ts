@@ -3,6 +3,7 @@ import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
+import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
@@ -448,23 +449,52 @@ describe('deleteAccount', () => {
     );
   });
 
-  it('keeps a corner held when the account and its agent both held it', async () => {
+  it('keeps a person hold\'s release rule when the account and its agent both held a surviving corner (R-DELETE-HOLD-AUTHORITY)', async () => {
+    // A partner agent owns the corner, so the corner survives the deletion.
+    const partnerAgent = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Partner Bee')`, [partnerAgent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2,worker_agent_id=$2 WHERE corner_id=$1`, [
+      CORNER,
+      partnerAgent,
+    ]);
+    // A plain member stays a member after the deletion promotes the partner.
+    const member = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Member','member')`, [member]);
     await database.query(
-      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'member')`,
-      [CORNER, OWNER],
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`,
+      [WORKSPACE, ROOM, member],
     );
+    // Historical standings can differ: the person hold is weaker by standing
+    // but, unlike the agent hold, only someone above member may release it.
+    const personHold = (
+      await database.query<{ id: string }>(
+        `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'member') RETURNING id::text`,
+        [CORNER, OWNER],
+      )
+    ).rows[0]!.id;
     await database.query(
       `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id) VALUES($1,$2,'owner',$3)`,
       [CORNER, OWNER, AGENT],
     );
+    await expect(setCornerHold(database, { cornerId: CORNER, releaseHoldId: personHold }, member)).rejects.toThrow(
+      'hold release denied',
+    );
 
     await phone.execute('deleteAccount', {}, OWNER);
 
-    await expectRowCount(
-      `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL
-         AND standing='owner' AND actor_id=$2 AND set_by_agent_id=$2`,
-      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
-      1,
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`, [CORNER], 1);
+    const kept = (
+      await database.query<{ id: string }>(
+        `SELECT id::text FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL
+           AND actor_id=$2 AND set_by_agent_id IS NULL AND standing='member'`,
+        [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      )
+    ).rows;
+    expect(kept).toEqual([{ id: personHold }]);
+    await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
+    await expect(setCornerHold(database, { cornerId: CORNER, releaseHoldId: personHold }, member)).rejects.toThrow(
+      'hold release denied',
     );
     await expectRowCount(`SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [CORNER], 1);
   });

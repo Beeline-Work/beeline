@@ -1,5 +1,5 @@
 import { appErrorCopy } from '@/buzz/app-error-copy';
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
@@ -459,7 +459,7 @@ export function useRoomSurfaceSession({
     readCursorViewerRef.current = userPubkey;
     if (previous && previous !== userPubkey) readCursorRef.current?.cancel();
   }, [userPubkey]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (roomClient) readCursorRef.current?.retry();
   }, [roomClient]);
   // A VISIT begins and ends with focus, not with the Room id. Re-arming on

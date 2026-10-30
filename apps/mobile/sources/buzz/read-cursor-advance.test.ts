@@ -133,11 +133,11 @@ describe('ReadCursorAdvancer', () => {
     const advancer = new ReadCursorAdvancer(publish);
     advancer.observe(TRANSCRIPT, [TRANSCRIPT[2]!]);
     for (let report = 0; report < 3; report += 1) {
-      vi.advanceTimersByTime(100);
+      vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS / 4);
       advancer.observe(TRANSCRIPT, [TRANSCRIPT[2]!]);
     }
     expect(publish).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS - 300);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS / 4);
     expect(publish).toHaveBeenCalledExactlyOnceWith('c');
   });
 

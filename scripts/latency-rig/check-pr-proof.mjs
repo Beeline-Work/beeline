@@ -20,7 +20,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const pr = event.pull_request;
   if (!pr) throw new Error('Pull request context required');
-  const files = execFileSync('git', ['diff', '--name-only', `${pr.base.sha}...${pr.head.sha}`], { encoding: 'utf8' }).trim().split('\n');
+  const files = execFileSync('git', ['diff', '--name-only', '-z', `${pr.base.sha}...${pr.head.sha}`], { encoding: 'utf8' }).split('\0').filter(Boolean);
   checkProof(files, pr.body);
   console.log('Latency rig proof accepted.');
 }

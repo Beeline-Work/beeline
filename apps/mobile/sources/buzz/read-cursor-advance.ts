@@ -7,7 +7,7 @@ import type { ChatDisplayMessage } from './room-view-presentation';
  * rows it sweeps past were never read, so the boundary follows where the
  * reader STOPPED, not every row that crossed the fold on the way there.
  */
-export const READ_CURSOR_DEBOUNCE_MS = 400;
+export const READ_CURSOR_DEBOUNCE_MS = 200;
 
 /** A provisional row is painted from an unsettled turn, not stored mail. */
 function isProvisional(

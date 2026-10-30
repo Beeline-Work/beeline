@@ -36,7 +36,7 @@ test('the CI entry point fails a hot-path PR and passes after its body supplies 
     git('-c', 'user.name=Rig test', '-c', 'user.email=rig@example.test', 'commit', '--allow-empty', '-qm', 'base');
     const base = git('rev-parse', 'HEAD');
     mkdirSync(join(cwd, 'apps/mobile/sources/push'), { recursive: true });
-    writeFileSync(join(cwd, 'apps/mobile/sources/push/example.ts'), 'export {};\n');
+    writeFileSync(join(cwd, 'apps/mobile/sources/push/déjà.ts'), 'export {};\n');
     git('add', '.');
     git('-c', 'user.name=Rig test', '-c', 'user.email=rig@example.test', 'commit', '-qm', 'change');
     const head = git('rev-parse', 'HEAD');

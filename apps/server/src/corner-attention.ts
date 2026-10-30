@@ -6,6 +6,7 @@ import {
   cornerWorkSql,
   cornerBlockerSql,
   cornerRowState,
+  cornerScheduledWaitSql,
   type CornerStateRow,
 } from './chat-corner-counts.js';
 import { reportToCommander } from './commander.js';
@@ -184,9 +185,7 @@ function attentionSql() {
       AND command.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
       AND command.review_context->>'purpose' IS NULL
       AND command.agent_id IS DISTINCT FROM f.worker_agent_id) review_queued,
-    EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
-      AND schedule.next_run_at>now()
-      AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) scheduled_wait
+    ${cornerScheduledWaitSql('c')} scheduled_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id
     ${cornerWorkSql(true)} ${cornerBlockerSql()}

@@ -153,12 +153,14 @@ function scan(
                   for (const prPresent of [false, true]) {
                     if (closure === 'merged' && !prPresent) continue;
                     for (const blocker of BLOCKERS) {
+                     for (const scheduledWait of [false, true]) {
                       count += 1;
                       const facts: CornerStateFacts = {
                         archived,
                         turnRunning,
                         workerQueued,
                         reviewerActive,
+                        scheduledWait,
                         ...(run ? { run } : {}),
                         lifecycle: lifecycleFor(shape, prPresent, closure),
                         ...blockerFacts(blocker),
@@ -176,12 +178,14 @@ function scan(
                       else if (turnRunning) expected = 'working';
                       else if (anyBlocker && !(pending && deferred)) expected = 'waiting';
                       else if (pending) expected = 'review';
+                      else if (scheduledWait) expected = 'waiting';
                       else expected = 'idle';
                       if (actual !== expected && failures.length < 8) {
                         failures.push(
-                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
+                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker} scheduled=${scheduledWait}`,
                         );
                       }
+                     }
                     }
                   }
                 }

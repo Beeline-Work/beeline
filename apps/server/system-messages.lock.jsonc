@@ -1,3 +1,4 @@
+// Wording-neutral lifecycle cleanup approved by lunchboxfortwo, message 304303be9b7e4a533bec01c78824f102a8486127a021656274eb6d2dfd890f9b, corner brief revision 5. Additional applyEvent and backfillRun wrappers approved in message 134f90601fa010dd765527b857a5f4292a4d7f6d3f379aa1ffca84cb4b44db52. Transition.take and its dead rereview wrappers only otherwise; no System wording change.
 // Connected app post/order wake-chain fix approved by lunchboxfortwo, message bd07c8db4f5da927d128b4624dbb17d1fe419210d001c0154fb0ea1c239fc4d3. Only the RoomsMcpAgentTools.inTurn wrapper changed: a lookup timeout and wake depth fields; no System wording changed.
 // Connected AI app agent-tool forwarding approved by lunchboxfortwo, message 7bd35003b7a0f33e5e59d225888502dcf09c83ab391409af02dc798b2866f17d (brief revision 1). Only RoomsMcpAgentTools call sites in rooms-mcp-agent.ts were added; they pass arguments to existing server actions and add no System wording.
 // One-tap YouTube upload reservation and restoration metadata approved by lunchboxfortwo, message 3044ec74214ab08b7beb3d898e065d6d6b6f3e1bc5c15deeef16dbf6a1a57650 (brief revision 3). Only consumeStarterVideoPost and restoreStarterVideoPost snapshots changed; no visible System wording changed.
@@ -2216,7 +2217,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:Transition.take:systemLine:a73200e674ef2c0f",
+    "id": "src/corner-lifecycle.ts:Transition.take:systemLine:f1131f6f591184e5",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "systemLine",
     "template": "systemLine(this.db, {\n    id: createHash('sha256')\n        .update(`beeline:corner-workflow:${this.cornerId}:${seq}:${fromState}:${outcome}`)\n        .digest('hex'),\n    roomId: this.cornerId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject,\n    verb: 'handed off',\n    object: toState,\n    presentation: 'card',\n    cardType: CORNER_LIFECYCLE_CARD_TYPE,\n    card: {\n        runId: this.cornerId,\n        roleBindings: this.run.roleBindings,\n        fromState,\n        outcome,\n        toState,\n        contents,\n        receipt: { exit: { gate: outcome, actorId: SYSTEM_IDENTITY_ID } },\n        seq,\n        ...(status ? { status } : {}),\n    },\n})",
@@ -2240,14 +2241,12 @@
       "\"implementer\"",
       "\"landed\"",
       "\"live:parent.reviewer_agent_id\"",
-      "\"loop\"",
       "\"merge_refused\"",
       "\"on\"",
       "\"opened\"",
       "\"pr_closed\"",
       "\"pushed\"",
       "\"rechecked\"",
-      "\"rereview\"",
       "\"review\"",
       "\"reviewer\"",
       "\"terminal\"",
@@ -2259,9 +2258,7 @@
       ".includes",
       ".includes()",
       ".kind",
-      ".loop",
       ".on",
-      ".onExceeded",
       ".roleBindings",
       ".run",
       ".seq",
@@ -2409,6 +2406,21 @@
     "occurrences": 1
   },
   {
+    "id": "src/corner-lifecycle.ts:applyEvent:wrapper:3ff93a9d30c4b928",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "transition.take(corner.locked ? 'pr_closed' : 'landed', event.contents)",
+    "literals": [
+      "\"landed\"",
+      "\"pr_closed\"",
+      ".contents",
+      ".locked",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/corner-lifecycle.ts:applyEvent:wrapper:4f53cda18c2baa0c",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
@@ -2424,27 +2436,6 @@
     "literals": [
       "\"revision_work\"",
       ".revision"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:applyEvent:wrapper:ad47e44233869b2a",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "transition.take('landed', event.contents)",
-    "literals": [
-      "\"landed\"",
-      ".contents"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:approvalRecorded:wrapper:31fc04dee1393206",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "transition.take('rereview')",
-    "literals": [
-      "\"rereview\""
     ],
     "occurrences": 1
   },
@@ -2473,7 +2464,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:backfillRun:wrapper:9cb45b4a91285fa3",
+    "id": "src/corner-lifecycle.ts:backfillRun:wrapper:7f8154245331d290",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "writeStartCard(db, {\n    cornerId,\n    roleBindings,\n    toState,\n    backfilled: { outcome, headSha },\n})",
@@ -2484,28 +2475,13 @@
       ".archived",
       ".headSha",
       ".lifecycle",
+      ".locked",
       ".outcome",
       ".pr",
       ".state",
       ".worker_agent_id",
       "binary:??",
       "cornerRunFromLifecycle()",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:checksReported:wrapper:08c7640f87df4d41",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "transition.take('rereview', { headSha })",
-    "literals": [
-      "\"rereview\"",
-      ".headSha",
-      ".lifecycle",
-      ".pr",
-      "NullKeyword",
-      "binary:??",
       "end:expression"
     ],
     "occurrences": 1

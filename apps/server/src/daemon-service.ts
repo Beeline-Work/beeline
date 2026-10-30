@@ -780,6 +780,20 @@ export class DaemonService {
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
           await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
+          // A published reply completes the command before the terminal receipt.
+          // Still settle its workflow attempt, but preserve a stored failed outcome.
+          if (command.source_message_id && (await db.query(
+            `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+               AND status='complete'`,
+            [scopedRoom, authenticatedAgentId, requestId],
+          )).rowCount)
+            committedTasks.push((database) => database.transaction((db) =>
+              failOverUnansweredTurn(db, {
+                roomId: scopedRoom!,
+                agentId: authenticatedAgentId,
+                sourceMessageId: command.source_message_id!,
+              }),
+            ));
           return this.writeResult() as Output<Name>;
         }
         // Silence is a server-owned terminal outcome, including private return

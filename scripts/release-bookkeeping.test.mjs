@@ -11,7 +11,15 @@ import { buildRecord, mergesSince, ownerReceipt, stageTimings } from './release-
 
 const script = fileURLToPath(new URL('./release-bookkeeping.mjs', import.meta.url));
 const root = fileURLToPath(new URL('..', import.meta.url));
-const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+
+// CI checks out one commit, so the merge-list tests use their own history.
+const repo = mkdtempSync(join(tmpdir(), 'bookkeeping-repo-'));
+const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+git('init', '-q');
+for (const subject of ['one', 'two', 'three', 'four']) {
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', subject);
+}
+const repoGit = (command, args, options) => execFileSync(command, args, { ...options, cwd: repo });
 
 test('owner receipt counts only the physical phone reporting this exact release', () => {
   const release = { version: 'v0.1.130', sha: 'a'.repeat(40) };
@@ -40,9 +48,9 @@ test('stage timings list every started job in start order with whole seconds', (
 test('the merge list runs from the previous release to this one', () => {
   const head = git('rev-parse', 'HEAD');
   const base = git('rev-parse', 'HEAD~2');
-  const merges = mergesSince(base, head);
+  const merges = mergesSince(base, head, repoGit);
   assert.deepEqual(merges.map((merge) => merge.sha), [git('rev-parse', 'HEAD~1'), head]);
-  assert.equal(mergesSince(null, head).length, 1);
+  assert.equal(mergesSince(null, head, repoGit).length, 1);
 });
 
 test('the record names the OTA branch from whichever OTA leg ran', () => {
@@ -102,7 +110,7 @@ async function fakeServices({ contents = 'ok', receipt = 'ok' } = {}) {
 
 function runScript(env) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [script], { cwd: root, env: { PATH: process.env.PATH, ...env } });
+    const child = spawn(process.execPath, [script], { cwd: repo, env: { PATH: process.env.PATH, ...env } });
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk; });
     child.stderr.on('data', (chunk) => { output += chunk; });

@@ -12,7 +12,8 @@ fixes instead of random paragraph removal, test each fix on a small and a large
 model, and keep it only when the gain justifies its tokens. They delegated the
 trade-off rule and the after-90% behavior to Ruby (D1 and D2 below).
 
-The schedule uses the owner's OpenRouter key through vault `use_credential`;
+The controller calls OpenRouter itself through a capped, revocable Squire
+egress grant on the owner's agent key. The raw key never leaves the vault, and
 no Actions secret or exported key is needed.
 
 ## Models and caps
@@ -85,27 +86,50 @@ toward the weekly skip, even if its scored cases all pass.
 
 ## Run
 
-Read the runner before executing it. Use a unique output and exchange directory
-under the agent's persistent session home and one cumulative history file:
+Read the runner before executing it. Use a unique run folder under the agent's
+persistent session home and one cumulative history file. One command completes
+every model call; the agent never pastes request bodies.
 
-```sh
-node --import tsx scripts/prompt-nightly.mjs \
-  --out "$HOME/prompt-nightly/<run>/result" \
-  --exchange "$HOME/prompt-nightly/<run>/exchange" \
-  --history "$HOME/prompt-nightly/history.jsonl" \
-  --candidate-patch "$HOME/prompt-nightly/<run>/candidate.patch"
-```
+1. **Revoke stale grants.** `list_app_access`; revoke any unrevoked grant on
+   `openrouter-beeline-agents` left by an earlier run.
+2. **Mint a grant.** `grant_app_access` with
+   `reference: vault://01KS0BKRYTVE9T9FAQQ31A4MK3/01M43K58H5847WW7VG5YP8DZ6F/01M43K58HE79QPCYPMPH3BCYNA`
+   (service `openrouter-beeline-agents`, the single-field agent key) and
+   `spend_cap_usd: 12`. Do not use the multi-field `Openrouter` credential: its
+   grant fails every call with HTTP 502 `secret_ambiguous`. Never fetch the raw key.
+3. **Write the token** to a mode 0600 file in the run folder, for example
+   `(umask 077; printf '%s' '<token>' > "$RUN/grant.token")`. The controller
+   refuses a token file that group or others can read. Never echo the token
+   elsewhere.
+4. **Run the controller until it exits.** Use a Bash call with
+   `run_in_background: true` and `timeout: 7200000`, so the agent is woken when
+   it exits; a foreground call times out after ten minutes:
 
-The controller writes numbered `*.request.json` files. The answering Beeline
-agent services each using Squire `use_credential`: POST the exact JSON body to
-`https://openrouter.ai/api/v1/chat/completions`, with the owner's Openrouter
-credential injected in the Authorization header by the vault. Inspect credential
-metadata to select the existing agent key. Never fetch a key or place it in a
-process, file, prompt, log or Actions secret. Save only the upstream response
-body atomically as the matching `*.response.json`. On refusal, return an explicit
-`{"error":"<redacted reason>"}` response; never invent a model answer. Keep the
-controller running until it exits. Missing responses time out after three minutes.
-A fresh exchange directory prevents stale responses from being reused.
+   ```sh
+   node --import tsx scripts/prompt-nightly.mjs \
+     --out "$RUN/result" \
+     --history "$HOME/prompt-nightly/history.jsonl" \
+     --candidate-patch "$RUN/candidate.patch" \
+     --grant-base-url "<base_url from the grant>" \
+     --grant-token-file "$RUN/grant.token" > "$RUN/run.log" 2>&1
+   ```
+
+5. **Revoke and delete.** After it exits, `revoke_app_access` with the grant id
+   and `rm "$RUN/grant.token"`, whatever the outcome. Then publish.
+
+The controller POSTs each body to `<base_url>/api/v1/chat/completions` with the
+grant token as bearer and reads the token once. Non-2xx responses, network
+errors and three-minute timeouts become `incomplete` samples with a redacted
+reason (status code or error name, never the token or upstream body), and the
+run still writes `result.json`. If the process gets SIGTERM, SIGINT or SIGHUP,
+`result.json` records `status: "killed"` with the signal. If it exits on an
+uncaught error, `result.json` records `status: "failed"` with the reason.
+Neither case stays at `running`. Only SIGKILL cannot be recorded.
+
+`--exchange <dir>` remains available for runs where an agent services each
+numbered `*.request.json` with `use_credential` and writes the matching
+`*.response.json` (or `{"error":"<redacted reason>"}`). It cannot carry a full
+run inside one agent turn. The CLI requires exactly one transport.
 All model tool calls are simulations and must never be executed, including
 browser calls.
 

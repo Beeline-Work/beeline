@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { parse } from 'yaml';
 import {
   assignReleaseVersion,
   latestPublished,
@@ -126,6 +131,62 @@ test('a server rerun that found its image already live keeps the image it replac
     server: { result: 'success', outputs: { image_ref: 'registry.fly.io/beeline-server:0.2.31-bbbbbbbbbbbb', previous_image_ref: '' } },
   } });
   assert.equal(v31.components.server.previousImageRef, 'registry.fly.io/beeline-server:0.2.30-aaaaaaaaaaaa');
+});
+
+const image = (version, sha) => `registry.fly.io/beeline-server:${version.slice(1)}-${sha.slice(0, 12)}`;
+const digest = (ref) => `${ref}@sha256:${'0'.repeat(64)}`;
+
+// The server leg's "Ask Fly whether this release already runs" script, run
+// exactly as the action runs it against a `flyctl machine list --json` file.
+function askFly(machines, target) {
+  const action = parse(readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8'));
+  const step = action.runs.steps.find((candidate) => candidate.id === 'fleet');
+  const script = /<<'NODE'\n([\s\S]*?)\nNODE/.exec(step.run)[1];
+  const root = mkdtempSync(join(tmpdir(), 'beeline-fleet-'));
+  try {
+    const file = join(root, 'machines.json');
+    writeFileSync(file, JSON.stringify(machines));
+    const out = execFileSync('node', ['-', file, target], { input: script, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+    return Object.fromEntries(out.trim().split('\n').map((line) => line.split(/=(.*)/s).slice(0, 2)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('server rollback returns to the previous published release, not an attempt that deployed and then failed', () => {
+  const v30 = migrationRecord({ version: 'v0.2.30', sourceSha: 'd'.repeat(40) });
+  const v31 = shipped({ version: 'v0.2.31', sha: A, previous: v30, selected: ['server'], needs: {
+    server: { result: 'success', outputs: { image_ref: image('v0.2.31', A), previous_image_ref: image('v0.2.29', C) } },
+  } });
+  // v0.2.32 deployed its image and failed in another leg: it never published.
+  // v0.2.33 replaces that image on the fleet and publishes.
+  const v33 = shipped({ version: 'v0.2.33', sha: C, previous: v31, selected: ['server'], needs: {
+    server: { result: 'success', outputs: { image_ref: image('v0.2.33', C), previous_image_ref: image('v0.2.32', B) } },
+  } });
+  assert.equal(v33.components.server.previousImageRef, image('v0.2.31', A));
+  const live = image('v0.2.33', C);
+  assert.equal(serverRollbackImage({ record: v33, machineImages: [digest(live), digest(live)] }).image, image('v0.2.31', A));
+});
+
+test('a rerun of the first migrated release reads the replaced image from the Machines, so rollback still has a target', () => {
+  const legacy = image('v0.2.30', A);
+  const target = image('v0.2.31', B);
+  // First attempt: the fleet still runs the legacy image.
+  assert.equal(askFly([{ id: 'm1', config: { image: digest(legacy) } }, { id: 'm2', config: { image: digest(legacy) } }], target)
+    .previous_image_ref, legacy);
+  // The attempt updated both Machines, recording the replaced image, then
+  // failed elsewhere. The rerun finds the release live.
+  const updated = (id) => ({ id, config: { image: digest(target), metadata: { fly_process_group: 'app', beeline_replaced_image: legacy } } });
+  const rerun = askFly([updated('m1'), updated('m2')], target);
+  assert.equal(rerun.shipped, 'true');
+  assert.equal(rerun.previous_image_ref, legacy);
+  const v31 = shipped({ version: 'v0.2.31', sha: B, previous: migrationRecord({ version: 'v0.2.30', sourceSha: A }), selected: ['server'], needs: {
+    server: { result: 'success', outputs: { image_ref: rerun.image_ref, previous_image_ref: rerun.previous_image_ref } },
+  } });
+  assert.equal(v31.components.server.previousImageRef, legacy);
+  assert.equal(serverRollbackImage({ record: v31, machineImages: [digest(target), digest(target)] }).image, legacy);
+  // A split fleet names the image its unfinished Machine still runs.
+  assert.equal(askFly([updated('m1'), { id: 'm2', config: { image: digest(image('v0.2.29', C)) } }], target).previous_image_ref, image('v0.2.29', C));
 });
 
 // Rollback stories: return to the previous release, even if the newest run

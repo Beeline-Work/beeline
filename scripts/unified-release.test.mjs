@@ -1205,11 +1205,11 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(promote, /wait_for_machine_ready "\$second"/);
   assert.match(
     promote,
-    /retry_flyctl_update "\$canary" "\$image_ref" "canary"\nwait_for_machine_ready "\$canary"/,
+    /retry_flyctl_update "\$canary" "\$image_ref" "canary" "\$previous_ref"\nwait_for_machine_ready "\$canary"/,
   );
   assert.match(
     promote,
-    /retry_flyctl_update "\$second" "\$image_ref" "second"\nwait_for_machine_ready "\$second"/,
+    /retry_flyctl_update "\$second" "\$image_ref" "second" "\$second_previous_ref"\nwait_for_machine_ready "\$second"/,
   );
   assert.ok(promote.indexOf('wait_for_machine_ready "$canary"') < promote.indexOf('/v1/auth/review/exchange'));
   assert.match(promote, /v\.version === process\.argv\[2\] && v\.sourceSha === process\.argv\[3\]/);

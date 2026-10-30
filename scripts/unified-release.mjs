@@ -578,11 +578,14 @@ export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {})
   if (server.selected && server.state === 'checked') {
     if (!FLY_IMAGE.test(serverOutputs.image_ref ?? '')) fail('the server job reported no image');
     server.imageRef = serverOutputs.image_ref;
-    const replaced = serverOutputs.previous_image_ref;
-    // A rerun that found the image already live reports no replaced image;
-    // the previous release record still knows it.
-    server.previousImageRef = FLY_IMAGE.test(replaced ?? '') && replaced !== server.imageRef
-      ? replaced : previous?.components?.server?.imageRef ?? previous?.components?.server?.previousImageRef;
+    // Rollback returns to the previous published release's image, never to
+    // whatever the fleet ran before: that may be an attempt that deployed and
+    // then failed elsewhere. Only a migrated record, which names no image,
+    // falls back to the image the fleet replaced.
+    const usable = (ref) => (FLY_IMAGE.test(ref ?? '') && ref !== server.imageRef ? ref : undefined);
+    server.previousImageRef = usable(previous?.components?.server?.imageRef)
+      ?? usable(serverOutputs.previous_image_ref)
+      ?? usable(previous?.components?.server?.previousImageRef);
   }
   const ota = state.components['mobile-ota'];
   if (ota.selected && ota.state === 'checked') {

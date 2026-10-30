@@ -6,8 +6,10 @@
 #
 # Fly is the only memory: a rerun whose Machines already all run this release's
 # image does nothing, and a fleet left split by an interrupted release is
-# finished on the new image instead of refused. The image and the image it
-# replaced leave through step outputs into the release record.
+# finished on the new image instead of refused. Each updated Machine records
+# the image it replaced in its Fly metadata. The image and the image it
+# replaced leave through step outputs; the release record keeps the previous
+# published release's image as the rollback target.
 name: Server release leg
 description: Build the exact server image once and deploy it to Fly.io behind a canary
 
@@ -22,7 +24,7 @@ outputs:
     description: The image every Machine runs after this leg
     value: ${{ steps.fleet.outputs.image_ref }}
   previous_image_ref:
-    description: The image the fleet ran before this leg (empty on a rerun that found the release already live)
+    description: The image the fleet ran before this leg (on a rerun, read from the Machines' metadata; empty if unknown)
     value: ${{ steps.fleet.outputs.previous_image_ref }}
 
 runs:
@@ -48,10 +50,15 @@ runs:
         for (const [i, m] of machines.entries()) console.error(`${m.id}: ${images[i]}`);
         const live = images.length > 0 && images.every((ref) => ref === image);
         const others = [...new Set(images.filter((ref) => ref !== image))];
+        // A Machine this release already updated names, in its Fly metadata,
+        // the image it replaced; a rerun reads it there.
+        const replaced = [...new Set(machines.filter((m, i) => images[i] === image)
+          .map((m) => tag(m.config?.metadata?.beeline_replaced_image)).filter((ref) => ref && ref !== image))];
         console.log(`image_ref=${image}`);
         console.log(`shipped=${live}`);
         // Only an unsplit fleet names one previous image.
-        console.log(`previous_image_ref=${others.length === 1 ? others[0] : ''}`);
+        const previous = others.length === 1 ? others : others.length === 0 ? replaced : [];
+        console.log(`previous_image_ref=${previous.length === 1 ? previous[0] : ''}`);
         NODE
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
@@ -136,13 +143,19 @@ runs:
 
         # One retry covers a transient Fly API failure.
         retry_flyctl_update() {
-          local machine="$1" image="$2" desc="$3"
-          if flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1; then
+          local machine="$1" image="$2" desc="$3" replaced="${4:-}"
+          local metadata=()
+          # A forward update records the image it replaces on the Machine, so a
+          # rerun that finds this release live still knows what came before.
+          if [ -n "$replaced" ] && [ "${replaced%@sha256:*}" != "${image%@sha256:*}" ]; then
+            metadata=(--metadata "beeline_replaced_image=${replaced%@sha256:*}")
+          fi
+          if flyctl machine update "$machine" --app beeline-server --image "$image" "${metadata[@]}" --wait-timeout 300 --yes 2>&1; then
             return 0
           fi
           echo "retry_flyctl_update($desc): first attempt failed, retrying in 10s" >&2
           sleep 10
-          flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1
+          flyctl machine update "$machine" --app beeline-server --image "$image" "${metadata[@]}" --wait-timeout 300 --yes 2>&1
         }
 
         # Report whether every Fly Machine runs its expected image.
@@ -227,7 +240,7 @@ runs:
           echo "::warning::Server fleet is split ($previous_ref, $second_previous_ref); converging both Machines on $image_ref"
         fi
         canary_updated=1
-        retry_flyctl_update "$canary" "$image_ref" "canary"
+        retry_flyctl_update "$canary" "$image_ref" "canary" "$previous_ref"
         wait_for_machine_ready "$canary"
 
         if [ -n "${SERVER_CANARY_REVIEW_SECRET:-}" ]; then
@@ -318,7 +331,7 @@ runs:
 
         node scripts/unified-release.mjs server-canary-promotion --samples "$canary_samples"
         second_update_attempted=1
-        retry_flyctl_update "$second" "$image_ref" "second"
+        retry_flyctl_update "$second" "$image_ref" "second" "$second_previous_ref"
         wait_for_machine_ready "$second"
         fleet_updated=1
         trap - ERR

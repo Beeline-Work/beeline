@@ -1184,3 +1184,21 @@ describe('zero-check worker completion', () => {
     expect(after.worker).toEqual([]);
   });
 });
+
+it('Reproduction idle-1: a later reconciliation repairs a lost completion without refetching a recently read head', async () => {
+  await ownPr();
+  await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1',[R,REVIEWER]);
+  rollupState='PENDING';
+  expect(await gate(AUTHOR)).toMatchObject({checks:'pending'});
+  const before=graphqlRequests().length;
+  await operations.refreshOpenPendingChecks();
+  expect(graphqlRequests()).toHaveLength(before);
+  // GitHub completes its sole test, but no completion webhook arrives.
+  rollupState='SUCCESS';
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,fetchStartedAt}',
+    to_jsonb(extract(epoch FROM clock_timestamp())-61)) WHERE corner_id=$1`,[AUTHOR]);
+  await operations.refreshOpenPendingChecks();
+  expect(graphqlRequests()).toHaveLength(before+1);
+  expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,[AUTHOR])).rows[0]?.checks).toBe('passing');
+  expect((await daemon.execute('getAgentCommands',{roomId:AUTHOR},REVIEWER)).commands).toHaveLength(1);
+});

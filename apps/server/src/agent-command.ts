@@ -261,6 +261,13 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
         WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
           AND origin.parent_id IS NOT NULL AND (origin.archived_at IS NOT NULL
             OR fact.lifecycle->>'lifecycle' IN ('closed','landed')))
+      OR (command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}'
+        AND command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it, set a hold, or close it.'
+        AND EXISTS (SELECT 1 FROM corner_attention_spans span
+          WHERE span.corner_id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
+            AND (span.last_state IS DISTINCT FROM 'idle' OR EXISTS (
+              SELECT 1 FROM corner_facts fact WHERE fact.corner_id=span.corner_id
+                AND (fact.lifecycle->>'checks'='pending' OR fact.lifecycle->'checksSummary'->>'status'='pending')))))
       OR (command.private_payload->>'text' LIKE 'failed:%'
         AND EXISTS (SELECT 1 FROM rooms origin WHERE origin.parent_id IS NOT NULL AND origin.id::text=
           COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId'))

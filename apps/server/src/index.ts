@@ -452,7 +452,6 @@ async function main() {
   });
   let repairedPromotedCorners = false;
   let reconciledMergeability = false;
-  let reconciledPendingChecks = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const work = new BackgroundWork();
   const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app');
@@ -526,7 +525,6 @@ async function main() {
     if (newLeader) {
       repairedPromotedCorners = false;
       reconciledMergeability = false;
-      reconciledPendingChecks = false;
     }
     if (githubJobs && !repairedPromotedCorners) {
       const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
@@ -549,11 +547,8 @@ async function main() {
         githubJobs.refreshStaleMergeability());
       reconciledMergeability = result.ok;
     }
-    if (githubJobs && !reconciledPendingChecks) {
-      const pendingChecks = await backgroundJobs.run('github-pending-checks', () =>
-        githubJobs.refreshOpenPendingChecks());
-      reconciledPendingChecks = pendingChecks.ok;
-    }
+    if (githubJobs) await backgroundJobs.run('github-pending-checks', () =>
+      githubJobs.refreshOpenPendingChecks());
     const now = Date.now();
     // Merges happen throughout a leader's tenure. Keep retrying missed
     // webhooks and claims whose grace/backoff deadline was not due at boot.

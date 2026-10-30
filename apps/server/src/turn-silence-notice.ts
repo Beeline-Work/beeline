@@ -190,7 +190,8 @@ export async function noteFirstSilence(
   // Check before reassignment too: answered work must not move to another agent.
   if ((await database.query(`SELECT 1 FROM messages
     WHERE room_id=$1 AND request_id=$2 AND author_id=$3
-      AND presentation='message' AND deleted_at IS NULL LIMIT 1`,
+      AND presentation='message' AND deleted_at IS NULL
+      AND text<>'Selected model is at capacity. Please try a different model.' LIMIT 1`,
     [input.roomId, input.requestId, input.agentId])).rowCount) return NO_RESTART;
   // Activity is an observation, not a request that owes an answer. Even a
   // harness failure or an old helper's empty-turn receipt stays silent.
@@ -325,7 +326,8 @@ async function inscribeSilence(
   if (!command && input.generationId != null) return NO_RESTART;
   if ((await database.query(`SELECT 1 FROM messages
     WHERE room_id=$1 AND request_id=$2 AND author_id=$3
-      AND presentation='message' AND deleted_at IS NULL LIMIT 1`,
+      AND presentation='message' AND deleted_at IS NULL
+      AND text<>'Selected model is at capacity. Please try a different model.' LIMIT 1`,
     [input.roomId, input.requestId, input.agentId])).rowCount) return NO_RESTART;
   const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
@@ -468,6 +470,9 @@ async function inscribeSilence(
     );
   }
 
+  if (givingUp && command) await database.query(
+    'UPDATE agent_commands SET hiccup_attempts=$2 WHERE id=$1', [command.id,attempt],
+  );
   let reportDelivered: boolean | undefined;
   if (command?.review_context && !hiccupRestart && !updateRequeued)
     await database.query(`UPDATE agent_commands SET review_context=review_context ||

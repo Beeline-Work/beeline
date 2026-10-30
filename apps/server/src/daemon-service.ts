@@ -787,6 +787,24 @@ export class DaemonService {
           delete candidate.reason;
           delete candidate.reasonKind;
         }
+        // Codex can return its provider-capacity diagnostic as a successful
+        // final message. It is not an answer or a review verdict. Correct only
+        // this exact diagnostic, retaining the command's retry budget and fence.
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
+          const diagnostic = (await db.query<{ text: string }>(
+            `SELECT text FROM messages WHERE id=$1 AND text=$2`,
+            [command.result_message_id, 'Selected model is at capacity. Please try a different model.'],
+          )).rows[0];
+          if (diagnostic) {
+            await db.query(`UPDATE agent_commands SET state='claimed',completed_at=NULL,result_message_id=NULL
+              WHERE id=$1 AND generation_id=$2 AND state='complete'`, [command.id,command.generation_id]);
+            command.state='claimed';
+            candidate.status='failed';
+            candidate.reason=diagnostic.text;
+            candidate.reasonKind='hiccup';
+            delete candidate.completionKind;
+          }
+        }
         // Queue the existing workflow completion hook for both a fresh receipt
         // and a receipt whose published reply already completed the command.
         // A replay must preserve any stored failed outcome.

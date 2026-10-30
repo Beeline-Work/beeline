@@ -1154,6 +1154,9 @@ export class GitHubOperations {
          FROM corner_facts WHERE corner_id=$1`, [input.cornerId],
       )).rows[0]?.review_woken ?? false;
     }
+    corner.archived = (await this.database.query<{ archived: boolean }>(
+      `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [input.cornerId],
+    )).rows[0]?.archived ?? true;
     const configuredReviewerId = corner.configured_reviewer_id;
     // The same gate the server merges on (`cornerMergeGate`), for this exact head.
     const gate = await cornerMergeGate(this.database, input.cornerId, {
@@ -1221,6 +1224,7 @@ export class GitHubOperations {
       held: gate.held,
       holds: gate.holds,
       archived: corner.archived,
+      merged: pr.merged,
       expectedHeadSha: corner.lifecycle.pr?.headSha,
       currentHeadSha: pr.headSha,
       mergeability: pr.mergeability,
@@ -2640,9 +2644,9 @@ export class GitHubOperations {
   /**
    * Re-read open corners still stored as pending. A deploy uses this so a head
    * whose only unfinished suites are empty app placeholders moves on without
-   * waiting for another check event. Corners that are actually still running
-   * stay pending. One pass; a rate limit stops the pass and the next leader
-   * tries again.
+   * waiting for another check event. The reconciliation cadence also repairs
+   * missed final events after startup. Recently fetched heads wait a minute;
+   * a rate limit stops this bounded pass.
    */
   async refreshOpenPendingChecks(): Promise<void> {
     const rows = await this.database.query<CornerWebhookTarget & {
@@ -2660,6 +2664,8 @@ export class GitHubOperations {
           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
         AND fact.lifecycle->>'checks'='pending'
+        AND COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)
+          < extract(epoch FROM clock_timestamp())-60
         AND fact.owner_agent_id IS NOT NULL
         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
         AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
@@ -2861,7 +2867,7 @@ export class GitHubOperations {
           // suites that passed. The flag is assigned on its own so that
           // placeholder name stays out of the System line.
           let nameThePass = false;
-          if (becamePassing && check.status === 'pending' && check.name === 'Pull request checks')
+          if (becamePassing && check.status === 'pending')
             nameThePass = true;
           const label = nameThePass
             ? 'passed'

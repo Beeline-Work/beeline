@@ -288,6 +288,42 @@ describe('GitHub phone operations', () => {
     });
   });
 
+  it('Reproduction stale-green: a pending webhook that reads a green rollup sends a passing review wake', async () => {
+    const {corners,app,payload}=await checksFixture();
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"'),workflow_state='checks' WHERE corner_id=$1`,[corners[0]]);
+    app.readCommitCheckRollup.mockResolvedValue({state:'passed',total:1,failing:[],checks:[{name:'SERVER INTEGRATION',status:'passed'}]} as never);
+    const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
+    await operations.processWebhook('check_run',{...payload,action:'in_progress',check_run:{...payload.check_run,status:'in_progress',conclusion:null}});
+    const note=(await database.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-passed'`,[corners[0]])).rows[0];
+    expect(note?.text).toContain('passed');
+    expect(note?.text).not.toContain('started');
+  });
+
+  it('Reproduction merged-1: archival during the provider read cannot leave a landing offer', async () => {
+    const {corners,headSha,app}=await checksFixture();
+    const cornerId=corners[0]!;
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`,[cornerId,HUMAN]);
+    await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`,[cornerId,REVIEWER,headSha]);
+    const rollup=await app.readCommitCheckRollup();
+    app.readCommitCheckRollup.mockImplementationOnce(async()=>{
+      await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`,[cornerId]);
+      return rollup;
+    });
+    const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
+    expect(await operations.prChecksStatus({cornerId})).toMatchObject({stage:'closed',mergeAllowed:false});
+  });
+
+  it('Reproduction merged-1: live GitHub merged state closes the gate before archival reaches the read', async () => {
+    const {corners,headSha,app}=await checksFixture();
+    const cornerId=corners[0]!;
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`,[cornerId,HUMAN]);
+    await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`,[cornerId,REVIEWER,headSha]);
+    const pr=await app.readPullRequest('room-token','owner/widgets',1);
+    app.readPullRequest.mockResolvedValue({...pr,merged:true,state:'closed'});
+    const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
+    expect(await operations.prChecksStatus({cornerId})).toMatchObject({stage:'merged',mergeAllowed:false});
+  });
+
   it.each([true, false])('CLOSED-1: merge explains a closed corner with recorded PR=%s', async hasPr => {
     const { corners } = await checksFixture();
     const cornerId = corners[0]!;

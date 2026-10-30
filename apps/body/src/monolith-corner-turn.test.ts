@@ -305,7 +305,7 @@ describe('corner merge instructions', () => {
     ['approve_merge', 'in_progress'],
     ['approve_merge', 'failed'],
     ['unrelated_tool', 'completed'],
-  ])('R8e refreshes reviewer %s (%s) without duplicating a completed verdict', async (tool, status) => {
+  ])('Reproduction stale-green / R8e refreshes reviewer %s (%s) without duplicating a completed verdict', async (tool, status) => {
     const stableRuns = status === 'completed' && tool !== 'unrelated_tool' ? 1 : 2;
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
     roots.push(root);
@@ -317,6 +317,7 @@ describe('corner merge instructions', () => {
     await execFileAsync('git', ['-C', root, 'commit', '-m', 'first head']);
     const firstHead = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim();
     let lifecycleHead = firstHead;
+    let lifecycleChecks = 'passing';
     const agent = stored('11'.repeat(32), 'Echo');
     const runtime = {
       version: 2,
@@ -356,6 +357,10 @@ describe('corner merge instructions', () => {
               },
             ],
           };
+        if (name === 'getPrChecksStatus') {
+          lifecycleChecks='passing'; // The live checks read also commits its snapshot.
+          return {checks:'passed',headSha:lifecycleHead,stage:'waiting_for_yes'};
+        }
         if (name === 'getCornerRestoreState')
           return {
             cornerId: 'corner-id',
@@ -363,7 +368,7 @@ describe('corner merge instructions', () => {
             closeRequested: false,
             lifecycle: {
               lifecycle: 'in-review',
-              checks: 'passing',
+              checks: lifecycleChecks,
               pr: {
                 number: 7,
                 url: 'https://github.com/acme/widgets/pull/7',
@@ -473,6 +478,9 @@ describe('corner merge instructions', () => {
     const firstInstruction = await activeInstruction();
     expect(firstInstruction).toContain(`Review PR 7 at ${firstHead}`);
     expect(firstInstruction).toContain('call approve_merge with the reviewed head SHA as a tool argument');
+    lifecycleChecks='pending';
+    expect(await activeInstruction()).toContain(`Review PR 7 at ${firstHead}`);
+    lifecycleChecks='passing';
     const reviewSkill = join(root, 'agent-home', 'codex', 'skills', 'beeline-review', 'SKILL.md');
     expect(firstInstruction).toContain(reviewSkill);
     expect(await readFile(reviewSkill, 'utf8')).toContain('Read the current server-assigned brief');
@@ -514,6 +522,8 @@ describe('corner merge instructions', () => {
         toolCalls: [{ id: 'verdict', title: `beeline.${tool}`, status }],
       };
     });
+    lifecycleChecks='pending';
+    const liveReadsBefore=api.execute.mock.calls.filter(([name])=>name==='getPrChecksStatus').length;
     const stableTrigger = `GitHub passed a check on ${latestHead}`;
     await (
       loop as unknown as {
@@ -526,6 +536,7 @@ describe('corner merge instructions', () => {
         ): Promise<void>;
       }
     ).prompt('stable-review-turn', stableTrigger, [], undefined, [stableTrigger]);
+    expect(api.execute.mock.calls.filter(([name])=>name==='getPrChecksStatus').length-liveReadsBefore).toBe(1);
     expect(sessionPrompt).toHaveBeenCalledTimes(stableRuns);
     expect(sessionPrompt.mock.calls[0]?.[1]).toContain(
       `Review PR 7 at ${latestHead}`,
@@ -600,6 +611,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
               { identityId: 'candy-id', kind: 'agent', name: 'Candy', handle: 'candy', role: 'member' },
             ],
           };
+        if (name === 'getPrChecksStatus') return {checks:'passed',headSha:head,stage:'waiting_for_yes'};
         if (name === 'getCornerRestoreState')
           return {
             cornerId: 'corner-id',

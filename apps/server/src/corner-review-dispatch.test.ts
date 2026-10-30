@@ -1706,3 +1706,35 @@ it.each(['final','report'])(
     }
     await expect(daemon.execute('approveCornerMerge',{cornerId:C,headSha:head},B)).resolves.toMatchObject({status:'approved'});
   });
+
+it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repair order is a verdict even without a final reply or report (%s)', async status => {
+  await phone.execute('updateRoom', {roomId:R,reviewerAgentId:B}, H);
+  const head='c5e43cc29583eea666a240fad67c3c2f33fde945';
+  await greenHead(3060,head);
+  const [review]=await commands(B,C);
+  await claim(review!);
+  await daemon.execute('order',{roomId:C,requestId:review!.turnRequestId,generationId:'g1',
+    address:C,agent:'@hoots',text:'FAIL: helper-forwarded literal arrays bypass the wording lock. Fix the returned parameter tracking.'},B);
+  await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,generationId:'g1',status,...(status==='complete'?{completionKind:'no-reply' as const}:{reason:'unreported_order: runtime failed after delivery',reasonKind:'hiccup' as const})},B);
+  const repairs=(await commands(A,C)).filter(c=>c.reason==='order');
+  expect(repairs.length).toBeGreaterThan(0);
+  await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND agent_id=$2",[C,A]);
+  await reconcileConfiguredCornerReviewers(db,R);
+  expect(await commands(B,C)).toEqual([]);
+});
+it('Reproduction capacity-1: capacity returned as final text and a complete receipt retries the original review', async () => {
+  await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
+  await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');
+  const [review]=await commands(B,C);
+  for(const attempt of [1,2,3]) {
+    await db.query('UPDATE agent_commands SET wake_after=NULL WHERE id=$1',[review!.id]);
+    await claim(review!,`cap-${attempt}`);
+    await result(review!,'Selected model is at capacity. Please try a different model.',`cap-${attempt}`);
+    const receipt=await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,generationId:`cap-${attempt}`,status:'complete'},B);
+    expect(Boolean(receipt.hiccupRestart)).toBe(attempt<3);
+    const saved=(await db.query('SELECT state,hiccup_attempts,wake_after FROM agent_commands WHERE id=$1',[review!.id])).rows[0]!;
+    expect(saved.hiccup_attempts).toBe(attempt);
+    expect(saved.state).toBe(attempt<3?'pending':'complete');
+    if(attempt<3) expect(saved.wake_after).not.toBeNull();
+  }
+});

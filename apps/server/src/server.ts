@@ -1,3 +1,5 @@
+import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
+import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
 import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
 import { VaultSaveRelay } from './vault-save-relay.js';
 import { vaultSaveHttp } from './vault-save-http.js';
@@ -1968,6 +1970,29 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
   if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
     json(response, 200, await options.daemon.releaseReadiness());
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/v1/public/mobile-minimum') {
+    try {
+      publicJson(response, 200, await readMobileMinimums(options.database));
+    } catch {
+      publicJson(response, 503, {});
+    }
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/releases/mobile-minimum') {
+    if (!options.releaseNotify?.secret || !bearerSecretMatches(options.releaseNotify.secret, request)) {
+      json(response, 403, { error: 'release_notify_access_denied' });
+      return;
+    }
+    const input = await body(request);
+    const minimum = parseMobileMinimum(input);
+    if (!minimum || (input.platform !== 'android' && input.platform !== 'ios')) {
+      json(response, 400, { error: 'platform, valid minVersion and reason required' });
+      return;
+    }
+    await writeMobileMinimum(options.database, input.platform, minimum);
+    json(response, 200, { platform: input.platform, ...minimum });
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/releases/helper-minimum') {

@@ -58,6 +58,10 @@ on:
         type: boolean
         default: false
         required: false
+      mobile_store_minimum:
+        description: 'Explicit store minimums as JSON, e.g. {"android":{"minVersion":"0.2.24","reason":"This version can no longer sign in."}}; empty leaves both unchanged'
+        type: string
+        required: false
       force_listing:
         description: Push the Play store listing even when its text and images already match
         type: boolean
@@ -1350,6 +1354,12 @@ jobs:
           [ "$verified" = true ] || { echo 'desktop updater manifest did not converge' >&2; exit 1; }
           manifest_committed=true
           trap - EXIT
+      - name: Set explicitly requested store minimums after successful delivery
+        if: steps.result.outputs.outcome == 'success' && inputs.mobile_store_minimum != ''
+        env:
+          MOBILE_STORE_MINIMUM: ${{ inputs.mobile_store_minimum }}
+          BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
+        run: node scripts/mobile-store-minimum.mjs
       - name: Notify clients without changing the authoritative release outcome
         id: notification
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'

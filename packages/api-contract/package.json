@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./mobile-minimum": {
+      "types": "./dist/mobile-minimum.d.ts",
+      "import": "./dist/mobile-minimum.js",
+      "default": "./dist/mobile-minimum.js"
+    },
     "./phone": {
       "types": "./dist/phone.d.ts",
       "import": "./dist/phone.js",

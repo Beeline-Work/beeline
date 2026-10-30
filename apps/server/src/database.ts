@@ -1,3 +1,4 @@
+import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
 import { NEXT_DAY_CHECKIN_SCHEMA } from './next-day-checkin.js';
 import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
@@ -233,7 +234,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 42;
+export const REQUIRED_SCHEMA_VERSION = 43;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3344,6 +3345,7 @@ export async function migrate(
       room_webhook_deliveries, room_webhook_requests, room_webhooks;
   `);
   await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
+  await ddlScript('mobile store minimum schema', MOBILE_MINIMUM_SCHEMA);
   // Bounded operator history reads use date-leading indexes rather than
   // scanning the message/turn ledgers once for every plotted day.
   await retryMigrationStep('operator message history index', () => createIndexConcurrently(

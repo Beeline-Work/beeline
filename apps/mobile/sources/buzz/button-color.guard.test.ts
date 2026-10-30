@@ -58,6 +58,10 @@ const decorativeAccentFills = new Set([
   'components/buzz/ConnectProgress.tsx:sweep',
 ]);
 
+// Brief revision 1, approved by lunchboxfortwo: the blocking store-update
+// screen retains the brass store action from Dashboard_four_tabs_update_screen.
+const approvedAccentButtons = new Set(['components/StoreUpdateGate.tsx:button']);
+
 function filesUnder(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -83,7 +87,8 @@ describe('button palette boundary', () => {
           const value = node.initializer.getText(source);
           if (/(?:\.accent|\.brassWash(?:Strong)?|\bbrassWash\b|#(?:b08a4a|8a6323)\b)/i.test(value)) {
             const name = styleName(node);
-            if (!decorativeAccentFills.has(`${file}:${name}`)) violations.push(`${file}:${name} = ${value}`);
+            const key = `${file}:${name}`;
+            if (!decorativeAccentFills.has(key) && !approvedAccentButtons.has(key)) violations.push(`${key} = ${value}`);
           }
         }
         ts.forEachChild(node, visit);

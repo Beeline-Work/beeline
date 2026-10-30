@@ -34,6 +34,8 @@ const ALLOWED: Readonly<Record<string, string>> = {
   'buzz/corner-display-state.ts|○': 'corner state circle',
   'components/buzz/EmptyLedgerState.tsx|○': 'empty ledger state circle',
   'components/buzz/ConversationRow.tsx|●': 'live call dot',
+  // Approved store-version comparison, a status line rather than a control.
+  'components/StoreUpdateGate.tsx|→': 'installed to required store version',
   // Direction, ledger and archive marks in text.
   'app/(app)/beeline/settings/workbench/wallet.tsx|↓': 'payment direction',
   'app/(app)/beeline/settings/workbench/wallet.tsx|↑': 'payment direction',

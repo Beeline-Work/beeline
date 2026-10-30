@@ -68,16 +68,20 @@ it('R-RELEASE-PROVENANCE: capture boundary excludes missing human provenance but
 });
 
 it('release-dispatch-attribution: commits readable server provenance before dispatch and preserves recovery inputs', async () => {
+  const mobileMinimum = JSON.stringify({ android: { minVersion: '0.2.24', reason: 'Required sign-in fix' } });
   const dispatch = vi.fn(async (inputs: Record<string, string>) => {
     const provenance = JSON.parse(inputs.dispatched_by!);
     expect(provenance).toMatchObject({ agentId: agent, handle: 'jellybean', place: room, humanCommandMessageId: 'human-command' });
     expect(inputs.release_version).toBe('v0.1.94');
     expect(inputs.selection).toBe('server');
+    expect(inputs.mobile_store_minimum).toBe(mobileMinimum);
     const receipt = (await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [provenance.auditMessageId])).rows[0];
     expect(receipt?.text).toContain(inputs.dispatched_by);
     expect(receipt?.text).not.toMatch(/token|secret/i);
   });
-  const result = await productionReleaseDispatch(db, agent, input, dispatch);
+  const result = await productionReleaseDispatch(db, agent, {
+    ...input, inputs: { ...input.inputs, mobile_store_minimum: mobileMinimum },
+  }, dispatch);
   expect(result.auditMessageId).toBeTruthy();
   expect(dispatch).toHaveBeenCalledOnce();
 });

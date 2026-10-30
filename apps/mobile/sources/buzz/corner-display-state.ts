@@ -91,7 +91,7 @@ export type CornerHeaderAgentInput = {
   readonly ownerPubkey?: string;
   /** Absent until the corner's row lands; the header then shows no state. */
   readonly status?: CornerState;
-  readonly headerSuffix?: 'failed' | 'checks failed';
+  readonly headerSuffix?: 'checks failed';
   /** Pubkeys holding a live working receipt in this corner. */
   readonly activeTurnPubkeys: readonly string[];
 };

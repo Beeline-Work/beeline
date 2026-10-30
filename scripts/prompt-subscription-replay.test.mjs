@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { createHash } from 'node:crypto';
 import { createStub } from './prompt-replay-stub.mjs';
 import { loadSplit, gradeNative, summarize, frontier, codexArgs, nativePrompt, runSubscription } from './prompt-subscription-replay.mjs';
 import { loadCases, loadSource, toolsFor } from './prompt-cases.ts';
@@ -22,6 +23,31 @@ test('split is frozen, disjoint, exhaustive, and held-out execution requires fin
   assert.equal(split.heldout.length, 23);
   assert.equal(split.tune.some(id => split.heldout.includes(id)), false);
   await assert.rejects(runSubscription(['--model', 'gpt-6-luna', '--partition', 'heldout']), /frozen --selection/);
+});
+
+test('missing-data repair reuses a fully graded sample with telemetry without invoking Codex or altering its source', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'replay-repair-test-'));
+  try {
+    const split = loadSplit(loadCases());
+    const config = JSON.parse(readFileSync('scripts/prompt-variants/full.json'));
+    const row = { id: split.tune[0], model: 'gpt-6-luna', partition: 'tune', status: 'behavior', pass: true,
+      inputTokens: 100, modelRequests: 1, searchCalls: 0, toolCalls: 1,
+      telemetry: { status: 'complete', calls: [{ beelineOwnedTokensPerCall: 20 }] } };
+    const source = { model: row.model, partition: 'tune', splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'),
+      variants: { full: { config, rows: [row] } } };
+    const path = join(folder, 'original.json');
+    const original = JSON.stringify(source);
+    writeFileSync(path, original);
+    const out = join(folder, 'repaired');
+    const result = await runSubscription(['--model', row.model, '--variants', 'full', '--only', row.id, '--repair-from', path, '--out', out]);
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.variants.full.rows, [row]);
+    assert.equal(existsSync(join(out, 'full', row.id, 'fixture.json')), false);
+    assert.equal(readFileSync(path, 'utf8'), original);
+    const invalid = join(folder, 'wrong-split.json');
+    writeFileSync(invalid, JSON.stringify({ ...source, splitHash: 'different-split' }));
+    await assert.rejects(runSubscription(['--model', row.model, '--variants', 'full', '--repair-from', invalid, '--out', folder]), /different model, partition or split/);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('stub loads definitions, keeps them per sample, and never executes a proposed shell command', () => {
@@ -55,7 +81,8 @@ test('stub respects terminal actions and native grading preserves safety failure
   assert.equal(gradeNative({ pass: { call: 'order' } }, stub.trace, events, variant, tools).pass, false);
   const fresh = createStub(fixture);
   fresh.call('read', {});
-  assert.equal(gradeNative({ pass: { call: 'read' } }, fresh.trace, events, variant, tools).status, 'incomplete');
+  assert.equal(gradeNative({ pass: { call: 'read' } }, fresh.trace, events, variant, tools).status, 'behavior');
+  assert.equal(fresh.trace.terminal, 'unsupported-operation');
   const forbidden = createStub(fixture);
   forbidden.call('Bash', { command: 'do not run' });
   assert.equal(gradeNative({ pass: { noCall: 'Bash' } }, forbidden.trace, events, variant, tools).pass, false);
@@ -79,13 +106,16 @@ test('usage and frontier exclude unscored samples and reject per-model regressio
   assert.equal(result.passRate, 1);
   assert.equal(result.unscored, 1);
   assert.equal(result.p90InputTokens, 10);
-  const a = { name: 'a', complete: true, regressionModels: [], meanPassRate: .8, medianInputTokens: 100 };
-  const b = { ...a, name: 'b', meanPassRate: .9, medianInputTokens: 90 };
-  const c = { ...b, name: 'c', medianInputTokens: 80, regressionModels: ['luna'] };
+  const a = { name: 'a', complete: true, regressionModels: [], meanPassRate: .8, medianBeelineOwnedTokensPerCall: 100 };
+  const b = { ...a, name: 'b', meanPassRate: .9, medianBeelineOwnedTokensPerCall: 90 };
+  const c = { ...b, name: 'c', medianBeelineOwnedTokensPerCall: 80, regressionModels: ['luna'] };
   assert.deepEqual(frontier([a, b, c]).map(v => v.name), ['b']);
   const args = codexArgs('gpt-6-luna', '/tmp/cwd', '/tmp/fixture', '/tmp/trace');
   assert.ok(args.includes('forced_login_method="chatgpt"'));
   assert.ok(args.includes('shell_tool'));
+  assert.equal(args.includes('--ephemeral'), false);
+  assert.ok(args.includes('agents.enabled=false'));
+  assert.ok(args.includes('features.multi_agent_v2=false'));
   assert.equal(args.some(a => /grant-token|api.key/i.test(a)), false);
 });
 

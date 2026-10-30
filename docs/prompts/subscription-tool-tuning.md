@@ -59,18 +59,38 @@ Commands, assignments, messages and browser calls are never executed.
 find_tools returns matching definitions, enables them for the sample and sends
 `notifications/tools/list_changed`; Codex's `mcp_tool_list_changed` feature is
 explicitly enabled. Loaded definitions never carry into another sample. Native
-host tool usage, unloaded calls, and calls after terminal boundaries fail;
-missing scenario facts remain unscored. The existing `evaluateRule` grades the
+host tool usage, unloaded calls, and calls after terminal boundaries fail.
+Replay-only adapters discover the canonical first-party app schemas, translate
+recorded operation aliases, and read recorded PR facts. Unsupported operations
+return an explicit refusal boundary and never invent a successful mutation.
+Completed turns, including refused operations, use the existing `evaluateRule`;
+unsupported-boundary counts remain visible separately. The unchanged rule grades the
 calls and reply without changing any saved rule. An independent simulator call
 limit (24) bounds runaway native turns; exhaustion is unscored, not a pass.
 
-Codex `turn.completed.usage.input_tokens` includes its own harness prompt and
-all tool continuations in every arm. Reports use the median and nearest-rank p90
-of these aggregate turn counts; cached tokens are retained without subtracting
-them. Codex does not expose an underlying model-request count in this event
-stream; `modelRequests` is explicitly null. Search calls and all MCP attempts
-are counted exactly, so extra tool calls/search calls per sample can be compared
-without inventing model-request counts.
+Codex `turn.completed.usage.input_tokens` remains the separate aggregate input
+per case, including its harness and all continuations. The runner persists the
+matching Codex rollout and copies it into the sample output. It parses unique
+`token_usage_record` responses, or legacy `event_msg` / `token_count` notices
+with `info.last_token_usage`, to count model calls and retain per-call input and
+cached input. The response sum must match the aggregate turn usage.
+
+The frontier uses `medianBeelineOwnedTokensPerCall`: structural `o200k_base`
+counts of the replay-owned instructions/index, inline replay definitions, and
+retrieved replay/app-definition objects retained in history on each request.
+Case conversation, other scenario results and Codex instructions/tools are
+excluded. Provider framing/tokenization differs, so these structural counts
+are not asserted to sum exactly to provider input. Codex totals, median model
+calls per case, first-call block/tool counts, and unsupported-boundary cases
+are separate measurements. Missing telemetry prevents frontier eligibility.
+
+Codex can itself defer the MCP catalog in both arms. `initialExposure` records
+the observed model-visible surface rather than assuming an eager full listing.
+Interpret the existing variants within that harness; do not claim the nominal
+server schema size equals first-call model exposure. The legacy multi-agent
+flag is supplemented by `agents.enabled=false` and
+`features.multi_agent_v2=false` so model defaults cannot enable native agents
+outside the simulator. This isolation applies equally to every variant.
 
 Each run saves its configs, split hash, commit, sample calls, returned facts,
 JSONL Codex events, final status and summary in result.json. Per-sample prompt,
@@ -78,6 +98,22 @@ fixture, stderr and trace files permit inspection. Existing matching samples
 resume without reusing a different model, partition or config. Use a fresh
 output directory after implementation changes. `--only <tune-case-id>` is for
 smoke proofs and marks the result `smokeOnly`; never pool it into a round.
+
+For authorized missing-data repairs, preserve the original output and pass its
+result to a fresh output directory:
+
+```sh
+node --import tsx scripts/prompt-subscription-replay.mjs \
+  --model gpt-6-luna --variants full,r0-deferred --partition tune \
+  --repair-from <original-round-0-luna>/result.json --out <repaired-round-0-luna>
+```
+
+Already graded samples with complete telemetry are reused. Only absent,
+ungraded, or telemetry-missing samples are run; replacements cite their original
+result. Original results are never rewritten. Resuming a repair archives any
+incomplete output sample before retrying it. No new variants or held-out runs
+are implied by a repair command. Legacy ephemeral samples usually need a
+replacement because they have no per-response rollout data.
 
 A real subscription smoke proof on both local assigned models exercised full
 and deferred native MCP calls. The deferred proof loaded Read and order using

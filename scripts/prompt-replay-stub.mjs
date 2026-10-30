@@ -3,7 +3,8 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { FIND_TOOLS, findTools } from './prompt-tool-loading.mjs';
-import { scenarioResult, validSchema } from './prompt-nightly.mjs';
+import { validSchema } from './prompt-nightly.mjs';
+import { replayScenarioResult } from './prompt-replay-scenarios.mjs';
 
 export function createStub({ testCase, tools, skills, variant }) {
   const loaded = new Set(variant.mode === 'full' ? tools.map(t => t.name) : variant.core);
@@ -43,8 +44,12 @@ export function createStub({ testCase, tools, skills, variant }) {
       trace.terminal = name;
       return { instruction: 'The simulated assigned turn has ended. Do not call more tools.' };
     }
-    const result = scenarioResult(testCase, entry, skills);
+    const result = replayScenarioResult(testCase, entry, skills);
     trace.results.push({ call: entry, ...result });
+    if (result.invalidSchema) {
+      trace.calls.pop();
+      trace.invalidCalls.push(entry);
+    }
     if (result.boundary) trace.terminal = result.boundary;
     if (name === 'merge_corner') trace.terminal ??= name;
     return result.boundary ? { ...result, instruction: 'Stop at this boundary and end the turn.' } : result.result;

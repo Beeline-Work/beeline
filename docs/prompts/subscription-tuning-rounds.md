@@ -81,3 +81,11 @@ The provisional round-two frontier changes from `r1-order`/`r2-full-short` to
 `r1-short`/`r1-order`. Missing simulated facts still exclude cases, so neither this
 frontier nor the earlier stopping argument establishes an optimum. Repair
 simulator coverage and request telemetry before further tuning or held-out runs.
+
+Persisted diagnostic rollouts subsequently showed that Codex itself defers the
+MCP definitions in both arms. The initial-call proxy above is therefore a
+nominal server-config count, not observed model exposure; it is withdrawn as
+selection evidence. The corrected report uses actual exposed/retrieved
+definitions per call and requires complete rollout telemetry and grading.
+Existing variants remain unchanged. Only missing-data repairs are authorized;
+new tuning rounds and held-out evaluation remain paused for the owner's report.

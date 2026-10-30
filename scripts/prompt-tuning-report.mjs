@@ -35,7 +35,7 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
     return [model, ids];
   }));
   const variants = names.map(name => {
-    const perModel = {}, inputs = [], regressions = [];
+    const perModel = {}, inputs = [], owned = [], requests = [], regressions = [];
     let complete = models.length > 0;
     for (const model of models) {
       const entry = byModel.get(model)?.get(name);
@@ -45,8 +45,11 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
       const pairedPassRate = scoredPairs.length ? scoredPairs.filter(r => r.pass).length / scoredPairs.length : null;
       const baseRate = basePairs.length ? basePairs.filter(r => r.pass).length / basePairs.length : null;
       if (baseRate !== null && pairedPassRate < baseRate - 0.05 - 1e-12) regressions.push(model);
-      complete &&= Boolean(entry && rows.length === entry.expected && scoredPairs.length && scoredPairs.every(r => Number.isFinite(r.inputTokens)));
+      complete &&= Boolean(entry && rows.length === entry.expected && rows.every(r => r.status === 'behavior' && r.telemetry?.status === 'complete') &&
+        scoredPairs.length && scoredPairs.every(r => Number.isFinite(r.inputTokens) && Number.isFinite(r.modelRequests)));
       inputs.push(...scoredPairs.map(r => r.inputTokens).filter(Number.isFinite));
+      owned.push(...scoredPairs.flatMap(r => r.telemetry?.calls ?? []).map(c => c.beelineOwnedTokensPerCall).filter(Number.isFinite));
+      requests.push(...scoredPairs.map(r => r.modelRequests).filter(Number.isFinite));
       perModel[model] = { ...summarize(rows), attempted: rows.length, expected: entry?.expected ?? null,
         pairedPassed: scoredPairs.filter(r => r.pass).length, pairedScored: scoredPairs.length, pairedPassRate };
     }
@@ -54,12 +57,12 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
     return { name, config: configs.get(name), complete, regressionModels: regressions, perModel,
       meanPassRate: rates.length && rates.every(r => r !== null) ? rates.reduce((a, b) => a + b, 0) / rates.length : null,
       worstModelPassRate: rates.length && rates.every(r => r !== null) ? Math.min(...rates) : null,
-      medianInputTokens: median(inputs) };
+      medianInputTokens: median(inputs), medianBeelineOwnedTokensPerCall: median(owned), medianModelRequestsPerCase: median(requests) };
   });
   const edge = frontier(variants).map(v => v.name);
   const comparisons = Object.fromEntries(names.filter(name => name !== 'full').map(name => {
     const byCause = { 'never searched': [], 'wrong tool': [], 'called unloaded tool': [], other: [] };
-    let extraCalls = 0, extraSearches = 0, pairs = 0;
+    let extraCalls = 0, extraSearches = 0, extraModelRequests = 0, modelRequestPairs = 0, pairs = 0;
     const won = [], lost = [], tied = [], unscored = [];
     for (const model of models) {
       const baseline = byModel.get(model)?.get('full'), candidate = byModel.get(model)?.get(name);
@@ -72,6 +75,10 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
           (before.pass === after.pass ? tied : after.pass ? won : lost).push(`${model}:${id}`);
           extraCalls += after.toolCalls - before.toolCalls;
           extraSearches += after.searchCalls - before.searchCalls;
+          if (Number.isFinite(after.modelRequests) && Number.isFinite(before.modelRequests)) {
+            extraModelRequests += after.modelRequests - before.modelRequests;
+            modelRequestPairs++;
+          }
           pairs++;
         } else unscored.push(`${model}:${id}`);
         if (before.pass !== true || after.pass === true) continue;
@@ -86,11 +93,12 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
     }
     return [name, { won, lost, tied, unscored, deferredOnlyFailures: byCause, pairedSamples: pairs,
       extraToolCallsPerSample: pairs ? extraCalls / pairs : null,
-      extraSearchCallsPerSample: pairs ? extraSearches / pairs : null, extraModelRequestsPerSample: null }];
+      extraSearchCallsPerSample: pairs ? extraSearches / pairs : null,
+      extraModelRequestsPerSample: modelRequestPairs ? extraModelRequests / modelRequestPairs : null }];
   }));
   return { partition, models, excluded, missingModels: models.filter(m => !byModel.has(m)), pairedCaseIds: paired,
     variants, frontier: edge, comparisons, costUsd: 0,
-    usageNote: 'Codex harness and all continuations are included. Frontier and regression comparisons use the same scored case intersection across variants on each available model.' };
+    usageNote: 'Frontier uses structural Beeline-owned tokens per model call from rollouts, including retrieved definition objects retained in history. medianInputTokens remains the separate aggregate Codex total per case. Missing telemetry or ungraded cases prevent complete frontier eligibility. Codex may itself defer the replay catalog; inspect telemetry.initialExposure before interpreting the result as eager versus deferred.' };
 }
 export function stoppingDecision(history) {
   if (history.length >= 8) return { stop: true, reason: 'Eight rounds reached' };

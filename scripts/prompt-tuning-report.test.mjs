@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { tuningReport, stoppingDecision, MODELS } from './prompt-tuning-report.mjs';
 const row = (id, pass, inputTokens = 100, status = 'behavior') => ({ id, pass, status, inputTokens,
+  modelRequests: 1, telemetry: { status: 'complete', calls: [{ beelineOwnedTokensPerCall: inputTokens }] },
   toolCalls: 1, searchCalls: 0, searches: [], transcript: { calls: [{ name: 'read', args: {} }], text: '' } });
 const config = name => ({ name, mode: name === 'full' ? 'full' : 'deferred', core: ['read'] });
 const run = (model, full, deferred) => ({ model, partition: 'tune', splitHash: 'fixed', expectedCases: full.length,
@@ -24,6 +25,22 @@ test('a per-model regression above five points disqualifies a cheaper variant', 
   const report = tuningReport(runs, 'tune');
   assert.deepEqual(report.variants[1].regressionModels, [MODELS[0]]);
   assert.deepEqual(report.frontier, ['full']);
+});
+
+test('frontier uses Beeline tokens rather than aggregate Codex usage, and legacy telemetry gaps prevent eligibility', () => {
+  const runs = MODELS.map(model => {
+    const before = row('a', true, 10);
+    before.telemetry.calls[0].beelineOwnedTokensPerCall = 100;
+    const after = row('a', true, 1000);
+    after.telemetry.calls[0].beelineOwnedTokensPerCall = 20;
+    return run(model, [before], [after]);
+  });
+  const report = tuningReport(runs, 'tune');
+  assert.equal(report.variants[0].medianBeelineOwnedTokensPerCall, 100);
+  assert.equal(report.variants[1].medianBeelineOwnedTokensPerCall, 20);
+  assert.ok(report.frontier.includes('deferred'));
+  for (const r of runs) for (const v of Object.values(r.variants)) delete v.rows[0].telemetry;
+  assert.deepEqual(tuningReport(runs, 'tune').frontier, []);
 });
 
 test('missing models prevent a complete frontier and explicit model limits are preserved', () => {

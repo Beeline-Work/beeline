@@ -1,6 +1,6 @@
 /** Subscription-only Codex/MCP replay. All advertised operations are canned. */
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, copyFileSync, renameSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -9,6 +9,7 @@ import { loadCases, loadSource, replayPrompt, toolsFor } from './prompt-cases.ts
 import { evaluateRule, skillPath } from './prompt-case-rules.ts';
 import { median, needsSquire } from './prompt-nightly.mjs';
 import { deniesAvailableTool } from './prompt-tool-loading.mjs';
+import { findRollout, readTelemetry } from './prompt-codex-telemetry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIGS = join(ROOT, 'scripts/prompt-variants');
@@ -61,9 +62,12 @@ export function gradeNative(testCase, trace, events, variant, tools) {
     searches: trace.searches, results: trace.results };
 }
 export function codexArgs(model, cwd, fixture, trace) {
-  const args = ['exec', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '-C', cwd, '-s', 'read-only', '-m', model, '--json'];
+  const args = ['exec', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '-C', cwd, '-s', 'read-only', '-m', model, '--json'];
   for (const feature of ['shell_tool', 'apps', 'plugins', 'multi_agent', 'browser_use', 'image_generation', 'view_image', 'sleep_tool', 'hooks']) args.push('--disable', feature);
   for (const setting of ['web_search="disabled"', 'forced_login_method="chatgpt"', 'features.skip_host_skill_discovery=true',
+    // The model's V2 backend can override the legacy multi_agent flag. Disable
+    // actual native agent execution, independently of the replay variant.
+    'agents.enabled=false', 'features.multi_agent_v2=false',
     'features.mcp_tool_list_changed=true', 'features.tool_suggest=false', 'model_reasoning_effort="low"',
     'mcp_servers.replay.command="node"',
     `mcp_servers.replay.args=${JSON.stringify(['--import', 'tsx', join(ROOT, 'scripts/prompt-replay-stub.mjs'), fixture, trace])}`,
@@ -98,27 +102,45 @@ export async function executeSample({ source, testCase, variant, model, director
   finally { clearTimeout(timer); rmSync(cwd, { recursive: true, force: true }); }
   writeFileSync(join(directory, 'events.jsonl'), events.map(e => JSON.stringify(e)).join('\n') + '\n');
   writeFileSync(join(directory, 'stderr.txt'), errors.join(''));
+  const threadId = events.find(e => e.type === 'thread.started')?.thread_id;
+  const rollout = findRollout(env.CODEX_HOME ?? join(homedir(), '.codex'), threadId);
+  let telemetry = { status: 'missing', error: `No persisted rollout found for replay thread ${threadId ?? '(not started)'}` };
+  if (rollout) {
+    const savedRollout = join(directory, 'rollout.jsonl');
+    copyFileSync(rollout, savedRollout);
+    telemetry = { ...readTelemetry(savedRollout, { prompt, variant, tools }), rolloutPath: savedRollout };
+    writeFileSync(join(directory, 'telemetry.json'), JSON.stringify(telemetry, null, 2) + '\n');
+  }
   const trace = existsSync(tracePath) ? JSON.parse(readFileSync(tracePath)) : { calls: [], attemptedCalls: [], invalidCalls: [], searches: [], results: [], terminal: null };
   const sample = gradeNative(testCase, trace, events, variant, tools);
   const usage = events.findLast(e => e.type === 'turn.completed')?.usage;
+  if (telemetry.status === 'complete' && Number.isFinite(usage?.input_tokens) && telemetry.sumProviderInputTokens !== usage.input_tokens) {
+    telemetry.status = 'mismatch';
+    telemetry.error = `Rollout input sum ${telemetry.sumProviderInputTokens} differs from Codex turn aggregate ${usage.input_tokens}`;
+  }
+  writeFileSync(join(directory, 'telemetry.json'), JSON.stringify(telemetry, null, 2) + '\n');
   const error = events.filter(e => ['error', 'turn.failed'].includes(e.type)).map(e => e.message ?? e.error?.message ?? JSON.stringify(e)).join('\n');
   const stopped = /usage limit|rate limit|quota|not supported|unsupported|does not exist|not available|not found|not authorized|access to.*model|insufficient/i.test(error);
   return { ...sample, seed, exitCode, timedOut, error: error || (timedOut ? 'Codex replay timeout' : undefined), modelStopped: stopped,
     inputTokens: usage?.input_tokens ?? null, cachedInputTokens: usage?.cached_input_tokens ?? null, outputTokens: usage?.output_tokens ?? null,
     toolCalls: trace.attemptedCalls.length, searchCalls: trace.searches.length,
-    // Codex exposes aggregate turn usage, not the count of underlying model requests.
-    modelRequests: null };
+    telemetry, modelRequests: telemetry.modelRequests ?? null };
 }
 export function summarize(rows) {
   const scored = rows.filter(r => r.status === 'behavior'), inputs = rows.map(r => r.inputTokens).filter(Number.isFinite);
+  const owned = rows.flatMap(r => r.telemetry?.calls ?? []).map(c => c.beelineOwnedTokensPerCall).filter(Number.isFinite);
   return { passed: scored.filter(r => r.pass).length, scored: scored.length, unscored: rows.length - scored.length,
     passRate: scored.length ? scored.filter(r => r.pass).length / scored.length : null,
     medianInputTokens: median(inputs), p90InputTokens: p90(inputs), inputAccountingSamples: inputs.length,
+    medianBeelineOwnedTokensPerCall: median(owned), p90BeelineOwnedTokensPerCall: p90(owned),
+    medianModelRequestsPerCase: median(rows.map(r => r.modelRequests).filter(Number.isFinite)),
+    missingTelemetry: rows.filter(r => r.telemetry?.status !== 'complete').length,
+    unsupportedBoundaryCases: rows.filter(r => r.terminal === 'unsupported-operation').length,
     meanSearchCalls: rows.length ? rows.reduce((n, r) => n + r.searchCalls, 0) / rows.length : null };
 }
 export function frontier(variants) {
-  const comparable = variants.filter(v => v.complete && !v.regressionModels.length);
-  return comparable.filter(v => !comparable.some(o => o.meanPassRate > v.meanPassRate && o.medianInputTokens < v.medianInputTokens));
+  const comparable = variants.filter(v => v.complete && !v.regressionModels.length && Number.isFinite(v.medianBeelineOwnedTokensPerCall));
+  return comparable.filter(v => !comparable.some(o => o.meanPassRate > v.meanPassRate && o.medianBeelineOwnedTokensPerCall < v.medianBeelineOwnedTokensPerCall));
 }
 export async function runSubscription(args) {
   const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 ? fallback : args[i + 1]; };
@@ -146,11 +168,19 @@ export async function runSubscription(args) {
     return variant;
   });
   if (variants.length > (partition === 'tune' ? 3 : 4)) throw new Error('Too many variants for this round');
+  const repairPath = option('--repair-from');
+  if (repairPath && resolve(repairPath) === join(out, 'result.json')) throw new Error('Use a fresh repair output; preserve the original result file');
+  if (repairPath && partition !== 'tune') throw new Error('Missing-data repairs are restricted to tune results');
+  const prior = repairPath ? JSON.parse(readFileSync(resolve(repairPath), 'utf8')) : undefined;
+  if (prior && (prior.model !== model || prior.partition !== partition || prior.smokeOnly || prior.splitHash !== createHash('sha256').update(JSON.stringify(split)).digest('hex')))
+    throw new Error('Repair source has a different model, partition or split');
+  if (prior && variants.some(v => JSON.stringify(prior.variants[v.name]?.config) !== JSON.stringify(v))) throw new Error('Repair source config differs from the requested variant');
   const source = await loadSource(ROOT);
   mkdirSync(out, { recursive: true });
   const result = { status: 'running', model, partition, splitSeed: split.seed, sampleSeed: split.caseSeed,
     seedLimitation: 'Codex exec has no provider seed flag; one fresh sample uses the same replay seed tag and fixed case partition/order for every variant.',
-    usageNote: 'Codex harness instructions and tool definitions are included in all reported input tokens.',
+    usageNote: 'inputTokens is aggregate Codex input per case. The frontier uses structural Beeline-owned tokens per model call from persisted rollouts; provider totals and model calls are reported separately.',
+    ...(repairPath ? { repairFrom: resolve(repairPath) } : {}),
     costUsd: 0, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(),
     splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'), expectedCases: cases.length,
     smokeOnly: Boolean(only), variants: Object.fromEntries(variants.map(v => [v.name, { config: v, rows: [] }])) };
@@ -166,17 +196,26 @@ export async function runSubscription(args) {
       if (existsSync(cached)) {
         const saved = JSON.parse(readFileSync(cached));
         if (saved.configHash !== createHash('sha256').update(JSON.stringify(variant)).digest('hex') || saved.model !== model || saved.partition !== partition) throw new Error('Existing sample has a different model, partition or variant; use a fresh output directory');
-        row = saved;
-      } else {
+        if (repairPath && (saved.status !== 'behavior' || saved.telemetry?.status !== 'complete'))
+          renameSync(directory, directory + `.superseded-${Date.now()}`);
+        else row = saved;
+      }
+      if (!row && prior?.variants[variant.name].rows.find(r => r.id === testCase.id && r.status === 'behavior' && r.telemetry?.status === 'complete')) {
+        row = prior.variants[variant.name].rows.find(r => r.id === testCase.id);
+      }
+      if (!row) {
+        const before = prior?.variants[variant.name].rows.find(r => r.id === testCase.id);
         row = { id: testCase.id, model, partition, configHash: createHash('sha256').update(JSON.stringify(variant)).digest('hex'),
-          ...await executeSample({ source, testCase, variant, model, directory, seed: split.caseSeed }) };
+          ...await executeSample({ source, testCase, variant, model, directory, seed: split.caseSeed }),
+          ...(before ? { replaces: { source: resolve(repairPath), status: before.status, inputTokens: before.inputTokens,
+            reason: before.status !== 'behavior' ? 'ungraded scenario' : 'missing request telemetry' } } : {}) };
         writeFileSync(cached, JSON.stringify(row, null, 2) + '\n');
       }
       result.variants[variant.name].rows.push(row); save();
       console.log(JSON.stringify({ model, partition, variant: variant.name, id: row.id, pass: row.pass, status: row.status, inputTokens: row.inputTokens, error: row.error }));
       if (row.modelStopped) { result.error = row.error; result.status = 'model-stopped'; save(); return result; }
     }
-    result.status = Object.values(result.variants).some(v => v.rows.some(r => r.status !== 'behavior')) ? 'incomplete' : 'complete';
+    result.status = Object.values(result.variants).some(v => v.rows.some(r => r.status !== 'behavior' || r.telemetry?.status !== 'complete')) ? 'incomplete' : 'complete';
   } catch (error) { result.status = 'failed'; result.error = error.message; }
   finally { process.off('SIGTERM', terminal); process.off('SIGINT', terminal); save(); }
   return result;

@@ -34,7 +34,8 @@ export function createStub({ testCase, tools, skills, variant }) {
       return { error: 'Arguments do not match the advertised schema' };
     }
     if (name === 'find_tools') {
-      const matches = findTools(tools, args.query);
+      const matches = findTools(tools, args.query).map(t => ({ ...t,
+        description: variant.descriptionWords ? t.description.split(/\s+/).slice(0, variant.descriptionWords).join(' ') : t.description }));
       trace.searches.push({ query: args.query, names: matches.map(t => t.name) });
       matches.forEach(t => loaded.add(t.name));
       return { definitions: matches, instruction: 'These definitions are now callable; continue the same turn.' };

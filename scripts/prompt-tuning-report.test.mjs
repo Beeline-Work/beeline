@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { tuningReport, stoppingDecision, MODELS } from './prompt-tuning-report.mjs';
 const row = (id, pass, inputTokens = 100, status = 'behavior') => ({ id, pass, status, inputTokens,
-  modelRequests: 1, telemetry: { status: 'complete', calls: [{ beelineOwnedTokensPerCall: inputTokens }] },
+  modelRequests: 1, telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', calls: [{ beelineOwnedTokensPerCall: inputTokens }] },
   toolCalls: 1, searchCalls: 0, searches: [], transcript: { calls: [{ name: 'read', args: {} }], text: '' } });
 const config = name => ({ name, mode: name === 'full' ? 'full' : 'deferred', core: ['read'] });
 const run = (model, full, deferred) => ({ model, partition: 'tune', splitHash: 'fixed', expectedCases: full.length,

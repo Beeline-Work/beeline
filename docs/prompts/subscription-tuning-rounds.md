@@ -89,3 +89,9 @@ selection evidence. The corrected report uses actual exposed/retrieved
 definitions per call and requires complete rollout telemetry and grading.
 Existing variants remain unchanged. Only missing-data repairs are authorized;
 new tuning rounds and held-out evaluation remain paused for the owner's report.
+
+The exposure correction now renders the stub's exact initial listing into each
+replay input and records the rendered names in the rollout telemetry. Full and
+deferred must show their different schema sets in the first Codex request before
+any historical matrix is repaired. Description caps also apply to loaded
+find_tools responses; the named variant configurations themselves are unchanged.

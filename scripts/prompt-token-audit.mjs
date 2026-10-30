@@ -2,32 +2,20 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { getEncoding } from 'js-tiktoken';
 import { createStub } from './prompt-replay-stub.mjs';
 import { nativePrompt } from './prompt-subscription-replay.mjs';
 import { loadCases, loadSource, toolsFor } from './prompt-cases.ts';
 import { median } from './prompt-nightly.mjs';
 import { tuningReport } from './prompt-tuning-report.mjs';
+import { countTokens, promptParts } from './prompt-codex-telemetry.mjs';
 
-const encoder = getEncoding('o200k_base');
-const count = text => encoder.encode(text).length;
 export function ownedAccounting(prompt, fixture) {
-  const start = prompt.indexOf('## Turn\n');
-  if (start < 0) throw new Error('Missing case conversation');
-  const end = prompt.indexOf('\n````\n', start);
-  if (end < 0) throw new Error('Missing case conversation end');
-  const conversation = prompt.slice(start, end + 6);
-  const owned = prompt.slice(0, start) + prompt.slice(end + 6);
-  const indexStart = owned.indexOf('## Deferred tool index\n');
-  const indexEnd = indexStart < 0 ? -1 : owned.indexOf('\n\n', indexStart);
-  const index = indexStart < 0 ? '' : owned.slice(indexStart, indexEnd < 0 ? undefined : indexEnd);
-  const system = index ? owned.replace(index, '') : owned;
-  const stub = createStub(fixture);
-  const tools = JSON.stringify(stub.listing());
+  const parts = promptParts(prompt, fixture.variant);
+  const tools = parts.renderedDefinitionTokens || countTokens(JSON.stringify(createStub(fixture).listing()));
   return { tokenizer: 'js-tiktoken@1.0.21/o200k_base',
-    scope: 'Initial request; serialized MCP listing plus replay-owned instructions and skill index. Excludes case conversation and Codex envelope. Not provider billing serialization.',
-    systemTokens: count(system), toolTokens: count(tools + index), conversationTokens: count(conversation),
-    beelineOwnedTokensPerInitialCall: count(system) + count(tools + index),
+    scope: parts.renderedDefinitionTokens ? 'Initial replay input with explicit definitions; not provider billing serialization.' : 'Legacy nominal MCP listing, not observed first-call exposure; not eligible for selection.',
+    systemTokens: parts.systemTokens, toolTokens: tools + parts.indexTokens, conversationTokens: parts.conversationTokens,
+    beelineOwnedTokensPerInitialCall: parts.systemTokens + tools + parts.indexTokens,
     modelCalls: null, codexHarnessTokensPerCall: null };
 }
 

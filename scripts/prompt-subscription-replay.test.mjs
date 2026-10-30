@@ -32,7 +32,7 @@ test('missing-data repair reuses a fully graded sample with telemetry without in
     const config = JSON.parse(readFileSync('scripts/prompt-variants/full.json'));
     const row = { id: split.tune[0], model: 'gpt-6-luna', partition: 'tune', status: 'behavior', pass: true,
       inputTokens: 100, modelRequests: 1, searchCalls: 0, toolCalls: 1,
-      telemetry: { status: 'complete', calls: [{ beelineOwnedTokensPerCall: 20 }] } };
+      telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', calls: [{ beelineOwnedTokensPerCall: 20 }] } };
     const source = { model: row.model, partition: 'tune', splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'),
       variants: { full: { config, rows: [row] } } };
     const path = join(folder, 'original.json');
@@ -98,6 +98,27 @@ test('all native prompts preserve the scenario but contain neither rule expectat
     assert.ok(prompt.includes(c.turn.task.body));
     assert.equal(prompt.includes('Return only the next batch'), false);
     assert.equal(prompt.includes('input_schema'), false);
+  }
+});
+
+test('full and deferred initial inputs expose exactly their advertised schemas despite Codex catalog deferral', async () => {
+  const source = await loadSource(process.cwd());
+  const c = loadCases().find(c => c.id === 'android-uses-leased-emulator');
+  const actual = toolsFor(source, c);
+  for (const name of ['full', 'r0-deferred', 'r1-short']) {
+    const config = JSON.parse(readFileSync(`scripts/prompt-variants/${name}.json`));
+    const prompt = nativePrompt(source, c, config, actual, 1000);
+    const definitions = JSON.parse(/## Replay tool definitions\n\n````json\n([\s\S]*?)\n````/.exec(prompt)[1]);
+    const stub = createStub({ testCase: c, tools: actual, skills: {}, variant: config });
+    assert.deepEqual(definitions, stub.listing());
+    if (config.mode === 'full') assert.deepEqual(definitions.map(t => t.name), actual.map(t => t.name));
+    else assert.deepEqual(definitions.map(t => t.name), [...actual.filter(t => config.core.includes(t.name)).map(t => t.name), 'find_tools']);
+    if (config.descriptionWords) {
+      const loaded = stub.call('find_tools', { query: 'Read' });
+      assert.ok(stub.trace.searches[0].names.includes('Read'));
+      assert.ok(loaded.definitions.every(t => t.description.split(/\s+/).length <= config.descriptionWords));
+      assert.ok(stub.listing().every(t => t.name === 'find_tools' || t.description.split(/\s+/).length <= config.descriptionWords));
+    }
   }
 });
 

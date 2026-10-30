@@ -48,6 +48,11 @@ hooks, apps, plugins, shell, browser, image, and subagent capabilities disabled.
 It retains its existing login and its built-in harness instructions. A local
 stdio MCP server advertises the case's real full tool definitions or the core
 plus find_tools; the prompt carries the remaining names and short purposes.
+The initial listing is also rendered verbatim as JSON in the replay input.
+Thus full includes all case schemas and deferred includes only its core plus
+find_tools, even when Codex internally defers its MCP catalog. Description caps
+apply consistently to the listing and find_tools responses. The rollout's
+`firstCallBeelineBlocks.renderedToolNames` proves the actual initial exposure.
 The actual saved surface is case-dependent: the canonical ordinary tools plus
 the runner/file-read tools and fixture-advertised extras (commonly 29 definitions).
 It preserves the nightly case-specific tool exposure rather than inventing tools
@@ -84,10 +89,10 @@ are not asserted to sum exactly to provider input. Codex totals, median model
 calls per case, first-call block/tool counts, and unsupported-boundary cases
 are separate measurements. Missing telemetry prevents frontier eligibility.
 
-Codex can itself defer the MCP catalog in both arms. `initialExposure` records
-the observed model-visible surface rather than assuming an eager full listing.
-Interpret the existing variants within that harness; do not claim the nominal
-server schema size equals first-call model exposure. The legacy multi-agent
+Codex can itself defer the native MCP catalog in both arms. `initialExposure`
+records the explicit replay definitions; `nativeCatalogExposure` separately
+records Codex's transport behavior. Historical runs without explicit definitions
+remain invalid for the full-versus-deferred comparison. The legacy multi-agent
 flag is supplemented by `agents.enabled=false` and
 `features.multi_agent_v2=false` so model defaults cannot enable native agents
 outside the simulator. This isolation applies equally to every variant.
@@ -108,8 +113,9 @@ node --import tsx scripts/prompt-subscription-replay.mjs \
   --repair-from <original-round-0-luna>/result.json --out <repaired-round-0-luna>
 ```
 
-Already graded samples with complete telemetry are reused. Only absent,
-ungraded, or telemetry-missing samples are run; replacements cite their original
+Already graded samples with complete telemetry and explicit exposure proof are
+reused. Only absent, ungraded, telemetry-missing, or incorrectly exposed samples
+are run; replacements cite their original
 result. Original results are never rewritten. Resuming a repair archives any
 incomplete output sample before retrying it. No new variants or held-out runs
 are implied by a repair command. Legacy ephemeral samples usually need a

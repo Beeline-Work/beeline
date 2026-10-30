@@ -10,9 +10,12 @@ import { evaluateRule, skillPath } from './prompt-case-rules.ts';
 import { median, needsSquire } from './prompt-nightly.mjs';
 import { deniesAvailableTool } from './prompt-tool-loading.mjs';
 import { findRollout, readTelemetry } from './prompt-codex-telemetry.mjs';
+import { createStub } from './prompt-replay-stub.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIGS = join(ROOT, 'scripts/prompt-variants');
+const usableSample = row => row.status === 'behavior' && row.telemetry?.status === 'complete' &&
+  row.telemetry.initialExposure === 'explicit-replay-definitions';
 const p90 = values => values.length ? [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.9) - 1] : null;
 export function loadSplit(cases) {
   const split = JSON.parse(readFileSync(join(CONFIGS, 'split.json'), 'utf8'));
@@ -27,7 +30,12 @@ export function nativePrompt(source, testCase, variant, tools, seed) {
   let prompt = original.slice(original.indexOf('## System prompt'));
   const begin = prompt.indexOf('## Tools\n'), end = prompt.indexOf('## Available skills\n');
   if (begin < 0 || end < begin) throw new Error('Replay tool section missing');
-  prompt = prompt.slice(0, begin) + prompt.slice(end);
+  // Codex may defer every MCP schema behind its own code-mode catalog. Render
+  // exactly the stub's initial listing as input so full/deferred describe what
+  // the model actually receives, independently of that transport behavior.
+  const definitions = createStub({ testCase, tools, skills: {}, variant }).listing();
+  prompt = prompt.slice(0, begin) + '## Replay tool definitions\n\n````json\n' +
+    JSON.stringify(definitions) + '\n````\n\n' + prompt.slice(end);
   for (const edit of variant.promptEdits ?? []) {
     if (!prompt.includes(edit.from)) throw new Error(`Variant edit not found: ${edit.from.slice(0, 60)}`);
     prompt = prompt.replaceAll(edit.from, edit.to);
@@ -135,6 +143,7 @@ export function summarize(rows) {
     medianBeelineOwnedTokensPerCall: median(owned), p90BeelineOwnedTokensPerCall: p90(owned),
     medianModelRequestsPerCase: median(rows.map(r => r.modelRequests).filter(Number.isFinite)),
     missingTelemetry: rows.filter(r => r.telemetry?.status !== 'complete').length,
+    missingExposureProof: rows.filter(r => r.telemetry?.initialExposure !== 'explicit-replay-definitions').length,
     unsupportedBoundaryCases: rows.filter(r => r.terminal === 'unsupported-operation').length,
     meanSearchCalls: rows.length ? rows.reduce((n, r) => n + r.searchCalls, 0) / rows.length : null };
 }
@@ -196,11 +205,11 @@ export async function runSubscription(args) {
       if (existsSync(cached)) {
         const saved = JSON.parse(readFileSync(cached));
         if (saved.configHash !== createHash('sha256').update(JSON.stringify(variant)).digest('hex') || saved.model !== model || saved.partition !== partition) throw new Error('Existing sample has a different model, partition or variant; use a fresh output directory');
-        if (repairPath && (saved.status !== 'behavior' || saved.telemetry?.status !== 'complete'))
+        if (repairPath && !usableSample(saved))
           renameSync(directory, directory + `.superseded-${Date.now()}`);
         else row = saved;
       }
-      if (!row && prior?.variants[variant.name].rows.find(r => r.id === testCase.id && r.status === 'behavior' && r.telemetry?.status === 'complete')) {
+      if (!row && prior?.variants[variant.name].rows.find(r => r.id === testCase.id && usableSample(r))) {
         row = prior.variants[variant.name].rows.find(r => r.id === testCase.id);
       }
       if (!row) {
@@ -208,14 +217,14 @@ export async function runSubscription(args) {
         row = { id: testCase.id, model, partition, configHash: createHash('sha256').update(JSON.stringify(variant)).digest('hex'),
           ...await executeSample({ source, testCase, variant, model, directory, seed: split.caseSeed }),
           ...(before ? { replaces: { source: resolve(repairPath), status: before.status, inputTokens: before.inputTokens,
-            reason: before.status !== 'behavior' ? 'ungraded scenario' : 'missing request telemetry' } } : {}) };
+            reason: before.status !== 'behavior' ? 'ungraded scenario' : before.telemetry?.status !== 'complete' ? 'missing request telemetry' : 'missing explicit exposure proof' } } : {}) };
         writeFileSync(cached, JSON.stringify(row, null, 2) + '\n');
       }
       result.variants[variant.name].rows.push(row); save();
       console.log(JSON.stringify({ model, partition, variant: variant.name, id: row.id, pass: row.pass, status: row.status, inputTokens: row.inputTokens, error: row.error }));
       if (row.modelStopped) { result.error = row.error; result.status = 'model-stopped'; save(); return result; }
     }
-    result.status = Object.values(result.variants).some(v => v.rows.some(r => r.status !== 'behavior' || r.telemetry?.status !== 'complete')) ? 'incomplete' : 'complete';
+    result.status = Object.values(result.variants).some(v => v.rows.some(r => !usableSample(r))) ? 'incomplete' : 'complete';
   } catch (error) { result.status = 'failed'; result.error = error.message; }
   finally { process.off('SIGTERM', terminal); process.off('SIGINT', terminal); save(); }
   return result;

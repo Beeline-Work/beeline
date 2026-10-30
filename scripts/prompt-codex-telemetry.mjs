@@ -18,6 +18,10 @@ export function promptParts(prompt, variant = {}) {
   if (end < 0) throw new Error('Replay conversation section missing');
   const conversation = prompt.slice(start, end + 6);
   let instructions = prompt.slice(0, start) + prompt.slice(end + 6);
+  const rendered = /## Replay tool definitions\n\n````json\n([\s\S]*?)\n````\n\n/.exec(instructions);
+  const renderedDefinitions = rendered ? JSON.parse(rendered[1]) : [];
+  const renderedDefinitionTokens = rendered ? countTokens(rendered[0]) : 0;
+  if (rendered) instructions = instructions.replace(rendered[0], '');
   const indexStart = instructions.indexOf('## Deferred tool index\n');
   let index = '';
   if (indexStart >= 0) {
@@ -29,10 +33,11 @@ export function promptParts(prompt, variant = {}) {
   const systemStart = prompt.indexOf('## System prompt');
   const skillsStart = prompt.indexOf('## Available skills\n');
   const rawSystem = /## System prompt\n\n````text\n([\s\S]*?)\n````/.exec(prompt)?.[1] ?? '';
-  return { systemTokens: countTokens(instructions), indexTokens: countTokens(index), conversationTokens: countTokens(conversation),
+  return { systemTokens: countTokens(instructions), indexTokens: countTokens(index), conversationTokens: countTokens(conversation), renderedDefinitionTokens,
     components: { beelineSystemPromptTokens: countTokens(rawSystem),
       availableSkillIndexTokens: skillsStart >= 0 ? countTokens(prompt.slice(skillsStart, start)) : 0,
       replayControlTokens: systemStart >= 0 ? countTokens(prompt.slice(0, systemStart)) : 0,
+      renderedDefinitionTokens, renderedToolNames: renderedDefinitions.map(t => t.name),
       appendedRuleTokens: countTokens(variant.appendRules ?? ''), deferredIndexTokens: countTokens(index),
       caseConversationTokens: countTokens(conversation) } };
 }
@@ -132,14 +137,15 @@ export function parseRollout(text, { prompt, variant, tools = [] }) {
     seen.add(key); firstResponse = true;
     calls.push({ responseId: record.response_id ?? null, inputTokens: record.usage.input_tokens,
       cachedInputTokens: record.usage.cached_input_tokens ?? 0, outputTokens: record.usage.output_tokens ?? null,
-      beelineSystemTokens: parts.systemTokens, beelineDefinitionTokens: parts.indexTokens + inlineDefinitions + returned,
-      beelineOwnedTokensPerCall: parts.systemTokens + parts.indexTokens + inlineDefinitions + returned,
+      beelineSystemTokens: parts.systemTokens, beelineDefinitionTokens: parts.renderedDefinitionTokens + parts.indexTokens + inlineDefinitions + returned,
+      beelineOwnedTokensPerCall: parts.systemTokens + parts.renderedDefinitionTokens + parts.indexTokens + inlineDefinitions + returned,
       caseConversationTokens: parts.conversationTokens });
   }
   return { status: calls.length ? 'complete' : 'missing', threadId: meta?.id ?? null, cliVersion: meta?.cli_version,
     tokenizer: 'js-tiktoken@1.0.21/o200k_base',
     accountingNote: 'Structural token counts of Beeline instructions/index, exposed replay schemas and retrieved definition objects retained in history. Provider totals use its own usage records; framing/tokenization differs. Skill results and other case history are outside this axis. Actual Codex exposure is retained, not assumed eager.',
-    initialExposure: initialInlineDefinitions ? 'inline-replay-definitions' : 'codex-deferred-replay-definitions',
+    initialExposure: parts.renderedDefinitionTokens ? 'explicit-replay-definitions' : initialInlineDefinitions ? 'inline-replay-definitions' : 'codex-deferred-replay-definitions',
+    nativeCatalogExposure: initialInlineDefinitions ? 'inline-replay-definitions' : 'codex-deferred-replay-definitions',
     calls, modelRequests: calls.length || null, medianBeelineOwnedTokensPerCall: middle(calls.map(c => c.beelineOwnedTokensPerCall)),
     firstCallBlocks: blocks, firstCallTools: builtins, firstCallBeelineBlocks: parts.components,
     sumProviderInputTokens: calls.length ? calls.reduce((n, c) => n + c.inputTokens, 0) : null };

@@ -59,3 +59,15 @@ test('index belongs to tool axis, appended rules belong to instructions, and con
   assert.ok(b.conversationTokens > a.conversationTokens);
   assert.equal(parseRollout(serialize([message('user', prompt)]), context).status, 'missing');
 });
+
+test('explicit replay definitions are counted on the tool axis and kept separate from native Codex catalog exposure', () => {
+  const definitions = [{ name: 'read', description: 'Recorded facts', inputSchema: { type: 'object' } }];
+  const exposed = prompt.replace('## Turn', '## Replay tool definitions\n\n````json\n' + JSON.stringify(definitions) + '\n````\n\n## Turn');
+  const a = promptParts(prompt), b = promptParts(exposed);
+  assert.equal(a.systemTokens, b.systemTokens);
+  assert.ok(b.renderedDefinitionTokens > 0);
+  const result = parseRollout(serialize([message('user', exposed), modern('one', 100)]), { ...context, prompt: exposed });
+  assert.equal(result.initialExposure, 'explicit-replay-definitions');
+  assert.equal(result.nativeCatalogExposure, 'codex-deferred-replay-definitions');
+  assert.deepEqual(result.firstCallBeelineBlocks.renderedToolNames, ['read']);
+});

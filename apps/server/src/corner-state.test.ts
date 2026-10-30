@@ -6,7 +6,6 @@ const facts: CornerStateFacts = {
   archived: false,
   turnRunning: false,
   owed: false,
-  now: 1000,
   lifecycle: { lifecycle: 'working', checks: 'unknown' },
 };
 const pushed = {
@@ -82,8 +81,8 @@ describe('observed corner states', () => {
   });
 });
 
-it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) => {
-  expect(deriveCornerState({...facts,lastTurnEndedAt:1000-Number(age)}).state).toBe(state);
+it('Reproduction R1: a turn that just ended without a report is idle, not working', () => {
+  expect(deriveCornerState(facts).state).toBe('idle');
 });
 it('FIC-1: a live implementer stays working regardless of failing-check age', () => {
   expect(deriveCornerState({ ...facts, turnRunning: true,

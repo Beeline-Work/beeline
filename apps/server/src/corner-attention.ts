@@ -6,6 +6,7 @@ import {
   cornerWorkSql,
   cornerBlockerSql,
   cornerRowState,
+  cornerScheduledWaitSql,
   type CornerStateRow,
 } from './chat-corner-counts.js';
 import { reportToCommander } from './commander.js';
@@ -184,9 +185,7 @@ function attentionSql() {
       AND command.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
       AND command.review_context->>'purpose' IS NULL
       AND command.agent_id IS DISTINCT FROM f.worker_agent_id) review_queued,
-    EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
-      AND schedule.next_run_at>now()
-      AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) scheduled_wait
+    ${cornerScheduledWaitSql('c')} scheduled_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id
     ${cornerWorkSql(true)} ${cornerBlockerSql()}
@@ -212,7 +211,12 @@ export async function refreshCornerAttention(
       await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
       return { parentId: row.parent_id, deadlines: [] };
     }
-    const state = cornerRowState(row).state;
+    // The display reads idle as soon as a turn ends. The alert still waits out
+    // the post-turn gap, so a reply or new order inside it opens no episode.
+    const derived = cornerRowState(row).state;
+    const inGap = derived === 'idle' && row.last_turn_ended_at !== null && row.last_turn_ended_at !== undefined &&
+      Date.now() - new Date(row.last_turn_ended_at).getTime() < 30_000;
+    const state = inGap ? 'working' : derived;
     const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
     await tx.query(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,

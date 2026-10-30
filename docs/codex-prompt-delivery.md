@@ -49,7 +49,7 @@ Run from the repository root using the current agent's own inherited login:
 
 ```sh
 BEELINE_CODEX_PROOF_OUTPUT=/tmp/codex-proof-prompts.jsonl \
-  node --import tsx apps/body/scripts/prove-codex-prompt-delivery.ts
+  npm run prove:codex-prompt-delivery -w @beeline/body
 ```
 
 The optional output file contains only generated fixture prompts, for structural

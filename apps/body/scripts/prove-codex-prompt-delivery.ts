@@ -1,6 +1,6 @@
 /** Real Codex ACP proof. No config writes, tool restrictions or model overrides.
  * Uses the current agent's inherited login and a disposable working directory.
- * Run: node --import tsx apps/body/scripts/prove-codex-prompt-delivery.ts
+ * Run: npm run prove:codex-prompt-delivery -w @beeline/body
  */
 import { appendFile, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

@@ -1,0 +1,28 @@
+# Fail fast, with one clear line, when a self-hosted runner lacks a tool the
+# release needs. Without it the first sign is a cryptic error minutes into a
+# leg ("flyctl: command not found" after a 10-minute image build).
+name: Require runner tools
+description: Check that each named command exists on this runner before any release work starts
+inputs:
+  tools:
+    description: Space-separated commands the job needs (for example "node flyctl docker")
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+      run: |
+        missing=()
+        for tool in $TOOLS; do
+          if command -v "$tool" >/dev/null 2>&1; then
+            echo "$tool: $(command -v "$tool")"
+          else
+            missing+=("$tool")
+          fi
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "::error title=Runner is missing release tools::$(hostname) (${RUNNER_NAME:-unknown runner}) has no ${missing[*]} on PATH. Install them on this runner or take it out of the pool; nothing was released." >&2
+          exit 1
+        fi

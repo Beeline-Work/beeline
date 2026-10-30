@@ -43,7 +43,9 @@ export const COMPONENT_PATH_RULES = [
   { exact: 'apps/mobile/scripts/ota-release.mjs', components: ['mobile-ota'] },
   { exact: 'apps/mobile/scripts/upload-sentry-sourcemaps.mjs', components: ['mobile-ota', 'website'] },
   { exact: 'apps/mobile/scripts/prepare-web-sourcemaps.mjs', components: ['website'] },
-  { exact: 'apps/mobile/scripts/ota-delivery-index.mjs', components: ['mobile-ota'] },
+  { exact: 'apps/mobile/scripts/store-runtime-targets.mjs', components: ['mobile-ota'] },
+  { exact: 'apps/mobile/store/native-runtime-builds.json', components: ['mobile-ota'] },
+  { exact: 'scripts/read-store-runtimes.mjs', components: ['mobile-ota'] },
   { exact: 'apps/mobile/scripts/ota-canary.sh', components: ['mobile-ota'] },
   { exact: 'apps/mobile/app.config.js', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
   { exact: 'apps/mobile/package.json', components: ['mobile-ota', 'mobile-native', 'desktop', 'website'] },
@@ -75,6 +77,7 @@ export const COMPONENT_PATH_RULES = [
   // or desktop artifacts.
   { exact: '.github/workflows/unified-release.yml', components: ['server', 'mobile-ota', 'website'] },
   { exact: 'scripts/unified-release.mjs', components: ['server', 'mobile-ota', 'website'] },
+  { exact: 'scripts/release-record.mjs', components: ['server', 'mobile-ota', 'website'] },
 ];
 
 const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
@@ -230,46 +233,10 @@ export function evaluateServerCanaryPromotion(samples) {
   return { clean: true, cleanCount, elapsedSeconds };
 }
 
-export function createServerImageLedger({ version, sourceSha, plan, state = 'prepared' }) {
-  validateReleaseIdentity(version, sourceSha);
-  if (!['prepared', 'deployed', 'rolled-back'].includes(state)) fail(`invalid server ledger state: ${state}`);
-  return {
-    schemaVersion: 1,
-    version,
-    sourceSha,
-    previousImageRef: plan.previousImageRef,
-    imageRef: plan.newImageRef,
-    canaryMachineId: plan.canaryMachineId,
-    secondMachineId: plan.secondMachineId,
-    state,
-  };
-}
-
-export function selectServerRollbackImage({ explicitImageRef, ledger } = {}) {
-  const imageRef = explicitImageRef || ledger?.previousImageRef;
-  if (!imageRef?.startsWith('registry.fly.io/')) fail('no valid previous server image ref was supplied or recorded');
-  return imageRef;
-}
-
 export function validateReleaseIdentity(version, sourceSha) {
   if (!VERSION.test(version ?? '')) fail(`invalid release version: ${version ?? '<missing>'}`);
   if (!SHA.test(sourceSha ?? '')) fail(`invalid release sha: ${sourceSha ?? '<missing>'}`);
   return { version, sourceSha };
-}
-
-export function nextReleaseVersion(previous, reservedVersions = []) {
-  const match = VERSION.exec(previous ?? 'v0.0.0');
-  if (!match) fail(`cannot increment invalid release version: ${previous}`);
-  const reserved = new Set(reservedVersions);
-  let patch = Number(match[3]) + 1;
-  while (reserved.has(`v${match[1]}.${match[2]}.${patch}`)) patch += 1;
-  return `v${match[1]}.${match[2]}.${patch}`;
-}
-
-export function releaseVersionForSource(previous, sourceSha, reservedVersions = []) {
-  validateReleaseIdentity(previous?.version, previous?.sourceSha);
-  validateReleaseIdentity(previous.version, sourceSha);
-  return previous.sourceSha === sourceSha ? previous.version : nextReleaseVersion(previous.version, reservedVersions);
 }
 
 function assertComponent(component) {
@@ -277,28 +244,14 @@ function assertComponent(component) {
 }
 function matchesRule(path, rule) { return rule.exact === path || (rule.prefix && path.startsWith(rule.prefix)); }
 
-function runtimePinChangeMessage(runtimePin, requirement) {
-  const changes = runtimePin.changedPlatforms?.map((platform) =>
-    `${platform} ${runtimePin.previous[platform]} -> ${runtimePin.next[platform]}`).join(', ')
-    ?? `${runtimePin.previous} -> ${runtimePin.next}`;
-  return `runtime pin changed ${changes}: ${requirement}`;
-}
-
-export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none', runtimePin, allowPinRestore = false } = {}) {
+export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none' } = {}) {
   if (!['none', 'internal', 'beta', 'production'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
   const explicit = selection !== 'auto' && selection !== '';
-  if (runtimePin?.changed && explicit && selection !== 'all'
-      && !selection.split(',').map((value) => value.trim()).includes('mobile-native')) {
-    fail(runtimePinChangeMessage(runtimePin, 'mobile-native (store binaries) must ship in this release; add it or revert the pin'));
-  }
   // RELEASE POLICY: OTA is the default delivery and never publishes to a
-  // store by itself. A runtime-pin change is the one case the planner treats
-  // as store-necessary (a new runtime needs a new store binary as its anchor),
-  // and that store submission is a deliberate operator choice via --store-track
-  // that requires the project owner's explicit consent. It is never inferred.
-  if (runtimePin?.changed && storeTrack === 'none' && !allowPinRestore) {
-    fail(runtimePinChangeMessage(runtimePin, '--store-track must name the store submission track (internal, beta, or production; store publishing is explicit, consent-gated) or pass --allow-pin-restore to assert this is an OTA-only pin RESTORE whose runtime already has store binaries'));
-  }
+  // store by itself. Store publishing happens only on an explicit
+  // --store-track. A runtime-pin change does not change that: the OTA goes to
+  // every runtime live in the stores today, and the new runtime waits for a
+  // store release the owner chooses.
   let selected;
   if (selection === 'all') selected = new Set(RELEASE_COMPONENTS);
   else if (selection === 'auto' || selection === '') {
@@ -315,23 +268,22 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
   // Path changes alone never authorize a routine native build. Explicit
   // component selection remains available for build-only recovery.
   if (!explicit && storeTrack === 'none') selected.delete('mobile-native');
-  if (runtimePin?.changed && !(storeTrack === 'none' && allowPinRestore)) selected.add('mobile-native');
   if (storeTrack !== 'none') selected.add('mobile-native');
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
 }
 
 export function selectReleaseComponentsFromPublishedInputs(
   pathsByComponent,
-  { selection = 'auto', storeTrack = 'none', runtimePin, allowPinRestore = false, desktopLagSeconds = 0 } = {},
+  { selection = 'auto', storeTrack = 'none', desktopLagSeconds = 0 } = {},
 ) {
   if (selection !== 'auto' && selection !== '') {
-    return selectReleaseComponents([], { selection, storeTrack, runtimePin, allowPinRestore });
+    return selectReleaseComponents([], { selection, storeTrack });
   }
-  const selected = new Set(selectReleaseComponents([], { storeTrack, runtimePin, allowPinRestore }));
+  const selected = new Set(selectReleaseComponents([], { storeTrack }));
   for (const component of RELEASE_COMPONENTS) {
     const paths = pathsByComponent?.[component];
     if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
-    if (selectReleaseComponents(paths, { storeTrack, runtimePin, allowPinRestore }).includes(component)) selected.add(component);
+    if (selectReleaseComponents(paths, { storeTrack }).includes(component)) selected.add(component);
   }
   if (desktopLagSeconds >= DESKTOP_UI_REFRESH_SECONDS &&
       pathsByComponent.desktop.some((path) => DESKTOP_UI_PREFIXES.some((prefix) => path.startsWith(prefix)))) {
@@ -387,6 +339,10 @@ export function artifactReference(component, { version, sourceSha }) {
   return `${component}-${version}-${sourceSha}`;
 }
 
+// What a carried component still serves: the server image, the phone OTA
+// branch and its targets. Rollbacks read these from the newest release.
+const CARRIED_FACTS = ['imageRef', 'previousImageRef', 'otaBranch', 'previousOtaBranch', 'otaTargets'];
+
 function previousComponent(previous, component) {
   const legacyName = component === 'helper' ? 'daemon' : component === 'mobile-ota' ? 'app' : component;
   const entry = previous?.components?.[component] ?? previous?.artifacts?.[legacyName];
@@ -405,7 +361,9 @@ function previousComponent(previous, component) {
   const version = entry.version ?? previous.version;
   const sourceSha = entry.sourceSha ?? entry.sourceCommit ?? previous.sourceSha;
   validateReleaseIdentity(version, sourceSha);
+  const facts = Object.fromEntries(CARRIED_FACTS.filter((key) => entry[key] !== undefined).map((key) => [key, entry[key]]));
   return {
+    ...facts,
     state: 'carried', selected: false, version, sourceSha,
     artifactRef: entry.artifactRef ?? artifactReference(component, { version, sourceSha }),
     ...(component === 'desktop' ? {
@@ -418,21 +376,13 @@ function desktopVersionForRelease(previous) {
   return nextDesktopVersion(previous?.components?.desktop?.desktopVersion ?? DESKTOP_VERSION_BASELINE);
 }
 
-export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, retry, startedAt = now() }) {
+// A rerun of an identity plans exactly what a first attempt would: there is
+// no attempt file. Each leg asks its own system whether its output already
+// shipped and skips what did.
+export function initializeRelease({ version, sourceSha, previous, selectedComponents = RELEASE_COMPONENTS, runtimePin, startedAt = now() }) {
   validateReleaseIdentity(version, sourceSha);
   const selected = new Set(selectedComponents);
   selected.forEach(assertComponent);
-  if (retry) {
-    validateReleaseIdentity(retry.version, retry.sourceSha);
-    if (retry.version !== version || retry.sourceSha !== sourceSha) fail(`retry identity ${retry.version}@${retry.sourceSha} does not match ${version}@${sourceSha}`);
-    const resumed = structuredClone(retry);
-    resumed.firstStartedAt ??= resumed.startedAt;
-    resumed.startedAt = startedAt;
-    resumed.state = 'planned';
-    resumed.delivery = { state: 'pending' };
-    resumed.updatedAt = startedAt;
-    return resumed;
-  }
   if (previous?.sourceSha === sourceSha) {
     if (previous.version !== version) fail(`sha ${sourceSha} is already assigned to ${previous.version}, not ${version}`);
     const supplemental = previous.state === 'delivered' ? RELEASE_COMPONENTS.filter((component) => {
@@ -507,7 +457,7 @@ export function markComponentStage(state, component, stage, identity = state, ar
   return state;
 }
 
-export function retryPlan(state) {
+export function pendingComponents(state) {
   currentRelease(state);
   return Object.fromEntries(RELEASE_COMPONENTS.map((component) => {
     const entry = componentEntry(state, component);
@@ -567,7 +517,7 @@ export function releasePlanSummary(state) {
       const entry = componentEntry(state, component);
       return [component, `${entry.version}@${entry.sourceSha} (${entry.artifactRef})`];
     })),
-    retry: retryPlan(state),
+    run: pendingComponents(state),
   };
 }
 
@@ -576,12 +526,12 @@ export function releasePlanSummary(state) {
 const COMPONENT_JOBS = {
   server: ['server'],
   helper: ['helper'],
-  'mobile-ota': ['mobile_ota', 'mobile_ota_after_native'],
+  'mobile-ota': ['mobile_ota', 'mobile_ota_after_proof'],
   desktop: ['desktop_installers'],
   website: ['website'],
 };
 const ARTIFACT_PREFIX = {
-  server: 'server-artifact', helper: 'daemon-artifact', 'mobile-ota': 'mobile-ota-promoted',
+  server: 'server-artifact', helper: 'daemon-artifact', 'mobile-ota': 'mobile-ota-release',
   'mobile-native': 'mobile-native', desktop: 'beeline-desktop-release', website: 'website',
 };
 
@@ -597,14 +547,7 @@ export function checkpointsFromJobs(needs, { version, sourceSha, releaseId }) {
   for (const [component, jobs] of Object.entries(COMPONENT_JOBS)) {
     if (plan[`run_${component.replace('-', '_')}`] !== 'true') continue;
     const job = jobs.find(succeeded);
-    if (!job) {
-      // An unfinished OTA that already reached production is recorded as
-      // promoted, so a pinned recovery only recovers that exact promotion.
-      if (jobs.some((name) => needs[name]?.outputs?.promote_started === 'true')) {
-        checkpoints.push({ ...checkpoint(component), state: 'promoted' });
-      }
-      continue;
-    }
+    if (!job) continue;
     const completedAt = Number(needs[job].outputs?.completed_at);
     checkpoints.push(checkpoint(component, Number.isFinite(completedAt) && completedAt > 0 ? { completedAt } : {}));
   }
@@ -612,6 +555,107 @@ export function checkpointsFromJobs(needs, { version, sourceSha, releaseId }) {
     plan[`native_${platform}`] !== 'true' || succeeded(`mobile_native_${platform}`));
   if (plan.run_mobile_native === 'true' && native) checkpoints.push(checkpoint('mobile-native'));
   return checkpoints;
+}
+
+const FLY_IMAGE = /^registry\.fly\.io\/[a-z0-9-]+:[A-Za-z0-9._-]+$/;
+const OTA_BRANCH = /^(?:release-[A-Za-z0-9._-]+|production)$/;
+
+function parseJsonOutput(value, label) {
+  if (!value) return undefined;
+  try { return JSON.parse(value); } catch { fail(`${label} is not JSON`); }
+}
+
+/**
+ * Folds what each finished job reported through its job outputs into the
+ * release record: the server image (and the image it replaced), the phone OTA
+ * branch, and any store build numbers. Job outputs live only inside this run;
+ * the record is the one thing the next run reads.
+ */
+export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {}) {
+  currentRelease(state);
+  const server = state.components.server;
+  const serverOutputs = needs?.server?.outputs ?? {};
+  if (server.selected && server.state === 'checked') {
+    if (!FLY_IMAGE.test(serverOutputs.image_ref ?? '')) fail('the server job reported no image');
+    server.imageRef = serverOutputs.image_ref;
+    // Rollback returns to the previous published release's image, never to
+    // whatever the fleet ran before: that may be an attempt that deployed and
+    // then failed elsewhere. Only a migrated record, which names no image,
+    // falls back to the image the fleet replaced.
+    const usable = (ref) => (FLY_IMAGE.test(ref ?? '') && ref !== server.imageRef ? ref : undefined);
+    server.previousImageRef = usable(previous?.components?.server?.imageRef)
+      ?? usable(serverOutputs.previous_image_ref)
+      ?? usable(previous?.components?.server?.previousImageRef);
+  }
+  const ota = state.components['mobile-ota'];
+  if (ota.selected && ota.state === 'checked') {
+    const job = ['mobile_ota', 'mobile_ota_after_proof'].find((name) => needs?.[name]?.result === 'success');
+    const outputs = needs[job].outputs ?? {};
+    if (!OTA_BRANCH.test(outputs.ota_branch ?? '')) fail('the mobile OTA job reported no branch');
+    ota.otaBranch = outputs.ota_branch;
+    ota.previousOtaBranch = previous?.components?.['mobile-ota']?.otaBranch ?? 'production';
+    if (ota.previousOtaBranch === ota.otaBranch) ota.previousOtaBranch = previous?.components?.['mobile-ota']?.previousOtaBranch;
+    ota.otaTargets = (outputs.ota_targets ?? '').split(',').filter(Boolean);
+    const storeRuntime = parseJsonOutput(outputs.store_runtime, 'store_runtime');
+    if (storeRuntime) state.storeRuntime = { ...state.storeRuntime, previouslyLive: storeRuntime.previouslyLive ?? [] };
+  }
+  // Store builds this release uploaded become known OTA runtimes once live.
+  const builds = [...(previous?.storeRuntime?.builds ?? [])];
+  for (const [platform, job, key] of [['android', 'mobile_native_android', 'version_code'], ['ios', 'mobile_native_ios', 'build_number']]) {
+    const buildNumber = needs?.[job]?.result === 'success' ? needs[job].outputs?.[key] : '';
+    if (!buildNumber || !/^\d+$/.test(runtimePins[platform] ?? '')) continue;
+    if (!builds.some((build) => build.platform === platform && String(build.buildNumber) === String(buildNumber))) {
+      builds.push({ platform, buildNumber: String(buildNumber), runtimeVersion: runtimePins[platform], evidence: `${state.version} (${state.sourceSha})` });
+    }
+  }
+  state.storeRuntime = {
+    builds,
+    previouslyLive: state.storeRuntime?.previouslyLive ?? previous?.storeRuntime?.previouslyLive ?? [],
+  };
+  state.updatedAt = now();
+  return state;
+}
+
+/** The state without its changed-path lists, small enough for a job output. */
+export function compactState(state) {
+  const compact = structuredClone(state);
+  if (compact.plan) {
+    delete compact.plan.paths;
+    delete compact.plan.componentPaths;
+  }
+  return compact;
+}
+
+/** The initialize job's outputs: one line each, the state as compact JSON. */
+export function planOutputs(state, previous) {
+  const plan = state.plan;
+  const lines = [
+    `release_state=${JSON.stringify(compactState(state))}`,
+    `ota_memory=${JSON.stringify(otaMemory(previous))}`,
+    `previous_record=${previous ? JSON.stringify(compactState(previous)) : ''}`,
+    `no_op=${state.state === 'delivered'}`,
+    `runtime_pin_changed=${plan.runtimePinChanged ?? false}`,
+    `desktop_version=${state.components.desktop.desktopVersion}`,
+    ...['android', 'ios'].map((platform) => `native_${platform}=${(plan.nativePlatforms ?? ['android', 'ios']).includes(platform)}`),
+    ...Object.entries(pendingComponents(state)).map(([component, run]) => `run_${component.replace('-', '_')}=${run}`),
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
+/** What the OTA leg needs from the previous release: no file, a job output. */
+export function otaMemory(previous) {
+  const ota = previous?.components?.['mobile-ota'];
+  return {
+    builds: previous?.storeRuntime?.builds ?? [],
+    previouslyLive: previous?.storeRuntime?.previouslyLive ?? [],
+    ...(ota?.otaTargets?.length ? {
+      previousTargets: ota.otaTargets.map((key) => {
+        const [platform, runtimeVersion] = key.split('@');
+        return { platform, runtimeVersion };
+      }),
+    } : {}),
+    previousBranch: ota?.otaBranch ?? 'production',
+  };
 }
 
 export async function notifyRelease({
@@ -659,13 +703,6 @@ function identityFromOptions(args) { return { version: args.version, sourceSha: 
 async function main(argv) {
   const args = options(argv);
   const command = args._[0];
-  if (command === 'release-version') {
-    const previous = args.previous ? readJson(args.previous) : undefined;
-    const reservedVersions = args['reserved-versions']
-      ? readFileSync(args['reserved-versions'], 'utf8').split(/\r?\n/).filter(Boolean) : [];
-    process.stdout.write(`${previous ? releaseVersionForSource(previous, args.sha, reservedVersions) : nextReleaseVersion(undefined, reservedVersions)}\n`);
-    return;
-  }
   if (command === 'component-paths') {
     const previous = args.previous ? readJson(args.previous) : fail('missing previous release');
     const componentPaths = changedPathsFromPublishedInputs(previous, args.sha);
@@ -678,25 +715,28 @@ async function main(argv) {
   }
   if (command === 'plan') {
     const previous = args.previous ? readJson(args.previous) : undefined;
-    const retry = args.retry ? readJson(args.retry) : undefined;
     const paths = args.paths ? readFileSync(args.paths, 'utf8').split(/\r?\n/).map((path) => path.trim()).filter(Boolean) : [];
     const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
     const selection = args.selection ?? 'auto';
     const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
-    const allowPinRestore = args['allow-pin-restore'] === 'true';
     const desktopLagSeconds = previous && componentPaths ? desktopLagFromPublishedInputs(previous, args.sha) : 0;
-    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', runtimePin, allowPinRestore, desktopLagSeconds };
+    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', desktopLagSeconds };
     const selectedComponents = componentPaths
       ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
       : selectReleaseComponents(paths, selectOptions);
-    const state = initializeRelease({ ...identityFromOptions(args), previous, retry, selectedComponents, runtimePin });
+    const state = initializeRelease({ ...identityFromOptions(args), previous, selectedComponents, runtimePin });
     state.plan.paths = paths;
     if (componentPaths) state.plan.componentPaths = componentPaths;
     state.plan.selection = selection;
-    if (allowPinRestore && runtimePin?.changed) state.plan.pinRestore = true;
+    if (runtimePin?.changed && !selectedComponents.includes('mobile-native')) {
+      // The new runtime has no store binary yet; the OTA still reaches every
+      // runtime live in the stores, and the new one waits for a store release.
+      console.log(`::notice title=Runtime pin changed without a store release::${runtimePin.changedPlatforms.map((platform) => `${platform} ${runtimePin.previous[platform]} -> ${runtimePin.next[platform]}`).join(', ')}; the OTA targets the live store runtimes and the new runtime waits for a store release`);
+    }
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
     else console.log(JSON.stringify(releasePlanSummary(state)));
+    if (args.outputs) appendFileSync(args.outputs, planOutputs(state, previous));
     return;
   }
   if (command === 'notify') {
@@ -752,21 +792,6 @@ async function main(argv) {
     if (!verdict.clean) process.exitCode = 1;
     return;
   }
-  if (command === 'server-ledger') {
-    const plan = readJson(args.plan);
-    writeJson(args.output, createServerImageLedger({
-      ...identityFromOptions(args), plan, state: args['ledger-state'] ?? 'prepared',
-    }));
-    return;
-  }
-  if (command === 'server-rollback-image') {
-    const imageRef = selectServerRollbackImage({
-      explicitImageRef: args.image,
-      ledger: args.ledger ? readJson(args.ledger) : undefined,
-    });
-    process.stdout.write(`${imageRef}\n`);
-    return;
-  }
   if (command === 'job-checkpoints') {
     const checkpoints = checkpointsFromJobs(readJson(args.needs), {
       ...identityFromOptions(args), releaseId: args['release-id'],
@@ -775,6 +800,14 @@ async function main(argv) {
     return;
   }
   const state = readJson(args.state);
+  if (command === 'apply-facts') {
+    applyJobFacts(state, readJson(args.needs), {
+      previous: args.previous ? readJson(args.previous) : undefined,
+      runtimePins: args.pins ? runtimeVersionsFromConfig(readJson(args.pins)) : {},
+    });
+    writeJson(args.state, state);
+    return;
+  }
   if (command === 'apply-checkpoints') {
     const checkpoints = args.checkpoints ? readJson(args.checkpoints) : fail('missing checkpoints file');
     if (!Array.isArray(checkpoints)) fail('checkpoints file must contain an array');
@@ -789,7 +822,7 @@ async function main(argv) {
     writeJson(args.state, state);
     return;
   }
-  fail('Usage: unified-release.mjs <release-version|component-paths|plan|job-checkpoints|classify-attempt|server-deploy-plan|server-canary-sample|server-canary-promotion|server-ledger|server-rollback-image|apply-checkpoints|finalize|notify>');
+  fail('Usage: unified-release.mjs <component-paths|plan|job-checkpoints|classify-attempt|server-deploy-plan|server-canary-sample|server-canary-promotion|apply-facts|apply-checkpoints|finalize|notify>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

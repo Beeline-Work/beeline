@@ -124,7 +124,10 @@ export async function reclaimExpiredCommandLeases(
         `UPDATE agent_turns SET status='failed',
            failure_reason='the command lease expired with no live execution',created_at=now()
          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
-           AND generation_id IS NOT DISTINCT FROM $4`,
+           AND generation_id IS NOT DISTINCT FROM $4
+           AND NOT EXISTS(SELECT 1 FROM agent_commands active WHERE active.room_id=$1
+             AND active.agent_id=$2 AND active.turn_request_id=$3
+             AND active.state='claimed' AND active.lease_expires_at>now())`,
         [command.room_id, command.agent_id, command.turn_request_id, command.generation_id],
       );
       await closeFreeAgentTurn(db, { roomId: command.room_id, agentId: command.agent_id,
@@ -142,7 +145,43 @@ export async function reclaimExpiredCommandLeases(
       agentId: command.agent_id,
     });
   }
-  return terminated;
+  // Completed commands no longer enter the lease sweep. Repair their orphaned
+  // turns without an age cutoff, including generations left by older helpers.
+  // Give terminal receipts the same grace as an expired lease.
+  const repaired = await database.transaction(async db => {
+    const commands = await db.query<{ id: string; generation_id: string | null }>(`SELECT command.id,orphan.generation_id FROM agent_turns orphan
+      JOIN agent_commands command ON command.room_id=orphan.room_id AND command.agent_id=orphan.agent_id
+        AND command.turn_request_id=orphan.request_id
+      WHERE orphan.status='working' AND command.state='complete' AND command.action IN ('input','resume')
+        AND COALESCE(command.completed_at,command.created_at)<now()-make_interval(secs => $1::double precision/1000)
+        AND NOT EXISTS(SELECT 1 FROM agent_commands active WHERE active.room_id=orphan.room_id
+          AND active.agent_id=orphan.agent_id AND active.turn_request_id=orphan.request_id
+          AND active.state='claimed' AND active.lease_expires_at>now())
+      ORDER BY command.completed_at NULLS FIRST LIMIT 200 FOR UPDATE OF command SKIP LOCKED`, [graceMs]);
+    const rows: { room_id: string; agent_id: string }[] = [];
+    for (const command of commands.rows) {
+      // Serialize with claims and heartbeats for every command sharing this
+      // request before checking for live execution in the next snapshot.
+      await db.query(`SELECT id FROM agent_commands WHERE room_id=(SELECT room_id FROM agent_commands WHERE id=$1)
+        AND agent_id=(SELECT agent_id FROM agent_commands WHERE id=$1)
+        AND turn_request_id=(SELECT turn_request_id FROM agent_commands WHERE id=$1)
+        ORDER BY id FOR UPDATE`, [command.id]);
+      const changed = await db.query<{ room_id: string; agent_id: string }>(`UPDATE agent_turns turn
+        SET status='failed',failure_reason='the command completed without a terminal turn receipt',created_at=now()
+        FROM agent_commands command WHERE command.id=$1 AND command.state='complete'
+          AND turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+          AND turn.request_id=command.turn_request_id AND turn.status='working'
+          AND turn.generation_id IS NOT DISTINCT FROM $2
+          AND NOT EXISTS(SELECT 1 FROM agent_commands active WHERE active.room_id=turn.room_id
+            AND active.agent_id=turn.agent_id AND active.turn_request_id=turn.request_id
+            AND active.state='claimed' AND active.lease_expires_at>now())
+        RETURNING turn.room_id,turn.agent_id`, [command.id,command.generation_id]);
+      rows.push(...changed.rows);
+    }
+    return rows;
+  });
+  for (const turn of repaired) live.publish({type:'invalidate',roomId:turn.room_id,agentId:turn.agent_id,reason:'turn'});
+  return terminated + repaired.length;
 }
 
 /** A delivered done report discharges this execution even if its final receipt was lost. */

@@ -7,6 +7,7 @@ import { ConnectionPresence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import type { CommittedTurnLiveRow } from './live.js';
 import { noteFirstSilence, reclaimExpiredCommandLeases } from './turn-silence-notice.js';
+import { PhoneService } from './phone-service.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { repositoryCacheDamagedFault } from '@beeline/api-contract/daemon';
 
@@ -1172,6 +1173,43 @@ describe('expired command lease sweep', () => {
   });
   afterEach(async () => {
     await database.close();
+  });
+
+  it.each(['g1','retired-generation'])('Reproduction stuck-turn-1: clears an old working corner turn whose command is complete (%s)', async generation => {
+    const requestId = 'e'.repeat(64);
+    const command = await ask(database, requestId);
+    await database.query(`INSERT INTO corner_facts(corner_id,lifecycle) VALUES($1,'{"lifecycle":"working"}')`, [ROOM]);
+    await database.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '2 days',
+      lease_expires_at=now()-interval '2 days' WHERE id=$1`, [command.id]);
+    await database.query(`UPDATE agent_turns SET created_at=now()-interval '2 days',generation_id=$2 WHERE request_id=$1`, [requestId,generation]);
+    const parent = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Parent')`, [parent, WORKSPACE]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'owner')`, [WORKSPACE,parent,HUMAN]);
+    await database.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [ROOM,parent]);
+    const phone = new PhoneService(database, new LiveHub());
+    const state = async () => (await phone.readCorners(parent,HUMAN))!.corners.find(c => c.corner.id===ROOM)!.state;
+    expect(await state()).toBe('working');
+    expect(await reclaimExpiredCommandLeases(database, new LiveHub())).toBe(1);
+    expect((await database.query(`SELECT status,failure_reason FROM agent_turns WHERE request_id=$1`, [requestId])).rows)
+      .toEqual([{status:'failed',failure_reason:'the command completed without a terminal turn receipt'}]);
+    expect(await state()).not.toBe('working');
+    expect(await reclaimExpiredCommandLeases(database, new LiveHub())).toBe(0);
+  });
+
+  it('protects a live successor lease from reconciliation of an older completed command', async () => {
+    const requestId = 'f'.repeat(64);
+    const command = await ask(database, requestId);
+    await database.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '2 days' WHERE id=$1`, [command.id]);
+    const source = 'a'.repeat(63)+'f';
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'resume')`, [source,ROOM,HUMAN]);
+    const successor = await createAgentCommand(database, {roomId:ROOM,agentId:AGENT,sourceMessageId:source,
+      action:'resume',reason:'resume',turnRequestId:requestId});
+    await claimAgentCommand(database,ROOM,AGENT,successor!.id,'live-successor');
+    await database.query(`UPDATE agent_turns SET created_at=now()-interval '2 days' WHERE request_id=$1`, [requestId]);
+    expect(await reclaimExpiredCommandLeases(database, new LiveHub())).toBe(0);
+    expect((await database.query(`SELECT status,generation_id FROM agent_turns WHERE request_id=$1`, [requestId])).rows)
+      .toEqual([{status:'working',generation_id:'live-successor'}]);
   });
 
   it('terminates a long-expired claim with no human trigger, which noteFirstSilence cannot reach', async () => {

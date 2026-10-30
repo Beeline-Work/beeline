@@ -2551,3 +2551,14 @@ it.each([
   await expect(daemon.execute('postAgentActivity', { ...input,
     activity: [{ ...activity[0]!, output: 'different output' }] }, A)).rejects.toThrow('conflicts');
 });
+
+it('stuck-turn-1: a completion receipt closes a working turn even when its command already completed', async () => {
+  await send('@hoots complete the work', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command!.id]);
+  await daemon.execute('postAgentTurnReceipt', {roomId:C, requestId:command!.turnRequestId,
+    generationId:'g1',status:'complete'}, A);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+    [C,command!.turnRequestId,A])).rows).toEqual([{status:'complete'}]);
+});

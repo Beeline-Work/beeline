@@ -1,4 +1,4 @@
-# TEMPORARY proof for the release-pipeline corner; removed before merge.
+# TEMPORARY proof for the release-pipeline corner; removed before merge (attempt 2).
 # Exercises the new phone OTA path against TEST EAS channels and branches only
 # (never `production`, never `beta`), plus the release identity/plan and the
 # server reconcile plan as dry runs. Nothing here deploys or releases.
@@ -110,6 +110,9 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
+          # Same as the release leg: Metro's cache must not land in a shared /tmp.
+          TMPDIR="$(mktemp -d)"
+          export TMPDIR
           sha=$(git rev-parse HEAD)
           branch="release-proof-${sha:0:12}-a"
           node scripts/ota-release.mjs publish --sha "$sha" --branch "$branch" --channel release-proof-beta \
@@ -120,6 +123,9 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
+          # Same as the release leg: Metro's cache must not land in a shared /tmp.
+          TMPDIR="$(mktemp -d)"
+          export TMPDIR
           sha=$(git rev-parse HEAD)
           branch="release-proof-${sha:0:12}-b"
           count() { "$EAS_CLI_PATH" update:list --branch "$branch" --limit 50 --json --non-interactive 2>/dev/null \
@@ -151,6 +157,9 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
+          # Same as the release leg: Metro's cache must not land in a shared /tmp.
+          TMPDIR="$(mktemp -d)"
+          export TMPDIR
           sha=$(git rev-parse HEAD)
           a="release-proof-${sha:0:12}-a"
           b="release-proof-${sha:0:12}-b"

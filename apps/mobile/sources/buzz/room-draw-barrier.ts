@@ -11,11 +11,6 @@ let drawnNewest: string | undefined;
 let roomId: string | undefined;
 let visibleIds = new Set<string>();
 let releaseScheduled = false;
-let afterTransition: (visit: number, work: () => void) => void = (_visit, work) => work();
-
-export function configureRoomDrawScheduler(schedule: typeof afterTransition): void {
-  afterTransition = schedule;
-}
 
 export function beginRoomDraw(id?: string): void {
   generation += 1;
@@ -79,12 +74,9 @@ export function finishRoomDraw(newest?: string, id?: string): void {
     release = undefined;
     resolve?.();
   };
-  // Wait for visible content and native navigation, then leave a frame-commit
-  // margin before optional work competes with that frame.
-  afterTransition(current, () => {
-    if (current !== generation || !pending) return;
-    if (!scheduleAnimationFrame(() => { if (!scheduleAnimationFrame(finish)) finish(); })) finish();
-  });
+  // Visible rows establish readiness; leave a frame-commit margin without
+  // waiting on interaction handles that can survive an interrupted transition.
+  if (!scheduleAnimationFrame(() => { if (!scheduleAnimationFrame(finish)) finish(); })) finish();
 }
 
 export function waitForRoomDraw(signal?: AbortSignal | null): Promise<void> | undefined {

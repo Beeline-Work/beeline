@@ -1,12 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { abandonRoomDraw, beginRoomDraw, finishRoomDraw, isOptionalRoomRequest,
-  configureRoomDrawScheduler, observeVisibleRoomRows, openingRoomResponseReady,
+  observeVisibleRoomRows, openingRoomResponseReady,
   requireOpeningRoomResponse, roomDrawGeneration, waitForRoomDraw } from './room-draw-barrier';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   abandonRoomDraw(roomDrawGeneration());
-  configureRoomDrawScheduler((_visit, work) => work());
 });
 
 it('a failed opening response never releases work before a frame', async () => {
@@ -94,23 +93,19 @@ it('holds all optional requests until after the Room frame and releases together
   expect(isOptionalRoomRequest('https://test/v1/phone/operations/sendRoomMessage')).toBe(false);
 });
 
-it('requires the current Room viewport and waits for navigation before the commit margin', async () => {
+it('requires the current Room viewport before the commit margin', async () => {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
-  let settled: (() => void) | undefined;
-  configureRoomDrawScheduler((_visit, work) => { settled = work; });
   beginRoomDraw('current');
   const sent = vi.fn();
   const waiting = waitForRoomDraw()!.then(sent);
   finishRoomDraw('row', 'previous');
   observeVisibleRoomRows('previous', ['row']);
-  expect(settled).toBeUndefined();
-  finishRoomDraw('row', 'current');
-  expect(settled).toBeUndefined();
-  observeVisibleRoomRows('current', ['row']);
-  expect(settled).toBeTypeOf('function');
   expect(frames).toHaveLength(0);
-  settled!();
+  finishRoomDraw('row', 'current');
+  expect(frames).toHaveLength(0);
+  observeVisibleRoomRows('current', ['row']);
+  expect(frames).toHaveLength(1);
   frames.shift()!(0);
   await Promise.resolve();
   expect(sent).not.toHaveBeenCalled();

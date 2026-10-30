@@ -365,6 +365,89 @@ describe('deleteAccount', () => {
     expect(await auth.authenticatePhone(ownerToken)).toBeNull();
   });
 
+  it('clears every non-cascading reference to identities (R-ACCOUNT-FKS)', async () => {
+    // Each foreign key to identities that neither cascades nor sets null must
+    // be cleared by deleteAccount before the identity row goes; otherwise the
+    // delete fails for any account with such a row. A new foreign key fails
+    // here until deleteAccount handles it and it is listed below.
+    const handled = [
+      'agent_commands.agent_id', 'agent_grants.decided_by', 'agent_grants.requested_by',
+      'agent_mandates.agent_id', 'agent_pairing_codes.claimed_by',
+      'agent_pairing_codes.created_by', 'agent_schedules.agent_id',
+      'agent_schedules.creator_id', 'agent_schedules.owner_id', 'agent_schedules.updated_by',
+      'agent_turn_traces.agent_id', 'agent_turns.agent_id', 'agents.owner_id',
+      'computer_sessions.agent_id', 'connector_offers.accepted_by',
+      'corner_app_bindings.bound_by', 'corner_app_installations.developer_agent_id',
+      'corner_app_installations.installed_by', 'corner_apps.author_agent_id',
+      'corner_brief_revisions.author_id', 'corner_facts.commissioned_by',
+      'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
+      'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',
+      'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
+      'corner_merge_holds.set_by_agent_id', 'corner_validation_stages.actor_id',
+      'free_agents.owner_id', 'github_installations.owner_id',
+      'identity_successions.new_identity_id', 'identity_successions.old_identity_id',
+      'invites.created_by', 'live_outputs.agent_id', 'messages.author_id',
+      'messages.deleted_by', 'mission_authority.principal_id', 'objects.owner_id',
+      'permission_authority.principal_id', 'rooms.created_by', 'rooms.reviewer_agent_id',
+      'schedule_receipts.agent_id', 'starter_onboarding_runs.beebee_id',
+      'starter_onboarding_runs.luna_id', 'starter_onboarding_runs.user_id',
+      'work_schedules.agent_id', 'workflow_owner_transfers.actor_id',
+      'workflow_owner_transfers.new_owner_id', 'workflow_owner_transfers.previous_owner_id',
+      'workspace_deletions.deleted_by', 'workspace_skills.creator_agent_id',
+      'workspace_skills.owner_agent_id',
+    ];
+    const references = await database.query<{ reference: string }>(
+      `SELECT c.conrelid::regclass::text||'.'||a.attname AS reference
+       FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1]
+       WHERE c.contype='f' AND c.confrelid='identities'::regclass AND c.confdeltype IN ('a','r')
+       ORDER BY 1`,
+    );
+    expect(references.rows.map((row) => row.reference)).toEqual([...handled].sort());
+    // Nothing reached through a cascade from identities is itself held by a
+    // non-cascading reference.
+    const indirect = await database.query(
+      `WITH RECURSIVE reached(tbl) AS (
+         SELECT 'identities'::regclass
+         UNION SELECT c.conrelid FROM pg_constraint c JOIN reached ON c.confrelid=reached.tbl
+         WHERE c.contype='f' AND c.confdeltype='c')
+       SELECT c.conname FROM pg_constraint c
+       WHERE c.contype='f' AND c.confdeltype IN ('a','r') AND c.confrelid<>'identities'::regclass
+         AND c.confrelid IN (SELECT tbl FROM reached)`,
+    );
+    expect(indirect.rows).toEqual([]);
+  });
+
+  it('keeps shared corner records under the tombstone and releases the account\'s merge holds', async () => {
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
+    await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
+    await database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'brief',$2,$3)`,
+      [CORNER, AGENT, ROOM],
+    );
+    await database.query(
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`,
+      [CORNER, OWNER],
+    );
+
+    await phone.execute('deleteAccount', {}, OWNER);
+
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND reviewer_agent_id IS NULL`, [ROOM], 1);
+    await expectRowCount(`SELECT 1 FROM messages WHERE id='m3' AND deleted_by=$1`, [DELETED_ACCOUNT_IDENTITY_ID], 1);
+    await expectRowCount(
+      `SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1 AND author_id=$2 AND content='brief'`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+    await expectRowCount(
+      `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND actor_id=$2
+         AND released_by=$2 AND released_at IS NOT NULL`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+      1,
+    );
+  });
+
   it('is idempotent: a second call resolves without effect', async () => {
     await phone.execute('deleteAccount', {}, OWNER);
     await expect(phone.execute('deleteAccount', {}, OWNER)).resolves.toBeUndefined();

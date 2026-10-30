@@ -1,4 +1,5 @@
 import { appErrorCopy } from '@/buzz/app-error-copy';
+import { reportClientError } from '@/buzz/client-error-report';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
@@ -257,7 +258,10 @@ export default function BuzzIdentitySettings() {
       ]);
       clearMobileSurfaceStorage();
       router.replace('/beeline/onboarding');
-    } catch {
+    } catch (error) {
+      // Keep the friendly copy, but record the real cause for diagnosis.
+      console.warn('[ACCOUNT] Delete account failed:', error);
+      void reportClientError('app', error);
       setError('Could not delete the account. Check your connection and try again.');
       setDeleteBusy(false);
     }

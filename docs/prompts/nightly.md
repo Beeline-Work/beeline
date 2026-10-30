@@ -1,20 +1,87 @@
-# Weekly prompt optimization
+# Nightly prompt improvement
 
-The replay runs weekly on squire, Sundays at **04:00 America/New_York**
-(`0 4 * * 0`). The Beeline scheduler owns DST conversion. Its surviving Room
-schedule is `ea5594a0-42ec-49dd-8957-5582216ebedd` in #beeline
-(`bb91a1c7-7cad-4fde-aafc-94fccb651ac8`), so archiving this implementation corner
-will not cancel it. The old corner schedule
-`e4ef62d4-6277-46cf-aa2c-fdc00912fdd7` was deleted to avoid duplicate runs.
+The replay runs nightly on squire at **04:00 America/New_York** (`0 4 * * *`)
+until the baseline pass rate is at least 90% on both tested models. The Beeline
+scheduler owns DST conversion. Its surviving Room schedule is
+`ea5594a0-42ec-49dd-8957-5582216ebedd` in #beeline
+(`bb91a1c7-7cad-4fde-aafc-94fccb651ac8`), so archiving an implementation corner
+will not cancel it.
 
-The weekly cadence was approved by lunchboxfortwo and relayed through Ruby.
-Ruby confirmed the surviving Room schedule is weekly, with its next run on
-Sunday 2026-10-25, 04:00 EDT / 08:00 UTC. Both corner schedule-list reads
-returned `schedules: []`; there is no remaining corner copy.
+lunchboxfortwo asked for this loop: raise the baseline with audited prompt
+fixes instead of random paragraph removal, test each fix on a small and a large
+model, and keep it only when the gain justifies its tokens. They delegated the
+trade-off rule and the after-90% behavior to Ruby (D1 and D2 below).
 
 The schedule uses the owner's OpenRouter key through vault `use_credential`;
-no Actions secret or exported key is needed. The GitHub replay workflow was removed.
-Keep the schedule, model and budget caps unchanged. The controller owns the measurement rules below.
+no Actions secret or exported key is needed.
+
+## Models and caps
+
+Every arm replays on both models, called directly through OpenRouter:
+
+- `openai/gpt-6-luna` — small (Baby's model)
+- `openai/gpt-6.1-sol` — large (Speedy's model)
+
+`--models` overrides the list; the default is both. gpt-6.1-sol rejects
+disabled reasoning, so it runs with `reasoning: { effort: "low" }`; other models
+run with reasoning disabled. OpenAI rejects strict schemas with free-form tool
+arguments, so the response format is sent with `strict: false`; the controller
+still validates every answer strictly and never repairs it. The run never orders Baby or
+Speedy. A response whose `model` differs from the requested model is
+`incomplete` for that model only. The production free-agent model
+(`apps/server/src/free-agents.ts`) is not changed and is not one of the tested
+models.
+
+One ledger caps the whole run across both models: **15 million tokens and $12**
+by default (`--token-cap`, `--cost-cap`). Expect about $8–12 per night while the
+baseline is below 90%. Never raise caps silently.
+
+## Nightly steps
+
+1. **Audit.** Read the previous run's `result.json`. For each model, list the
+   failing cases (baseline rows with `pass: false`) and their sample transcripts.
+   Group failures by cause, not by case. Write one targeted patch to the prompt
+   sources (`apps/body/src/**` or `apps/server/src/free-agents.ts`) that states
+   a general rule fixing the largest cause group. Never copy case text, names or
+   expected answers into the prompt. Write `audit.md` beside the patch: each
+   failing case, its cause group, and the expected fix (or "not addressed").
+   Do not change saved cases or pass rules.
+2. **Replay.** Run the controller with `--candidate-patch`. It applies the patch
+   in a temporary tree and replays baseline, unchanged control and candidate on
+   each model with the same fixed seeds. A patch touching any other path, or a
+   binary change, is rejected before any paid request.
+3. **Decide (D1).** The controller keeps the candidate only if all hold:
+   - pooled over both models' paired samples, the candidate beats baseline and
+     the unchanged control in one-sided exact paired sign tests (each p < 0.025);
+   - on neither model do losses exceed gains;
+   - on each model, median tokens per turn grow at most 2% per percentage point
+     of pooled pass-rate gain (`100 × (gains − losses) / paired samples`), and
+     never more than 10% per run. Fewer tokens is always allowed.
+4. **Propose.** On acceptance the controller writes `candidate.patch` and
+   `proposal.md` (per-model before/after pass rates, gains, losses and median
+   tokens). Open a normal repository corner from them, with `audit.md` in the
+   brief. Normal independent review and merge gates apply; nothing auto-merges.
+   The reviewer checks that the patch states a general rule, not case text.
+   Tomorrow's baseline uses the improved prompt once it merges.
+
+Without `--candidate-patch` and with any model below 90%, the run measures
+baseline and control only and records `experiment: skipped: no audit candidate`.
+
+## After 90% on both models (D2)
+
+When the current baseline is at least 90% on both models and no patch is given,
+the run uses the paragraph-removal (shortening) mode below, and acceptance also
+requires both models' candidate pass rates to stay at or above 90%. Shortening
+runs weekly: when the latest complete run reached the floor and a shortening
+experiment ran within the last seven days, the controller exits with
+`skipped: weekly shortening not due` and spends no tokens. An audit patch is
+still replayed on any night it is given. If a baseline falls below 90%, the
+nightly audit loop resumes.
+
+The floor counts only a fully scored cohort: every eligible case must have all
+its samples scored on every model. A run with any unscored or format-invalid case
+on a model never reaches the floor, never selects shortening, and never counts
+toward the weekly skip, even if its scored cases all pass.
 
 ## Run
 
@@ -25,7 +92,8 @@ under the agent's persistent session home and one cumulative history file:
 node --import tsx scripts/prompt-nightly.mjs \
   --out "$HOME/prompt-nightly/<run>/result" \
   --exchange "$HOME/prompt-nightly/<run>/exchange" \
-  --history "$HOME/prompt-nightly/history.jsonl"
+  --history "$HOME/prompt-nightly/history.jsonl" \
+  --candidate-patch "$HOME/prompt-nightly/<run>/candidate.patch"
 ```
 
 The controller writes numbered `*.request.json` files. The answering Beeline
@@ -38,11 +106,8 @@ body atomically as the matching `*.response.json`. On refusal, return an explici
 `{"error":"<redacted reason>"}` response; never invent a model answer. Keep the
 controller running until it exits. Missing responses time out after three minutes.
 A fresh exchange directory prevents stale responses from being reused.
-
-The model comes from the production default in `apps/server/src/free-agents.ts`.
-If production overrides that default, reconcile before treating the measurements
-as production evidence. The job never changes the model. All model tool calls are
-simulations and must never be executed, including browser calls.
+All model tool calls are simulations and must never be executed, including
+browser calls.
 
 ## Cohort and measurements
 
@@ -77,11 +142,10 @@ after a success. Seeds aid pairing; they do not promise provider determinism.
 Each row reports behavior pass proportion and a Wilson 95% interval. With three
 samples these intervals are intentionally wide.
 
-Three samples increase the paired cohort to 219 samples per arm for the current
-73 eligible cases. The previous two-sample run cost $0.18 but used 3.69 million
-tokens; the unchanged six-million-token cap, rather than the dollar cap, limits
-sampling growth. Every run still stops within its existing reservations and
-lists all budget-limited samples explicitly.
+Three samples give 219 paired samples per arm per model for the current 73
+eligible cases (438 pooled). The last one-model run used 3.2 million tokens.
+Every run stops within its reservations and lists all budget-limited samples
+explicitly.
 
 Output uses a JSON schema response constraint and requires providers to support
 the requested parameters. Raw output is parsed strictly, without extracting or
@@ -100,18 +164,19 @@ truthfulness verdict; truthful inability is distinct from successful completion.
 Tokens include every continuation, and every round retains raw output, upstream
 response, usage and simulated results. The output ceiling remains 4,096 tokens.
 
-Four concurrent requests share a six-million-token/$3 cap. Before each request,
+Four concurrent requests per model share the run's token and dollar cap. Before each request,
 reserve UTF-8 input bytes plus maximum output as a conservative token bound and
 $0.10. Replace reservations with billed usage on response. A response costing more
 than its reservation can cross the dollar cap; the controller then stops. Never
-increase caps silently. Include incomplete costs in the weekly result.
+increase caps silently. Include incomplete costs in the result.
 
-## One removal experiment per weekly run
+## Shortening experiment (after 90%)
 
 Remove one complete literal paragraph from a render function in a temporary
 source copy. Failing eligible baseline cases and skipped browser cases protect
 their whole section, so unmeasured browser rules are not removal candidates. Rotate
-the next eligible paragraph using cumulative history. Structural validation must
+the next eligible paragraph using cumulative history. A case failing on either
+model protects its section. Structural validation must
 still pass for the entire library, including skipped cases. Replay every eligible
 case against the candidate. Retain rejected outcomes without changing prompts.
 
@@ -133,18 +198,22 @@ noise-dependent estimate as `detectableEffect`, floored at the six-gain threshol
 it assumes independent paired samples and comparable discordance across arms.
 Actual detectability depends on discordance and how gains distribute between
 cases; three samples cannot resolve tiny per-case effects.
-A proposal additionally requires no passing sample to regress and lower median
-tokens per turn. Safety/authority paragraphs are always protected. The controller
+These numbers are per model; pooling both models doubles the paired samples.
+A removal proposal additionally requires no passing sample to regress, lower
+pooled median tokens per turn, and both models at or above 90%. Safety/authority paragraphs are always protected. The controller
 writes `proposal.md` and candidate source only after these conditions hold.
 Open a normal repository corner/PR for a proposed removal under current work
 authority; normal independent review and merge gates still apply.
+The same paired tests apply to audit patches, pooled over both models, with D1
+replacing the removal-only conditions.
 
 ## Publish and retain
 
 Keep `result.json`, `summary.txt`, and cumulative `history.jsonl` under the session
 home. Post the result and history as artifacts in the schedule’s Room and publish exactly
 one summary line per run on the repository issue **Prompt nightly results**.
-The line includes eligible pass rate, skipped count, median tokens/turn, total
+The line names each model's baseline pass rate, the tested change and whether it
+was kept, plus the pooled pass rate, skipped count, median tokens/turn, total
 tokens/cost and experiment outcome. The saved 9am morning-card procedure reads
 the newest comment and artifact evidence. If publication fails, report that
 failure instead of claiming the digest has a result. Never treat stale output as
@@ -165,6 +234,19 @@ drop. Browser cases stay explicitly skipped until a separately authorized replay
 can exercise them. Structural validation alone does not prove model behavior.
 
 `npm run test:prompt-nightly` tests controls without spending model tokens.
+
+## Two-model result (schema version 3)
+
+Top-level `baseline`, `control` and `candidate` rows pool both models; each row
+has `model` and an id of `<model>:<case id>`, so pairing never crosses models.
+Top-level scoring fields (`passed`, `scoredCases`, `passRate`, ...) are pooled
+over both models; their denominator is eligible cases × models. History adds
+`floorReached` and `models: { <id>: { passed, scoredCases, passRate,
+medianTokensPerTurn, experiment } }`; `model` lists the models comma-separated.
+`experiment` adds `mode` (`audit`, `shorten` or `none`), the patch paths and
+sha256, D1 fields (`gainPoints`, `tokenAllowance`, `tokenGrowth`) and
+`perModel` gains, losses, tokens and pass rates. Every earlier top-level history
+field is kept, and older lines need no migration.
 
 ## Result and history compatibility
 
@@ -197,5 +279,5 @@ successful behavior or valid format; class counts retain that distinction.
 
 For a measurement repair proof, pass `--label "measurement-repair run"`, post
 result and summary in its implementation corner, and do not publish that run as
-a weekly score on the results issue. A partial run remains useful evidence when
+a nightly score on the results issue. A partial run remains useful evidence when
 its missing data and cost are explicit; it cannot propose a removal.

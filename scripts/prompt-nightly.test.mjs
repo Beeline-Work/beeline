@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue } from './prompt-nightly.mjs';
+import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue, DEFAULT_MODELS, decideCandidate, chooseMode, floorReached, weeklyShorteningSkip, validateCandidatePatch } from './prompt-nightly.mjs';
 import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
@@ -93,6 +94,7 @@ test('continues through skill and factual file reads to the final reply, retaini
   assert.ok(JSON.stringify(bodies[1]).includes('requested body'));
   assert.ok(!JSON.stringify(bodies).includes('private unread body'));
   assert.equal(bodies[0].response_format.type, 'json_schema');
+  assert.equal(bodies[0].response_format.json_schema.strict, false);
 });
 
 test('separates format, invalid tool behavior, transport, truncation, and missing scenario facts', async () => {
@@ -173,12 +175,14 @@ test('full runner retains old history and records every budget-limited sample as
     const result = await runNightly({ out: join(dir, 'out'), history, tokenCap: 1, costCap: 3,
       request: async () => { throw new Error('must not make a paid request'); } });
     assert.equal(result.status, 'incomplete');
-    assert.equal(result.baseline.length, result.eligibleCount);
-    assert.equal(result.classes.baseline.incomplete, result.eligibleCount * FIXED_SAMPLES);
-    assert.equal(result.classes.control.incomplete, result.eligibleCount * FIXED_SAMPLES);
+    // Both default models replay every arm under one shared ledger.
+    assert.deepEqual(Object.keys(result.models), DEFAULT_MODELS);
+    assert.equal(result.baseline.length, result.eligibleCount * DEFAULT_MODELS.length);
+    assert.equal(result.classes.baseline.incomplete, result.eligibleCount * FIXED_SAMPLES * DEFAULT_MODELS.length);
+    assert.equal(result.classes.control.incomplete, result.eligibleCount * FIXED_SAMPLES * DEFAULT_MODELS.length);
     const lines = readFileSync(history, 'utf8').trim().split('\n').map(JSON.parse);
     assert.deepEqual(lines[0], legacy);
-    assert.equal(lines[1].schemaVersion, 2);
+    assert.equal(lines[1].schemaVersion, 3);
     assert.equal(lines[1].classes.baseline.behavior, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -308,7 +312,7 @@ test('full runner excludes format-only and partially scored cases from summary a
     for (const mixed of [false, true]) {
       const out = join(dir, String(mixed));
       const history = join(out, 'history.jsonl');
-      const result = await runNightly({ out, history, request: async body => {
+      const result = await runNightly({ out, history, models: [model], request: async body => {
         const reply = response({ calls: [], text: '72' });
         reply.model = body.model;
         if (!mixed || body.seed !== 1000) reply.choices[0].message.content = '{broken';
@@ -342,7 +346,7 @@ test('full runner reports a behavioral rate only for fully scored cases in a mix
   const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-mixed-'));
   try {
     const history = join(dir, 'history.jsonl');
-    const result = await runNightly({ out: dir, history, request: async body => {
+    const result = await runNightly({ out: dir, history, models: [model], request: async body => {
       const reply = response({ calls: [], text: '72' });
       reply.model = body.model;
       if (!JSON.stringify(body.messages).includes('and what is 9 times 8?')) reply.choices[0].message.content = '{broken';
@@ -355,6 +359,153 @@ test('full runner reports a behavioral rate only for fully scored cases in a mix
     assert.equal(saved.unscoredCases, result.eligibleCount - 1);
     assert.equal(saved.passRate, 1);
     assert.equal(saved.overallPassRate, null);
-    assert.match(readFileSync(join(dir, 'summary.txt'), 'utf8'), /1\/1 behavior-scored cases passed \(100\.0%\); .*overall pass rate unavailable/);
+    assert.match(readFileSync(join(dir, 'summary.txt'), 'utf8'), /1\/1 pooled behavior-scored cases passed \(100\.0%\); .*overall pass rate unavailable/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('D1 keeps a candidate only for a pooled paired gain worth its token growth', () => {
+  const pooled = (gains, losses = 0) => ({ significant: true, gains, losses, pairedSamples: 400 });
+  const arm = (gains, losses, after) => ({ gains, losses, before: 100, after });
+  // 5 points pooled allows 10% growth; shrinking tokens is always allowed.
+  assert.equal(decideCandidate(pooled(20), { small: arm(10, 0, 105), large: arm(10, 0, 95) }).outcome, 'propose prompt change');
+  assert.match(decideCandidate(pooled(20, 1), { small: arm(18, 0, 100), large: arm(2, 3, 100) }).outcome, /losses exceed gains on large/);
+  // 2 points pooled allows only 4% growth.
+  const tooCostly = decideCandidate(pooled(8), { small: arm(4, 0, 105), large: arm(4, 0, 100) });
+  assert.equal(tooCostly.accepted, false);
+  assert.equal(tooCostly.tokenAllowance, 0.04);
+  assert.match(tooCostly.outcome, /token growth small 5\.0% above 4\.0% allowance/);
+  // 10 points would allow 20%, but growth never exceeds 10% per run.
+  assert.equal(decideCandidate(pooled(40), { small: arm(20, 0, 110), large: arm(20, 0, 100) }).accepted, true);
+  assert.match(decideCandidate(pooled(40), { small: arm(20, 0, 112), large: arm(20, 0, 100) }).outcome, /above 10\.0% allowance/);
+  assert.equal(decideCandidate({ ...pooled(40), significant: false }, { small: arm(20, 0, 90) }).outcome, 'too little data');
+});
+
+test('D2 switches to weekly shortening only when both models reach 90%', () => {
+  const models = ['small', 'large'];
+  assert.equal(chooseMode({ rates: { small: 0.9, large: 0.95 }, models }), 'shorten');
+  assert.equal(chooseMode({ rates: { small: 0.899, large: 0.95 }, models }), 'none');
+  assert.equal(chooseMode({ rates: { small: 0.95 }, models }), 'none');
+  assert.equal(chooseMode({ patch: {}, rates: { small: 1, large: 1 }, models }), 'audit');
+  assert.equal(floorReached({ small: null, large: 1 }, models), false);
+  const day = 24 * 3600_000, now = Date.parse('2026-11-10T08:00:00Z');
+  const run = (daysAgo, small, mode = 'none') => ({ status: 'complete', startedAt: new Date(now - daysAgo * day).toISOString(),
+    models: { small: { passRate: small, overallPassRate: small }, large: { passRate: 0.93, overallPassRate: 0.93 } }, experiment: { mode } });
+  assert.match(weeklyShorteningSkip([run(3, 0.91, 'shorten'), run(1, 0.92)], models, now), /weekly shortening not due/);
+  assert.equal(weeklyShorteningSkip([run(7, 0.91, 'shorten'), run(1, 0.92)], models, now), undefined);
+  assert.equal(weeklyShorteningSkip([run(3, 0.91, 'shorten'), run(1, 0.85)], models, now), undefined);
+  assert.equal(weeklyShorteningSkip([{ startedAt: '2020-01-01', passed: 1 }], models, now), undefined);
+  // A partially scored entry has a behavior rate but no overall rate; it never counts as the floor.
+  const partial = (daysAgo, mode) => ({ ...run(daysAgo, 1, mode), models: { small: { passRate: 1, overallPassRate: null }, large: { passRate: 1 } } });
+  assert.equal(weeklyShorteningSkip([partial(1, 'shorten')], models, now), undefined);
+  assert.equal(weeklyShorteningSkip([partial(3, 'shorten'), run(1, 0.92)], models, now), undefined);
+});
+
+test('a partially scored cohort never reaches the floor, selects shortening, or skips later nights', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-partial-floor-'));
+  try {
+    const history = join(dir, 'history.jsonl');
+    // One passing case per model; every other case returns a malformed answer.
+    const request = async body => {
+      const reply = { ...response({ calls: [], text: '72' }), model: body.model };
+      if (!JSON.stringify(body.messages).includes('and what is 9 times 8?')) reply.choices[0].message.content = '{broken';
+      return reply;
+    };
+    const first = await runNightly({ out: join(dir, 'first'), history, request });
+    assert.equal(first.status, 'complete');
+    assert.equal(first.floorReached, false);
+    assert.equal(first.experiment.mode, 'none');
+    assert.equal(first.experiment.outcome, 'skipped: no audit candidate');
+    assert.equal(first.candidate.length, 0);
+    const saved = JSON.parse(readFileSync(history, 'utf8'));
+    assert.equal(saved.floorReached, false);
+    for (const id of DEFAULT_MODELS) {
+      assert.equal(saved.models[id].scoredCases, 1);
+      assert.equal(saved.models[id].passRate, 1);
+      assert.equal(saved.models[id].overallPassRate, null);
+    }
+    assert.match(readFileSync(join(dir, 'first', 'summary.txt'), 'utf8'), /below 90% floor/);
+    // A partial entry recorded in shorten mode by an older runner does not suppress the next night.
+    writeFileSync(history, `${JSON.stringify({ ...saved, floorReached: true, experiment: { mode: 'shorten', outcome: 'no change' } })}\n`);
+    const next = await runNightly({ out: join(dir, 'next'), history, request, now: Date.parse(saved.startedAt) + 3600_000 });
+    assert.notEqual(next.status, 'skipped');
+    assert.equal(next.experiment.mode, 'none');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+function writePatch(dir, path, marker) {
+  const before = join(dir, 'before'), after = join(dir, 'after');
+  const text = readFileSync('apps/body/src/prompt-assembly.ts', 'utf8');
+  const block = removalBlocks(text)[0];
+  writeFileSync(before, text);
+  writeFileSync(after, text.slice(0, block.end - 1) + ` ${marker}` + text.slice(block.end - 1));
+  const diff = spawnSync('diff', ['-u', '--label', `a/${path}`, '--label', `b/${path}`, before, after], { encoding: 'utf8' }).stdout;
+  const file = join(dir, `${path.replaceAll('/', '_')}.patch`);
+  writeFileSync(file, diff);
+  return { file, block };
+}
+
+test('an audit patch outside the prompt sources is rejected before any paid request', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-patch-'));
+  try {
+    for (const path of ['scripts/prompt-cases.ts', 'apps/server/src/auth.ts', 'apps/body/src/../../server/src/x.ts']) {
+      const { file } = writePatch(dir, path, 'X');
+      assert.throws(() => validateCandidatePatch(file), /outside apps\/body\/src/);
+      await assert.rejects(runNightly({ out: join(dir, 'out'), history: join(dir, 'history.jsonl'), candidatePatch: file,
+        request: async () => { throw new Error('must not make a paid request'); } }), /outside apps\/body\/src/);
+    }
+    assert.deepEqual(validateCandidatePatch(writePatch(dir, 'apps/body/src/prompt-assembly.ts', 'X').file).paths, ['apps/body/src/prompt-assembly.ts']);
+    assert.deepEqual(validateCandidatePatch(writePatch(dir, 'apps/server/src/free-agents.ts', 'X').file).paths, ['apps/server/src/free-agents.ts']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an audit patch replaces the removal experiment and replays the patched prompt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-audit-'));
+  try {
+    const marker = 'AUDITMARKER';
+    const { file } = writePatch(dir, 'apps/body/src/prompt-assembly.ts', marker);
+    let patchedRequests = 0;
+    const out = join(dir, 'out');
+    const result = await runNightly({ out, history: join(dir, 'history.jsonl'), models: [model], candidatePatch: file, request: async body => {
+      if (JSON.stringify(body.messages).includes(marker)) patchedRequests++;
+      return { ...response({ calls: [], text: '72' }), model: body.model };
+    } });
+    assert.equal(result.experiment.mode, 'audit');
+    assert.equal(result.experiment.block, undefined);
+    assert.deepEqual(result.experiment.patch.paths, ['apps/body/src/prompt-assembly.ts']);
+    assert.ok(patchedRequests > 0);
+    assert.equal(result.candidate.length, result.eligibleCount);
+    assert.ok(!existsSync(join(out, 'prompt-assembly.ts')));
+    // Without a patch and below the floor, nothing replaces the audit.
+    const idle = await runNightly({ out: join(dir, 'idle'), history: join(dir, 'idle.jsonl'), models: [model],
+      request: async body => ({ ...response({ calls: [], text: 'wrong' }), model: body.model }) });
+    assert.equal(idle.experiment.outcome, 'skipped: no audit candidate');
+    assert.equal(idle.candidate.length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('each model gets its own paired rows, and an off-model reply stays incomplete for that model only', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-models-'));
+  try {
+    const [small, large] = DEFAULT_MODELS;
+    const history = join(dir, 'history.jsonl');
+    const sent = {};
+    const result = await runNightly({ out: dir, history, request: async body => {
+      sent[body.model] = { reasoning: body.reasoning, strict: body.response_format.json_schema.strict };
+      return { ...response({ calls: [], text: '72' }), model: body.model === small ? 'openai/substitute' : body.model };
+    } });
+    // Both upstream endpoints rejected strict free-form args and the large model rejects disabled reasoning.
+    assert.deepEqual(sent, { [small]: { reasoning: { enabled: false }, strict: false }, [large]: { reasoning: { effort: 'low' }, strict: false } });
+    const n = result.eligibleCount * FIXED_SAMPLES;
+    assert.equal(result.models[small].classes.baseline.incomplete, n);
+    assert.equal(result.models[large].classes.baseline.incomplete, 0);
+    assert.deepEqual(result.models[large].baseline.map(r => r.samples.map(s => s.seed)), result.models[large].control.map(r => r.samples.map(s => s.seed)));
+    assert.ok(result.baseline.every(r => r.id.startsWith(`${r.model}:`)));
+    const saved = JSON.parse(readFileSync(history, 'utf8'));
+    assert.deepEqual(Object.keys(saved.models), DEFAULT_MODELS);
+    assert.equal(saved.models[small].scoredCases, 0);
+    assert.equal(saved.models[large].scoredCases, result.eligibleCount);
+    assert.equal(saved.passRate, saved.models[large].passRate);
+    assert.equal(saved.floorReached, false);
+    assert.match(readFileSync(join(dir, 'summary.txt'), 'utf8'), /baseline gpt-6-luna unscored, gpt-6\.1-sol \d+\/\d+ \(/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

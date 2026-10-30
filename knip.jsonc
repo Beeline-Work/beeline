@@ -32,8 +32,6 @@
         // Discovery spawns launch/MCP helpers; its runbook invokes the grading CLI by path.
         "scripts/discovery-{launch,mcp,grade}.mjs",
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
-        // The store-update evidence runbook starts the disposable policy service by path.
-        "scripts/serve-mobile-minimum-proof.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
         // VAULT-CARD-1 invokes the isolated built-server/Squire proof by path.
@@ -106,9 +104,6 @@
       "expo": false,
       "entry": [
         "index.ts",
-        // The store-update evidence runbook bundles this entry through esbuild.
-        "scripts/render-store-update-proof.mjs",
-        "scripts/store-update-web-entry.tsx",
         // The approved GitHub card proof uses temporary native/web entry and resolver overrides.
         "scripts/github-card-proof.tsx",
         // Gradle selects the Rooms connector native proof through entryFile.

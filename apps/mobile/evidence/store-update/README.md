@@ -10,23 +10,11 @@ Installed the APK on this corner's Android emulator, running native version
 `0.2.22`. Served this branch's JavaScript through Metro with
 `EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://10.0.2.2:8788`.
 
-Start the disposable policy service from the repository root:
-
-```sh
-npm run build -w @beeline/server
-node --import tsx scripts/serve-mobile-minimum-proof.mjs
-```
-
-The service uses the built HTTP server and a disposable PGlite database. It
-forwards other HTTP app reads to the live service. It does not write production
-policy. The local-only release secret is `local-proof-only`.
-
-```sh
-curl -X POST http://127.0.0.1:8789/v1/releases/mobile-minimum \
-  -H 'Authorization: Bearer local-proof-only' \
-  -H 'Content-Type: application/json' \
-  --data '{"platform":"android","minVersion":"0.2.24","reason":"This version can no longer sign in. The update takes about a minute."}'
-```
+The completed run used a disposable PGlite policy service forwarding other app
+reads to the live service. Its temporary helper was removed after proof. No
+production policy was written. The local Android minimum was set to `0.2.24`
+with the reason “This version can no longer sign in. The update takes about a
+minute.”
 
 - Above the installed version: the blocking screen appears. Hardware Back
   leaves the same screen visible. `android-bone-native.png` and
@@ -47,32 +35,36 @@ the development debugger. The screen waits for the existing root font-ready
 signal: native testing caught an initially clipped button label before fonts
 settled, and the captured result shows the complete label.
 
-## Browser stand-ins and remaining proof
+## Native iPhone
 
-```sh
-node --import tsx apps/mobile/scripts/render-store-update-proof.mjs
-```
+[Bone](ios-bone-native.png) and [Obsidian](ios-obsidian-native.png) show the
+blocking screen in the native bundled iPhone simulator app from preserved
+[proof run](https://github.com/Beeline-Work/beeline/actions/runs/40978222944).
+The temporary workflow was removed after collecting these captures.
 
-This renders the actual screen and shared button with React Native Web and
-the app's fonts/tokens. Files ending in `web-standin.png` are browser captures,
-including the iPhone-sized captures; they are **not native iPhone proof**.
+With the minimum equal to the installed version, the app passed the update
+gate and reached [the secure-storage error](ios-equal-minimum.png): “Secure
+storage unavailable: A required entitlement isn't present.” Ruby accepted
+this as passage through the gate, which wraps the entire app. The unsigned
+simulator build cannot use the iPhone keychain; its subsequent “Continue with
+GitHub” assertion failed. The unset-minimum iPhone step did not run because
+that assertion stopped the workflow. Android and unit tests cover unset policy.
 
-Native iPhone screenshots remain required. This Linux host has no
-`xcodebuild`; the online Mac runner rejected SSH authentication, and the
-connected BrowserStack account returned no uploaded apps. No iOS build was
-uploaded or store release requested.
+## Actual Android OTA and signed-in web
 
-The normal Room list after an actual OTA remains unverified. Unit tests cover
-unchanged native versions across differing OTA metadata, and the native
-equal/unset checks above reach the normal signed-out screen. They do not claim
-to be a signed-in Room-list capture following an OTA.
+The release APK retained Play Review sign-in. A local-only generated Android
+manifest directed Expo Updates to an isolated local transport. Exported this
+branch's actual Hermes bundle and assets using `expo export --platform android
+--dump-assetmap --max-workers 2`, delivered a fresh Expo Updates manifest, and
+relaunched. The [native launch record](ota-launch-proof.json) confirms update
+`dc6cf655-81f7-4477-ad1b-8ffbb7cf2d7f` READY with three successful launches and
+no failures. Native version stayed `0.2.22`, runtime `42`; no minimum changed.
+The [signed-in Room list after the OTA](android-after-ota.png) remains normal.
+This was local transport proof, with no production/EAS publish or channel
+change. The generated Android manifest was restored afterward.
 
-The existing signed-in browser session at
-`https://web.usebeeline.app/beeline/channels` displayed the Room list without
-an update gate. This was the existing owner session, **not the requested
-reviewer bypass**. The saved reviewer credential's web-only host scope refused
-the documented server review exchange (`host_not_allowed`); no raw credential
-was fetched. The exact reviewer-bypass web check remains open.
+The [signed-in Play Review web Room list](web-reviewer-room-list.jpg) at
+`https://web.usebeeline.app/beeline/channels` has no update gate.
 
 ## Automated checks
 

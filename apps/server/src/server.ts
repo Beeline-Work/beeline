@@ -58,6 +58,7 @@ import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import {
   projectSidebarPreview,
+  offscreenMessageFits,
   readSidebarPreview,
   MESSAGE_SEARCH_QUERY_MAX_BYTES,
   PHONE_READ_OPERATIONS,
@@ -1372,7 +1373,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                       const sidebarOnly = previewRooms.has(roomId) && !viewedRooms.has(roomId);
                       // Voice cards change a separate list mark; retain its covering read.
                       let wireDelta: object = publicDelta;
-                      if (sidebarOnly && publicDelta.type === 'message-delta') {
+                      if (sidebarOnly && publicDelta.type === 'message-delta' &&
+                          !offscreenMessageFits(publicDelta)) {
                         const preview = publicDelta.message.voiceCall ? null
                           : projectSidebarPreview(publicDelta, principal.identityId);
                         wireDelta = preview && readSidebarPreview(preview) ? preview : wireEvent;

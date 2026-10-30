@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue, DEFAULT_MODELS, decideCandidate, chooseMode, floorReached, weeklyShorteningSkip, validateCandidatePatch } from './prompt-nightly.mjs';
+import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue, DEFAULT_MODELS, decideCandidate, chooseMode, floorReached, weeklyShorteningSkip, validateCandidatePatch, grantTransport, runCli } from './prompt-nightly.mjs';
 import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
@@ -507,5 +508,118 @@ test('each model gets its own paired rows, and an off-model reply stays incomple
     assert.equal(saved.passRate, saved.models[large].passRate);
     assert.equal(saved.floorReached, false);
     assert.match(readFileSync(join(dir, 'summary.txt'), 'utf8'), /baseline gpt-6-luna unscored, gpt-6\.1-sol \d+\/\d+ \(/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+const TOKEN = 'grant-token-must-never-leak-7f3a';
+/** Stub OpenRouter-shaped proxy; `reply(body, index)` returns a status, an answer, or 'hang'. */
+async function stubProxy(reply) {
+  const seen = [];
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', chunk => { raw += chunk; });
+    req.on('end', () => {
+      const body = JSON.parse(raw);
+      seen.push({ method: req.method, url: req.url, authorization: req.headers.authorization, contentType: req.headers['content-type'], body });
+      const outcome = reply(body, seen.length - 1);
+      if (outcome === 'hang') return;
+      if (typeof outcome === 'number') { res.writeHead(outcome, { 'content-type': 'application/json' }); return res.end(`{"error":"upstream ${TOKEN}"}`); }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ...response(outcome), model: body.model }));
+    });
+  });
+  await new Promise(done => server.listen(0, '127.0.0.1', done));
+  const close = () => { server.closeAllConnections(); return new Promise(done => server.close(done)); };
+  return { base: `http://127.0.0.1:${server.address().port}/proxy/grant/`, seen, close };
+}
+const tokenFile = (dir, mode = 0o600) => { const file = join(dir, 'grant.token'); writeFileSync(file, `${TOKEN}\n`, { mode }); chmodSync(file, mode); return file; };
+const runChild = (args) => new Promise(done => {
+  const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/prompt-nightly.mjs', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.on('data', d => { output += d; });
+  child.stderr.on('data', d => { output += d; });
+  child.on('exit', (code, signal) => done({ code, signal, output, child }));
+  runChild.last = child;
+});
+
+test('grant transport POSTs each body with the grant bearer, and the token never reaches any output', async () => {
+  const proxy = await stubProxy(() => ({ calls: [], text: '72' }));
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-grant-'));
+  try {
+    const out = join(dir, 'out'), history = join(dir, 'history.jsonl');
+    const run = await runChild(['--out', out, '--history', history, '--models', model,
+      '--grant-base-url', proxy.base, '--grant-token-file', tokenFile(dir)]);
+    assert.equal(run.code, 0, run.output);
+    const first = proxy.seen[0];
+    assert.equal(first.method, 'POST');
+    assert.equal(first.url, '/proxy/grant/api/v1/chat/completions');
+    assert.equal(first.authorization, `Bearer ${TOKEN}`);
+    assert.equal(first.contentType, 'application/json');
+    assert.equal(first.body.model, model);
+    assert.ok(Array.isArray(first.body.messages));
+    const result = readFileSync(join(out, 'result.json'), 'utf8');
+    assert.equal(JSON.parse(result).status, 'complete');
+    for (const text of [result, readFileSync(join(out, 'summary.txt'), 'utf8'), readFileSync(history, 'utf8'), run.output]) assert.ok(!text.includes(TOKEN));
+  } finally { await proxy.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('grant HTTP errors and timeouts become redacted incomplete samples, and the run still finishes', async () => {
+  const proxy = await stubProxy((body, index) => index === 0 ? 500 : index === 1 ? 'hang' : { calls: [], text: '72' });
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-grant-errors-'));
+  try {
+    const out = join(dir, 'out');
+    const request = grantTransport({ baseUrl: proxy.base, token: TOKEN, timeoutMs: 300 });
+    const result = await runNightly({ out, history: join(dir, 'history.jsonl'), models: [model], request });
+    assert.equal(result.status, 'incomplete');
+    const saved = readFileSync(join(out, 'result.json'), 'utf8');
+    assert.equal(JSON.parse(saved).status, 'incomplete');
+    const reasons = result.diagnostics.baseline.incomplete.map(s => s.reason);
+    assert.deepEqual(reasons.sort(), ['Grant request failed: HTTP 500', 'Grant request failed: timed out after 300 ms']);
+    assert.ok(!saved.includes(TOKEN) && !saved.includes('upstream'));
+    await assert.rejects(grantTransport({ baseUrl: 'http://127.0.0.1:1', token: TOKEN })({}), (error) => /Grant request failed/.test(error.message) && !error.message.includes(TOKEN));
+  } finally { await proxy.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a controller that throws or is killed mid-run leaves a terminal result, never running', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-terminal-'));
+  try {
+    const out = join(dir, 'thrown');
+    const args = ['--out', out, '--history', join(dir, 'h.jsonl'), '--exchange', join(dir, 'exchange')];
+    await assert.rejects(runCli(args, { run: async ({ out }) => {
+      mkdirSync(out, { recursive: true });
+      writeFileSync(join(out, 'result.json'), JSON.stringify({ status: 'running', baseline: [1], experiment: { outcome: 'running' } }));
+      throw new Error('injected mid-run failure');
+    } }), /injected mid-run failure/);
+    const thrown = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
+    assert.deepEqual([thrown.status, thrown.error, thrown.baseline], ['failed', 'Controller error: injected mid-run failure', [1]]);
+
+    const proxy = await stubProxy(() => 'hang');
+    try {
+      const killed = join(dir, 'killed');
+      const exit = runChild(['--out', killed, '--history', join(dir, 'k.jsonl'), '--models', model,
+        '--grant-base-url', proxy.base, '--grant-token-file', tokenFile(dir)]);
+      while (!proxy.seen.length) await new Promise(done => setTimeout(done, 50));
+      runChild.last.kill('SIGTERM');
+      assert.equal((await exit).code, 143);
+      const saved = JSON.parse(readFileSync(join(killed, 'result.json'), 'utf8'));
+      assert.deepEqual([saved.status, saved.error], ['killed', 'Controller received SIGTERM']);
+    } finally { await proxy.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the CLI requires exactly one transport and an owner-only grant token file', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-cli-'));
+  const never = async () => { throw new Error('must not run'); };
+  try {
+    const base = ['--out', join(dir, 'out'), '--history', join(dir, 'h.jsonl')];
+    const grant = ['--grant-base-url', 'http://127.0.0.1:1', '--grant-token-file', tokenFile(dir)];
+    await assert.rejects(runCli(base, { run: never }), /exactly one transport/);
+    await assert.rejects(runCli([...base, '--exchange', join(dir, 'x'), ...grant], { run: never }), /exactly one transport/);
+    await assert.rejects(runCli([...base, '--grant-base-url', 'http://127.0.0.1:1'], { run: never }), /required together/);
+    tokenFile(dir, 0o644);
+    await assert.rejects(runCli([...base, ...grant], { run: never }), /chmod 600/);
+    const ran = [];
+    await runCli([...base, '--exchange', join(dir, 'x')], { run: async (options) => { ran.push(options); return { status: 'complete' }; } });
+    assert.equal(typeof ran[0].request, 'function');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

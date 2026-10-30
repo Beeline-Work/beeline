@@ -1,5 +1,5 @@
 /** Bounded model replay. Never executes the simulated tools in a case. */
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -503,6 +503,44 @@ export function fileTransport(directory) {
   };
 }
 
+/**
+ * Squire egress grant: the proxy injects the vaulted key, so this process holds
+ * only a capped, revocable grant token. Errors never echo the token or upstream body.
+ */
+export function grantTransport({ baseUrl, token, timeoutMs = 180_000, fetchImpl = fetch }) {
+  if (!/^https?:\/\//.test(baseUrl ?? '')) throw new Error('--grant-base-url must be an http(s) URL');
+  if (!token) throw new Error('Grant token file is empty');
+  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/chat/completions`;
+  const redact = (text) => String(text).split(token).join('[redacted]');
+  return async (body) => {
+    let response;
+    try {
+      response = await fetchImpl(url, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } });
+    } catch (error) {
+      const reason = error?.name === 'TimeoutError' ? `timed out after ${timeoutMs} ms` : redact(error?.cause?.code ?? error?.name ?? 'network error');
+      throw new Error(`Grant request failed: ${reason}`);
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Grant request failed: HTTP ${response.status}`);
+    }
+    try { return await response.json(); } catch { throw new Error('Grant request failed: response was not JSON'); }
+  };
+}
+
+/** A run that dies after starting must not leave result.json at `running`. */
+export function markTerminal(out, status, reason) {
+  const file = join(out, 'result.json');
+  let result = {};
+  try { result = JSON.parse(readFileSync(file, 'utf8')); } catch {}
+  if (result.status && result.status !== 'running') return;
+  mkdirSync(out, { recursive: true });
+  writeFileSync(`${file}.tmp`, `${JSON.stringify({ ...result, status, error: reason,
+    experiment: { ...result.experiment, outcome: 'incomplete; no proposal' } }, null, 2)}\n`);
+  renameSync(`${file}.tmp`, file);
+}
+
 /** Baseline scoring for one model or the pooled cohort; only fully scored cases count. */
 export function scoreRows(rows, eligible) {
   const scoredCases = rows.filter(row => row.scored === FIXED_SAMPLES && typeof row.pass === 'boolean').length;
@@ -667,21 +705,40 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   return { ...result, models: perModel, tokens: ledger.tokens, cost: ledger.cost };
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+export async function runCli(args, { run = runNightly } = {}) {
   const option = (name, fallback) => { const index = args.indexOf(name); return index < 0 ? fallback : args[index + 1]; };
   const out = resolve(option('--out', '.scratch/prompt-nightly/latest'));
   const history = resolve(option('--history', '.scratch/prompt-nightly/history.jsonl'));
   const exchange = option('--exchange');
-  if (!exchange) throw new Error('Use --exchange with the Beeline vault-backed controller; keys never enter this process');
+  const grantBaseUrl = option('--grant-base-url'), grantTokenFile = option('--grant-token-file');
+  const grant = grantBaseUrl !== undefined || grantTokenFile !== undefined;
+  if (Boolean(exchange) === grant) throw new Error('Use exactly one transport: --exchange <dir>, or --grant-base-url <url> with --grant-token-file <path>');
+  let request;
+  if (grant) {
+    if (!grantBaseUrl || !grantTokenFile) throw new Error('--grant-base-url and --grant-token-file are required together');
+    if (statSync(grantTokenFile).mode & 0o077) throw new Error('Grant token file must be readable only by its owner (chmod 600)');
+    request = grantTransport({ baseUrl: grantBaseUrl, token: readFileSync(grantTokenFile, 'utf8').trim() });
+  } else request = fileTransport(resolve(exchange));
   const tokenCap = Number(option('--token-cap', DEFAULT_TOKEN_CAP));
   const costCap = Number(option('--cost-cap', DEFAULT_COST_CAP));
   if (![tokenCap, costCap].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Budgets must be positive finite numbers');
   const models = option('--models', DEFAULT_MODELS.join(',')).split(',').map((model) => model.trim()).filter(Boolean);
   if (!models.length) throw new Error('--models needs at least one model');
   const patch = option('--candidate-patch');
-  const result = await runNightly({ out, history, request: fileTransport(resolve(exchange)), tokenCap, costCap, models,
-    candidatePatch: patch && resolve(patch), label: option('--label', 'nightly replay') });
-  if (!['complete', 'skipped'].includes(result.status)) process.exitCode = 1;
+  // SIGKILL cannot be caught; every other exit records why the run stopped.
+  const signals = { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 };
+  const onSignal = (signal) => { markTerminal(out, 'killed', `Controller received ${signal}`); process.exit(signals[signal]); };
+  for (const signal of Object.keys(signals)) process.on(signal, onSignal);
+  try {
+    const result = await run({ out, history, request, tokenCap, costCap, models,
+      candidatePatch: patch && resolve(patch), label: option('--label', 'nightly replay') });
+    if (!['complete', 'skipped'].includes(result.status)) process.exitCode = 1;
+    return result;
+  } catch (error) {
+    markTerminal(out, 'failed', `Controller error: ${error?.message ?? error}`);
+    throw error;
+  } finally {
+    for (const signal of Object.keys(signals)) process.off(signal, onSignal);
+  }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await runCli(process.argv.slice(2));

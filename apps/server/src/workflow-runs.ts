@@ -1442,20 +1442,25 @@ export async function handoff(
       });
       return { runId: input.runId, ...result };
     }
-    const contentsError = workflowContentsError(
-      state as WorkflowHandoffState | WorkflowGateState,
-      input.contents,
-    );
+    const declaredTimeout = isHandoffState(state) && input.outcome === 'timeout' && Object.hasOwn(on, 'timeout');
+    const contentsState = declaredTimeout ? { requires: ['reason'] } : state as WorkflowHandoffState;
+    const contentsError = workflowContentsError(contentsState, input.contents);
+    const timeoutReason = declaredTimeout && input.contents && typeof input.contents === 'object'
+      ? (input.contents as Record<string, unknown>).reason : undefined;
+    const timeoutError = declaredTimeout &&
+      (typeof timeoutReason !== 'string' || !timeoutReason.trim() || timeoutReason.length > 500)
+      ? 'timeout needs contents.reason: why this step timed out, 1-500 characters' : undefined;
     const receiptError = workflowReceiptError(input.receipt);
     const errors = [
       ...(boundAgentId !== command.agent_id ? [`this workflow state is bound to the ${role} role, not you`] : []),
       ...(!Object.hasOwn(on, input.outcome) ? ['invalid outcome'] : []),
       ...(contentsError ? [contentsError] : []),
       ...(contentsError?.startsWith('contents')
-        ? (state as WorkflowHandoffState | WorkflowGateState).requires
+        ? contentsState.requires
             .filter((field) => !input.contents || typeof input.contents !== 'object' || Array.isArray(input.contents) ||
               (input.contents as Record<string, unknown>)[field] == null)
             .map((field) => `${field} is required`) : []),
+      ...(timeoutError ? [timeoutError] : []),
       ...(receiptError ? [receiptError] : []),
     ];
     if (errors.length) {
@@ -2126,8 +2131,8 @@ async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): 
 
 
 /**
- * An explicit override: bind a specific agent to the role this run is
- * currently on, list-bound or not — the "ask a human" recovery path when
+ * An explicit override: bind a specific agent to the current role, or any
+ * declared role while waiting at a gate, list-bound or not — the recovery path when
  * nobody on a list is eligible, a woken run starter's way to rebind a stuck
  * role, or simply an explicit choice at any time. The target is not
  * health-filtered (an explicit choice overrides "healthy") and need not be on
@@ -2154,7 +2159,10 @@ export async function assignWorkflowRole(
     const { run, state } = scope;
     if (scope.ended || !state) throw new Error('this workflow run has already ended');
     const currentRole = (state as WorkflowHandoffState | WorkflowGateState).role;
-    if (currentRole !== input.role) {
+    if (!scope.contract.roles.includes(input.role)) {
+      throw new ExpectedRefusalError(`unknown workflow role: ${input.role}`);
+    }
+    if (currentRole !== input.role && state.kind !== 'gate') {
       throw new ExpectedRefusalError(`this run is currently at the ${currentRole} role, not ${input.role}`);
     }
     const member = await db.query(

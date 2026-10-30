@@ -250,7 +250,7 @@ elif flag_on "${PLAY_LISTING_CHECK_ONLY:-}"; then
 fi
 
 if flag_on "${PLAY_LISTING_CHECK_ONLY:-}"; then
-  echo "Store listing differs: ${differs:-unknown}"
+  echo "Store listing differs: ${differs:-unknown}; not uploaded (publish_listing is false)"
   exit 2
 fi
 if [ -n "$differs" ]; then

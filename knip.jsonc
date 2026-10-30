@@ -29,6 +29,8 @@
       // Shell hooks and device harnesses invoke these by path, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
+        // Play upload and commit shell scripts invoke the CD listing lock by path.
+        "scripts/play-listing-lock.mjs",
         // Discovery spawns launch/MCP helpers; its runbook invokes the grading CLI by path.
         "scripts/discovery-{launch,mcp,grade}.mjs",
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",

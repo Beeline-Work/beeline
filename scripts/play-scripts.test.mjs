@@ -74,7 +74,7 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
   });
   assert.equal(
     calls[4],
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   );
   assert.match(stdout, /release notes from: .*default\.txt/);
   assert.match(stdout, /versionCode 28 is on the internal track as draft/);
@@ -329,7 +329,7 @@ test('play-publish.sh still uploads the bundle when the listing is skipped', (t)
   const publishAt = step.indexOf('bash scripts/play-publish.sh');
   const listingAt = step.indexOf('bash scripts/play-publish-listing.sh');
   assert.ok(publishAt > 0 && listingAt > publishAt);
-  assert.match(step, /FORCE_LISTING:/);
+  assert.doesNotMatch(step, /FORCE_LISTING:/);
 
   const dir = tempDir(t);
   const aab = path.join(dir, 'app.aab');
@@ -339,13 +339,15 @@ test('play-publish.sh still uploads the bundle when the listing is skipped', (t)
   fs.writeFileSync(path.join(changelogs, 'default.txt'), 'notes\n');
   const published = run('play-publish.sh', {
     AAB_PATH: aab,
+    MAPPING_PATH: aab,
+    MAPPING_ARCHIVE_DIR: dir,
     TRACK: 'internal',
     RELEASE_NAME: '1.0.0',
     RELEASE_STATUS: 'completed',
     CHANGELOG_DIR: changelogs,
     PLAY_DRY_RUN_VERSION_CODE: '4',
   });
-  assert.equal(published.calls.length, 4);
+  assert.equal(published.calls.length, 5);
   assert.match(published.calls[1], /\/bundles\?uploadType=media/);
 
   const locale = writeListing(dir);

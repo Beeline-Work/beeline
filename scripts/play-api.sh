@@ -85,7 +85,8 @@ play_console_url() {
   echo "https://play.google.com/console/u/0/developers/-/app-list?search=${PACKAGE_NAME}"
 }
 
-# commit_edit EDIT_ID — commit an edit whichever review mode the app is in.
+# commit_edit EDIT_ID [hold-for-review] — keep default builds unsent;
+# other callers retain the existing adaptive commit behavior.
 # Google toggles the required form of this call on the app's current state:
 # while an unsent/rejected change is pending, `:commit` must carry
 # `changesNotSentForReview=true` ("Changes cannot be sent for review
@@ -97,6 +98,18 @@ play_console_url() {
 # back to the plain commit only on that exact complaint.
 commit_edit() {
   local edit_id="$1"
+  # Default build releases cannot safely detect console listing changes. Never
+  # retry without the hold flag, or cancel an existing review, in this mode.
+  # https://developers.google.com/android-publisher/concurrency-considerations
+  # https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit
+  if [ "${2:-}" = "hold-for-review" ]; then
+    if ! api POST "$API/edits/$edit_id:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW" -H "Content-Length: 0" >/dev/null; then
+      echo "::error::Play refused the safe commit; no automatic-review fallback attempted. Finish the build submission alone in Play Console." >&2
+      return 1
+    fi
+    echo "Build uploaded but not sent for review; send the build alone in Play Console and keep listing changes saved for later."
+    return 0
+  fi
   if [ "${PLAY_DRY_RUN:-0}" = "1" ]; then
     api POST "$API/edits/$edit_id:commit?changesNotSentForReview=true" -H "Content-Length: 0" >/dev/null
     return 0

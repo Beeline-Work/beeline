@@ -947,6 +947,8 @@ jobs:
           MAPPING_PATH: ${{ runner.temp }}/mapping.txt
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PUBLISH_LISTING: ${{ inputs.publish_listing && 'true' || 'false' }}
+          PLAY_DEFER_COMMIT: '1'
+          PLAY_LISTING_BASELINE: ${{ runner.temp }}/play-listing-before-build.json
           TRACK: ${{ inputs.store_track }}
           # scripts/play-api.sh refuses to run without the Play package name (release
           # run 34800657127 failed here after the first local Android build; the line
@@ -957,8 +959,17 @@ jobs:
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
+      - name: Enforce the Play listing lock before committing the build
+        if: inputs.store_track != 'none'
+        env:
+          ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline
+          PLAY_EDIT_ID: ${{ steps.play-upload.outputs.edit_id }}
+          PLAY_LISTING_BASELINE: ${{ runner.temp }}/play-listing-before-build.json
+          PUBLISH_LISTING: ${{ inputs.publish_listing && 'true' || 'false' }}
+        run: bash scripts/play-commit-build.sh
       - name: Publish the Play listing only when explicitly requested
-        if: inputs.publish_listing
+        if: inputs.store_track != 'none' && inputs.publish_listing
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline
@@ -966,7 +977,7 @@ jobs:
           LANGUAGE: en-US
         run: bash scripts/play-publish-listing.sh
       - name: Check the Play listing without uploading
-        if: ${{ !inputs.publish_listing }}
+        if: ${{ inputs.store_track != 'none' && !inputs.publish_listing }}
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline

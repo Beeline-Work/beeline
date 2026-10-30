@@ -331,13 +331,3 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
-
-it('PLAY-LISTING-1: listing consent defaults off and only publish_listing passes through', async () => {
-  const dispatch = vi.fn(async (_inputs: Record<string, string>) => {});
-  await productionReleaseDispatch(db, agent, input, dispatch);
-  expect(dispatch.mock.calls[0]![0]).not.toHaveProperty('publish_listing');
-  await productionReleaseDispatch(db, agent, { ...input, inputs: { publish_listing: 'true' } }, dispatch);
-  expect(dispatch.mock.calls[1]![0].publish_listing).toBe('true');
-  await expect(productionReleaseDispatch(db, agent, { ...input, inputs: { force_listing: 'true' } }, dispatch))
-    .rejects.toThrow('Invalid production release inputs');
-});

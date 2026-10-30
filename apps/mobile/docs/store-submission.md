@@ -151,9 +151,19 @@ short-lived Play access token from the service account, then runs
 `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` or `default.txt`
 → commit). Releases upload only the build to Play by default. Listing text and
 images are never uploaded unless the release is explicitly dispatched with
-`publish_listing=true` (default `false`). The default path compares the
-committed listing with Play, discards the read edit, and logs that differences
+`publish_listing=true` (default `false`) on an explicit workspace owner
+command. The cited command must include a dedicated imperative line such as
+"Publish the Play listing"; admin commands and routine release orders cannot
+unlock listing uploads. The default path compares the committed listing with Play, discards the read edit, and logs that differences
 were not uploaded; comparison errors only warn and do not fail the release.
+The upload step records every locale's listing text and all eight Play image
+types in the exact build edit before uploading. The **Enforce the Play listing
+lock before committing the build** CD step re-reads that edit immediately before
+commit and stops on any changed text/image, naming each locale and field/image
+type. Failure to read or validate the edit/baseline also stops before commit.
+Repo-vs-live differences alone remain advisory; the gate compares the edit
+against its pre-upload state. Explicit owner listing consent unlocks this gate.
+
 Default build commits also use `changesNotSentForReview=true` and
 `changesInReviewBehavior=ERROR_IF_IN_REVIEW`: the build is uploaded, but an
 operator must send **only the build** for review in Play Console and leave
@@ -171,8 +181,8 @@ When opted in, `scripts/play-publish-listing.sh` reads the live listing and
 skips unchanged text and image hashes. Changed listings clear and re-upload
 each image type in filename order, then commit. `publish_listing` permits
 uploading changes; it does not force re-uploading matching assets.
-The internal-track release is published as *completed* (rolled out to internal testers with no press in Play
-Console).
+The track release status remains *completed*; default commits still require the
+manual review step above before availability to testers or users.
 
 **`mobile_native_ios`** (TestFlight): decodes the `.p8` secret to a
 runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it **before** the build

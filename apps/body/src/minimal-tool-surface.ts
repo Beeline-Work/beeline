@@ -956,7 +956,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'dispatch_release',
-    description: 'Dispatch a production Beeline release only when explicitly commanded by a workspace owner or admin in this turn. Routine releases use no inputs. Recovery inputs require an explicit recovery instruction. Play listing uploads require explicit publish_listing=true; default releases upload only the build. Returns the audit receipt; creates no command approval card.',
+    description: 'Dispatch a production Beeline release only when explicitly commanded by a workspace owner or admin in this turn. Routine releases use no inputs. Recovery inputs require an explicit recovery instruction. Play listing uploads require publish_listing=true and a cited workspace owner command with an explicit line such as "Publish the Play listing". Admin or routine release commands cannot unlock it; default releases upload only the build. Returns the audit receipt; creates no command approval card.',
     inputSchema: { type: 'object', properties: {
       inputs: { type: 'object', properties: Object.fromEntries(
         ['release_sha', 'release_version', 'selection', 'store_track', 'run_release_proof', 'allow_pin_restore', 'publish_listing']

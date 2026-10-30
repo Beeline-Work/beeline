@@ -23,6 +23,8 @@
 #   CHANGELOG_DIR    — per-versionCode release notes dir; <versionCode>.txt wins,
 #                      default.txt otherwise (default: the en-US fastlane dir)
 #   PUBLISH_LISTING=true — explicit listing consent permits the existing automatic-review commit fallback
+#   PLAY_DEFER_COMMIT=1 — leave commit to the workflow CD gate (writes edit_id to GITHUB_OUTPUT)
+#   PLAY_LISTING_BASELINE — pre-upload listing snapshot file for the CD gate
 #   PLAY_DRY_RUN=1   — print the API calls instead of making them (see play-api.sh)
 
 set -euo pipefail
@@ -49,6 +51,12 @@ test -s "$MAPPING_PATH" || { echo "::error::R8 mapping missing or empty: $MAPPIN
 echo "1/4 Creating edit..."
 edit_id=$(api POST "$API/edits" -H "Content-Length: 0" | json_field id)
 echo "  edit id: $edit_id"
+export PLAY_EDIT_ID="$edit_id"
+if [ "${PUBLISH_LISTING:-false}" != "true" ]; then
+  PLAY_LISTING_BASELINE="${PLAY_LISTING_BASELINE:-$(mktemp)}"
+  export PLAY_LISTING_BASELINE
+  node "$(dirname "${BASH_SOURCE[0]}")/play-listing-lock.mjs" snapshot "$PLAY_LISTING_BASELINE"
+fi
 
 echo "2/4 Uploading AAB ($(du -h "$AAB_PATH" | awk '{print $1}'))..."
 version_code=$(api POST "$UPLOAD_API/edits/$edit_id/bundles?uploadType=media" \
@@ -95,12 +103,15 @@ api PUT "$API/edits/$edit_id/tracks/$TRACK" \
   --data "$track_body" > /dev/null
 echo "  track release configured"
 
-echo "4/4 Committing edit..."
-if [ "${PUBLISH_LISTING:-false}" = "true" ]; then
-  commit_edit "$edit_id"
-else
-  commit_edit "$edit_id" hold-for-review
+if [ "${PLAY_DEFER_COMMIT:-0}" = "1" ]; then
+  : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required when deferring commit}"
+  echo "edit_id=$edit_id" >> "$GITHUB_OUTPUT"
+  echo "Build upload prepared; CD listing gate must pass before commit"
+  exit 0
 fi
+
+echo "4/4 Committing edit..."
+bash "$(dirname "${BASH_SOURCE[0]}")/play-commit-build.sh"
 echo "  edit committed — versionCode $version_code is on the $TRACK track as $RELEASE_STATUS"
 echo ""
 echo "Play Console: $(play_console_url)"

@@ -682,7 +682,10 @@ export class DaemonService {
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       let appToolExecution: DaemonService['deferredAppTool'];
       const output = await this.database.transaction(async (db) => {
-        if (name === 'createCorner' || name === 'reviseCornerBrief')
+        // Failed receipts may reassign the reviewer. Take the lifecycle lock
+        // before the silence lock and turn writes, matching lifecycle dispatch.
+        if (name === 'createCorner' || name === 'reviseCornerBrief' ||
+            (isCorner && name === 'postAgentTurnReceipt' && candidate.status === 'failed'))
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && ['failed', 'complete'].includes(String(candidate.status))) {
@@ -2262,10 +2265,12 @@ export class DaemonService {
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
       } catch (error) {
-        // Activity has only transactional writes and buffered live events.
+        // Activity and failed receipts have transactional writes and buffered live events.
         // Retry the owning transaction, including authorization, after rollback;
         // a nested transaction cannot recover an aborted PostgreSQL transaction.
-        if (name !== 'postAgentActivity' || this.commandTransaction || attempt >= 2 ||
+        const retryableWrite = name === 'postAgentActivity' ||
+          (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
+        if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
           !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
           throw error;
         await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));

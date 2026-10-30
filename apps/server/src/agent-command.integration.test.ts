@@ -2562,3 +2562,25 @@ it('stuck-turn-1: a completion receipt closes a working turn even when its comma
   expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
     [C,command!.turnRequestId,A])).rows).toEqual([{status:'complete'}]);
 });
+
+it('Reproduction stuck-turn-1: superseded review output completes its command and closes its turn together', async () => {
+  await send('@hoots review this head', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`,
+    [command!.id, JSON.stringify({cornerId:C,headSha:'obsolete',pullRequest:1})]);
+  const state = async () => (await phone.readCorners(R,H))!.corners.find(row => row.corner.id===C)!.state;
+  expect(await state()).toBe('working');
+  await result(command!, '@hoots Review output for the old head');
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows)
+    .toEqual([{state:'complete'}]);
+  expect((await db.query(`SELECT status,failure_reason FROM agent_turns
+    WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`, [C,command!.turnRequestId,A])).rows)
+    .toEqual([{status:'failed',failure_reason:'the review command was superseded'}]);
+  expect(await state()).not.toBe('working');
+  await daemon.execute('postAgentTurnReceipt', {roomId:C,requestId:command!.turnRequestId,
+    generationId:'g1',status:'complete'}, A);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+    [C,command!.turnRequestId,A])).rows).toEqual([{status:'failed'}]);
+  console.log('Demonstrated stuck-turn-1: superseded review end → command complete, turn failed, phone corner no longer working; receipt replay preserves failure');
+});

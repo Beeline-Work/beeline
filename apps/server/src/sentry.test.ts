@@ -465,7 +465,7 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
 
-it('BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREVIEW-1P: real agent handlers keep refusals out of Sentry', async () => {
+it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREVIEW-1P: real agent handlers keep refusals out of Sentry', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -479,18 +479,18 @@ it('BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREVIEW-1P: real agent handl
     const source = `
       import assert from 'node:assert/strict';
       import { createServer } from 'node:http';
-      import { reserveServiceReviewWorkspaces } from './src/service-review.ts';
-      import { postRoomChoice } from './src/room-choice.ts';
-      import { saveWorkflow, startWorkflow } from './src/workflow-runs.ts';
-      import { ComposioApps } from './src/composio-apps.ts';
+      import { reserveServiceReviewWorkspaces } from './dist/service-review.js';
+      import { postRoomChoice } from './dist/room-choice.js';
+      import { saveWorkflow, startWorkflow } from './dist/workflow-runs.js';
+      import { ComposioApps } from './dist/composio-apps.js';
       import { describedWorkflow } from './src/test-support.ts';
       import { PgliteDatabase } from './src/test-support.ts';
-      import { migrate } from './src/database.ts';
-      import { DaemonService } from './src/daemon-service.ts';
-      import { LiveHub } from './src/live.ts';
-      import { createAgentCommand } from './src/agent-command.ts';
-      import { createBeelineServer } from './src/server.ts';
-      import { flushServerErrors } from './src/sentry.ts';
+      import { migrate } from './dist/database.js';
+      import { DaemonService } from './dist/daemon-service.js';
+      import { LiveHub } from './dist/live.js';
+      import { createAgentCommand } from './dist/agent-command.js';
+      import { createBeelineServer } from './dist/server.js';
+      import { flushServerErrors } from './dist/sentry.js';
       const db = new PgliteDatabase();
       await migrate(db);
       const agent = 'c'.repeat(64), human = 'a'.repeat(64);
@@ -573,6 +573,18 @@ it('BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREVIEW-1P: real agent handl
             browse:{role:'triager',requires:[],on:{reviewed:'done'}},done:{kind:'terminal',status:'done'}
           }})});
           const {runId} = await startWorkflow(db,worker,{name,roleBindings:{triager:agent}});
+          if (name === 'refusal-proof') {
+            // WORKFLOW-ROLE-REFUSAL: authorized caller chooses a role other than the current one.
+            const snapshot = async () => ({
+              messages:(await db.query('SELECT * FROM messages ORDER BY id')).rows,
+              schedules:(await db.query('SELECT * FROM agent_schedules ORDER BY id')).rows,
+              commands:(await db.query('SELECT * FROM agent_commands ORDER BY id')).rows,
+            });
+            const before = await snapshot();
+            const mismatch = await call({...input,runId,role:'reviewer',targetAgentId:agent},'assignWorkflowRole');
+            assert.deepEqual(mismatch,{status:503,body:{error:'this run is currently at the triager role, not reviewer'}});
+            assert.deepEqual(await snapshot(),before);
+          }
           if (name === 'workspace-walk') await reserveServiceReviewWorkspaces(db,agent,runId,true);
           const contents = name === 'workspace-walk' ? {receipts:(await db.query('SELECT * FROM service_review_targets($1,$2)',[agent,runId])).rows.map(row=>({workspace:row.workspace_id,rowsRead:0,firstMessageTime:null,lastMessageTime:null,findings:'none'}))} : {text:'x'.repeat(17000)};
           const result = await call({...input,runId,outcome:'reviewed',contents},'handoff');

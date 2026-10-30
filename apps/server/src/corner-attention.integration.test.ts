@@ -922,3 +922,11 @@ it('Reproduction R1: a worker that ends its turn with a future schedule reads wa
   await runCornerAttention(db);
   expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(1);
 });
+
+it('Reproduction idle-1: an opening idle alert is discarded when delivered during pending CI', async () => {
+  await refreshCornerAttention(db,C);
+  const queued=(await daemon.execute('getAgentCommands',{roomId:C},COMMANDER)).commands;
+  expect(queued.some(c=>c.source.body.includes('is idle'))).toBe(true);
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[C,JSON.stringify({checks:'pending',pr:{number:3101,headSha:'0db9eaa0713c7dc8d3027b7c045bbe1760cd391a'},checksSummary:{status:'pending',total:14,checks:[{name:'SHARED PACKAGE TESTS',status:'pending'},{name:'Build auth container',status:'pending'}]}})]);
+  expect((await daemon.execute('getAgentCommands',{roomId:C},COMMANDER)).commands).toEqual([]);
+});

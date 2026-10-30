@@ -3296,8 +3296,11 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
   it.each([new Error('GitHub pull request merge failed: HTTP 502'), new TypeError('fetch failed')])(
     'Reproduction R6c: %s after GitHub merged produces a landing, no refusal', async error => {
       const cornerId = await approved();
-      githubApp.mergePullRequest.mockRejectedValueOnce(error);
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+      githubApp.mergePullRequest.mockImplementationOnce(async () => {
+        githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+        throw error;
+      });
       await implementersMerge();
       expect((await cards(cornerId)).filter(card => card.outcome === 'merge_refused')).toEqual([]);
       expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
@@ -3494,14 +3497,16 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
       expect(depth, 'token').toBe(0);
       return { token: 'tok', expiresAt: '2030-01-01T00:00:00Z' };
     });
+    let mergeAttempted = false;
     githubApp.readPullRequest.mockImplementation(async () => {
       providerDepths.push({ call: 'read PR', depth });
       expect(depth, 'read PR').toBe(0);
-      return providerPr(cornerId, path !== 'recovery open');
+      return providerPr(cornerId, path === 'recovery merged' || mergeAttempted);
     });
     githubApp.mergePullRequest.mockImplementation(async () => {
       providerDepths.push({ call: 'merge', depth });
       expect(depth, 'merge').toBe(0);
+      mergeAttempted = true;
       if (path === 'uncertain merge') throw new TypeError('fetch failed');
     });
     githubApp.deleteBranch.mockImplementation(async () => {

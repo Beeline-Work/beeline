@@ -201,7 +201,7 @@ export const CORNER_REVIEWER_SESSION_INSTRUCTION =
   "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS wakes the implementer to land; use merge_corner yourself only on an explicit commander order.";
 
 export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
-  'The current PR head is not green, so approve_merge on it fails now. The server wakes you when checks pass on the current head.';
+  'A current green review target matching this checkout could not be verified. Read checks before reviewing; confirm the checkout matches the live PR head. The server still requires green checks and approval on that exact head.';
 
 export const CORNER_DELIVERY_NUDGE =
   'Only when you write code in this corner and the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. If you wrote no code, deliver with post_artifact.';

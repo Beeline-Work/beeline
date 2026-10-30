@@ -206,6 +206,7 @@ import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js
 import { agentWalletTool, agentSignTypedData, agentContractCall, delegationView } from './wallet.js';
 import {
   noteFirstSilence,
+  recoverModelCapacityCompletion,
   TURN_FAILURE_REASON_MAX,
   turnSilenceLockKey,
 } from './turn-silence-notice.js';
@@ -786,6 +787,16 @@ export class DaemonService {
           candidate.status = 'complete';
           delete candidate.reason;
           delete candidate.reasonKind;
+        }
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
+          const capacity = await recoverModelCapacityCompletion(db, this.live, command);
+          if (capacity) {
+            await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
+            return this.writeResult({
+              ...(capacity.hiccupRestart ? {hiccupRestart:true,hiccupAttempt:capacity.attempt} : {}),
+              ...(capacity.reportDelivered !== undefined ? {failureReportDelivered:capacity.reportDelivered} : {}),
+            }) as Output<Name>;
+          }
         }
         // Queue the existing workflow completion hook for both a fresh receipt
         // and a receipt whose published reply already completed the command.

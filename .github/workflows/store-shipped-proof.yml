@@ -1,0 +1,44 @@
+# TEMPORARY read-only proof for the release-pipeline corner; removed before merge.
+# Asks the real Play and App Store Connect APIs whether a release marker shipped.
+# Play: one throwaway edit, read, then deleted (never committed). ASC: GET only.
+name: Store shipped proof (temporary)
+
+on:
+  push:
+    branches: [feature/corner-22cec696f18b]
+    paths: [.github/workflows/store-shipped-proof.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  store_shipped:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Mint a Play token
+        id: play
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/play-token.mjs
+      - name: Ask both stores about an unshipped marker and list what they hold
+        env:
+          ACCESS_TOKEN: ${{ steps.play.outputs.access_token }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          node scripts/store-shipped.mjs find --marker "v0.0.0@$(git rev-parse HEAD | cut -c1-12)" --android --ios
+          node --input-type=module -e "
+            import { readPlayTracks } from './scripts/store-shipped.mjs';
+            import { appStoreClient } from './scripts/ios-store-build.mjs';
+            const tracks = await readPlayTracks({ packageName: 'app.usebeeline', accessToken: process.env.ACCESS_TOKEN });
+            for (const t of tracks.tracks ?? []) console.log('play', t.track, (t.releases ?? []).map((r) => r.name + ':' + (r.versionCodes ?? []).join('/')).join(', '));
+            const page = await appStoreClient()('/v1/builds?filter[app]=6803948500&sort=-uploadedDate&limit=5&include=preReleaseVersion,betaBuildLocalizations');
+            for (const b of page.data) console.log('ios build', b.attributes.version, b.attributes.processingState, 'localizations', b.relationships?.betaBuildLocalizations?.data?.length ?? 'n/a');
+          "

@@ -14,7 +14,8 @@
 #   MAPPING_PATH     — nonempty R8 mapping extracted from that exact AAB
 #   MAPPING_ARCHIVE_DIR — directory for version-code-named mapping artifacts
 #   TRACK            — internal | alpha | beta | production
-#   RELEASE_NAME     — release name shown in Play Console (the app version)
+#   RELEASE_NAME     — release name shown in Play Console: "<app version> (<release marker>)";
+#                      a release already named this on any track is not uploaded again
 #   RELEASE_STATUS   — draft | completed
 #                       draft     = uploaded, not sent to testers; you press
 #                                   "Send to testers"/"Release" in Play Console.
@@ -52,6 +53,26 @@ echo "1/4 Creating edit..."
 edit_id=$(api POST "$API/edits" -H "Content-Length: 0" | json_field id)
 echo "  edit id: $edit_id"
 export PLAY_EDIT_ID="$edit_id"
+
+# A rerun of the same release must not upload a second bundle. RELEASE_NAME
+# carries the release marker, so a Play release with this exact name on any
+# track means this build already shipped: drop the edit and report it.
+shipped_code=$(api GET "$API/edits/$edit_id/tracks" | RELEASE_NAME="$RELEASE_NAME" python3 -c '
+import json, os, sys
+for track in json.load(sys.stdin).get("tracks", []):
+  for release in track.get("releases", []):
+    if release.get("name") == os.environ["RELEASE_NAME"] and release.get("versionCodes"):
+      print(max(int(code) for code in release["versionCodes"]))
+      sys.exit(0)
+')
+if [ -n "$shipped_code" ]; then
+  api DELETE "$API/edits/$edit_id" >/dev/null
+  echo "  $RELEASE_NAME already shipped as versionCode $shipped_code; nothing uploaded"
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    { echo "already_shipped=true"; echo "version_code=$shipped_code"; } >> "$GITHUB_OUTPUT"
+  fi
+  exit 0
+fi
 if [ "${PUBLISH_LISTING:-false}" != "true" ]; then
   PLAY_LISTING_BASELINE="${PLAY_LISTING_BASELINE:-$(mktemp)}"
   export PLAY_LISTING_BASELINE

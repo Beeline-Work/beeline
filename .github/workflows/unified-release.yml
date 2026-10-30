@@ -116,6 +116,11 @@ jobs:
       native_android: ${{ steps.plan.outputs.native_android }}
       native_ios: ${{ steps.plan.outputs.native_ios }}
       native_app_version: ${{ steps.native_version.outputs.version }}
+      release_marker: ${{ steps.store_shipped.outputs.release_marker }}
+      android_shipped: ${{ steps.store_shipped.outputs.android_shipped }}
+      android_version_code: ${{ steps.store_shipped.outputs.android_version_code }}
+      ios_shipped: ${{ steps.store_shipped.outputs.ios_shipped }}
+      ios_build_number: ${{ steps.store_shipped.outputs.ios_build_number }}
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
       desktop_version: ${{ steps.plan.outputs.desktop_version }}
     steps:
@@ -211,19 +216,57 @@ jobs:
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
           node scripts/unified-release.mjs "${args[@]}"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
+      # A rerun of this release asks the stores what it already shipped. The
+      # Play release name and the TestFlight "What to Test" text carry the
+      # release marker, so a shipped platform skips its build and upload.
+      - name: Mint a Play token to read this release's store builds
+        id: play_read
+        if: >-
+          steps.plan.outputs.run_mobile_native == 'true' && steps.plan.outputs.native_android == 'true' &&
+          inputs.store_track != '' && inputs.store_track != 'none'
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/play-token.mjs
+      - name: Find this release's store builds
+        id: store_shipped
+        if: steps.plan.outputs.run_mobile_native == 'true'
+        env:
+          STORE_TRACK: ${{ inputs.store_track }}
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+          NATIVE_ANDROID: ${{ steps.plan.outputs.native_android }}
+          NATIVE_IOS: ${{ steps.plan.outputs.native_ios }}
+          ACCESS_TOKEN: ${{ steps.play_read.outputs.access_token }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          marker="$RELEASE_VERSION@${RELEASE_SHA:0:12}"
+          echo "release_marker=$marker" >> "$GITHUB_OUTPUT"
+          # Without a store track nothing is uploaded, so nothing can have shipped.
+          if [ -z "$STORE_TRACK" ] || [ "$STORE_TRACK" = none ]; then exit 0; fi
+          args=(find --marker "$marker" --outputs "$GITHUB_OUTPUT")
+          if [ "$NATIVE_ANDROID" = true ]; then args+=(--android); fi
+          if [ "$NATIVE_IOS" = true ]; then args+=(--ios); fi
+          node scripts/store-shipped.mjs "${args[@]}"
       - name: Resolve the shared native store version before building
         id: native_version
         if: steps.plan.outputs.run_mobile_native == 'true'
         env:
           STORE_TRACK: ${{ inputs.store_track }}
           RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+          SHIPPED_VERSION: ${{ steps.store_shipped.outputs.shipped_version }}
           EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
           EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
         run: |
           set -euo pipefail
           git show "$RELEASE_SHA:apps/mobile/package.json" > "$RUNNER_TEMP/mobile-package.json"
-          if [ "$STORE_TRACK" = production ]; then
+          if [ -n "$SHIPPED_VERSION" ]; then
+            # A platform already shipped this release: the other one must match it.
+            version="$SHIPPED_VERSION"
+          elif [ "$STORE_TRACK" = production ]; then
             version=$(node scripts/ios-store-build.mjs resolve-version "$RUNNER_TEMP/mobile-package.json")
           else
             version=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/mobile-package.json")
@@ -518,13 +561,13 @@ jobs:
       # that older run and cannot be downloaded here. The binary under proof
       # therefore follows whether the native job actually ran and succeeded.
       - name: Download the native AAB under proof
-        if: needs.mobile_native_android.result == 'success'
+        if: needs.mobile_native_android.outputs.built == 'true'
         uses: actions/download-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/proof-binary
       - name: Build the sideload APK under proof (no native build in this run)
-        if: needs.mobile_native_android.result != 'success'
+        if: needs.mobile_native_android.outputs.built != 'true'
         working-directory: apps/mobile
         env:
           ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
@@ -553,7 +596,7 @@ jobs:
           BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
         run: |
           set -euo pipefail
-          if [ "${{ needs.mobile_native_android.result }}" = 'success' ]; then
+          if [ "${{ needs.mobile_native_android.outputs.built }}" = 'true' ]; then
             node apps/mobile/scripts/release-proof.mjs --aab "$RUNNER_TEMP/proof-binary/beeline.aab"
           else
             node apps/mobile/scripts/release-proof.mjs --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
@@ -729,7 +772,8 @@ jobs:
     runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
     outputs:
-      version_code: ${{ steps.play-upload.outputs.version_code }}
+      version_code: ${{ steps.play-upload.outputs.version_code || needs.initialize.outputs.android_version_code }}
+      built: ${{ steps.android_build.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -755,7 +799,12 @@ jobs:
         run: |
           node scripts/check-release-version.cjs
           node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+      - name: Report an Android build this release already shipped
+        if: needs.initialize.outputs.android_shipped == 'true'
+        run: echo "::notice::Android versionCode ${{ needs.initialize.outputs.android_version_code }} already shipped for ${{ needs.initialize.outputs.release_marker }}; no build or upload"
       - name: Build immutable Android store binary locally
+        id: android_build
+        if: needs.initialize.outputs.android_shipped != 'true'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -789,6 +838,7 @@ jobs:
           NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
         run: echo "version=$NATIVE_APP_VERSION" >> "$GITHUB_OUTPUT"
       - name: Hand the AAB to the release proof in this run
+        if: steps.android_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
@@ -808,7 +858,7 @@ jobs:
         run: node scripts/play-token.mjs
       - name: Upload Android to the selected Play track
         id: play-upload
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && steps.android_build.outcome == 'success'
         env:
           MAPPING_ARCHIVE_DIR: ${{ runner.temp }}/android-mappings
           MAPPING_PATH: ${{ runner.temp }}/mapping.txt
@@ -825,9 +875,11 @@ jobs:
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
-          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
+          # The release marker in the name lets a rerun find this build on Play.
+          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }} (${{ needs.initialize.outputs.release_marker }})" \
+            RELEASE_STATUS=completed bash scripts/play-publish.sh
       - name: Enforce the Play listing lock before committing the build
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && steps.play-upload.outputs.edit_id != ''
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline
@@ -858,7 +910,7 @@ jobs:
             echo "::warning::Could not compare the Play listing; listing was not uploaded"
           fi
       - name: Retain R8 mapping by Play version code
-        if: always() && steps.play-upload.outputs.version_code != ''
+        if: always() && steps.play-upload.outputs.version_code != '' && steps.play-upload.outputs.already_shipped != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-mapping-${{ steps.play-upload.outputs.version_code }}
@@ -930,7 +982,15 @@ jobs:
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+      - name: Reuse the iOS build this release already shipped
+        if: needs.initialize.outputs.ios_shipped == 'true'
+        run: |
+          set -euo pipefail
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
+          node scripts/store-shipped.mjs ios-evidence --marker "${{ needs.initialize.outputs.release_marker }}" --output "$RUNNER_TEMP/ios-build.json"
       - name: Build immutable iOS store binary locally
+        if: needs.initialize.outputs.ios_shipped != 'true'
         working-directory: apps/mobile
         run: |
           set -euo pipefail
@@ -943,8 +1003,11 @@ jobs:
           "$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
           python3 ../../scripts/ios-build-evidence.py "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-build.json"
+          # verify writes this marker into the build's What to Test text.
+          node -e 'const fs=require("node:fs");const p=process.argv[1];fs.writeFileSync(p,JSON.stringify({...JSON.parse(fs.readFileSync(p,"utf8")),releaseMarker:process.argv[2]})+"\n")' \
+            "$RUNNER_TEMP/ios-build.json" "${{ needs.initialize.outputs.release_marker }}"
       - name: Submit iOS build to TestFlight for a selected store track
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && needs.initialize.outputs.ios_shipped != 'true'
         working-directory: apps/mobile
         run: |
           set -euo pipefail

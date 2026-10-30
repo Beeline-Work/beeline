@@ -1349,9 +1349,11 @@ test('the emulator release proof gates OTA promotion', () => {
   const apk = steps.find((step) => step.name === 'Build the sideload APK under proof (no native build in this run)');
   const run = steps.find((step) => step.name === 'Run the emulator release proof');
   const evidence = steps.find((step) => step.name === 'Preserve release-proof evidence');
-  assert.match(aab.if, /needs\.mobile_native_android\.result == 'success'/);
+  // The AAB exists only when the native job built it in this run; a rerun
+  // that found the build already on Play proves a sideload APK instead.
+  assert.match(aab.if, /needs\.mobile_native_android\.outputs\.built == 'true'/);
   assert.match(aab.with.name, /mobile-native-android-build-/);
-  assert.match(apk.if, /needs\.mobile_native_android\.result != 'success'/);
+  assert.match(apk.if, /needs\.mobile_native_android\.outputs\.built != 'true'/);
   // The sideload build IS the carried-build proof path: npm ci installs
   // @beeline/* as unbuilt file: symlinks whose package `main` is dist/index.js
   // (gitignored), so Metro dies in createBundleReleaseJsAndAssets with
@@ -1684,7 +1686,19 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     const iosIdentity = ios.steps.find((step) => step.id === 'ios_identity');
     assert.ok(ios.steps.indexOf(appReview) < ios.steps.indexOf(iosIdentity));
     assert.equal(ios.outputs.build_number, '${{ steps.ios_identity.outputs.build_number }}');
-    assert.equal(android.outputs.version_code, '${{ steps.play-upload.outputs.version_code }}');
+    assert.equal(android.outputs.version_code,
+      '${{ steps.play-upload.outputs.version_code || needs.initialize.outputs.android_version_code }}');
+    // A rerun asks the stores first: a shipped platform neither builds nor uploads.
+    assert.equal(androidBuild.if, "needs.initialize.outputs.android_shipped != 'true'");
+    assert.match(playUpload.if, /steps\.android_build\.outcome == 'success'/);
+    assert.match(playUpload.run, /RELEASE_NAME="\$\{\{ steps\.native_version\.outputs\.version \}\} \(\$\{\{ needs\.initialize\.outputs\.release_marker \}\}\)"/);
+    assert.equal(iosBuild.if, "needs.initialize.outputs.ios_shipped != 'true'");
+    assert.match(iosSubmit.if, /ios_shipped != 'true'/);
+    assert.match(iosBuild.run, /releaseMarker/);
+    const iosReuse = ios.steps.find((step) => step.name === 'Reuse the iOS build this release already shipped');
+    assert.equal(iosReuse.if, "needs.initialize.outputs.ios_shipped == 'true'");
+    assert.match(iosReuse.run, /store-shipped\.mjs ios-evidence/);
+    assert.ok(ios.steps.indexOf(iosReuse) < ios.steps.indexOf(appReview));
     const androidEvidence = androidSteps.find((step) => step.name === 'Hand the AAB to the release proof in this run');
     assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');
     assert.match(androidEvidence.with.path, /android-build\.json[\s\S]*beeline\.aab/);

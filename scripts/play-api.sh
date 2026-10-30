@@ -17,7 +17,8 @@
 # the curl arguments minus the bearer token) and answer with a canned body, so
 # the sequence can be proven without a service account.
 # PLAY_DRY_RUN_VERSION_CODE sets the versionCode the canned upload/track bodies
-# report (default 0).
+# report (default 0). PLAY_DRY_RUN_TRACKS is the canned edits.tracks.list body
+# (default: no tracks).
 
 : "${PACKAGE_NAME:?PACKAGE_NAME env var is required (e.g. app.usebeeline)}"
 if [ "${PLAY_DRY_RUN:-0}" != "1" ]; then
@@ -30,10 +31,11 @@ export API UPLOAD_API
 
 play_dry_run_response() {
   local method="$1" url="$2"
-  local version_code="${PLAY_DRY_RUN_VERSION_CODE:-0}"
+  local version_code="${PLAY_DRY_RUN_VERSION_CODE:-0}" no_tracks='{"tracks":[]}'
   case "$method $url" in
     "POST $API/edits") echo '{"id":"dry-run-edit"}' ;;
     "POST $UPLOAD_API/edits/"*"/bundles?"*) echo "{\"versionCode\":${version_code}}" ;;
+    "GET $API/edits/"*"/tracks") echo "${PLAY_DRY_RUN_TRACKS:-$no_tracks}" ;;
     "GET $API/edits/"*"/tracks/"*)
       echo "{\"track\":\"${url##*/}\",\"releases\":[{\"name\":\"dry-run-release\",\"status\":\"completed\",\"versionCodes\":[\"${version_code}\"],\"releaseNotes\":[{\"language\":\"en-US\",\"text\":\"dry-run notes\"}]}]}"
       ;;

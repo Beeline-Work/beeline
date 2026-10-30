@@ -100,6 +100,20 @@ export async function prepareUpload({ api, evidence, appId, now = Date.now }) {
   return { ...evidence, appStore: { appId, uploadStartedAt: new Date(now()).toISOString() } };
 }
 
+/** Writes the release marker into the build's en-US What to Test text (see store-shipped.mjs). */
+export async function markIosBuild({ api, buildId, marker }) {
+  const whatsNew = `Beeline release ${marker}`;
+  const existing = await api(`/v1/builds/${buildId}/betaBuildLocalizations?limit=50`);
+  const local = existing?.data?.find((item) => item.attributes?.locale === 'en-US');
+  if (local) {
+    await api(`/v1/betaBuildLocalizations/${local.id}`, { method: 'PATCH',
+      data: { type: 'betaBuildLocalizations', id: local.id, attributes: { whatsNew } } });
+  } else {
+    await api('/v1/betaBuildLocalizations', { method: 'POST', data: { type: 'betaBuildLocalizations',
+      attributes: { locale: 'en-US', whatsNew }, relationships: { build: { data: { type: 'builds', id: buildId } } } } });
+  }
+}
+
 export async function verifyUpload({ api, evidence, receipt, now = Date.now, wait = sleep,
   timeoutMs = TIMEOUT_MS, log = console.log }) {
   const { appId, uploadStartedAt } = evidence.appStore ?? {};
@@ -110,6 +124,7 @@ export async function verifyUpload({ api, evidence, receipt, now = Date.now, wai
     throw new Error('altool did not provide a delivery UUID and a prepared upload identity');
   }
   const deadline = now() + timeoutMs;
+  let marked = false;
   do {
     const upload = await api(`/v1/buildUploads/${deliveryId}`, { allowMissing: true });
     if (upload) {
@@ -141,6 +156,12 @@ export async function verifyUpload({ api, evidence, receipt, now = Date.now, wai
           }
           if (['FAILED', 'INVALID'].includes(attrs.processingState) || attrs.expired) {
             throw new Error(`iOS build ${build.id} is unusable: ${JSON.stringify(attrs)}`);
+          }
+          // Mark the build as this release's the moment Apple lists it, so a
+          // rerun finds it and never uploads a second build.
+          if (evidence.releaseMarker && !marked) {
+            await markIosBuild({ api, buildId: build.id, marker: evidence.releaseMarker });
+            marked = true;
           }
           if (attrs.processingState === 'VALID') {
             log(`Verified App Store app ${appId}: iOS ${evidence.appVersion} (${evidence.buildNumber}), build ${build.id}, VALID`);

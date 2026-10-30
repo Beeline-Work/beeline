@@ -24,6 +24,22 @@ async function main() {
     ['inline-output-toggle', 'inline-output-body'],
     ['script-toggle', 'script'],
   ];
+  const alignment = [...rows, ['wrapped-check-summary']].map(([id]) => {
+    const row = get(id);
+    const mark = row.querySelector('svg')!.getBoundingClientRect();
+    const label = row.querySelector('[dir="auto"]')!.getBoundingClientRect();
+    return { id, offset: mark.y + mark.height / 2 - label.y - label.height / 2,
+      rowHeight: row.getBoundingClientRect().height };
+  });
+  const statusMark = get('corner-status-line').querySelector('svg')!.getBoundingClientRect();
+  const statusText = get('corner-status-copy').getBoundingClientRect();
+  alignment.push({ id: 'corner-status-line', offset: statusMark.y + statusMark.height / 2 - statusText.y - statusText.height / 2,
+    rowHeight: get('corner-status-line').getBoundingClientRect().height });
+  if (!location.search.includes('alignment-baseline'))
+    for (const { id, offset, rowHeight } of alignment) {
+      assert(Math.abs(offset) <= 1, `${id}: chevron offset ${offset}px`);
+      assert(rowHeight === 44, `${id}: row height changed to ${rowHeight}px`);
+    }
   for (const [id, child] of rows) {
     const row = get(id);
     assert(row.getBoundingClientRect().height >= 44, `${id}: tap height below 44`);
@@ -61,6 +77,12 @@ async function main() {
   assert(document.documentElement.scrollWidth <= innerWidth, 'horizontal overflow');
   for (const [id] of rows) { get(id).click(); await pause(); }
   assert(get('tool-run-more-read'), 'long steps run needs N more');
+  const more = get('tool-run-more-read');
+  const moreMark = more.querySelector('svg')!.getBoundingClientRect();
+  const moreText = more.querySelector('[dir="auto"]')!.getBoundingClientRect();
+  assert(Math.abs(moreMark.y + moreMark.height / 2 - moreText.y - moreText.height / 2) <= 1, 'N more alignment');
+  const wrapped = get('wrapped-check-summary').querySelector('[dir="auto"]')!;
+  assert(wrapped.getBoundingClientRect().height === 2 * parseFloat(getComputedStyle(wrapped).lineHeight), 'wrapped summary needs two lines');
   assert(!get('tool-ledger-line-edit'), 'long run shows only two steps initially');
   get('tool-run-more-read').click(); await pause();
   assert(get('tool-ledger-line-edit'), 'N more must reveal failed step');
@@ -120,7 +142,7 @@ async function main() {
   assert(getComputedStyle(get('script')).marginBottom === '0px', 'script body margin differs from main');
   assert(Math.abs(card.height - 147) < 1, 'open script card height differs from main');
   document.getElementById('result')!.textContent =
-    `PASS DISCLOSURE-EDGE: ${before ? 'original edge' : 'no edge'}, 44px targets, edge taps expand/collapse, next-message spacing`;
+    `PASS DISCLOSURE-EDGE ${JSON.stringify(alignment)}: ${before ? 'original edge' : 'no edge'}, 44px targets, edge taps expand/collapse, next-message spacing`;
 }
 main().catch((error) => {
   document.getElementById('result')!.textContent = `FAIL: ${error.message}`;

@@ -1,0 +1,7 @@
+Native inputs changed but android.runtimeVersion is still "43".
+Fix: bump android.runtimeVersion in apps/mobile/app.config.js to "44" and ship that platform's new native build.
+Native inputs changed but ios.runtimeVersion is still "36".
+Fix: bump ios.runtimeVersion in apps/mobile/app.config.js to "37" and ship that platform's new native build.
+  android: 37fc3034b64d7dc22e8f39c10b9ac85b42b422f6 -> fc7f5415d3a13b9ad7f23699b3261fc217277a5a
+  ios: 7b96cfde20118e56391556854cc37d749bb713d4 -> 444e753b9c9dac3443fea897a572eec6a7db381b
+Run `npm run fingerprint:write --prefix apps/mobile` and commit native-fingerprint.json.

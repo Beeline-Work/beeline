@@ -38,7 +38,7 @@ for (const system of [false, true])
             width,
             height: system ? (process.env.SYSTEM_OPENED === '1' ? 1500 : 500) : 2300,
             head,
-            query: `?${theme}${process.env.DISCLOSURE_BEFORE === '1' ? '&before' : ''}${system ? '&system' : ''}${process.env.SYSTEM_BASELINE === '1' ? '&baseline' : ''}${process.env.SYSTEM_OPENED === '1' ? '&opened' : ''}`,
+            query: `?${theme}${process.env.DISCLOSURE_BEFORE === '1' ? '&before' : ''}${process.env.CHEVRON_BASELINE === '1' ? '&alignment-baseline' : ''}${system ? '&system' : ''}${process.env.SYSTEM_BASELINE === '1' ? '&baseline' : ''}${process.env.SYSTEM_OPENED === '1' ? '&opened' : ''}`,
             screenshotPath: screenshotDir
               ? path.join(screenshotDir, `web-${width}-${theme}${system ? '-system' : ''}.png`)
               : undefined,
@@ -47,6 +47,7 @@ for (const system of [false, true])
           expect(proof.result, proof.stderr).toContain(
             system ? 'PASS SYSTEM-FIRST-LINE' : 'PASS DISCLOSURE-EDGE',
           );
+          if (!system && screenshotDir) writeFileSync(path.join(screenshotDir, `web-${width}-${theme}.txt`), proof.result + '\n');
           if (system) {
             const metrics = JSON.parse(proof.result.slice('PASS SYSTEM-FIRST-LINE '.length));
             const baselinePath = path.join(

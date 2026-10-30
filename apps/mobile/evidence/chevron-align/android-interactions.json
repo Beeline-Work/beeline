@@ -1,0 +1,66 @@
+{
+  "serial": "emulator-5554",
+  "density": 2.625,
+  "themes": {
+    "bone": [
+      {
+        "row": "tool-run-group-read",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "1 issue filed \u00b7 1 corner merged",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "notification-run-expand-checks",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "notification-run-expand-payments",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "notification-run-expand-notices",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "inline-output-toggle",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "script-toggle",
+        "expandedThenCollapsed": true
+      }
+    ],
+    "obsidian": [
+      {
+        "row": "tool-run-group-read",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "1 issue filed \u00b7 1 corner merged",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "notification-run-expand-checks",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "notification-run-expand-payments",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "notification-run-expand-notices",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "inline-output-toggle",
+        "expandedThenCollapsed": true
+      },
+      {
+        "row": "script-toggle",
+        "expandedThenCollapsed": true
+      }
+    ]
+  }
+}

@@ -315,7 +315,8 @@ const appSignInStyles = StyleSheet.create(theme => {
   title: { ...theme.buzz.type.bodyStrong, color: board.ink },
   detail: { ...theme.buzz.type.meta, color: board.secondary },
   error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
-  button: { alignSelf: 'flex-start' },
+  // A single decision sits where a ButtonRow puts its confirm: at the trailing edge.
+  button: { alignSelf: 'flex-end' },
   settled: { ...theme.buzz.type.sectionHead, color: board.quiet, marginVertical: 8, marginHorizontal: 8 },
   };
 });

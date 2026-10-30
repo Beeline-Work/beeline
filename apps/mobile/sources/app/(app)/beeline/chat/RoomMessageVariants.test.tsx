@@ -2953,6 +2953,9 @@ describe('Room message variant components', () => {
       expect(JSON.stringify(fallback.toJSON())).toContain('continues the request right after.');
       act(() => pendingCard.root.findByProps({ testID: 'app-sign-in-slack-connect' }).props.onPress());
       expect(onConnect).toHaveBeenCalledTimes(1);
+      // The lone Connect decision sits at the trailing edge, like every card's ButtonRow.
+      const connect = pendingCard.root.findAll((node: any) => node.props.testID === 'app-sign-in-slack-connect')[0]!;
+      expect([connect.props.style].flat(Infinity)).toContainEqual(expect.objectContaining({ alignSelf: 'flex-end' }));
       const waiting = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);
       expect(JSON.stringify(waiting.toJSON())).toContain('Waiting for the account owner');
       const settled = render(<AppSignInCard message={message({ appSignIn: { ...signIn.appSignIn!, status: 'connected' } })} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);

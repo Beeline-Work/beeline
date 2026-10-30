@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -142,7 +142,27 @@ describe('ACP turn liveness over real stdio', () => {
     console.log('Reproduction LOOP-1: first successful no_reply_needed → prompt ended with no final text');
   });
 
-  it.each(['content', 'rawOutput', 'tool_result'])('Reproduction LAT-0730: changing %s results keep identical capture polls alive', async format => {
+  it('Reproduction LAT-0730: recorded ACP capture-log polls finish despite identical inputs', async () => {
+    const fixture = JSON.parse(await readFile(new URL('./fixtures/lat-0730-acp.json', import.meta.url), 'utf8'));
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
+    // Native wait is absent from the recorded thread items. Replay all five
+    // rendered command pairs, then the first two again with fresh IDs to exceed six calls.
+    for (let i = 0; i < 7; i++) {
+      for (const update of fixture.updates.slice((i % 5) * 2, (i % 5) * 2 + 2)) {
+        const replay = JSON.parse(JSON.stringify(update).replaceAll(update.toolCallId, `capture-${i}`));
+        await client.setModel(sessionId, JSON.stringify(replay));
+      }
+    }
+    await client.setModel(sessionId, JSON.stringify({ complete: true }));
+    expect((await prompt).stopReason).toBe('end_turn');
+    expect(cancel).not.toHaveBeenCalled();
+    console.log('Demonstrated LAT-0730: recorded ACP log tails; native wait absent; seven calls → end_turn');
+  });
+
+  it.each(['content', 'rawOutput', 'tool_result'])('changing %s results keep identical poll inputs alive', async format => {
     const opened = once(client, 'session/update');
     const prompt = client.sessionPrompt(sessionId, 'tool');
     await opened;

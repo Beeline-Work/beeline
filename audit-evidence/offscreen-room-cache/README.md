@@ -25,10 +25,10 @@ The unchanged local-attempt.sh completed on be8ddcf8d; see repair-rig/report.md 
 
 The before p50 range is (371–573 ms), from the approved nightly baseline. After p50 has not returned to approximately (260 ms); the rig budget verdict fails. Warm p50 is (433 ms), send-text p50 (215 ms). The server shard overlapped the first portion of capture, so these timing figures are not an uncontended comparison. All raw capture remains at /tmp/emberus-rig-repair; the report and host-load summary are committed. Active-reply timing under large offscreen traffic remains unproven. No timing metric or rig method was changed.
 
-## Server import boundary repair
+## Contract test location
 
-The server contract test previously imported mobile `surface-registry.ts` and `cache-room-message-delta.ts`. The registry reached `surface-clock.ts`; the delta handler reached `room-view-presentation.ts`. These runtime modules used shared contracts only, but Vite resolved their nearest `apps/mobile/tsconfig.json`, which extends `expo/tsconfig.base.json`. The presentation module also had erased type-only references to mobile transport, agent display, corners, and PR lifecycle.
-
-The registry, clock, message cache handler, and Room reconciliation now live in `packages/buzz-client`, with mobile re-exports preserving one implementation and one clock. The server imports that package, never the mobile source tree. Existing server tests that read mobile source text (pairing command and corner status formatter) do not load its tsconfig. The server Vitest transform override is removed.
-
-Root typecheck and the focused mobile cache, reconciliation, identity, and Workspace tests pass (52 tests). The standalone server test passes (85 tests). Device proof remains pending CI, as ordered.
+The registry, clock and Room reconciliation remain in mobile. The mobile suite's
+`offscreen-room-contract.test.ts` starts the actual server, subscribes offscreen,
+and feeds its WebSocket frame into the mobile Room cache. The server suite also
+asserts that small offscreen messages retain the full frame. No mobile runtime
+code is moved into the shared package.

@@ -132,13 +132,7 @@ async function measure() {
       <LedgerSystemLine id="legacy" text={'Legacy notice\nSecond line\nThird line'} stamp="4" />
     </>,
   );
-  // React's effects and the width-dependent cut search can finish after the
-  // first timer under CI load. Wait for their visible result before measuring.
-  const collapsedIds = ['first', 'second', 'legacy', ...sweep.map((width) => `sweep-${width}`)];
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await settle();
-    if (collapsedIds.every((id) => row(id)?.textContent?.endsWith('…\u00A0more'))) break;
-  }
+  await settle();
   const callerLabel = get('system-line-caller-label-caller');
   const callerQuote = get('system-line-caller-message-caller');
   assert(callerLabel.textContent === "Caller's message:", 'caller label missing');

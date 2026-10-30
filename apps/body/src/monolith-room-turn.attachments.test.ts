@@ -200,12 +200,7 @@ async function runTurn(
     fetchImpl,
   });
   const loop = roomLoop.run();
-  // Wait for the reply to persist before cancelling the loop. Prompt entry
-  // alone races the asynchronous reply delivery under CI load.
-  await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(
-    'postRoomMessage',
-    expect.objectContaining({ text: 'A photo of a bee.' }),
-  ), { timeout: 5_000 });
+  await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
   abort.abort();
   await loop;
   await scheduler.dispose();

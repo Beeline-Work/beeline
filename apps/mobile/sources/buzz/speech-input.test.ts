@@ -9,6 +9,7 @@ import {
 } from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
 import { dictationTranscriptionAvailable, startDictationUpload } from './speech-transcription';
+import { reportClientError } from './client-error-report';
 import { dictationWaveformLevel } from './waveform-level';
 
 vi.mock('react-native', () => ({
@@ -35,6 +36,7 @@ vi.mock('./speech-transcription', () => ({
   startDictationUpload: vi.fn(() => upload),
   discardDictationRecordings: vi.fn(async () => {}),
 }));
+vi.mock('./client-error-report', () => ({ reportClientError: vi.fn(async () => {}) }));
 vi.mock('./speech-locale', () => ({
   getDeviceSpeechLocale: () => 'en-GB',
 }));
@@ -775,7 +777,8 @@ describe('useSpeechInput', () => {
       expect(speech().state).toBe('idle');
     });
 
-    it('does not upload a take with no on-device words', async () => {
+    it('commits Whisper text from recorded audio with no on-device words', async () => {
+      upload.finish.mockResolvedValue('Whisper heard me.');
       const { onResult, speech } = renderHook();
       await act(async () => {
         await speech().start();
@@ -786,9 +789,57 @@ describe('useSpeechInput', () => {
         fireEvent('end');
         await stopped;
       });
-      expect(upload.finish).not.toHaveBeenCalled();
-      expect(upload.discard).toHaveBeenCalled();
+      expect(upload.finish).toHaveBeenCalledOnce();
+      expect(upload.discard).not.toHaveBeenCalled();
+      expect(onResult).toHaveBeenCalledExactlyOnceWith('Whisper heard me.');
+    });
+
+    it.each([true, false])('shows nothing-recognised when both transcripts are empty (audio=%s)', async (audio) => {
+      upload.finish.mockResolvedValue(null);
+      const { onResult, speech } = renderHook();
+      await act(async () => { await speech().start(); });
+      await act(async () => {
+        const stopped = speech().stop();
+        if (audio) fireEvent('audioend', { uri: 'file:///cache/empty.wav' });
+        fireEvent('end');
+        expect(await stopped).toBe(false);
+      });
+      expect(speech().state).toBe('nothing-recognised');
       expect(onResult).not.toHaveBeenCalled();
+    });
+
+    it.each(['silence', 'restart-limit'])('uses Whisper after %s even without native text or a final end', async (reason) => {
+      vi.useFakeTimers();
+      upload.finish.mockResolvedValue('Recovered speech.');
+      const { onResult, speech } = renderHook();
+      await act(async () => { await speech().start(); });
+      await act(async () => {
+        fireEvent('audioend', { uri: 'file:///cache/recorded.wav' });
+        if (reason === 'silence') vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS);
+        else for (let i = 0; i < 11; i++) fireEvent('end');
+      });
+      expect(speech().state).toBe('finalizing');
+      await act(async () => { vi.advanceTimersByTime(SPEECH_FINALIZATION_TIMEOUT_MS); });
+      expect(onResult).toHaveBeenCalledExactlyOnceWith('Recovered speech.');
+      expect(speech().state).toBe('idle');
+    });
+
+    it('reports the native error and recognizer once per take and resets on the next take', async () => {
+      mockMod.getSpeechRecognitionServices.mockReturnValue([ANDROID_GOOGLE_RECOGNITION_SERVICE]);
+      const { speech } = renderHook();
+      await act(async () => { await speech().start(); });
+      await act(async () => {
+        fireEvent('error', { error: 'network', message: 'service unavailable' });
+        fireEvent('end');
+        fireEvent('error', { error: 'busy', message: 'busy' });
+      });
+      expect(reportClientError).toHaveBeenCalledTimes(1);
+      expect(reportClientError).toHaveBeenCalledWith('app', expect.objectContaining({
+        message: `dictation-error: network: service unavailable; platform=android; recognizer=${ANDROID_GOOGLE_RECOGNITION_SERVICE}`,
+      }));
+      await act(async () => { speech().cancel(); await speech().start(); });
+      await act(async () => { fireEvent('error', { error: 'audio-capture', message: 'capture failed' }); });
+      expect(reportClientError).toHaveBeenCalledTimes(2);
     });
 
     it('commits server-only browser audio without a recognition result', async () => {

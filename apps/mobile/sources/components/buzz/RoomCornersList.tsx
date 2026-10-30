@@ -1,4 +1,4 @@
-import { InlineActionRow } from './IndexRow';
+import { ContentTarget, InlineActionRow, InlineRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
 import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
@@ -219,7 +219,7 @@ export function RoomCornersList({
     const objective = inspectorCornerObjective(label, item.corner.about);
     const runs = liveRuns?.(item.corner.id) ?? [];
     return (
-      <Pressable
+      <ContentTarget
         accessibilityLabel={`${label}. ${display.status}${objective ? `. ${objective}` : ''}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
@@ -242,7 +242,7 @@ export function RoomCornersList({
           otherLiveRuns={runs.slice(1)}
           testID={`room-corner-objective-${item.corner.id}`}
         />
-      </Pressable>
+      </ContentTarget>
     );
   };
 
@@ -257,7 +257,7 @@ export function RoomCornersList({
     const closed = cornerClosedStamp(item.closedAt, stampedAt);
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
     return (
-      <Pressable
+      <InlineRow
         accessibilityLabel={`${label}. ${display.status}. ${line}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
@@ -283,7 +283,7 @@ export function RoomCornersList({
           circle carries its motion for the glance. */}
         {stateWord(display)}
         <StateCircle state={display.visual} tone={display.tone} />
-      </Pressable>
+      </InlineRow>
     );
   };
 

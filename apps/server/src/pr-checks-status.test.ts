@@ -1197,6 +1197,11 @@ it('Reproduction idle-1: a later reconciliation repairs a lost completion withou
   rollupState='SUCCESS';
   await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,fetchStartedAt}',
     to_jsonb(extract(epoch FROM clock_timestamp())-61)) WHERE corner_id=$1`,[AUTHOR]);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',
+    jsonb_build_object('headSha',$2::text,'after',extract(epoch FROM clock_timestamp())+300)) WHERE corner_id=$1`,[AUTHOR,SHA]);
+  await operations.refreshOpenPendingChecks();
+  expect(graphqlRequests()).toHaveLength(before);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,[AUTHOR,'previous-head']);
   await operations.refreshOpenPendingChecks();
   expect(graphqlRequests()).toHaveLength(before+1);
   expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,[AUTHOR])).rows[0]?.checks).toBe('passing');

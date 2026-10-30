@@ -206,6 +206,7 @@ import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js
 import { agentWalletTool, agentSignTypedData, agentContractCall, delegationView } from './wallet.js';
 import {
   noteFirstSilence,
+  recoverModelCapacityCompletion,
   TURN_FAILURE_REASON_MAX,
   turnSilenceLockKey,
 } from './turn-silence-notice.js';
@@ -787,22 +788,14 @@ export class DaemonService {
           delete candidate.reason;
           delete candidate.reasonKind;
         }
-        // Codex can return its provider-capacity diagnostic as a successful
-        // final message. It is not an answer or a review verdict. Correct only
-        // this exact diagnostic, retaining the command's retry budget and fence.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
-          const diagnostic = (await db.query<{ text: string }>(
-            `SELECT text FROM messages WHERE id=$1 AND text=$2`,
-            [command.result_message_id, 'Selected model is at capacity. Please try a different model.'],
-          )).rows[0];
-          if (diagnostic) {
-            await db.query(`UPDATE agent_commands SET state='claimed',completed_at=NULL,result_message_id=NULL
-              WHERE id=$1 AND generation_id=$2 AND state='complete'`, [command.id,command.generation_id]);
-            command.state='claimed';
-            candidate.status='failed';
-            candidate.reason=diagnostic.text;
-            candidate.reasonKind='hiccup';
-            delete candidate.completionKind;
+          const capacity = await recoverModelCapacityCompletion(db, this.live, command);
+          if (capacity) {
+            await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
+            return this.writeResult({
+              ...(capacity.hiccupRestart ? {hiccupRestart:true,hiccupAttempt:capacity.attempt} : {}),
+              ...(capacity.reportDelivered !== undefined ? {failureReportDelivered:capacity.reportDelivered} : {}),
+            }) as Output<Name>;
           }
         }
         // Queue the existing workflow completion hook for both a fresh receipt

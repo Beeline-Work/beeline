@@ -1733,6 +1733,7 @@ it('Reproduction capacity-1: capacity returned as final text and a complete rece
     const receipt=await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,generationId:`cap-${attempt}`,status:'complete'},B);
     expect(Boolean(receipt.hiccupRestart)).toBe(attempt<3);
     const saved=(await db.query('SELECT state,hiccup_attempts,wake_after FROM agent_commands WHERE id=$1',[review!.id])).rows[0]!;
+    expect((await db.query('SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3',[C,review!.turnRequestId,B])).rows[0]).toMatchObject({status:'failed',failure_reason:'Selected model is at capacity. Please try a different model.'});
     expect(saved.hiccup_attempts).toBe(attempt);
     expect(saved.state).toBe(attempt<3?'pending':'complete');
     if(attempt<3) expect(saved.wake_after).not.toBeNull();

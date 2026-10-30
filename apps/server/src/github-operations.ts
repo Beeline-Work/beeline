@@ -2664,6 +2664,8 @@ export class GitHubOperations {
           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
         AND fact.lifecycle->>'checks'='pending'
+        AND fact.lifecycle->'checkRefreshRetry'->>'headSha'
+          IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
         AND COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)
           < extract(epoch FROM clock_timestamp())-60
         AND fact.owner_agent_id IS NOT NULL

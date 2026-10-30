@@ -3722,3 +3722,64 @@ describe('Reproduction run-status: one saved status for every reader', () => {
     }
   });
 });
+
+
+describe('workflow timeout recovery reproductions', () => {
+  async function signupRun() {
+    const command = await adminCommand();
+    const contract = describedWorkflow({
+      version: 1, name: 'signup-recovery', description: 'Recover signup without a provider key',
+      roles: ['maker', 'owner'], start: 'signup_stills',
+      handoffs: {
+        signup_stills: { role: 'maker', requires: ['vault_reference'], timeoutSeconds: 60,
+          on: { ready: 'done', timeout: 'recover' } },
+        recover: { kind: 'gate', role: 'owner', requires: ['decision'],
+          on: { retry: 'signup_stills', abandon: 'failed' }, timeoutSeconds: 600, default: 'abandon' },
+        done: { kind: 'terminal', status: 'done' },
+        failed: { kind: 'terminal', status: 'failed' },
+      },
+    });
+    await saveWorkflow(database, command, { contract });
+    return startWorkflow(database, command, {
+      name: 'signup-recovery', roleBindings: { maker: WORKER_A, owner: APPROVER },
+    });
+  }
+
+  it('Reproduction wf-1: declared timeout accepts reason without vault_reference, preserving success validation', async () => {
+    const { runId } = await signupRun();
+    const command = await commandFor(WORKER_A);
+    await expect(handoff(database, command, { runId, outcome: 'ready', contents: { reason: 'No key' } }))
+      .rejects.toThrow('vault_reference is required');
+    await expect(handoff(database, command, { runId, outcome: 'unknown', contents: { reason: 'No key' } }))
+      .rejects.toThrow('invalid outcome');
+    for (const contents of [{}, { reason: '' }, { reason: 42 }, { reason: 'x'.repeat(501) }, { reason: 'No key', extra: 'x'.repeat(16384) }, null]) {
+      await expect(handoff(database, command, { runId, outcome: 'timeout', contents })).rejects.toThrow();
+    }
+    await expect(handoff(database, command, { runId, outcome: 'timeout',
+      contents: { reason: 'Provider key does not exist' } })).resolves.toMatchObject({ state: 'recover' });
+    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'recover' });
+  });
+
+  it('Reproduction wf-2: directed recovery rebinds maker at owner gate without allowing agent gate answers', async () => {
+    const { runId } = await signupRun();
+    await handoff(database, await commandFor(WORKER_A), {
+      runId, outcome: 'blocked', contents: { reason: 'Provider signup exhausted' },
+    });
+    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'recover' });
+    const directed = await adminCommand();
+    await expect(assignWorkflowRole(database, directed, { runId, role: 'maker', targetAgentId: WORKER_B }))
+      .resolves.toMatchObject({ state: 'recover' });
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read).toMatchObject({ state: 'recover', boundAgentId: APPROVER });
+    await expect(assignWorkflowRole(database, directed, { runId, role: 'missing', targetAgentId: WORKER_B }))
+      .rejects.toThrow('role');
+    await expect(handoff(database, await commandFor(APPROVER), {
+      runId, outcome: 'retry', contents: { decision: 'retry' },
+    })).rejects.toThrow();
+    await answerGate(runId, 'retry');
+    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'signup_stills', boundAgentId: WORKER_B });
+    await expect(handoff(database, await commandFor(WORKER_B), {
+      runId, outcome: 'ready', contents: { vault_reference: 'vault://provider/key' },
+    })).resolves.toMatchObject({ status: 'done' });
+  });
+});

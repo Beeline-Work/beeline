@@ -86,6 +86,7 @@
     "prove:workflow-run": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-workflow-run.ts",
     "prove:wallet-tools": "npm run build && node --import tsx scripts/prove-wallet-tools.mjs",
     "prove:workflow-notices": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-workflow-notices.mjs",
+    "prove:workflow-timeout": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-workflow-timeout.mjs",
     "prove:agent-list-run": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-agent-list-run.ts",
     "prove:reviewer-list": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-reviewer-list.ts",
     "dry-run:helper-storage": "node --import tsx scripts/dry-run-helper-storage.ts",

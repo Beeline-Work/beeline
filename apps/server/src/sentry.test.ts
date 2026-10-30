@@ -574,7 +574,7 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
           }})});
           const {runId} = await startWorkflow(db,worker,{name,roleBindings:{triager:agent}});
           if (name === 'refusal-proof') {
-            // WORKFLOW-ROLE-REFUSAL: authorized caller chooses a role other than the current one.
+            // WORKFLOW-ROLE-REFUSAL: authorized caller chooses an undeclared role.
             const snapshot = async () => ({
               messages:(await db.query('SELECT * FROM messages ORDER BY id')).rows,
               schedules:(await db.query('SELECT * FROM agent_schedules ORDER BY id')).rows,
@@ -582,7 +582,7 @@ it('WORKFLOW-ROLE-REFUSAL / BEELINE-SENTRY-REFUSALS / APP-REFUSAL-5 / VIDEO-PREV
             });
             const before = await snapshot();
             const mismatch = await call({...input,runId,role:'reviewer',targetAgentId:agent},'assignWorkflowRole');
-            assert.deepEqual(mismatch,{status:503,body:{error:'this run is currently at the triager role, not reviewer'}});
+            assert.deepEqual(mismatch,{status:503,body:{error:'unknown workflow role: reviewer'}});
             assert.deepEqual(await snapshot(),before);
           }
           if (name === 'workspace-walk') await reserveServiceReviewWorkspaces(db,agent,runId,true);

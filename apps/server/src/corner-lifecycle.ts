@@ -996,9 +996,16 @@ export async function blockingReview(
        LEFT JOIN messages source ON source.id=command.source_message_id
        JOIN agent_turns turn ON turn.room_id=command.room_id
          AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
+       LEFT JOIN LATERAL (SELECT true delivered FROM agent_commands repair
+         WHERE repair.room_id=command.room_id AND repair.parent_command_id=command.id AND repair.reason='order'
+           AND repair.private_payload->>'authorId'=command.agent_id
+           AND repair.review_context->>'purpose'='repair'
+           AND repair.review_context->>'headSha'=$2
+           AND repair.review_context->'pullRequest'=command.review_context->'pullRequest'
+           AND repair.private_payload->>'text' ~* $4 LIMIT 1) repair_verdict ON true
        WHERE command.room_id=$1 AND command.action='input'
          AND (command.state='complete' AND turn.status='complete'
-           OR command.report_outcome IN ('failed','blocked'))
+           OR command.report_outcome IN ('failed','blocked') OR repair_verdict.delivered)
          AND (EXISTS (SELECT 1 FROM messages verdict
            WHERE verdict.room_id=command.room_id AND verdict.author_id=command.agent_id
              AND (verdict.id=command.result_message_id OR verdict.request_id=command.turn_request_id
@@ -1006,7 +1013,8 @@ export async function blockingReview(
              AND verdict.deleted_at IS NULL AND verdict.text ~* $4)
            OR EXISTS (SELECT 1 FROM agent_commands report
              WHERE report.id IN (SELECT jsonb_array_elements_text(COALESCE(command.review_context->'reportIds','[]'::jsonb)))
-               AND report.private_payload->>'authorId'=command.agent_id AND report.private_payload->>'text' ~* $4))
+               AND report.private_payload->>'authorId'=command.agent_id AND report.private_payload->>'text' ~* $4)
+           OR repair_verdict.delivered)
          AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
          AND (command.reason='corner_review_dispatch'
            OR (command.reason IN ('agent_tag','order') AND command.review_context IS NOT NULL
@@ -1018,7 +1026,7 @@ export async function blockingReview(
             ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
          AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
            SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1))
-         AND (command.report_outcome IN ('failed','blocked') OR NOT EXISTS (
+         AND (command.report_outcome IN ('failed','blocked') OR repair_verdict.delivered OR NOT EXISTS (
            SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
              AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
              AND card.created_at>command.created_at
@@ -1440,6 +1448,7 @@ export type CornerMergeabilityInput = {
   held: boolean;
   holds: readonly { id: string; holderId?: string; holderName?: string | null }[];
   archived: boolean;
+  merged?: boolean;
   expectedHeadSha?: string | null;
   currentHeadSha: string;
   mergeability?: string;
@@ -1448,6 +1457,7 @@ export type CornerMergeabilityInput = {
 /** One verdict and refusal reason for both the checks read and merge command. */
 export function cornerMergeability(input: CornerMergeabilityInput) {
   const reasons = [
+    input.merged ? 'the pull request is already merged' : '',
     input.archived ? 'the corner is closed' : '',
     input.expectedHeadSha && input.expectedHeadSha !== input.currentHeadSha
       ? 'PR head changed; checks and approval must match the corner head'

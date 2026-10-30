@@ -15,6 +15,7 @@ const { createAgentCommand, reconcileConfiguredCornerReviewers } = await mod(
 );
 const { flushDueCommanderWakes } = await mod('apps/server/dist/commander-wakes.js');
 const { advanceCorner } = await mod('apps/server/dist/corner-lifecycle.js');
+const { refreshCornerAttention } = await mod('apps/server/dist/corner-attention.js');
 const { GitHubOperations } = await mod('apps/server/dist/github-operations.js');
 const db = new PgliteDatabase();
 const human = 'a'.repeat(64),
@@ -26,6 +27,7 @@ const workspace = '11111111-1111-4111-8111-111111111111',
   parent = '22222222-2222-4222-8222-222222222222',
   corner = '33333333-3333-4333-8333-333333333333';
 let server;
+let merged = false;
 try {
   await migrate(db);
   await db.query(
@@ -99,7 +101,7 @@ try {
         number: 1,
         headSha: head,
         url: 'https://github.com/owner/widgets/pull/1',
-        merged: false,
+        merged,
       }),
       readCommitCheckRollup: async () => ({ state: 'passed', total: 1, checks: [], failing: [] }),
     },
@@ -168,9 +170,20 @@ try {
       200,
     );
   }
+  // The production alerts were queued at opening, then delivered during CI.
+  await db.query(`UPDATE corner_facts SET lifecycle='{}' WHERE corner_id=$1`,[corner]);
+  await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL,last_state=NULL WHERE corner_id=$1`,[corner]);
+  await refreshCornerAttention(db,corner);
+  const idleCommands=(await call('getAgentCommands',{roomId:corner},commander)).body.commands;
+  assert.ok(idleCommands.some(c=>c.source.body.includes('is idle')),JSON.stringify((await db.query('SELECT last_state,episode,reported_episode FROM corner_attention_spans WHERE corner_id=$1',[corner])).rows));
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[corner,JSON.stringify({checks:'pending',pr:{number:1,headSha:head}})]);
+  assert.deepEqual((await call('getAgentCommands',{roomId:corner},commander)).body.commands,[]);
+  console.log('idle-1 demonstrated: built HTTP drops the opening alert while checks are running.');
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`,[corner]);
   for (const [index, verdict] of [
     'failed: FAIL: required evidence is missing.',
     'blocked: required checks are missing.',
+    'FAIL: the sample endpoint accepts an invalid request. Add the required validation.',
   ].entries()) {
     const currentHead = String(index + 1).repeat(40);
     await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [corner]);
@@ -191,6 +204,12 @@ try {
     const review = pending[0],
       generationId = `review-${index}`;
     await claim(review, generationId);
+    if (index === 2) {
+      assert.equal((await call('order',{roomId:corner,requestId:review.turnRequestId,generationId,
+        address:corner,agent:'@worker',text:verdict})).status,200);
+      assert.equal((await call('postAgentTurnReceipt',{roomId:corner,requestId:review.turnRequestId,generationId,status:'complete',completionKind:'no-reply'})).status,200);
+      await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1 AND agent_id=$2`,[corner,worker]);
+    } else {
     const report = await call('report', {
       roomId: corner,
       requestId: review.turnRequestId,
@@ -212,6 +231,7 @@ try {
       ).status,
       200,
     );
+    }
     await db.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [corner],
@@ -231,6 +251,7 @@ try {
     await reconcileConfiguredCornerReviewers(db, parent);
     assert.deepEqual((await call('getAgentCommands', { roomId: corner })).body.commands, []);
   }
+  console.log('review-1 demonstrated: built HTTP repair order without a final reply suppresses repeated review.');
   console.log(
     'REVIEW-STOP-1 demonstrated: built HTTP report -> failed receipt -> repeated green/check repair produces no review; new head dispatches again.',
   );
@@ -264,15 +285,15 @@ try {
     assert.ok(command);
     const generationId = `capacity-${attempt}`;
     await claim(command, generationId, worker);
+    assert.equal((await call('postRoomMessage',{roomId:corner,requestId:command.turnRequestId,generationId,
+      text:'Selected model is at capacity. Please try a different model.'},worker)).status,200);
     const receipt = await call(
       'postAgentTurnReceipt',
       {
         roomId: corner,
         requestId: command.turnRequestId,
         generationId,
-        status: 'failed',
-        reason: 'The model is at capacity; overloaded_error',
-        reasonKind: 'hiccup',
+        status: 'complete',
       },
       worker,
     );
@@ -304,9 +325,20 @@ try {
         command.source.body.includes('failed:') && command.source.body.includes('at capacity'),
     ),
   );
+  console.log('capacity-1 demonstrated: final capacity text plus successful receipt retries with bounded backoff.');
   console.log(
     'CAPACITY-1 / CAPACITY-COMMANDER-1 demonstrated: built HTTP capacity receipt -> hidden during backoff -> durable deadline release -> retry, finite exhaustion -> commander receives failure. Fixture advances database deadlines instead of waiting.',
   );
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`,[parent,reviewer]);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,[corner,head]);
+  await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`,[corner,reviewer,head]);
+  merged=true;
+  const gate=await call('getPrChecksStatus',{cornerId:corner},worker);
+  assert.equal(gate.status,200);
+  assert.equal(gate.body.stage,'merged');
+  assert.equal(gate.body.mergeAllowed,false);
+  console.log('merged-1 demonstrated: built HTTP refuses a merged PR even before corner archival.');
+
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));
   await db.close();

@@ -1499,7 +1499,7 @@ export class MonolithCornerTurnLoop {
    * server still compares approve_merge's SHA with the current head, so a push
    * after this read fails closed too.
    */
-  private async activeReviewerInstruction(): Promise<string | undefined> {
+  private async activeReviewerInstruction(refreshChecks = true): Promise<string | undefined> {
     const input = this.reviewerInstructionInput;
     if (!input) return undefined;
     try {
@@ -1512,10 +1512,19 @@ export class MonolithCornerTurnLoop {
         ),
       ]);
       const pr = restore.lifecycle?.pr;
+      if (!pr?.number) return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
+      // One provider refresh per wake. The bounded second pass reads the
+      // committed lifecycle, including any head/check changes since that read.
+      const liveChecks = refreshChecks
+        ? await this.options.api.execute('getPrChecksStatus', {
+            cornerId: this.options.cornerId, pullRequest: pr.number,
+          })
+        : { checks: restore.lifecycle?.checks === 'passing' ? 'passed' : 'pending',
+            headSha: pr.headSha, stage: restore.lifecycle?.lifecycle === 'done' ? 'merged' : 'checking' };
       if (
-        restore.lifecycle?.checks !== 'passing' ||
-        !pr?.number ||
-        !pr.headSha ||
+        liveChecks.checks !== 'passed' ||
+        liveChecks.stage === 'merged' || liveChecks.stage === 'closed' ||
+        !pr.headSha || liveChecks.headSha !== pr.headSha ||
         pr.headSha !== localHead
       )
         return CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION;
@@ -2374,7 +2383,7 @@ export class MonolithCornerTurnLoop {
               let reviewerTargetChanged = false;
               if (!explained && reviewTurn) {
                 await this.syncBranch();
-                refreshedReviewerInstruction = await this.activeReviewerInstruction();
+                refreshedReviewerInstruction = await this.activeReviewerInstruction(false);
                 reviewerTargetChanged = refreshedReviewerInstruction !== activeReviewerInstruction;
                 reviewerSecondPass =
                   reviewerTargetChanged ||

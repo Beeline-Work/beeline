@@ -114,14 +114,23 @@ export async function markIosBuild({ api, buildId, marker }) {
   }
 }
 
-export async function verifyUpload({ api, evidence, receipt, now = Date.now, wait = sleep,
+const DELIVERY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function verifyUpload({ receipt, ...options }) {
+  const deliveryId = receipt.details?.['delivery-uuid'];
+  if (!receipt['success-message'] || !DELIVERY_ID.test(deliveryId ?? '')) {
+    throw new Error('altool did not provide a delivery UUID');
+  }
+  return awaitDelivery({ ...options, deliveryId });
+}
+
+/** Waits for Apple delivery `deliveryId` to become a VALID build, marking it for the release on the way. */
+export async function awaitDelivery({ api, evidence, deliveryId, now = Date.now, wait = sleep,
   timeoutMs = TIMEOUT_MS, log = console.log }) {
   const { appId, uploadStartedAt } = evidence.appStore ?? {};
   validateEvidence(evidence, appId);
-  const deliveryId = receipt.details?.['delivery-uuid'];
-  if (!receipt['success-message'] || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deliveryId ?? '') ||
-      !Number.isFinite(Date.parse(uploadStartedAt))) {
-    throw new Error('altool did not provide a delivery UUID and a prepared upload identity');
+  if (!DELIVERY_ID.test(deliveryId ?? '') || !Number.isFinite(Date.parse(uploadStartedAt))) {
+    throw new Error('No Apple delivery UUID and prepared upload identity to verify');
   }
   const deadline = now() + timeoutMs;
   let marked = false;

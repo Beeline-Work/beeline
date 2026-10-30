@@ -1,12 +1,13 @@
 // Asks Google Play and App Store Connect whether this release's store builds
 // already went out, so a rerun of the same release skips the build and the
 // upload instead of repeating them. The stores are the only memory: the Play
-// release name and the TestFlight "What to Test" text carry the release marker
-// (`<release version>@<12-char sha>`), written in the same step that ships the build.
+// release name, the iOS upload's file name and the TestFlight "What to Test"
+// text carry the release marker (`<release version>@<12-char sha>`). The file
+// name travels with the upload itself, so Apple holds it before the job can die.
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { appStoreClient } from './ios-store-build.mjs';
+import { appStoreClient, awaitDelivery } from './ios-store-build.mjs';
 
 const PLAY_API = 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications';
 const MARKER = /^v\d+\.\d+\.\d+@[0-9a-f]{12}$/;
@@ -16,6 +17,12 @@ export function releaseMarker(version, sha) {
   const marker = `${version}@${String(sha).slice(0, 12)}`;
   if (!MARKER.test(marker)) throw new Error(`invalid release marker ${marker}`);
   return marker;
+}
+
+/** The IPA's file name; altool sends it with the upload, and App Store Connect keeps it. */
+export function iosUploadFileName(marker) {
+  if (!MARKER.test(marker)) throw new Error(`invalid release marker ${marker}`);
+  return `beeline-${marker.replace('@', '-')}.ipa`;
 }
 
 /** Play Console release name: the store version plus the release marker. */
@@ -79,6 +86,37 @@ export async function findIosBuild({ api, appId, marker }) {
   return null;
 }
 
+// Uploads Apple accepted. AWAITING_UPLOAD never finished transfer, and FAILED never became a build.
+const ACCEPTED_UPLOADS = new Set(['PROCESSING', 'COMPLETE']);
+
+/**
+ * This release's accepted iOS upload, found by its file name among the newest
+ * uploads. It exists from the moment altool's transfer finishes, before the
+ * build is listed or marked, so a job killed after the upload still leaves it.
+ */
+export async function findIosUpload({ api, appId, marker, recent = 20 }) {
+  const fileName = iosUploadFileName(marker);
+  const page = await api(`/v1/apps/${appId}/buildUploads?sort=-uploadedDate&limit=200`);
+  if (!Array.isArray(page?.data)) throw new Error('App Store Connect returned no build upload collection');
+  const uploads = page.data
+    .filter((upload) => upload.attributes?.platform === 'IOS' && ACCEPTED_UPLOADS.has(upload.attributes?.state?.state))
+    .sort((a, b) => Date.parse(b.attributes.createdDate ?? b.attributes.uploadedDate) - Date.parse(a.attributes.createdDate ?? a.attributes.uploadedDate))
+    .slice(0, recent);
+  for (const upload of uploads) {
+    const files = await api(`/v1/buildUploads/${upload.id}/buildUploadFiles`);
+    if (!(files?.data ?? []).some((file) => file.attributes?.fileName === fileName)) continue;
+    const attrs = upload.attributes;
+    return { bundleId: BUNDLE_ID, appVersion: attrs.cfBundleShortVersionString, buildNumber: attrs.cfBundleVersion,
+      releaseMarker: marker, appStore: { appId, deliveryId: upload.id, uploadStartedAt: attrs.createdDate ?? attrs.uploadedDate } };
+  }
+  return null;
+}
+
+/** This release's iOS build or accepted upload, whichever Apple holds. */
+export async function findIosRelease({ api, appId, marker }) {
+  return await findIosBuild({ api, appId, marker }) ?? await findIosUpload({ api, appId, marker });
+}
+
 /** Waits until a found build finishes processing; App Review needs a VALID build. */
 export async function awaitIosBuild({ api, evidence, now = Date.now, wait = sleep, timeoutMs = 20 * 60_000 }) {
   const deadline = now() + timeoutMs;
@@ -124,7 +162,7 @@ async function main() {
     const play = args.includes('--android')
       ? findPlayRelease(await readPlayTracks({ packageName: 'app.usebeeline', accessToken: process.env.ACCESS_TOKEN }), marker)
       : null;
-    const ios = args.includes('--ios') ? await findIosBuild({ api: appStoreClient(), appId, marker }) : null;
+    const ios = args.includes('--ios') ? await findIosRelease({ api: appStoreClient(), appId, marker }) : null;
     const lines = shippedOutputs({ play, ios });
     for (const [platform, found] of [['Android', play], ['iOS', ios]]) {
       console.error(found ? `${platform} ${found.appVersion} already shipped for ${marker}; the rerun skips it`
@@ -135,15 +173,22 @@ async function main() {
     else console.log(lines.join('\n'));
     return;
   }
-  if (command === 'ios-evidence') {
-    const api = appStoreClient();
-    const found = await findIosBuild({ api, appId, marker });
-    if (!found) throw new Error(`no iOS build carries ${marker}; the store check and this job disagree`);
-    writeFileSync(option(args, 'output'), `${JSON.stringify(await awaitIosBuild({ api, evidence: found }))}\n`);
-    console.log(`Reusing iOS ${found.appVersion} (${found.buildNumber}), build ${found.appStore.buildId}`);
+  if (command === 'ios-file-name') {
+    console.log(iosUploadFileName(marker));
     return;
   }
-  throw new Error('Usage: store-shipped.mjs find|ios-evidence --marker <version>@<sha12> [--android] [--ios] [--outputs file] [--output file]');
+  if (command === 'ios-evidence') {
+    const api = appStoreClient();
+    const found = await findIosRelease({ api, appId, marker });
+    if (!found) throw new Error(`no iOS build carries ${marker}; the store check and this job disagree`);
+    // An upload found only by its file name is verified and marked as the first attempt would have.
+    const evidence = found.appStore.buildId ? await awaitIosBuild({ api, evidence: found })
+      : await awaitDelivery({ api, evidence: found, deliveryId: found.appStore.deliveryId });
+    writeFileSync(option(args, 'output'), `${JSON.stringify(evidence)}\n`);
+    console.log(`Reusing iOS ${found.appVersion} (${found.buildNumber}), build ${evidence.appStore.buildId}`);
+    return;
+  }
+  throw new Error('Usage: store-shipped.mjs find|ios-evidence|ios-file-name --marker <version>@<sha12> [--android] [--ios] [--outputs file] [--output file]');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

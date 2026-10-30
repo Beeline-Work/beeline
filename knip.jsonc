@@ -74,6 +74,8 @@
         "scripts/prove-helper-migration-update.mjs",
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
+        // store-shipped.test.mjs runs the release scripts with this fake App Store Connect preloaded.
+        "scripts/fixtures/fake-app-store-connect.mjs",
         // The transcript benchmark README invokes these measurement CLIs by path.
         "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile,list-engine-report,list-visual-audit,prepare-list-engines}.mjs",
       ],

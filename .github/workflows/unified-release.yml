@@ -217,8 +217,9 @@ jobs:
           node scripts/unified-release.mjs "${args[@]}"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
       # A rerun of this release asks the stores what it already shipped. The
-      # Play release name and the TestFlight "What to Test" text carry the
-      # release marker, so a shipped platform skips its build and upload.
+      # Play release name, the iOS upload's file name and the TestFlight "What
+      # to Test" text carry the release marker, so a shipped platform skips its
+      # build and upload.
       - name: Mint a Play token to read this release's store builds
         id: play_read
         if: >-
@@ -1000,9 +1001,14 @@ jobs:
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           bash ../../scripts/npm-ci-timed.sh
-          "$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
-          test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
-          python3 ../../scripts/ios-build-evidence.py "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-build.json"
+          # The IPA's file name carries the release marker. altool sends it with
+          # the upload, so a rerun finds an accepted upload even if this job dies
+          # before verify marks the build.
+          ipa="$RUNNER_TEMP/$(node ../../scripts/store-shipped.mjs ios-file-name --marker "${{ needs.initialize.outputs.release_marker }}")"
+          echo "IOS_IPA=$ipa" >> "$GITHUB_ENV"
+          "$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output "$ipa"
+          test -s "$ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
+          python3 ../../scripts/ios-build-evidence.py "$ipa" "$RUNNER_TEMP/ios-build.json"
           # verify writes this marker into the build's What to Test text.
           node -e 'const fs=require("node:fs");const p=process.argv[1];fs.writeFileSync(p,JSON.stringify({...JSON.parse(fs.readFileSync(p,"utf8")),releaseMarker:process.argv[2]})+"\n")' \
             "$RUNNER_TEMP/ios-build.json" "${{ needs.initialize.outputs.release_marker }}"
@@ -1024,7 +1030,7 @@ jobs:
           # same API key; it finds the .p8 under ./private_keys of its working directory.
           mkdir -p "$RUNNER_TEMP/private_keys"
           cp "$EXPO_ASC_API_KEY_PATH" "$RUNNER_TEMP/private_keys/AuthKey_${EXPO_ASC_KEY_ID}.p8"
-          (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$RUNNER_TEMP/beeline-ios.ipa" \
+          (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$IOS_IPA" \
             --apiKey "$EXPO_ASC_KEY_ID" --apiIssuer "$EXPO_ASC_ISSUER_ID" --output-format json) | tee "$RUNNER_TEMP/ios-upload.json"
           # altool success only confirms transport. Processing can still fail
           # (90683 rejected build 87 after a successful upload). Require the
@@ -1050,7 +1056,7 @@ jobs:
         # DerivedData: a cancelled attempt leaves both behind, and five of them filled
         # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
-          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-upload.json"
+          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP"/beeline-*.ipa "$RUNNER_TEMP/ios-upload.json"
           rm -rf "$RUNNER_TEMP/private_keys" "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
           df -h / | tail -1
       - name: Restore the runner user keychains

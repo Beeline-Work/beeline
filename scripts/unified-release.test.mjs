@@ -1666,15 +1666,19 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.match(iosCredentials.run, /EAS_SKIP_AUTO_FINGERPRINT=1/);
     assert.match(iosBuild.run, /"\$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output/);
     assert.doesNotMatch(iosBuild.run, /npx/);
-    assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
-    assert.match(iosBuild.run, /python3 ..\/..\/scripts\/ios-build-evidence\.py "\$RUNNER_TEMP\/beeline-ios\.ipa" "\$RUNNER_TEMP\/ios-build\.json"/);
+    // The IPA is named for the release so Apple's upload record identifies it (see store-shipped.mjs).
+    assert.match(iosBuild.run, /ipa="\$RUNNER_TEMP\/\$\(node ..\/..\/scripts\/store-shipped\.mjs ios-file-name --marker "\$\{\{ needs\.initialize\.outputs\.release_marker \}\}"\)"/);
+    assert.match(iosBuild.run, /echo "IOS_IPA=\$ipa" >> "\$GITHUB_ENV"/);
+    assert.match(iosBuild.run, /--output "\$ipa"/);
+    assert.match(iosBuild.run, /test -s "\$ipa"/);
+    assert.match(iosBuild.run, /python3 ..\/..\/scripts\/ios-build-evidence\.py "\$ipa" "\$RUNNER_TEMP\/ios-build\.json"/);
     assert.match(iosSubmit.run, /ios-store-build\.mjs prepare "\$RUNNER_TEMP\/ios-build\.json"/);
     assert.match(iosSubmit.run, /ios-store-build\.mjs verify "\$RUNNER_TEMP\/ios-build\.json" "\$RUNNER_TEMP\/ios-upload\.json"/);
     assert.ok(iosSubmit.run.indexOf('ios-store-build.mjs prepare') < iosSubmit.run.indexOf('xcrun altool --upload-app'));
     assert.ok(iosSubmit.run.indexOf('ios-store-build.mjs verify') > iosSubmit.run.indexOf('xcrun altool --upload-app'));
     assert.match(
       iosSubmit.run,
-      /xcrun altool --upload-app -t ios -f "\$RUNNER_TEMP\/beeline-ios\.ipa" \\\n\s+--apiKey "\$EXPO_ASC_KEY_ID" --apiIssuer "\$EXPO_ASC_ISSUER_ID" --output-format json/,
+      /xcrun altool --upload-app -t ios -f "\$IOS_IPA" \\\n\s+--apiKey "\$EXPO_ASC_KEY_ID" --apiIssuer "\$EXPO_ASC_ISSUER_ID" --output-format json/,
     );
     assert.doesNotMatch(iosSubmit.run, /npx .*eas submit/);
     assert.match(cleanup.run, /rm -rf "\$RUNNER_TEMP\/private_keys"/);
@@ -1705,7 +1709,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.ok(!ios.steps.some((step) => step.uses === 'actions/upload-artifact@v4'));
 
     assert.equal(cleanup.if, 'always()');
-    assert.match(cleanup.run, /rm -f .*AuthKey_.*beeline-ios\.ipa/);
+    assert.match(cleanup.run, /rm -f .*AuthKey_.*"\$RUNNER_TEMP"\/beeline-\*\.ipa/);
     assert.equal(restoreKeychains.if, 'always()');
     assert.ok(ios.steps.indexOf(restoreKeychains) > ios.steps.indexOf(cleanup));
     assert.match(restoreKeychains.run, /xargs security list-keychains -d user -s < "\$RUNNER_TEMP\/user-keychains\.txt"/);

@@ -758,7 +758,7 @@ describe('private operator dashboard', () => {
       body: JSON.stringify({
         durationMs: 120,
         failed: false,
-        network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2 },
+        network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2, jsResponseDelayMs: 250.4 },
       }),
     });
     expect(accepted.status).toBe(204);
@@ -769,6 +769,16 @@ describe('private operator dashboard', () => {
         )
       ).rows[0]?.network_rtt_residual_ms,
     ).toBe(81);
+    expect((await db.query<{ js_response_delay_ms: number }>(
+      `SELECT js_response_delay_ms FROM operator_function_events WHERE function_name='page_load'`,
+    )).rows[0]?.js_response_delay_ms).toBe(250);
+    for (const jsResponseDelayMs of [-1, 600_001, '250']) {
+      const invalid = await fetch(endpoint, { method: 'POST', headers,
+        body: JSON.stringify({ durationMs: 120, failed: false,
+          network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2, jsResponseDelayMs } }),
+      });
+      expect(invalid.status).toBe(400);
+    }
     const rejected = await fetch(endpoint, {
       method: 'POST',
       headers,

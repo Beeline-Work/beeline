@@ -142,20 +142,30 @@ attribute concurrent actions.
 ## Calibration and limits
 
 The release Room GET now returns its server processing time in `Server-Timing`.
-The phone measures the winning request's start and response-header arrival
-with its monotonic clock. After the Room paints, the **existing** page-load
+The phone uses the winning request's native resource entry for request start,
+response-header arrival and response completion, and separately records when
+JavaScript handles the response. Older binaries without resource timing omit
+the wire measurement; a delayed JavaScript callback is never a substitute for
+native arrival. After the Room paints, the **existing** page-load
 observation carries those two durations; it adds no network call. The server
 stores `request-to-first-byte minus server processing` as
 `operator_function_events.network_rtt_residual_ms`. This captures network,
 Fly edge and connection setup in one upper-bound residual, without trying to
 synchronize phone and server clocks. It does not capture radio packet RTT.
+`js_response_delay_ms` stores JavaScript handling minus native body completion,
+separating bridge/JS queue delay from both the network and body transfer. It is
+an arrival-to-handling delay, not a CPU-utilization measurement. Both values
+ride the same sampled page observation. Rows without a JS response delay can
+come from legacy clients that measured header handling in JavaScript; exclude
+those rows when deriving native wire timing.
 Once that release has real traffic, export at least 20 content-free values
 read-only and run `derive-rtt.mjs` on one JSON object per line:
 
 ```sql
-SELECT network_rtt_residual_ms
+SELECT network_rtt_residual_ms, js_response_delay_ms
 FROM operator_function_events
 WHERE function_name='page_load' AND network_rtt_residual_ms IS NOT NULL
+  AND js_response_delay_ms IS NOT NULL
   AND created_at >= now()-interval '1 day'
 ORDER BY id DESC LIMIT 1000;
 ```
@@ -175,11 +185,30 @@ to fill unmeasured routes with static estimates.
 
 Run `node scripts/latency-rig/check-routes.mjs` and
 `node --test scripts/latency-rig/*.test.mjs` to validate route coverage and the
-deterministic budget evaluator. The rig has no GitHub Actions workflow.
+deterministic budget evaluator. Device capture runs on squire; GitHub Actions
+checks PR evidence with `latency-proof.yml` and does not run an emulator.
 Nightly timing uses the squire emulator and parent-Room schedule documented below. A full launch report still requires all route and
 interaction marks; the
 nightly subset does not establish that broader budget. Missing required subset
 cases fail closed.
+
+### Pull request proof
+
+`sensitive-paths.json` owns the latency-sensitive path prefixes. Pull requests
+touching those paths must include one line with measured before/after p95 values
+for each nightly case, in milliseconds:
+
+```text
+Rig before/after: room-list-1=BEFORE->AFTERms; room-list-5=BEFORE->AFTERms; push-1=BEFORE->AFTERms; push-5=BEFORE->AFTERms; warm-room=BEFORE->AFTERms; send-text=BEFORE->AFTERms
+```
+
+Replace every placeholder with a measured number and link the reports alongside
+the line. `LATENCY RIG PROOF` fails missing or nonnumeric cases and reevaluates
+when the PR body changes. Unrelated paths need no line. The evidence check
+validates the summary's presence; independent review must verify its reports.
+Room request contracts also reject any star-prompt, Workspace, read-mark or
+Room-list request starting before the native draw mark, even when the overall
+request-count budget would allow it.
 
 ## Room opens with newly arrived messages
 

@@ -12,6 +12,19 @@ test('counts independent network requests at one RTT depth', () => {
   assert.equal(serialDepth([]), 0);
 });
 
+test('an optional request before Room draw fails even within the cold request budget', () => {
+  for (const operation of ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/w',
+    '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/r/read', '/v1/phone/observations/page-load']) {
+    const sample = { kind: 'route', name: '/beeline/chat/[channelId]', variant: 'cold',
+      clockDomain: 'host', startMs: 0, paintMs: 100,
+      http: [{ operation, startMs: 10, endMs: 110 }] };
+    const routes = [{ path: sample.name, variants: ['cold'], coldHttpMax: 1, coldDepthMax: 1 }];
+    assert.equal(summarize([sample], routes).requestPass, false, operation);
+    sample.http[0].startMs = 101;
+    assert.equal(summarize([sample], routes).requestPass, true, operation);
+  }
+});
+
 test('nearest rank p95 exposes one slow sample in twenty', () => {
   assert.equal(percentile([...Array(19).fill(10), 100], .95), 10);
   assert.equal(percentile([...Array(18).fill(10), 99, 100], .95), 99);

@@ -39,6 +39,7 @@ export async function recordOperatorFunctionEvent(
   durationMs: number,
   failed: boolean,
   networkRttResidualMs?: number,
+  jsResponseDelayMs?: number,
 ): Promise<void> {
   const boundedDuration = Math.max(0, Math.min(600_000, Math.round(durationMs)));
   if (networkRttResidualMs === undefined) {
@@ -48,9 +49,10 @@ export async function recordOperatorFunctionEvent(
     );
   } else {
     await database.query(
-      `INSERT INTO operator_function_events(function_name,duration_ms,failed,network_rtt_residual_ms)
-       VALUES($1,$2,$3,$4)`,
-      [name, boundedDuration, failed, networkRttResidualMs],
+      `INSERT INTO operator_function_events(function_name,duration_ms,failed,network_rtt_residual_ms,js_response_delay_ms)
+       VALUES($1,$2,$3,$4,$5)`,
+      [name, boundedDuration, failed, networkRttResidualMs,
+        jsResponseDelayMs === undefined ? null : Math.round(jsResponseDelayMs)],
     );
   }
   // Event-triggered retention keeps the operational ledger bounded without a

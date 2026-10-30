@@ -347,16 +347,19 @@ class MonolithRoomViewClient {
         response.headers.get('server-timing') ?? '',
       );
       if (timing && serverTiming) {
-        const requestToFirstByteMs = timing.firstByteMs - timing.requestStartMs;
+        const requestToFirstByteMs = timing.responseReceivedMs - timing.requestStartMs;
+        const jsResponseDelayMs = timing.jsHandledMs - timing.responseCompletedMs;
         const serverProcessingMs = Number(serverTiming[1]);
         if (
           requestToFirstByteMs >= serverProcessingMs &&
           requestToFirstByteMs < 15_000 &&
+          jsResponseDelayMs >= 0 && jsResponseDelayMs <= 600_000 &&
           serverProcessingMs >= 0
         ) {
           recordRoomReadNetworkTiming(decodeURIComponent(roomMatch[1]!), {
             requestToFirstByteMs,
             serverProcessingMs,
+            jsResponseDelayMs,
           });
         }
       }

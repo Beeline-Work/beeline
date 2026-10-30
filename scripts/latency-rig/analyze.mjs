@@ -75,6 +75,11 @@ export function summarizeSample(sample) {
     paintMs: paintMs - startMs,
     canonicalMs: sample.canonicalMs === undefined ? null : finite(sample.canonicalMs, 'canonicalMs') - startMs,
     prepaintHttpCount: prepaint.length,
+    prepaintOptionalCount: prepaint.filter(span =>
+      /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test((span.operation ?? '').split('?')[0]) ||
+      /^\/v1\/phone\/rooms\/[^/]+\/read$/.test((span.operation ?? '').split('?')[0]) ||
+      span.operation === '/v1/phone/operations/readStarPrompt' ||
+      span.operation === '/v1/phone/observations/page-load').length,
     prepaintHttpDepth: serialDepth(prepaint),
     prepaintCompletedRoundTrips: prepaint.filter((span) => span.endMs <= paintMs + clockUncertaintyMs).length,
     writeCount: writes.length, followupReadCount: followupReads.length,
@@ -124,6 +129,7 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       clockCalibrated: items.every((item) => item.clockCalibrated),
       maxClockUncertaintyMs: maxObserved('clockUncertaintyMs'),
       maxPrepaintHttpCount: maxObserved('prepaintHttpCount'),
+      maxPrepaintOptionalCount: maxObserved('prepaintOptionalCount'),
       maxPrepaintHttpDepth: maxObserved('prepaintHttpDepth'),
       maxPrepaintCompletedRoundTrips: maxObserved('prepaintCompletedRoundTrips'),
       maxWrites: maxObserved('writeCount'), maxFollowupReads: maxObserved('followupReadCount'),
@@ -135,6 +141,7 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], maxRequests, maxDepth,
       timingPass: !items.some((item) => item.timedOut) && p95 < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
       requestPass: items.every((item) => item.clockCalibrated) && maxObserved('prepaintHttpCount') <= maxRequests &&
+        (first.name !== '/beeline/chat/[channelId]' || maxObserved('prepaintOptionalCount') === 0) &&
         maxObserved('prepaintHttpDepth') <= maxDepth &&
         (first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&
           item.followupReadCount === 0 && item.prepaintCompletedRoundTrips === 0)),

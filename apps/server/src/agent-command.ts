@@ -1601,6 +1601,20 @@ type WorkflowWakeCard = {
 };
 
 /**
+ * A Squire decision wake names the exact approval, tool and status, so the
+ * woken agent calls that tool's resume step instead of asking again.
+ */
+function squireDecisionDetail(cardType: string | null, card: WorkflowWakeCard | null): string {
+  if (cardType !== 'squire-approval-decision' || !card) return '';
+  const { approvalId, tool, status } = card as { approvalId?: unknown; tool?: unknown; status?: unknown };
+  if (typeof approvalId !== 'string' || typeof tool !== 'string' || typeof status !== 'string') return '';
+  const next = status === 'approved'
+    ? `Call ${tool} with action "resume" and approval_id "${approvalId}" now, then continue the work that needed it.`
+    : 'Do not call its resume step.';
+  return `\nSquire approval ${approvalId} for ${tool}: ${status}. ${next}`;
+}
+
+/**
  * A wake from a saved workflow run (a `workflow-handoff` card, or a gate's
  * choice/poll card once answered — see `postWorkflowGate`) states the run id
  * and workflow name plainly, so a woken agent treats its own wake as proof a
@@ -1735,7 +1749,7 @@ export async function readAgentCommands(
       source: {
         id: r.private_payload ? r.id : r.source_message_id ?? r.id,
         authorId: r.private_payload?.authorId ?? (r.reason === 'free_agent_checkin' ? SYSTEM_IDENTITY_ID : r.author_id),
-        body: (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + (r.voice_origin ? '\n' + voiceDateContext(Date.now()) + ' Never start your reply with your name.\nThis is a separate request from a live voice call. Answer this request in this turn, even if it appeared as background context while you were busy. Start your report with a spoken answer sized to the question: one line for a status, a few sentences for a real answer, at most about 150 words. Then a blank line, then the full report.' : '') + checkFailureLogBody(r.system_event ?? null) + reportedHeadBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
+        body: (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + (r.voice_origin ? '\n' + voiceDateContext(Date.now()) + ' Never start your reply with your name.\nThis is a separate request from a live voice call. Answer this request in this turn, even if it appeared as background context while you were busy. Start your report with a spoken answer sized to the question: one line for a status, a few sentences for a real answer, at most about 150 words. Then a blank line, then the full report.' : '') + checkFailureLogBody(r.system_event ?? null) + reportedHeadBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + squireDecisionDetail(r.wake_card_type, r.wake_card) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
         attachments: r.coalesced_attachments ?? r.private_payload?.attachments ?? r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.private_payload ? 'private' : r.reason === 'free_agent_checkin' ? 'system' : r.presentation,
@@ -1839,6 +1853,19 @@ export async function routeSystemCommand(
     }
     return;
   }
+  // A Squire decision answers a turn that never paused: the agent posted the
+  // approval link and either kept working or ended its turn. A live turn must
+  // keep running (completing its command revokes its output authority and
+  // drops it), so the resume waits behind it. Once that turn has ended, only
+  // an approval starts the follow-up turn; a denial or expiry wakes nobody,
+  // because the person who decided already knows and the agent has nothing
+  // it can do with the answer.
+  const squireDecision = input.kind === 'squire-approval-decided';
+  const squireStatus = squireDecision
+    ? (await db.query<{ status: string | null }>(
+        `SELECT card->>'status' status FROM messages WHERE id=$1`, [input.sourceMessageId],
+      )).rows[0]?.status
+    : undefined;
   for (const agentId of new Set(input.targets)) {
     const action =
       input.kind === 'turn-cancelled' ? 'stop' : isResumeKind(input.kind) ? 'resume' : 'input';
@@ -1852,13 +1879,18 @@ export async function routeSystemCommand(
         )
       ).rows[0];
       if (!parent) continue;
+      if (squireDecision && squireStatus !== 'approved' &&
+          (parent.state === 'complete' || parent.state === 'cancelled'))
+        continue;
       await db.query(
-        `UPDATE agent_commands SET state=$4,completed_at=now() WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND state IN ('pending','claimed')`,
+        `UPDATE agent_commands SET state=$4,completed_at=now() WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+           AND (state='pending' OR (state='claimed' AND (NOT $5::boolean OR lease_expires_at<=now())))`,
         [
           input.roomId,
           agentId,
           parent.turn_request_id,
           action === 'stop' ? 'cancelled' : 'complete',
+          squireDecision,
         ],
       );
     } else if (input.kind.startsWith('agent:')) {

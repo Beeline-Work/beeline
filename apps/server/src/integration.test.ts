@@ -13634,6 +13634,82 @@ describe('monolith integration', () => {
     expect(((await outside.json()) as { error: string }).error).toBe('daemon room access denied');
   });
 
+  it('keeps a live turn running when Squire allows its key reveal, then resumes it once with the approval named', async () => {
+    // Reproduction squire-decision-live-turn: corner fbcbb6cc, 2026-10-30 02:24 UTC.
+    // The decision completed the still-running turn's command, its next
+    // heartbeat lost output authority, the helper dropped the turn, and the
+    // resume for that same request id never ran.
+    const asked = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee fetch the test login', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    const parent = (await database.query<{ id: string }>(
+      `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3`,
+      [ROOM, AGENT, asked.messageId],
+    )).rows[0]!;
+    await database.transaction((tx) => claimAgentCommand(tx, ROOM, AGENT, parent.id, 'live-generation'));
+    const decision = {
+      roomId: ROOM,
+      requestId: asked.messageId,
+      approvalId: 'reveal-live-1',
+      status: 'approved',
+      tool: 'fetch_credential',
+      title: 'Reveal a key',
+      detail: 'google.com / default',
+    };
+    expect((await daemonOperation('postSquireApprovalDecision', decision)).status).toBe(200);
+    // A repeated relay of the same decision never queues a second turn.
+    expect((await daemonOperation('postSquireApprovalDecision', decision)).status).toBe(200);
+    const states = await database.query<{ action: string; state: string }>(
+      `SELECT action,state FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 ORDER BY created_at`,
+      [ROOM, AGENT, asked.messageId],
+    );
+    expect(states.rows).toEqual([
+      { action: 'input', state: 'claimed' },
+      { action: 'resume', state: 'pending' },
+    ]);
+    const heartbeat = await request('/v1/daemon/operations/postAgentTurnReceipt', 'POST', {
+      roomId: ROOM, requestId: asked.messageId, status: 'working', generationId: 'live-generation', heartbeat: true,
+    }, daemonToken);
+    expect(heartbeat.status).toBe(200);
+    const finished = await request('/v1/daemon/operations/postAgentTurnReceipt', 'POST', {
+      roomId: ROOM, requestId: asked.messageId, status: 'complete', generationId: 'live-generation',
+    }, daemonToken);
+    expect(finished.status).toBe(200);
+    const page = (await (await daemonOperation('getAgentCommands', { roomId: ROOM })).json()) as {
+      commands: { action: string; turnRequestId: string; source: { body: string } }[];
+    };
+    const resume = page.commands.filter((command) => command.turnRequestId === asked.messageId);
+    expect(resume).toHaveLength(1);
+    expect(resume[0]!.action).toBe('resume');
+    expect(resume[0]!.source.body).toContain(
+      'Squire approval reveal-live-1 for fetch_credential: approved. Call fetch_credential with action "resume" and approval_id "reveal-live-1" now',
+    );
+  });
+
+  it('starts a turn for an ended asker only when Squire allowed the request', async () => {
+    const asked = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee fetch the other login', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    await database.query(
+      `UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3`,
+      [ROOM, AGENT, asked.messageId],
+    );
+    const decide = (approvalId: string, status: string) => daemonOperation('postSquireApprovalDecision', {
+      roomId: ROOM, requestId: asked.messageId, approvalId, status,
+      tool: 'fetch_credential', title: 'Reveal a key', detail: 'google.com / default',
+    });
+    const resumes = async () => (await database.query<{ state: string; source_message_id: string }>(
+      `SELECT state,source_message_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
+      [ROOM, AGENT, asked.messageId],
+    )).rows;
+    expect((await decide('reveal-ended-denied', 'denied')).status).toBe(200);
+    expect((await decide('reveal-ended-expired', 'expired')).status).toBe(200);
+    expect(await resumes()).toEqual([]);
+    const allowed = (await (await decide('reveal-ended-approved', 'approved')).json()) as { id: string };
+    expect((await decide('reveal-ended-approved', 'approved')).status).toBe(200);
+    expect(await resumes()).toEqual([{ state: 'pending', source_message_id: allowed.id }]);
+  });
+
   it('refuses a per-item kind: its own owner already wakes directly, with no subscription involved', async () => {
     // grant-decided, choice-answered, choice-skipped, poll-closed,
     // turn-cancelled, squire-approval-decided and connector-offer-decided all

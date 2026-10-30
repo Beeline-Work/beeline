@@ -75,7 +75,7 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
   });
   assert.equal(
     calls[4],
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   );
   assert.match(stdout, /release notes from: .*default\.txt/);
   assert.match(stdout, /versionCode 28 is on the internal track as draft/);
@@ -658,4 +658,62 @@ test('Reproduction PLAY-LISTING-1: default releases leave changed listings alone
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Could not compare.*not uploaded/);
+});
+
+// Reproduction PLAY-LISTING-1: saved console changes must stay out of review
+// even when our release never uploads listing text/images.
+test('default build commit holds console changes and never retries an automatic-review commit', (t) => {
+  const workflow = parse(fs.readFileSync(path.join(REPO, '.github/workflows/unified-release.yml'), 'utf8'));
+  const bundle = workflow.jobs.mobile_native_android.steps.find(step => step.name === 'Upload Android to the selected Play track');
+  assert.equal(bundle.env.PUBLISH_LISTING, "${{ inputs.publish_listing && 'true' || 'false' }}");
+  for (const consent of [false, true]) {
+    for (const refuseHold of [false, true]) {
+      const dir = tempDir(t);
+      const bin = path.join(dir, 'bin');
+      fs.mkdirSync(bin);
+      const log = path.join(dir, 'calls.log');
+      // Emulate the API state that previously triggered the dangerous retry.
+      fs.writeFileSync(path.join(bin, 'curl'), `#!/usr/bin/env python3
+import json, os, sys
+url = next(arg for arg in sys.argv[1:] if arg.startswith('https:'))
+with open(os.environ['CALL_LOG'], 'a') as f:
+    f.write(url + '\\n')
+body, status = {}, 200
+if url.endswith('/edits'):
+    body = {'id': 'edit-1'}
+elif '/bundles?' in url:
+    body = {'versionCode': 142}
+elif ':commit?' in url and os.environ['REFUSE_HOLD'] == 'true':
+    body, status = {'error': {'message': 'changesNotSentForReview must not be set'}}, 400
+print(json.dumps(body))
+print(status, end='')
+`);
+      fs.chmodSync(path.join(bin, 'curl'), 0o755);
+      const aab = path.join(dir, 'app.aab');
+      fs.writeFileSync(aab, 'bundle-and-mapping-fixture');
+      const result = run('play-publish.sh', {
+        PATH: bin + ':' + process.env.PATH, PLAY_DRY_RUN: '0', ACCESS_TOKEN: 'test-token',
+        CALL_LOG: log, REFUSE_HOLD: String(refuseHold), PUBLISH_LISTING: String(consent),
+        AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: dir,
+        TRACK: 'production', RELEASE_NAME: '0.2.24', RELEASE_STATUS: 'completed',
+      }, { expectStatus: !consent && refuseHold ? 1 : 0 });
+      const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+      const commits = calls.filter(call => call.includes(':commit'));
+      assert.match(calls[1], /bundles\?uploadType=media/);
+      assert.ok(calls.some(call => call.endsWith('/tracks/production')));
+      assert.doesNotMatch(calls.join('\n'), /\/listings\//);
+      if (!consent) {
+        assert.deepEqual(commits, [API + '/edits/edit-1:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW']);
+        if (refuseHold) {
+          assert.match(result.stderr, /no automatic-review fallback attempted/);
+          assert.doesNotMatch(result.stdout, /edit committed/);
+        } else {
+          assert.match(result.stdout, /Build uploaded but not sent for review; send the build alone in Play Console/);
+        }
+      } else {
+        assert.equal(commits.length, refuseHold ? 2 : 1);
+        if (refuseHold) assert.equal(commits[1], API + '/edits/edit-1:commit');
+      }
+    }
+  }
 });

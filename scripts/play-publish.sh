@@ -22,6 +22,7 @@
 # Optional:
 #   CHANGELOG_DIR    — per-versionCode release notes dir; <versionCode>.txt wins,
 #                      default.txt otherwise (default: the en-US fastlane dir)
+#   PUBLISH_LISTING=true — explicit listing consent permits the existing automatic-review commit fallback
 #   PLAY_DRY_RUN=1   — print the API calls instead of making them (see play-api.sh)
 
 set -euo pipefail
@@ -95,7 +96,11 @@ api PUT "$API/edits/$edit_id/tracks/$TRACK" \
 echo "  track release configured"
 
 echo "4/4 Committing edit..."
-commit_edit "$edit_id"
+if [ "${PUBLISH_LISTING:-false}" = "true" ]; then
+  commit_edit "$edit_id"
+else
+  commit_edit "$edit_id" hold-for-review
+fi
 echo "  edit committed — versionCode $version_code is on the $TRACK track as $RELEASE_STATUS"
 echo ""
 echo "Play Console: $(play_console_url)"

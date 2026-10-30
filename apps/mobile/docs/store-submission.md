@@ -154,6 +154,19 @@ images are never uploaded unless the release is explicitly dispatched with
 `publish_listing=true` (default `false`). The default path compares the
 committed listing with Play, discards the read edit, and logs that differences
 were not uploaded; comparison errors only warn and do not fail the release.
+Default build commits also use `changesNotSentForReview=true` and
+`changesInReviewBehavior=ERROR_IF_IN_REVIEW`: the build is uploaded, but an
+operator must send **only the build** for review in Play Console and leave
+listing changes saved for later. This conservative rule applies to every
+default build commit because the API does not expose pending console listing
+changes separately. If Play refuses this mode, the release fails with
+instructions rather than retrying a commit that could submit the listing.
+Google documents that a normal commit also sends console changes:
+[concurrency considerations](https://developers.google.com/android-publisher/concurrency-considerations)
+and [edits.commit parameters](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit).
+Explicit `publish_listing=true` retains the prior commit behavior, including
+its automatic-review fallback when required by Play.
+
 When opted in, `scripts/play-publish-listing.sh` reads the live listing and
 skips unchanged text and image hashes. Changed listings clear and re-upload
 each image type in filename order, then commit. `publish_listing` permits

@@ -19,14 +19,14 @@ test('normalizes either signed device offset without changing native paint durat
   }
 });
 
-test('chooses the smallest measured round trip and retains its midpoint uncertainty', () => {
+test('chooses the smallest measured round trip and retains its midpoint uncertainty', async () => {
   const times = [1000, 1020, 1030, 1034, 1040, 1050];
   const devices = [610, 632, 645];
-  const chosen = calibrateDeviceClock(() => devices.shift(), () => times.shift());
+  const chosen = await calibrateDeviceClock(() => devices.shift(), () => times.shift());
   assert.deepEqual(chosen, { deviceMs: 632, hostBeforeMs: 1030, hostAfterMs: 1034 });
 });
 
-test('rejects missing calibration, stale bounds, uncertain clocks and clock jumps', () => {
+test('rejects missing calibration, stale bounds, uncertain clocks and clock jumps', async () => {
   assert.throws(() => hostClockMoment({ startMs: 100, paintMs: 200, endMs: 250 }), /clock domain/);
   assert.throws(() => hostClockMoment({ ...moment(384), clockSync: undefined }), /calibration/);
   assert.throws(() => hostClockMoment({ ...moment(384), startMs: 80 }), /bound/);
@@ -34,7 +34,7 @@ test('rejects missing calibration, stale bounds, uncertain clocks and clock jump
   changed.clockSync.after = anchor(250, 484);
   assert.throws(() => hostClockMoment(changed), /changed/);
   const times = [1000, 1100];
-  assert.throws(() => sampleDeviceClock(() => 610, () => times.shift()), /uncertain/);
+  await assert.rejects(() => sampleDeviceClock(() => 610, () => times.shift()), /uncertain/);
 });
 
 test('carries measured uncertainty conservatively and leaves explicit host samples alone', () => {

@@ -12,20 +12,20 @@ function validate(anchor) {
   return { offsetMs: (anchor.hostBeforeMs + anchor.hostAfterMs) / 2 - anchor.deviceMs, uncertaintyMs };
 }
 
-export function sampleDeviceClock(readDeviceMs, now = Date.now) {
+export async function sampleDeviceClock(readDeviceMs, now = Date.now) {
   const hostBeforeMs = now();
-  const deviceMs = Number(readDeviceMs());
+  const deviceMs = Number(await readDeviceMs());
   const hostAfterMs = now();
   const anchor = { deviceMs, hostBeforeMs, hostAfterMs };
   validate(anchor);
   return anchor;
 }
 
-export function calibrateDeviceClock(readDeviceMs, now = Date.now) {
+export async function calibrateDeviceClock(readDeviceMs, now = Date.now) {
   const anchors = [];
   let failure;
   for (let attempt = 0; attempt < 3; attempt++) {
-    try { anchors.push(sampleDeviceClock(readDeviceMs, now)); }
+    try { anchors.push(await sampleDeviceClock(readDeviceMs, now)); }
     catch (error) { failure = error; }
   }
   if (!anchors.length) throw failure;

@@ -279,21 +279,28 @@ missing artifacts, and completion/publication checks.
 
 ## Compatibility and signing invariants
 
-- OTA targets are computed in `ota-release.mjs`: each platform's current pin
-  from `apps/mobile/app.config.js` plus the two highest shipped runtimes below
-  it, excluding `RETIRED_COMPAT_RUNTIMES` before filling the two slots (at most
-  six targets). Shipped means present in EAS production history **or** the
-  committed `SHIPPED_NATIVE_RUNTIMES` store ledger. Older production runtimes
-  are logged as dropped under the pin-plus-two rule; missing selected targets
-  and rollback anchors still fail closed. No compatibility-list edit is needed
-  after a pin bump. Production queries EAS before computing targets; promotion
-  and release proof consume the exact targets saved in the release ledger.
-  Rollback computes from the production response it already queries.
-- Offline `publish --dry-run` uses the committed store ledger only. For a
-  deterministic plan matching production, save `eas update:list --branch
-  production --limit 50 --json --non-interactive` and pass its JSON file as
-  `--production-history <path>` with `--dry-run`. Live releases reject that
-  override and always query EAS.
+- OTA targets include each platform's newest live store runtime and the two
+  newest older runtimes confirmed live on that store. A current pin still in
+  review gets no OTA target. OTA history, uploads and TestFlight do not count as store publication.
+  Play uses `applications/app.usebeeline/tracks/production/releases` and its
+  `PUBLISHED` lifecycle state (not edit-track `completed`, which can await review).
+  ASC uses distributed iOS versions and their exact build identities. Native
+  upload identity artifacts map build numbers to runtime pins; the cumulative
+  OTA index retains resolved identities and store publication observations.
+  Unknown binary identities or unreadable stores preserve that platform's
+  entire previous release target set. Older ledgers conservatively derive the
+  previous set from EAS promotion messages, retaining all observed targets if
+  that release identity is unavailable. The Play history seed is parsed once
+  from its captured production release history; an undated upload is excluded.
+  No release timeout increases. Promotion and rollback use the
+  exact target list recorded in the release ledger.
+- For a deterministic offline plan, pass `publish --dry-run --production-history
+  <eas.json> --store-status <stores.json>`. The latter contains `stores.android`
+  and `stores.ios`, each with `status: "readable"` and `live` platform/runtime
+  records, plus optional `previouslyLive` and `previousTargets`. Snapshots are
+  rejected for live publishing. Without store evidence the dry run preserves
+  previous targets; it does not infer publication from the old native ledger.
+
 - Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives in `ANDROID_SIDELOAD_*` secrets and the Trusty Squire vault; see the [signing guide](../apps/mobile/android-signing/README.md) for rotation and recovery.
 
 ## Release preflight and failure triage

@@ -1,0 +1,815 @@
+{
+  "data": {
+    "app": {
+      "byId": {
+        "updateBranches": [
+          {
+            "name": "production",
+            "updates": [
+              {
+                "id": "01a18a97-ec1f-7eea-be80-4c743c3a9ba0",
+                "group": "ffe4ab67-a88c-4d0f-b9f6-16bfd7ef649b",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 81eaa44b-7acb-4189-9c1f-84bd89f291c4 (e4a001d2fb37)",
+                "createdAt": "2026-10-30T02:16:14.623Z"
+              },
+              {
+                "id": "01a18a97-e205-7833-b9a7-d4edfc83523b",
+                "group": "c55ae0cc-f557-403a-94d9-14aa468a374c",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta 6ae70ed8-e9d3-4628-87c5-a3139c52348b (e4a001d2fb37)",
+                "createdAt": "2026-10-30T02:16:12.037Z"
+              },
+              {
+                "id": "01a18a97-d767-700a-aabc-fc0449d7f1a9",
+                "group": "4ee5c3ab-e39e-4816-aaeb-d1eb16530147",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 68698707-68c3-4846-9b35-8e4a538ea816 (e4a001d2fb37)",
+                "createdAt": "2026-10-30T02:16:09.319Z"
+              },
+              {
+                "id": "01a18a97-ccd5-7d6c-8e39-d1a3e3a7a3aa",
+                "group": "1461aee8-95c2-4d6e-9930-4b9153941e50",
+                "runtimeVersion": "41",
+                "platform": "android",
+                "message": "promote beta 7427ab5b-61b1-4680-b315-d53898c27ec9 (e4a001d2fb37)",
+                "createdAt": "2026-10-30T02:16:06.613Z"
+              },
+              {
+                "id": "01a18a97-c2f4-7750-b670-68d7570bc1c4",
+                "group": "3999ecc9-1ca1-46d0-9b8c-4a9dd181c89c",
+                "runtimeVersion": "42",
+                "platform": "android",
+                "message": "promote beta 71c2c3f6-6f83-46e8-85c6-1b80b1ff0a18 (e4a001d2fb37)",
+                "createdAt": "2026-10-30T02:16:04.084Z"
+              },
+              {
+                "id": "01a18a97-b834-7e33-b14b-de978caf0908",
+                "group": "0d6f4813-25ee-414c-9631-62e3ea4a5234",
+                "runtimeVersion": "43",
+                "platform": "android",
+                "message": "promote beta 1628f093-59b9-4638-a401-7fad34727f1a (e4a001d2fb37)",
+                "createdAt": "2026-10-30T02:16:01.332Z"
+              },
+              {
+                "id": "01a18933-5e39-72bb-9fba-9577f071a06b",
+                "group": "c80e32da-e28f-40f0-82b1-a0a2deb7af0f",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 5215a576-d988-4493-a826-e0082e812d8d (04a757fd21f4)",
+                "createdAt": "2026-10-29T19:46:47.481Z"
+              },
+              {
+                "id": "01a18933-53a0-7d34-ae98-5c4a442ab097",
+                "group": "d007bd3c-eef9-4b52-9da4-eb2b86ce8bf6",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta ae63c3f8-08d9-41f5-be45-a78c153550d2 (04a757fd21f4)",
+                "createdAt": "2026-10-29T19:46:44.768Z"
+              },
+              {
+                "id": "01a18933-3920-79b5-aedd-18c693c91865",
+                "group": "5b80b7df-81a3-4982-9204-7c1e8b595a8c",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 38b6b2e5-61df-4717-aecd-b326e1fb6923 (04a757fd21f4)",
+                "createdAt": "2026-10-29T19:46:37.984Z"
+              },
+              {
+                "id": "01a18933-2e4b-768e-9d20-2c78cac8180b",
+                "group": "5c000ee5-970c-4f86-90aa-86fdf5950eb9",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 6a8dea44-efa5-47f2-96c4-0a03f7fdea0a (04a757fd21f4)",
+                "createdAt": "2026-10-29T19:46:35.211Z"
+              },
+              {
+                "id": "01a18933-2401-7d1d-b5db-6a480b98c0a2",
+                "group": "b267fcfd-65e9-4147-947d-940a85fa5672",
+                "runtimeVersion": "41",
+                "platform": "android",
+                "message": "promote beta 65f0f4c7-542d-4bd3-9292-9523f8ed9fd9 (04a757fd21f4)",
+                "createdAt": "2026-10-29T19:46:32.577Z"
+              },
+              {
+                "id": "01a18933-195b-7345-b3f1-df6b8cbded4b",
+                "group": "f34b886d-9975-4a38-8a7d-d31638e64540",
+                "runtimeVersion": "42",
+                "platform": "android",
+                "message": "promote beta 4e6a209b-9b23-40f0-9041-7d1e04c189a3 (04a757fd21f4)",
+                "createdAt": "2026-10-29T19:46:29.851Z"
+              },
+              {
+                "id": "01a188e3-af58-7151-9ab5-66f4b08292d4",
+                "group": "43ad7236-2800-4121-8f50-b15b64babd0f",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 255822b4-bf83-4e17-afa2-2f8202a13dc1 (a9843bdd1dc5)",
+                "createdAt": "2026-10-29T18:19:45.368Z"
+              },
+              {
+                "id": "01a188e3-a427-7ecd-9a9b-1ff6b65d602b",
+                "group": "d35c583f-2d0f-477a-9b04-043866f2d290",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta d39ac5e1-6f94-4f7a-b353-8126a5c3fafc (a9843bdd1dc5)",
+                "createdAt": "2026-10-29T18:19:42.503Z"
+              },
+              {
+                "id": "01a188e3-9a85-725f-9784-7b516e380deb",
+                "group": "bf421579-a11a-4e0f-a727-eff086df9850",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta b4681004-94d0-47e5-828d-19a2e5a0dd75 (a9843bdd1dc5)",
+                "createdAt": "2026-10-29T18:19:40.037Z"
+              },
+              {
+                "id": "01a188e3-8b07-7391-b3aa-42aaf9d23c23",
+                "group": "93c94326-e77b-46aa-b26e-ab7a94bf5821",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 49cbaf9c-66ae-479a-97f0-4a3c01ed47e8 (a9843bdd1dc5)",
+                "createdAt": "2026-10-29T18:19:36.071Z"
+              },
+              {
+                "id": "01a188e3-81b3-79dd-bcda-b00131b714fb",
+                "group": "71f65b4a-8844-4e5d-a5da-0439a84e71de",
+                "runtimeVersion": "41",
+                "platform": "android",
+                "message": "promote beta b0bbeb0f-5d40-41db-8d11-cdead65464b4 (a9843bdd1dc5)",
+                "createdAt": "2026-10-29T18:19:33.683Z"
+              },
+              {
+                "id": "01a188e3-7866-77b4-8786-71772e730c03",
+                "group": "b524ff0a-84bf-4981-b277-35a396798259",
+                "runtimeVersion": "42",
+                "platform": "android",
+                "message": "promote beta afeba7f7-e519-4a8f-9c67-062e2b71a84c (a9843bdd1dc5)",
+                "createdAt": "2026-10-29T18:19:31.302Z"
+              },
+              {
+                "id": "01a18650-5423-7cd0-bf18-451000699575",
+                "group": "721b5829-1797-4747-8cd6-b3e894f1b229",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 972cfc92-5267-4742-ac14-2b817fa56778 (d2f1254ad922)",
+                "createdAt": "2026-10-29T06:19:33.795Z"
+              },
+              {
+                "id": "01a18650-4a2c-7cc7-bbc5-ea753008c601",
+                "group": "79c56095-5a7e-4f60-a2f2-ab7a1077619f",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta bb104c0c-a736-4fba-8612-7294dd88ccc1 (d2f1254ad922)",
+                "createdAt": "2026-10-29T06:19:31.244Z"
+              },
+              {
+                "id": "01a18650-4136-7e42-a0b6-a42dfa80ee6b",
+                "group": "6512c857-8e08-4cd3-bcb7-e14cefdfee75",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta b474cd80-b080-4777-a019-64c338242271 (d2f1254ad922)",
+                "createdAt": "2026-10-29T06:19:28.950Z"
+              },
+              {
+                "id": "01a18650-388d-75e5-a744-05765012ec2d",
+                "group": "506c0c27-3516-4c54-91a0-d9c470ebf5cf",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta ad61bd22-ea05-4615-89bf-6f72b0386284 (d2f1254ad922)",
+                "createdAt": "2026-10-29T06:19:26.733Z"
+              },
+              {
+                "id": "01a18650-3007-786c-83c8-27bd29d941db",
+                "group": "5e211d14-6d8c-4afa-8477-01f1e140c580",
+                "runtimeVersion": "41",
+                "platform": "android",
+                "message": "promote beta 619c6919-d480-460a-8de1-19aeed0e4661 (d2f1254ad922)",
+                "createdAt": "2026-10-29T06:19:24.551Z"
+              },
+              {
+                "id": "01a18650-2745-7500-ae2e-e7f9ea72963b",
+                "group": "5e56761d-8c62-4b31-b8f7-c289cba72de8",
+                "runtimeVersion": "42",
+                "platform": "android",
+                "message": "promote beta 021317a1-8fec-4e4a-ae47-07ffef1ea6e2 (d2f1254ad922)",
+                "createdAt": "2026-10-29T06:19:22.309Z"
+              },
+              {
+                "id": "01a18324-2bf1-734c-9578-20d93d709007",
+                "group": "e4617dbd-045a-47a8-b783-1c667e3300bf",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta da666832-bd53-4c47-9aa2-26295e632e56 (a2ae65117559)",
+                "createdAt": "2026-10-28T15:32:28.273Z"
+              },
+              {
+                "id": "01a18324-2177-730d-946f-f51e319f05a3",
+                "group": "202dca19-703f-4d6e-ac51-76ce185a561a",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta 639ba85d-d84c-46be-8b61-dac3d1f9b5f6 (a2ae65117559)",
+                "createdAt": "2026-10-28T15:32:25.591Z"
+              },
+              {
+                "id": "01a18324-1619-7c8c-b10d-75e7f67f5626",
+                "group": "0a36ba4e-2a38-49cb-bc52-8b79e28db74e",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 15b7947d-306e-40fa-b4f2-19640c715847 (a2ae65117559)",
+                "createdAt": "2026-10-28T15:32:22.681Z"
+              },
+              {
+                "id": "01a18324-0bc6-7bf4-8e11-954ac9174432",
+                "group": "a0ec09fb-c978-4e32-91a2-fd4ad5c528e8",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 58b5f419-b9be-4536-b987-b9434ce4ce64 (a2ae65117559)",
+                "createdAt": "2026-10-28T15:32:20.038Z"
+              },
+              {
+                "id": "01a18324-01b0-782f-bd85-189b8bf89ef5",
+                "group": "d750c268-df84-417d-bd80-cc5b07523844",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta ccd99885-1bb7-4d55-97ac-95acf6336b5d (a2ae65117559)",
+                "createdAt": "2026-10-28T15:32:17.456Z"
+              },
+              {
+                "id": "01a18323-f7ee-7abc-8bef-7c72f183d34b",
+                "group": "444cf332-0173-4167-84d7-a52776782bf5",
+                "runtimeVersion": "41",
+                "platform": "android",
+                "message": "promote beta a1d42f11-eddb-4a42-9925-514605cc1fbb (a2ae65117559)",
+                "createdAt": "2026-10-28T15:32:14.958Z"
+              },
+              {
+                "id": "01a18296-7062-704d-87d6-a209f8cd8157",
+                "group": "22a855c7-ee93-4362-be3d-64d177dbd78e",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta e7f2af76-5282-4604-b1ec-2a74d4ee8a3c (950601257735)",
+                "createdAt": "2026-10-28T12:57:39.682Z"
+              },
+              {
+                "id": "01a18296-6679-70cf-a5d2-2aa8bbbf3e73",
+                "group": "96e916bf-817d-4ac9-87ac-1fae80e79423",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta d25d3771-196e-42b1-8b0c-cd545159e07f (950601257735)",
+                "createdAt": "2026-10-28T12:57:37.145Z"
+              },
+              {
+                "id": "01a18296-5c86-7b6c-a1f4-3b3c10eba7e4",
+                "group": "62f17fca-66ea-46fe-802a-8afb4c29a1df",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 8cbfc09d-fd44-4e4e-bbcf-f5d5c97ef6c4 (950601257735)",
+                "createdAt": "2026-10-28T12:57:34.598Z"
+              },
+              {
+                "id": "01a18296-52dc-7c97-a7eb-c793ead04cb4",
+                "group": "05172b81-0053-472f-b49e-24858a13c6cb",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 1e2dcc66-eb5e-4db3-9e5c-c316e52f492f (950601257735)",
+                "createdAt": "2026-10-28T12:57:32.124Z"
+              },
+              {
+                "id": "01a18296-48b9-79a0-ad9b-4bf6f3f6c42f",
+                "group": "e89facc6-38cf-4e56-a7db-15150e1e3324",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 86d5165d-afe9-4f5b-a49f-8481eaa7934a (950601257735)",
+                "createdAt": "2026-10-28T12:57:29.529Z"
+              },
+              {
+                "id": "01a18296-3e81-75f3-b24b-26f86c48650a",
+                "group": "6a0fa202-000e-4145-9b02-d289657e42fd",
+                "runtimeVersion": "41",
+                "platform": "android",
+                "message": "promote beta a625aee9-3986-4b2b-afad-f65d489da14e (950601257735)",
+                "createdAt": "2026-10-28T12:57:26.913Z"
+              },
+              {
+                "id": "01a1805f-43db-7cbc-b3c8-4c81157d12da",
+                "group": "e44ff55b-ccd8-4560-8a42-7144d14d1d4f",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 6f50b9c7-31ff-4f0e-8e82-4726f7ef3ef7 (46ffa16295db)",
+                "createdAt": "2026-10-28T02:38:09.371Z"
+              },
+              {
+                "id": "01a1805f-3a04-7c5c-b582-631ef08e10ba",
+                "group": "8c8af599-cb8b-4ab2-a784-5277e26eee23",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta 65b235ee-d913-470d-b0cc-24f83f3e95a6 (46ffa16295db)",
+                "createdAt": "2026-10-28T02:38:06.852Z"
+              },
+              {
+                "id": "01a1805f-3076-7dd3-a44a-b15cee53de99",
+                "group": "e4bcce10-9628-423e-8e11-063ead1bf17b",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 496b33dc-7734-4801-9ad9-3316f535f95c (46ffa16295db)",
+                "createdAt": "2026-10-28T02:38:04.406Z"
+              },
+              {
+                "id": "01a1805f-26d0-7ff8-860a-cd2e1291cad7",
+                "group": "a76942f0-2689-4c3e-987e-141db743a48b",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta 2becb7c4-c198-4841-8556-24c1fdc003f1 (46ffa16295db)",
+                "createdAt": "2026-10-28T02:38:01.936Z"
+              },
+              {
+                "id": "01a1805f-1d28-730a-b4ff-804c1e17ed16",
+                "group": "5f4a9d91-5dca-42eb-81fd-0d0aca56ce9f",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta e66eea21-ba3c-481d-a000-7519f52b240c (46ffa16295db)",
+                "createdAt": "2026-10-28T02:37:59.464Z"
+              },
+              {
+                "id": "01a1805f-13d3-7f0f-a8d7-1bdfedc667e6",
+                "group": "de7ebbce-0f51-4a88-b42a-57309e59d43e",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 4e7cac4f-2e7f-4fd4-9461-b40c9af57c1c (46ffa16295db)",
+                "createdAt": "2026-10-28T02:37:57.075Z"
+              },
+              {
+                "id": "01a17df2-1f19-723f-b3fd-4a08e8a479dd",
+                "group": "771e16aa-2bda-42c8-8e33-49250321e9e2",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 35ea574b-6ec0-45aa-ba04-f3892f9795f0 (0fea2ab295b1)",
+                "createdAt": "2026-10-27T15:19:42.105Z"
+              },
+              {
+                "id": "01a17df2-14ce-7118-a96e-e3ab05c566fa",
+                "group": "2c1847a7-327f-4f75-abbb-c185a3889dd9",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta b27ad1c8-c518-4f2f-be06-a1b35aa1404f (0fea2ab295b1)",
+                "createdAt": "2026-10-27T15:19:39.470Z"
+              },
+              {
+                "id": "01a17df2-0acc-7b3c-8486-b8ace778996b",
+                "group": "82726e8d-6e37-4aaf-a42f-5befc101c8dc",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 60e99e1b-721d-4842-a424-414c4ed16a7c (0fea2ab295b1)",
+                "createdAt": "2026-10-27T15:19:36.908Z"
+              },
+              {
+                "id": "01a17df2-0137-7735-8288-45ce2c1e2097",
+                "group": "43f5c819-9b8b-4f9c-8040-ed01b23d05c4",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta 996cbb42-b2c1-445a-8a12-e2f7a2490b61 (0fea2ab295b1)",
+                "createdAt": "2026-10-27T15:19:34.455Z"
+              },
+              {
+                "id": "01a17df1-f7cc-7cae-bb31-4617fe7b4a12",
+                "group": "b312f227-baec-4237-88bd-3ca0245767d3",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 514d869f-50fc-4a8c-a10d-66a31aabf045 (0fea2ab295b1)",
+                "createdAt": "2026-10-27T15:19:32.044Z"
+              },
+              {
+                "id": "01a17df1-edd8-792c-ac73-5112a84766c7",
+                "group": "4d73368f-d806-4533-a46a-3fb94c9d75f0",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 95fa6026-97e9-471b-9df5-9a842ac33de2 (0fea2ab295b1)",
+                "createdAt": "2026-10-27T15:19:29.496Z"
+              },
+              {
+                "id": "01a17d82-84ba-7b6e-8708-c147e1018e7f",
+                "group": "3417c7d5-2a72-4d20-b158-e625544e6da8",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta b01c4295-62ae-48a4-9af1-ea3032fcd7ad (6158e1e6a991)",
+                "createdAt": "2026-10-27T13:17:48.090Z"
+              },
+              {
+                "id": "01a17d82-7b37-7b25-880a-9600d50f78d4",
+                "group": "ee634891-bb94-4526-831e-30160187f5a2",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta 2682a7dd-a2c1-4c5f-b5ae-9e2af7d93929 (6158e1e6a991)",
+                "createdAt": "2026-10-27T13:17:45.655Z"
+              },
+              {
+                "id": "01a17d82-712c-7e34-b5e7-52e671358910",
+                "group": "ea6e6455-fcda-454d-ac96-e6e98109fdfc",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta ee1057eb-330e-47c1-84e3-8d7d2583d284 (6158e1e6a991)",
+                "createdAt": "2026-10-27T13:17:43.084Z"
+              },
+              {
+                "id": "01a17d82-6743-7277-bab4-a6f1bd25fe96",
+                "group": "258437b9-9512-4681-bd5e-c967b679ce32",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta b6896b4c-3ef2-4c8f-8331-afc21759fb41 (6158e1e6a991)",
+                "createdAt": "2026-10-27T13:17:40.547Z"
+              },
+              {
+                "id": "01a17d82-5d51-7d6e-9b35-37fe8f25a9ef",
+                "group": "12a40a73-df8f-409e-bf20-9a51ce39729e",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta cf419fa0-542a-4cc6-b8a2-46fa7c444f1c (6158e1e6a991)",
+                "createdAt": "2026-10-27T13:17:38.001Z"
+              },
+              {
+                "id": "01a17d82-53c6-75d0-8de6-5eb0dd5b2397",
+                "group": "b269a4ef-6f3a-41af-a8ec-f0cfc2073ad9",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta d88e04c4-be60-48a6-928d-f323fd2027b7 (6158e1e6a991)",
+                "createdAt": "2026-10-27T13:17:35.558Z"
+              },
+              {
+                "id": "01a17688-5b19-7f3b-aacf-b00470c54084",
+                "group": "c9e849b1-c914-4b1d-9ebd-60e169be9a3c",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta ea3be2fb-6934-4347-9a86-fa12804041e7 (3da3d7a8f43f)",
+                "createdAt": "2026-10-26T04:46:50.137Z"
+              },
+              {
+                "id": "01a17688-51a2-75cb-97b1-fe69b12c81fa",
+                "group": "84e3d856-a537-437c-bef0-927b87a001d8",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta bdeb3d88-d82a-425d-8540-7c23e662eff8 (3da3d7a8f43f)",
+                "createdAt": "2026-10-26T04:46:47.714Z"
+              },
+              {
+                "id": "01a17688-4890-7680-9a94-1ae6fd145e9b",
+                "group": "d0f6a35e-cdd7-47d4-b654-2c994dddcbc2",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 7e5e24a4-dd44-4073-b068-dd8f3c1c6ad7 (3da3d7a8f43f)",
+                "createdAt": "2026-10-26T04:46:45.392Z"
+              },
+              {
+                "id": "01a17688-3f19-7a6b-bb47-fc64233dadac",
+                "group": "33a7e0d8-c5a0-445f-909a-4427d5f7c010",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta 05e55ba1-dec7-4c2d-a3a2-1cd14d7c75dc (3da3d7a8f43f)",
+                "createdAt": "2026-10-26T04:46:42.969Z"
+              },
+              {
+                "id": "01a17688-35d4-7604-90cc-8d530669522e",
+                "group": "a26e787d-fd09-4d4d-bac0-e33d28b9a517",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 0efad7fc-a9c8-45f3-a9c5-be89a8364923 (3da3d7a8f43f)",
+                "createdAt": "2026-10-26T04:46:40.596Z"
+              },
+              {
+                "id": "01a17688-2c89-75a0-94b7-1388e55a9960",
+                "group": "4b4d7556-b516-4819-9db7-0d2934609a66",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta f6868e1e-a50f-4096-b1d5-3af93b7b9d87 (3da3d7a8f43f)",
+                "createdAt": "2026-10-26T04:46:38.217Z"
+              },
+              {
+                "id": "01a17472-c9e1-7acc-b157-720266074dba",
+                "group": "c2dc41e1-62f3-41f5-b5ec-3d002c210532",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 4e72da6d-8234-4b88-9354-1f6e47be4f76 (73c6ac2c055e)",
+                "createdAt": "2026-10-25T19:04:02.273Z"
+              },
+              {
+                "id": "01a17472-c06b-7378-b7fe-95c8f36de048",
+                "group": "762075ee-f287-409d-bc19-065dfda2e300",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta d04bf973-6e38-42db-a43f-b80493254d9d (73c6ac2c055e)",
+                "createdAt": "2026-10-25T19:03:59.851Z"
+              },
+              {
+                "id": "01a17472-b76d-7b5a-935c-81ecfc69cf48",
+                "group": "c08297e9-e3fd-43de-bcc6-6c28ceb37236",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta ccb9b59f-3f0c-4712-a6c4-c611ee90431d (73c6ac2c055e)",
+                "createdAt": "2026-10-25T19:03:57.549Z"
+              },
+              {
+                "id": "01a17472-adfc-747b-92e8-6f893da07bca",
+                "group": "36ec12f9-d090-4870-8e48-5d04fda7445b",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta f8503016-422b-4395-9e9a-e120ab4e21aa (73c6ac2c055e)",
+                "createdAt": "2026-10-25T19:03:55.132Z"
+              },
+              {
+                "id": "01a17472-a44d-7056-9012-0fffaeeda6f8",
+                "group": "1541134f-663f-473c-9e6b-9d9e3bf9c9fd",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 1e8ba330-dd9c-4379-b426-57eb4ca72008 (73c6ac2c055e)",
+                "createdAt": "2026-10-25T19:03:52.653Z"
+              },
+              {
+                "id": "01a17472-9ade-7e69-ad23-09f81ab7e003",
+                "group": "84e4b92e-fd36-4784-8b6e-64551aad10c7",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 9942e7d9-e5ea-4c5f-9f6d-882815b6d93d (73c6ac2c055e)",
+                "createdAt": "2026-10-25T19:03:50.238Z"
+              },
+              {
+                "id": "01a172f5-fc5d-79d6-a77c-98a2bb1082af",
+                "group": "f2c13d0a-44b5-43d1-91af-d58fa8ac0c3f",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 94751632-67c3-4412-948d-6a5c1fc253e3 (516a92736980)",
+                "createdAt": "2026-10-25T12:08:05.981Z"
+              },
+              {
+                "id": "01a172f5-f09c-7e61-b256-bd44f7034a38",
+                "group": "4f7ea48b-0811-467a-8ea4-5bc6f8d1c7d4",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta eedd08d1-674b-4e86-a7ef-7c5f41c9e059 (516a92736980)",
+                "createdAt": "2026-10-25T12:08:02.972Z"
+              },
+              {
+                "id": "01a172f5-e55d-74aa-9113-62c50f3347ec",
+                "group": "4244b871-41c6-404e-a720-ea7460e90080",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 9eb8acaf-5eb4-465c-ba4c-560420eec26f (516a92736980)",
+                "createdAt": "2026-10-25T12:08:00.093Z"
+              },
+              {
+                "id": "01a172f5-db59-7d20-aa96-2fb9b1e818ae",
+                "group": "abeef402-f0df-485f-86b1-ea4f583bfa9d",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta ae1b636d-1b8b-4ccf-85c1-a77d60e1673d (516a92736980)",
+                "createdAt": "2026-10-25T12:07:57.529Z"
+              },
+              {
+                "id": "01a172f5-d159-7d32-9a64-81218680a418",
+                "group": "72560346-bb21-46f5-af2d-8eb7fcbf515d",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 9e553d66-60f9-4032-9f6f-42f091cc5e07 (516a92736980)",
+                "createdAt": "2026-10-25T12:07:54.969Z"
+              },
+              {
+                "id": "01a172f5-c78d-7c3c-bef9-11e1ea043716",
+                "group": "cdcb32ac-e03a-40b5-81dd-196cffd10f96",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 82f7ba79-3a4e-4e5d-9437-6e473d2c4cfa (516a92736980)",
+                "createdAt": "2026-10-25T12:07:52.461Z"
+              },
+              {
+                "id": "01a16fb9-2e6e-7719-ad0d-a559fc8ad613",
+                "group": "78d50924-b3ad-4972-a1d5-1b61f0ab9618",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta d5d7a25b-5ac8-4719-9eb4-d88b71a52f90 (735d7a8a5ef8)",
+                "createdAt": "2026-10-24T21:02:49.454Z"
+              },
+              {
+                "id": "01a16fb9-24dd-70e6-b4b9-8968af0bf318",
+                "group": "423aea3f-3dca-4794-be16-369fd0efba04",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta a4e6ec90-0fb4-4002-a640-23f7478f9484 (735d7a8a5ef8)",
+                "createdAt": "2026-10-24T21:02:47.005Z"
+              },
+              {
+                "id": "01a16fb9-1b1b-7bab-b795-4776aa3ae957",
+                "group": "e6f29bfd-8657-4c3f-a782-d34aca2e0ba7",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 2a84f063-496d-41b9-8c82-0a0f38956a76 (735d7a8a5ef8)",
+                "createdAt": "2026-10-24T21:02:44.507Z"
+              },
+              {
+                "id": "01a16fb9-119a-777b-b79c-25898b13ae9c",
+                "group": "13131150-8d50-449c-8719-6609f41150a7",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta 0e2a4f6b-6da5-4db5-a723-a11f27fbe8e6 (735d7a8a5ef8)",
+                "createdAt": "2026-10-24T21:02:42.074Z"
+              },
+              {
+                "id": "01a16fb9-060d-7728-9239-7b8da20e667e",
+                "group": "05912e2d-8282-4d15-8fd4-0958052884f3",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 5b06af43-1fae-473d-a2c9-055b9edb6822 (735d7a8a5ef8)",
+                "createdAt": "2026-10-24T21:02:39.117Z"
+              },
+              {
+                "id": "01a16fb8-fc31-74f3-8b16-18efe2432695",
+                "group": "2700b7c3-63de-49e1-8593-e393a77018b0",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 81f699e3-5403-41f3-b579-0e58828f5d2c (735d7a8a5ef8)",
+                "createdAt": "2026-10-24T21:02:36.593Z"
+              },
+              {
+                "id": "01a16cd7-68da-7670-8f59-1c60471c3f6d",
+                "group": "e6b40f43-17f6-4a93-a59b-ef7f66066b8d",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta e8325168-37da-44d0-baaf-29c1951d4202 (22d7abec6b91)",
+                "createdAt": "2026-10-24T07:36:58.842Z"
+              },
+              {
+                "id": "01a16cd7-5fa5-7163-a976-f26d36e16528",
+                "group": "83f87c83-ed45-49d5-ab63-8c3fd58bca7f",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta 8ca70101-53f1-4bbb-916e-cb68569e7d1e (22d7abec6b91)",
+                "createdAt": "2026-10-24T07:36:56.485Z"
+              },
+              {
+                "id": "01a16cd7-569b-798c-8e60-60534d8a025b",
+                "group": "e142b5f8-b1c9-4aec-ba65-46c71616c042",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta f50ff4aa-03c3-4198-b38f-9911083010ce (22d7abec6b91)",
+                "createdAt": "2026-10-24T07:36:54.171Z"
+              },
+              {
+                "id": "01a16cd7-4d4e-7c38-86a2-904e6c53381f",
+                "group": "e268ff5f-b412-4069-9cce-56cbee61fbfc",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta f2181a37-d127-41bb-a1a6-f95dae142163 (22d7abec6b91)",
+                "createdAt": "2026-10-24T07:36:51.790Z"
+              },
+              {
+                "id": "01a16cd7-441e-7336-8211-bd97382ded8d",
+                "group": "5280cad7-0b29-48be-9e8c-ee98c0fa76bb",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta c181e0d9-b8b5-4047-bd7a-b4958fd422f7 (22d7abec6b91)",
+                "createdAt": "2026-10-24T07:36:49.438Z"
+              },
+              {
+                "id": "01a16cd7-3b64-7505-82ce-2d8ff39f6be2",
+                "group": "9ccc9c89-63d3-48bc-83b2-f1794a4ead00",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta 0729bc16-f7cd-4fe1-a233-1a43facbc7c3 (22d7abec6b91)",
+                "createdAt": "2026-10-24T07:36:47.204Z"
+              },
+              {
+                "id": "01a16bf0-f738-7cce-af6f-957a8ebac17f",
+                "group": "dcbd834f-a683-4c81-b869-abd0dab1573d",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta e2d48d41-f29d-4f9e-b394-bf1cd33b203f (f2e025d43775)",
+                "createdAt": "2026-10-24T03:25:16.472Z"
+              },
+              {
+                "id": "01a16bf0-e723-7393-af78-a93adf7c3e96",
+                "group": "bbaf3139-6b09-4486-9708-ed6060b3b5d4",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta ade7041d-937f-4598-a040-7833255a6be5 (f2e025d43775)",
+                "createdAt": "2026-10-24T03:25:12.355Z"
+              },
+              {
+                "id": "01a16bf0-d6df-7a73-9978-73a2338c2844",
+                "group": "902cf011-5fde-413a-9cba-ebe26862d40d",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta a93476ba-7e98-4f93-920c-8714a84c7823 (f2e025d43775)",
+                "createdAt": "2026-10-24T03:25:08.191Z"
+              },
+              {
+                "id": "01a16bf0-c6be-77f5-9f87-4a3f9f82e8be",
+                "group": "b992544f-59bc-4a54-bf81-923c8419da56",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta cfddee76-ec7b-4b58-b1bb-563234c8e392 (f2e025d43775)",
+                "createdAt": "2026-10-24T03:25:04.062Z"
+              },
+              {
+                "id": "01a16bf0-b623-76b8-84c5-7112b231157f",
+                "group": "f3a3c98c-179f-4102-903d-fa3a1ba7f1d9",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta 50258683-d7f2-4d94-85ec-b64c29cab699 (f2e025d43775)",
+                "createdAt": "2026-10-24T03:24:59.811Z"
+              },
+              {
+                "id": "01a16bf0-a41d-7ba8-96d6-24b651e34d90",
+                "group": "c906d242-177f-4eb3-8745-778bf7b015a4",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta c7848752-b2e4-423d-9f4b-f7cd16097cb7 (f2e025d43775)",
+                "createdAt": "2026-10-24T03:24:55.197Z"
+              },
+              {
+                "id": "01a16ac4-a998-704f-b4d2-d141ec0566d5",
+                "group": "fb4aa04b-01b5-4a62-89cf-38b11dd9136d",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta c6cf469c-1dea-4470-b038-180ceaff9e34 (62a269572454)",
+                "createdAt": "2026-10-23T21:57:15.800Z"
+              },
+              {
+                "id": "01a16ac4-a089-7ba2-8905-56bffb9d686e",
+                "group": "88f36dd3-3753-4624-93c4-8c1c37fe2b00",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta 7cdef5c7-38be-4520-ae6d-041e76b47f8d (62a269572454)",
+                "createdAt": "2026-10-23T21:57:13.481Z"
+              },
+              {
+                "id": "01a16ac4-9716-72b6-880d-8619068a7f45",
+                "group": "b78a269c-b06a-438d-911b-9e7e1d9c8f33",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta 8fe28df6-5835-45b1-8e5a-28b6c42d6e9b (62a269572454)",
+                "createdAt": "2026-10-23T21:57:11.062Z"
+              },
+              {
+                "id": "01a16ac4-8de4-7a59-a771-483aca3fe1a3",
+                "group": "8666bbe7-a407-4208-be56-895ca766475d",
+                "runtimeVersion": "38",
+                "platform": "android",
+                "message": "promote beta 542eb8ae-1260-4ebe-9eb3-3f276462e1be (62a269572454)",
+                "createdAt": "2026-10-23T21:57:08.708Z"
+              },
+              {
+                "id": "01a16ac4-84c8-7072-883b-b380a5ac01c7",
+                "group": "190fbdbe-40fa-4e1e-ab99-1a25ba132593",
+                "runtimeVersion": "39",
+                "platform": "android",
+                "message": "promote beta c82e5503-9f2b-416d-9367-34d435caf4c0 (62a269572454)",
+                "createdAt": "2026-10-23T21:57:06.376Z"
+              },
+              {
+                "id": "01a16ac4-7a7d-7626-9d02-0023ff4a2521",
+                "group": "8e3183da-e407-4892-976d-170c3549ff06",
+                "runtimeVersion": "40",
+                "platform": "android",
+                "message": "promote beta ef5036ff-aebb-4660-99bb-3f6ff72851f3 (62a269572454)",
+                "createdAt": "2026-10-23T21:57:03.741Z"
+              },
+              {
+                "id": "01a166be-6a53-78e4-aec5-743bfb4c074c",
+                "group": "703034eb-a17a-4d63-9621-732bedf20c01",
+                "runtimeVersion": "34",
+                "platform": "ios",
+                "message": "promote beta 85d1f7b6-0b77-4b1c-8b32-dfdb9c9ff12f (9b1692b7f40e)",
+                "createdAt": "2026-10-23T03:11:57.523Z"
+              },
+              {
+                "id": "01a166be-6075-7cf1-8667-f87d0f3fd064",
+                "group": "3fdce14a-3092-46c2-b503-ce259dbd0157",
+                "runtimeVersion": "35",
+                "platform": "ios",
+                "message": "promote beta abe87af7-1965-48d8-8205-328ac5f43e54 (9b1692b7f40e)",
+                "createdAt": "2026-10-23T03:11:54.997Z"
+              },
+              {
+                "id": "01a166be-56e4-7e5b-bb1d-ff437d9ebcb9",
+                "group": "32dffa68-d8f7-4160-b3f5-5010b4944584",
+                "runtimeVersion": "36",
+                "platform": "ios",
+                "message": "promote beta f8e26414-f22e-4580-a8a4-7d5e6505e094 (9b1692b7f40e)",
+                "createdAt": "2026-10-23T03:11:52.548Z"
+              },
+              {
+                "id": "01a166be-4d10-7dc4-839d-27e8259f7f5a",
+                "group": "23bae836-7681-4717-bdad-ee83bafaffce",
+                "runtimeVersion": "36",
+                "platform": "android",
+                "message": "promote beta 759cac3c-8704-40f7-b36f-18b6d951b885 (9b1692b7f40e)",
+                "createdAt": "2026-10-23T03:11:50.032Z"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

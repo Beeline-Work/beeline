@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
 import { queueSentrySourcemaps } from './upload-sentry-sourcemaps.mjs';
+import { storeRuntimeTargets, runtimeKey } from './store-runtime-targets.mjs';
 import {
   RELEASE_PLATFORMS,
   classifyFailure,
@@ -21,6 +22,8 @@ import {
   markPublished,
   mergeReconciliation,
   readJson,
+  readDeliveryIndex,
+  writeDeliveryIndex,
   recordFailure,
   sameGroupSet,
   writeJson,
@@ -45,9 +48,8 @@ const PRODUCTION_LOOKUP_CEILING = 50;
 function productionLookupLimit() {
   return String(PRODUCTION_LOOKUP_CEILING);
 }
-// Shipped means a runtime appears in production EAS history OR this native
-// store ledger. The ledger also proves an embedded rollback anchor when a
-// shipped binary has not received its first production OTA yet.
+// Legacy native upload receipts provide embedded rollback anchors only.
+// They never admit an OTA target or establish store publication.
 export const SHIPPED_NATIVE_RUNTIMES = [
   {
     platform: 'android',
@@ -153,61 +155,37 @@ export const SHIPPED_NATIVE_RUNTIMES = [
   },
 ];
 
-// Explicit retirements are excluded before selecting the latest two shipped runtimes.
-const RETIRED_BY_PIN_PLUS_TWO =
-  'retired by owner decision (lunchboxfortwo, Room message 49d2569e): publish OTA only to the current pin plus the latest two shipped runtimes per platform; per-target publishes of 17 runtimes pushed mobile_ota past its 15-minute cap in unified release runs 37891485721 and 37944067762. EAS GraphQL production-branch update insights totalUniqueUsers, 2026-09-25 to 2026-10-09, project 58f1e94e-5ce5-475e-9dde-3eaa9e36699c, latest production group 2026-10-08 06:27: android@33=6, android@32=1, android@31=1, android@24=1, every other Android runtime=0; ios@31=2, every other iOS runtime (32, 29, 27, 26, 25, 24, 23)=0. The approved plan covers every observed install except the one android@24 install, which stops receiving OTA updates; update insights do not establish public store runtime versions';
-
-export const RETIRED_COMPAT_RUNTIMES = [
-  { platform: 'android', runtimeVersion: '23', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'android', runtimeVersion: '24', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'android', runtimeVersion: '25', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'android', runtimeVersion: '26', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'android', runtimeVersion: '28', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'android', runtimeVersion: '29', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'ios', runtimeVersion: '23', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'ios', runtimeVersion: '24', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'ios', runtimeVersion: '25', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'ios', runtimeVersion: '26', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  { platform: 'ios', runtimeVersion: '27', evidence: RETIRED_BY_PIN_PLUS_TWO },
-  {
-    platform: 'android',
-    runtimeVersion: '37',
-    evidence:
-      'retired by owner decision (lunchboxfortwo, 2026-10-14: ship v0.1.58 now): never reached users: the only android@37 store binary (unified release v0.1.58 runs 38637553492 and 38638236337) was refused by Google Play at edit commit (HTTP 403, undeclared foreground service permission), and #2480 moved the Android pin to 38 before any android@37 binary was published',
-  },
-];
-
 function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
 }
 
-// The same computed set feeds publish, coverage and rollback. With no history
-// (offline dry runs), the committed shipped-native ledger is the deterministic
-// stand-in. Supply --production-history <JSON> to dry-run an EAS snapshot.
+function previousReleaseTargets(history) {
+  const updates = collectUpdates(history).updates;
+  // EAS returns newest first. A promotion message records the release source
+  // on every target; older releases on this branch are not the fallback set.
+  const source = updates[0]?.message?.match(/\(([a-f0-9]{12})\)/)?.[1];
+  return source ? updates.filter(t => t.message?.includes(`(${source})`)) : updates;
+}
+
+// The same computed set feeds publish and coverage. An offline plan without
+// store evidence preserves prior targets instead of inventing store history.
 export function releaseUpdateTargets(
   projectDir = process.cwd(),
   pins,
   history = null,
-  shipped = SHIPPED_NATIVE_RUNTIMES,
-  retired = RETIRED_COMPAT_RUNTIMES,
+  storeState = {},
 ) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
   }
   const resolvedPins = pins ?? readPinnedRuntimeVersion(projectDir);
-  const retiredKeys = new Set(retired.map(targetKey));
-  const known = [...shipped, ...collectUpdates(history).updates];
-  return RELEASE_PLATFORMS.flatMap((platform) => {
-    const pin = resolvedPins[platform];
-    if (!/^\d+$/.test(pin)) throw new Error(`Invalid runtime pin: ${platform}@${pin}`);
-    const versions = [...new Set(known
-      .filter((target) => target.platform === platform &&
-        /^\d+$/.test(target.runtimeVersion) &&
-        BigInt(target.runtimeVersion) < BigInt(pin) && !retiredKeys.has(targetKey(target)))
-      .map((target) => target.runtimeVersion))]
-      .sort((a, b) => BigInt(a) > BigInt(b) ? -1 : BigInt(a) < BigInt(b) ? 1 : 0)
-      .slice(0, 2);
-    return [pin, ...versions].map((runtimeVersion) => ({ platform, runtimeVersion }));
+  return storeRuntimeTargets({
+    pins: resolvedPins,
+    stores: storeState.stores,
+    previouslyLive: storeState.previouslyLive,
+    // Migration from ledgers that predate store evidence is conservative. OTA
+    // history is a fallback target set, never evidence of store publication.
+    previousTargets: storeState.previousTargets ?? previousReleaseTargets(history),
   });
 }
 
@@ -217,13 +195,12 @@ export function planCoverageErrors(
   pins,
   targets,
   history = null,
-  shipped = SHIPPED_NATIVE_RUNTIMES,
-  retired = RETIRED_COMPAT_RUNTIMES,
+  storeState = {},
 ) {
   const planned = new Set(targets.map(targetKey));
-  return releaseUpdateTargets(process.cwd(), pins, history, shipped, retired)
+  return releaseUpdateTargets(process.cwd(), pins, history, storeState)
     .filter((target) => !planned.has(targetKey(target)))
-    .map((target) => `${targetKey(target)} is missing from the pin-plus-two release plan.`);
+    .map((target) => `${targetKey(target)} is missing from the store-runtime release plan.`);
 }
 
 function fail(message) {
@@ -554,6 +531,13 @@ function readLedger(path) {
   return readJson(path);
 }
 
+function recordStoreRuntimeState(indexPath, ledger) {
+  if (!indexPath || !ledger.storeRuntimeState) return;
+  const index = readDeliveryIndex(indexPath);
+  index.storeRuntimeState = ledger.storeRuntimeState;
+  writeDeliveryIndex(indexPath, index);
+}
+
 function publish(options) {
   if (!options.sha || !options.ref) fail('publish requires --sha and --ref');
   const configuredPins = readPinnedRuntimeVersion(process.cwd());
@@ -566,22 +550,43 @@ function publish(options) {
     { dryRun: options.dryRun },
   );
   if (!options.dryRun && !previous) fail('Production history is unreadable; refusing to plan OTA.');
-  const targets = releaseUpdateTargets(process.cwd(), configuredPins, previous);
+  if (options.storeStatus && !options.dryRun) fail('--store-status is only allowed with --dry-run.');
+  const priorStoreState = options.index ? readDeliveryIndex(options.index).storeRuntimeState ?? {} : {};
+  let storeStatus = options.storeStatus ? readJson(options.storeStatus) : {};
+  if (!options.dryRun) {
+    const input = join(mkdtempSync(join(tmpdir(), 'beeline-store-status-')), 'previous.json');
+    writeJson(input, priorStoreState);
+    const observed = spawnSync(process.execPath, [fileURLToPath(new URL('../../../scripts/read-store-runtimes.mjs', import.meta.url)), input], {
+      encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
+    });
+    if (observed.status === 0) {
+      try { storeStatus = JSON.parse(observed.stdout); } catch { /* Keep all previous targets. */ }
+    }
+  }
+  const storeState = {
+    ...storeStatus,
+    previouslyLive: priorStoreState.previouslyLive ?? storeStatus.previouslyLive ?? [],
+    previousTargets: priorStoreState.previousTargets ?? storeStatus.previousTargets,
+  };
+  for (const platform of RELEASE_PLATFORMS) {
+    if (storeState.stores?.[platform]?.status !== 'readable') {
+      console.log(`${platform} store status unavailable; preserving the previous target set.`);
+    }
+  }
+  const targets = releaseUpdateTargets(process.cwd(), configuredPins, previous, storeState);
   console.log(`ota_plan_targets=${targets.map(targetKey).join(',')}`);
-  const coverageErrors = planCoverageErrors(configuredPins, targets, previous);
+  const coverageErrors = planCoverageErrors(configuredPins, targets, previous, storeState);
   if (coverageErrors.length) fail(coverageErrors.join('\n'));
   console.log(`release_plan_targets=${targets.map(targetKey).join(',')}`);
-  const retiredKeys = new Set(RETIRED_COMPAT_RUNTIMES.map(targetKey));
   const dropped = [...new Set(collectUpdates(previous).updates
     .filter((target) => RELEASE_PLATFORMS.includes(target.platform) &&
-      !retiredKeys.has(targetKey(target)) &&
       /^\d+$/.test(target.runtimeVersion) &&
       BigInt(target.runtimeVersion) < BigInt(configuredPins[target.platform]) &&
       !targets.some((planned) => targetKey(planned) === targetKey(target)))
     .map(targetKey))].sort();
-  if (dropped.length) console.log(`pin-plus-two rule: dropping older production runtimes ${dropped.join(', ')}`);
+  if (dropped.length) console.log(`store-runtime retention: dropping non-live production runtimes ${dropped.join(', ')}`);
   if (options.dryRun && !options.productionHistory) {
-    console.log('Offline dry-run: using shipped-native ledger only; --production-history supplies an EAS snapshot.');
+    console.log('Offline dry-run: --production-history and --store-status supply read-only snapshots.');
   }
 
   const channel = runEas(['channel:view', 'beta', '--json', '--non-interactive'], {
@@ -615,7 +620,11 @@ function publish(options) {
   const pins = readPinnedRuntimeVersion(process.cwd());
   // Shipped-native ledger entries may use their store binary's embedded update
   // when no earlier production OTA exists. History-only targets use that OTA.
-  const shippedBinaryKeys = new Set(SHIPPED_NATIVE_RUNTIMES.map(targetKey));
+  const shippedBinaryKeys = new Set([
+    ...SHIPPED_NATIVE_RUNTIMES,
+    ...(storeStatus.builds ?? []),
+    ...(priorStoreState.builds ?? []),
+  ].map(target => targetKey({ ...target, platform: target.platform.toLowerCase() })));
   const embeddedAnchorTargets = requiredRollbackTargets.filter(
     (target) =>
       !previousTargetKeys.has(targetKey(target)) &&
@@ -710,6 +719,18 @@ function publish(options) {
     ...(options.releaseVersion ? { releaseVersion: options.releaseVersion } : {}),
     sourceRef: options.ref,
     updateTargets: targets,
+    storeRuntimeState: {
+      builds: storeStatus.builds ?? priorStoreState.builds ?? [],
+      stores: storeStatus.stores ?? {},
+      observedAt: storeStatus.observedAt ?? null,
+      previousTargets: targets,
+      previouslyLive: [...new Map([
+        ...RELEASE_PLATFORMS.flatMap(p => storeStatus.stores?.[p]?.status === 'readable'
+          ? [...storeStatus.stores[p].live, ...(storeStatus.stores[p].historical ?? [])] : []),
+        // Preserve the first publication observation, including seeded dates.
+        ...(storeState.previouslyLive ?? []),
+      ].map(t => [runtimeKey(t), t])).values()],
+    },
     candidateTargets: candidateTargets.map(({ update: _update, ...target }) => target),
     candidateGroupIds,
     candidateGroupId: joinGroupIds(candidateGroups),
@@ -824,6 +845,7 @@ function recoverPromotion(options) {
     publishedAt: promotedAt, runId: String(options.runId ?? ledger.delivery?.runId ?? 'unknown'),
     attempt: Number(options.retryAttempt ?? ledger.delivery?.attempt ?? 1),
   });
+  recordStoreRuntimeState(options.index, ledger);
   writeFileSync(options.result, 'recovered\n');
 }
 
@@ -918,6 +940,7 @@ function promote(options) {
       runId: String(ledger.delivery?.runId ?? options.runId ?? 'unknown'),
       attempt: Number(ledger.delivery?.attempt ?? options.attempt ?? 1),
     });
+    recordStoreRuntimeState(options.index, ledger);
   }
 }
 
@@ -1076,7 +1099,7 @@ function rollback(options) {
       'rollback --embedded requires --expected-current-group naming the production group being rolled back',
     );
   }
-  if (!embeddedOnly && sourceIds.length > RELEASE_PLATFORMS.length * 3) {
+  if (!embeddedOnly && sourceIds.length > PRODUCTION_LOOKUP_CEILING) {
     fail(
       `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
     );

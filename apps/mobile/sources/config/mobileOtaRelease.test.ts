@@ -13,7 +13,6 @@ import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
   planCoverageErrors,
-  RETIRED_COMPAT_RUNTIMES,
   releaseUpdateTargets,
   SHIPPED_NATIVE_RUNTIMES,
 } from '../../scripts/ota-release.mjs';
@@ -85,6 +84,7 @@ writeFileSync(priorReleaseScript, releaseSource
   .replace('export function releaseUpdateTargets(', 'function computeUpdateTargets(')
   .concat(`\nfunction releaseUpdateTargets(projectDir, pins) {\n  if (process.env.EXPO_RUNTIME_OVERRIDE) throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');\n  return ${JSON.stringify(priorTargets)};\n}\n`)
   .replace(/export const SHIPPED_NATIVE_RUNTIMES = \[[\s\S]*?\n\];/, `export const SHIPPED_NATIVE_RUNTIMES = ${JSON.stringify(priorShipped)};`)
+  .replace("'./store-runtime-targets.mjs'", JSON.stringify(join(mobileRoot, 'scripts/store-runtime-targets.mjs')))
   .replace("'./native-fingerprint.mjs'", JSON.stringify(join(mobileRoot, 'scripts/native-fingerprint.mjs')))
   .replace("'./upload-sentry-sourcemaps.mjs'", JSON.stringify(join(mobileRoot, 'scripts/upload-sentry-sourcemaps.mjs')))
   .replace("'./ota-delivery-index.mjs'", JSON.stringify(join(mobileRoot, 'scripts/ota-delivery-index.mjs'))));
@@ -111,64 +111,66 @@ describe('mobile OTA release governor', () => {
   ] });
   const currentHistory = history(['31', '32', '33', '34', '35', '36', '37', '38'], ['29', '31', '32', '33', '34', '35']);
 
-  it('automatically retains the old pin after a pin bump, capped at six targets', () => {
-    expect(releaseUpdateTargets(mobileRoot, pins, currentHistory, [])).toEqual([
-      { platform: 'android', runtimeVersion: '43' },
+  const storeState = {
+    stores: {
+      android: { status: 'readable', live: [{ platform: 'android', runtimeVersion: '40' }] },
+      ios: { status: 'readable', live: [{ platform: 'ios', runtimeVersion: '35' }] },
+    },
+    previouslyLive: [
+      { platform: 'android', runtimeVersion: '39' },
       { platform: 'android', runtimeVersion: '38' },
-      { platform: 'android', runtimeVersion: '36' },
-      { platform: 'ios', runtimeVersion: '36' },
-      { platform: 'ios', runtimeVersion: '35' },
-      { platform: 'ios', runtimeVersion: '34' },
-    ]);
-  });
+    ],
+  };
 
-  it('retains a newly shipped previous pin without changing the native ledger', () => {
-    const bumped = { android: '40', ios: '37' };
-    expect(releaseUpdateTargets(mobileRoot, bumped,
-      history(['39', '38', '36'], ['36', '35', '34']), [])
-      .map(target => `${target.platform}@${target.runtimeVersion}`)).toEqual([
-        'android@40', 'android@39', 'android@38', 'ios@37', 'ios@36', 'ios@35',
-      ]);
-  });
-
-  it('excludes explicit retirements before filling the two slots and ignores future runtimes', () => {
-    const targets = releaseUpdateTargets(mobileRoot, pins, history(['37', '38', '36', '44'], ['35', '34', '37']));
+  it('OTA-STORE-40 includes live Play runtime despite OTA-only history on 41 and 42', () => {
+    const targets = releaseUpdateTargets(mobileRoot, pins, history(['42', '41', '40'], ['35']), storeState);
     expect(targets.map(t => `${t.platform}@${t.runtimeVersion}`)).toEqual([
-      'android@43', 'android@38', 'android@36', 'ios@36', 'ios@35', 'ios@34',
+      'android@40', 'android@39', 'android@38', 'ios@35',
     ]);
-    expect(RETIRED_COMPAT_RUNTIMES.find(t => t.runtimeVersion === '37')?.evidence).toContain('owner decision');
+    expect(planCoverageErrors(pins, targets.filter(t => t.runtimeVersion !== '40'),
+      currentHistory, storeState)).toEqual(['android@40 is missing from the store-runtime release plan.']);
   });
 
-  it('uses the union of production history and the shipped-native ledger with fewer than two shipped runtimes', () => {
-    const shipped = [{ platform: 'android', runtimeVersion: '38', evidence: 'store binary' }];
-    expect(releaseUpdateTargets(mobileRoot, pins, history(['36'], ['35']), shipped, [])).toEqual([
-      { platform: 'android', runtimeVersion: '43' },
-      { platform: 'android', runtimeVersion: '38' },
-      { platform: 'android', runtimeVersion: '36' },
-      { platform: 'ios', runtimeVersion: '36' },
-      { platform: 'ios', runtimeVersion: '35' },
-    ]);
-    expect(releaseUpdateTargets(mobileRoot, pins, null, [], [])).toHaveLength(2);
+  it('skips never-live 41/42 after 43 actually goes live', () => {
+    const state = { ...storeState, stores: { ...storeState.stores,
+      android: { status: 'readable', live: [{ platform: 'android', runtimeVersion: '43' }] } },
+      previouslyLive: [...storeState.previouslyLive, { platform: 'android', runtimeVersion: '40' }] };
+    expect(releaseUpdateTargets(mobileRoot, pins, history(['43','42','41','40'], ['35']), state)
+      .filter(t => t.platform === 'android').map(t => t.runtimeVersion)).toEqual(['43', '40', '39']);
   });
 
-  it('fails coverage for missing targets inside the cap but allows older targets to drop', () => {
+  it('keeps all prior targets when either store cannot be read, including retired entries', () => {
     const targets = releaseUpdateTargets(mobileRoot, pins, currentHistory);
-    expect(planCoverageErrors(pins, targets, currentHistory)).toEqual([]);
-    expect(planCoverageErrors(pins, targets.filter(t => t.runtimeVersion !== '38'), currentHistory))
-      .toEqual(['android@38 is missing from the pin-plus-two release plan.']);
+    expect(targets).toHaveLength(currentHistory.currentPage.length);
+    expect(targets).toContainEqual({ platform: 'android', runtimeVersion: '37' });
+    const state = { ...storeState, stores: {}, previousTargets: [
+      { platform: 'android', runtimeVersion: '42' }, { platform: 'android', runtimeVersion: '40' },
+      { platform: 'ios', runtimeVersion: '34' },
+    ] };
+    expect(releaseUpdateTargets(mobileRoot, pins, null, state)).toEqual(expect.arrayContaining(state.previousTargets));
   });
 
-  it('produces a deterministic dry-run plan from an EAS history snapshot', () => {
+  it('preserves live runtimes outside the retention window or above the current pin', () => {
+    const state = { stores: { android: { status: 'readable', live: [
+      { platform: 'android', runtimeVersion: '24' }, { platform: 'android', runtimeVersion: '44' },
+    ] } }, previouslyLive: storeState.previouslyLive };
+    expect(releaseUpdateTargets(mobileRoot, pins, null, state).map(t => t.runtimeVersion))
+      .toEqual(['44', '39', '38']);
+  });
+
+  it('demonstrates OTA-STORE-40 through the release CLI without publishing', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-plan-'));
     const snapshot = join(directory, 'production.json');
-    writeFileSync(snapshot, JSON.stringify(currentHistory));
+    const stores = join(directory, 'stores.json');
+    writeFileSync(snapshot, JSON.stringify(history(['42', '41', '40'], ['35'])));
+    writeFileSync(stores, JSON.stringify(storeState));
     const result = spawnSync(process.execPath, [releaseScript, 'publish', '--dry-run',
-      '--production-history', snapshot, '--sha', '6e51856d', '--ref', 'main',
+      '--production-history', snapshot, '--store-status', stores, '--sha', '6e51856d', '--ref', 'main',
       '--ledger', join(directory, 'ledger.json')], { cwd: mobileRoot, encoding: 'utf8' });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('release_plan_targets=android@43,android@38,android@36,ios@36,ios@35,ios@34');
-    expect(result.stdout).toContain('pin-plus-two rule: dropping older production runtimes android@31, android@32, android@33, android@34, android@35, ios@29, ios@31, ios@32, ios@33');
-    expect(result.stdout.match(/EXPO_RUNTIME_OVERRIDE=/g)).toHaveLength(6);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('release_plan_targets=android@40,android@39,android@38,ios@35');
+    expect(result.stdout).toContain('dropping non-live production runtimes android@41, android@42');
+    expect(result.stdout.match(/EXPO_RUNTIME_OVERRIDE=/g)).toHaveLength(4);
   });
 
   it('R1 keeps android@38 and ios@35 covered through publish planning', () => {
@@ -202,7 +204,7 @@ esac
     expect(result.status).toBe(0);
     const ledger = JSON.parse(readFileSync(join(directory, 'ledger.json'), 'utf8'));
     expect(ledger.status).toBe('beta');
-    expect(ledger.candidateTargets).toHaveLength(6);
+    expect(ledger.candidateTargets).toHaveLength(currentHistory.currentPage.length);
     expect(ledger.candidateTargets).toEqual(expect.arrayContaining([
       expect.objectContaining({ platform: 'android', runtimeVersion: '38' }),
       expect.objectContaining({ platform: 'ios', runtimeVersion: '35' }),
@@ -211,19 +213,8 @@ esac
     expect(result.stderr).not.toContain('no rollback anchor');
     expect(result.stdout).toContain('android@38');
     expect(result.stdout).toContain('ios@35');
-    expect(result.stdout).toContain('pin-plus-two rule: dropping older production runtimes android@31');
-    expect(ledger.previousProductionTargets).toHaveLength(4);
-    for (const key of ['android@43', 'ios@36']) {
-      expect(result.stdout).toContain(`${key}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`);
-    }
-    const noAnchor = spawnSync(process.execPath, [releaseScript, 'publish',
-      '--sha', '6e51856d', '--ref', 'main', '--ledger', join(directory, 'missing.json')], {
-      cwd: mobileRoot, encoding: 'utf8',
-      env: { ...process.env, EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: '' },
-    });
-    expect(noAnchor.status).toBe(1);
-    expect(noAnchor.stderr).toContain('no rollback anchor for android@43, ios@36');
-    expect(existsSync(join(directory, 'missing.json'))).toBe(false);
+    expect(result.stdout).toContain('store status unavailable; preserving the previous target set.');
+    expect(ledger.previousProductionTargets).toHaveLength(currentHistory.currentPage.length);
     const override = spawnSync(process.execPath, [releaseScript, 'publish',
       '--production-history', 'ignored.json', '--sha', '6e51856d', '--ref', 'main'], {
       cwd: mobileRoot, encoding: 'utf8', env: { ...process.env, EAS_CLI_PATH: fakeEas },
@@ -575,6 +566,9 @@ esac
     expect(runRelease(['promote', '--ledger', ledgerPath, '--index', indexPath], env).status).toBe(
       0,
     );
+    const publishedLedger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).storeRuntimeState.previousTargets)
+      .toEqual(publishedLedger.updateTargets);
 
     // Every current and compatibility target is promoted independently.
     const republished = readFileSync(callsPath, 'utf8')

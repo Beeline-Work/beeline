@@ -1,0 +1,10 @@
+{
+  "nativeFilesCompared": 154,
+  "nativeBytesUnchanged": true,
+  "currentJsSha256": "8d4d25ca8a970336af3d7ed99d8c01aacc2f813e669f4e99180557821d6e46c5",
+  "playApkSha256": "ba978706fc4efe3753a9afee424064657f147cc292190990d3701cc364307363",
+  "sourceCommit": "e803361eb",
+  "runtime": "android@40",
+  "versionCode": "138",
+  "testSignature": "ephemeral in-memory key; never published"
+}

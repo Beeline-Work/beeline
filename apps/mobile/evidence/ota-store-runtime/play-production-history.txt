@@ -1,0 +1,51 @@
+Production
+Release
+Version code
+Released
+Status
+Unread notifications
+Production
+Phones, Tablets, Desktop (Googlebook OS, ChromeOS), Android XR
+Create new release
+Releases
+0.2.24
+Manage release
+In review.
+Go to Publishing overview
+1 version code
+Show summary
+0.2.24
+Manage release
+Superseded by another release
+1 version code
+Show summary
+0.2.24
+Manage release
+Superseded by another release
+1 version code
+Show summary
+0.2.24
+Manage release
+Available on Google Play
+1 version code
+Released on Oct 26 3:40 PM
+Show summary
+Release history
+Hide
+Release
+Version code
+Released
+Status
+0.2.24
+129
+Oct 18, 2026 3:23 PM
+Replaced on Oct 26, 2026 3:40 PM
+0.2.23
+128
+-
+Replaced on Oct 18, 2026 3:23 PM
+0.2.22
+127
+Oct 17, 2026 1:05 PM
+Replaced on Oct 18, 2026 3:23 PM
+Hide

@@ -134,10 +134,10 @@ export class RoomsMcpOAuth {
   private cookie(request: IncomingMessage): string {
     return (request.headers.cookie ?? '').split(';').map(part => part.trim()).find(part => part.startsWith('beeline_mcp='))?.slice(12) ?? '';
   }
-  private page(response: ServerResponse, title: string, content: string): void {
+  private page(response: ServerResponse, title: string, content: string, status = 200): void {
     // No form-action: Chrome applies it to every redirect after a form POST, so
     // a client callback that redirects again (www.cursor.com to cursor.com) stalls.
-    response.writeHead(200, {
+    response.writeHead(status, {
       // Preserve Origin on same-origin form POSTs without sending referrers to other sites.
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
       'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
@@ -440,17 +440,55 @@ export class RoomsMcpOAuth {
         ...tokenHeaders(request) }));
       // A browser sign-in step logs its fixed reason, plus authorize's parameter names; never state, PKCE, client or redirect values.
       const step = browserStep(request.method, path);
-      if (step) console.warn(`[rooms-mcp-oauth] ${step} refused`, JSON.stringify({ error: message,
-        reason: error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : 'invalid_parameter',
+      const reason = error instanceof Refusal ? error.reason : error instanceof SyntaxError ? 'invalid_json' : 'invalid_parameter';
+      if (step) console.warn(`[rooms-mcp-oauth] ${step} refused`, JSON.stringify({ error: message, reason,
         ...(step === 'authorize' ? { params: [...new Set(url.searchParams.keys())].slice(0, 30).map(key => key.slice(0, 40)).sort() } : {}) }));
       if (registration) console.warn('[rooms-mcp-oauth] registration refused', JSON.stringify({ error: message,
         ...(error instanceof SyntaxError ? { reason: 'invalid_json' } : {}), ...registrationSummary(registrationInput) }));
       if (message === 'invalid_client' && request.headers.authorization) response.setHeader('www-authenticate', 'Basic realm="Beeline MCP"');
-      mcpJson(response, message === 'invalid_client' ? 401 : 400, { error: message });
+      const status = message === 'invalid_client' ? 401 : 400;
+      // A person sees browser steps, so they get the step and reason in words; client endpoints keep the OAuth JSON body.
+      if (step) {
+        const label = step === 'callback' ? `Signing in with ${path.endsWith('github') ? 'GitHub' : 'Google'}` : BROWSER_STEPS[step]!;
+        const reference = `${step} · ${reason} · ${new Date().toISOString().slice(0, 19)}Z`;
+        this.page(response, 'Connection stopped', `<div class="brand"><img class="mark" src="${BEELINE_ICON}" alt="Beeline"></div><p class="head">${escape(label)}</p><h1>This connection stopped</h1><p class="lede">${escape(BROWSER_REFUSALS[reason] ?? BROWSER_REFUSALS.invalid_parameter!)} Go back to the app and connect again. If it stops here again, send this reference to Support.</p><p class="meta">Reference: ${escape(reference)}</p>`, status);
+      } else mcpJson(response, status, { error: message });
     }
     return true;
   }
 }
+
+/** What the person was doing at each browser sign-in step. Callback names its provider. */
+export const BROWSER_STEPS: Record<string, string> = {
+  authorize: 'Starting the connection', login: 'Choosing how to sign in',
+  consent: 'Showing what the app can do', 'consent submit': 'Saving your choice',
+};
+/** One fixed sentence per browser-step refusal reason; request values never reach the page. */
+export const BROWSER_REFUSALS: Record<string, string> = {
+  query_too_long: 'The app sent a sign-in link longer than Beeline accepts.',
+  state_too_long: "The app's state value is longer than Beeline accepts.",
+  duplicate_parameter: 'The request named the same setting more than once.',
+  response_type_invalid: 'The app asked for a sign-in type Beeline does not support.',
+  pkce_invalid: "The app's PKCE security check is missing or does not use S256.",
+  resource_mismatch: 'The app asked to connect to a different server than this Beeline server.',
+  client_unknown: 'Beeline does not know this app. Its registration is missing or was removed.',
+  redirect_uri_unregistered: "The app's return address does not match the one it registered.",
+  scope_invalid: 'The app asked for access that Beeline does not offer.',
+  flow_missing_or_expired: 'This sign-in expired after 10 minutes, or it started in a different browser.',
+  provider_invalid: 'The sign-in choice was not Google or GitHub.',
+  provider_mismatch: 'You came back from a different sign-in provider than the one you chose.',
+  flow_already_signed_in: 'This sign-in already finished. The page opened a second time.',
+  ticket_missing: 'The sign-in provider came back without a sign-in ticket.',
+  ticket_exchange_failed: 'Beeline could not confirm your sign-in with the provider.',
+  origin_mismatch: 'The form came from a page outside Beeline.',
+  body_too_large: 'The form sent more data than Beeline accepts.',
+  body_not_object: 'The form data is not in a shape Beeline reads.',
+  invalid_json: 'The form data is not valid JSON.',
+  joiner_invalid: 'The name or handle is not valid. A handle uses only lowercase letters, digits and underscores.',
+  flow_not_signed_in: 'You have not signed in to Beeline for this connection yet.',
+  decision_invalid: 'The page sent an answer other than Allow or Cancel.',
+  invalid_parameter: 'Beeline hit an unexpected problem on this step.',
+};
 
 function browserStep(method: string | undefined, path: string): string | undefined {
   if (method === 'GET' && path === '/mcp/oauth/authorize') return 'authorize';

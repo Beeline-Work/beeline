@@ -11,7 +11,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
-import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
+import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
@@ -381,6 +381,84 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await scrub('consent submit', 'decision_invalid', response);
       expect(warn).not.toHaveBeenCalled();
     } finally { warn.mockRestore(); }
+  });
+  it('R1: shows each refused browser step as a page naming the step and reason, never JSON or request values', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const registered = await (await post('/mcp/oauth/register', { client_name: 'Shown', redirect_uris: ['https://client.example/callback'] })).json() as { client_id: string };
+      const challenge = createHash('sha256').update(opaque()).digest('base64url');
+      const base = { client_id: registered.client_id, redirect_uri: 'https://client.example/callback', response_type: 'code', code_challenge_method: 'S256',
+        code_challenge: challenge, state: 'state-sentinel-123', resource: origin + '/mcp' };
+      const shown = new Set<string>();
+      const page = async (label: string, step: string, reason: string, response: Response) => {
+        const body = await response.text();
+        expect([reason, response.status, response.headers.get('content-type')]).toEqual([reason, 400, 'text/html; charset=utf-8']);
+        expect(body).toContain(`<p class="head">${label}</p>`);
+        expect(body).toContain(BROWSER_REFUSALS[reason]!.replace(/'/g, '&#39;'));
+        expect(body).toMatch(new RegExp(`Reference: ${step} · ${reason} · \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ`));
+        for (const value of [registered.client_id, challenge, 'state-sentinel-123', 'client.example', 'evil.example', 'flow-sentinel-123', 'cookie-sentinel-123', 'ticket-sentinel-123', 'Bad Handle!'])
+          expect(body).not.toContain(value);
+        shown.add(reason);
+      };
+      const authorize = (input: Record<string, string>, extra = '') => fetch(origin + '/mcp/oauth/authorize?' + new URLSearchParams(input) + extra, { redirect: 'manual' });
+      const authorizeCases: [Record<string, string>, string, string?][] = [
+        [base, 'query_too_long', `&pad=${'x'.repeat(8200)}`],
+        [{ ...base, state: 'x'.repeat(2100) }, 'state_too_long'],
+        [base, 'duplicate_parameter', '&state=state-sentinel-123'],
+        [{ ...base, response_type: 'token' }, 'response_type_invalid'],
+        [{ ...base, code_challenge: 'short' }, 'pkce_invalid'],
+        [{ ...base, resource: 'https://evil.example/mcp' }, 'resource_mismatch'],
+        [{ ...base, client_id: 'unknown-client' }, 'client_unknown'],
+        [{ ...base, redirect_uri: 'https://evil.example/callback' }, 'redirect_uri_unregistered'],
+        [{ ...base, scope: 'rooms:admin' }, 'scope_invalid'],
+      ];
+      for (const [input, reason, extra] of authorizeCases) await page('Starting the connection', 'authorize', reason, await authorize(input, extra));
+      // An unexpected failure still names its step.
+      vi.spyOn(db, 'query').mockRejectedValueOnce(new Error('database offline'));
+      await page('Starting the connection', 'authorize', 'invalid_parameter', await authorize(base));
+      const stale = { cookie: 'beeline_mcp=cookie-sentinel-123' };
+      await page('Choosing how to sign in', 'login', 'flow_missing_or_expired', await fetch(`${origin}/mcp/oauth/login?flow=flow-sentinel-123&provider=google`, { headers: stale, redirect: 'manual' }));
+      await page('Showing what the app can do', 'consent', 'flow_missing_or_expired', await fetch(`${origin}/mcp/oauth/consent?flow=flow-sentinel-123`, { headers: stale }));
+      const submit = (body: string, headers: Record<string, string>) => fetch(origin + '/mcp/oauth/consent', { method: 'POST', redirect: 'manual', headers, body });
+      const form = { 'content-type': 'application/x-www-form-urlencoded', origin };
+      await page('Saving your choice', 'consent submit', 'origin_mismatch', await post('/mcp/oauth/consent', { flow: 'flow-sentinel-123', decision: 'allow' }, { ...stale, origin: 'https://evil.example' }));
+      await page('Saving your choice', 'consent submit', 'flow_missing_or_expired', await post('/mcp/oauth/consent', { flow: 'flow-sentinel-123', decision: 'allow' }, { ...stale, origin }));
+      await page('Saving your choice', 'consent submit', 'body_too_large', await submit(`flow=${'x'.repeat(40_000)}`, form));
+      await page('Saving your choice', 'consent submit', 'duplicate_parameter', await submit('flow=flow-sentinel-123&flow=flow-sentinel-123', form));
+      await page('Saving your choice', 'consent submit', 'body_not_object', await submit('[]', { 'content-type': 'application/json', origin }));
+      await page('Saving your choice', 'consent submit', 'invalid_json', await submit('flow-sentinel-123', { 'content-type': 'application/json', origin }));
+      // A live flow reaches the later branches.
+      const start = await authorize(base);
+      const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+      const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+      const callback = (provider: string, ticket?: string) => fetch(`${origin}/mcp/oauth/callback/${provider}?state=${flow}${ticket ? `&ticket=${ticket}` : ''}`, { headers: { cookie }, redirect: 'manual' });
+      await page('Choosing how to sign in', 'login', 'provider_invalid', await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=other`, { headers: { cookie }, redirect: 'manual' }));
+      await page('Saving your choice', 'consent submit', 'flow_not_signed_in', await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin }));
+      await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+      await page('Signing in with Google', 'callback', 'ticket_missing', await callback('google'));
+      await page('Signing in with GitHub', 'callback', 'provider_mismatch', await callback('github', 'ticket-sentinel-123'));
+      await page('Signing in with Google', 'callback', 'ticket_exchange_failed', await callback('google', 'ticket-sentinel-123'));
+      expect((await callback('google', 'local-demo-ticket')).status).toBe(302);
+      await page('Signing in with Google', 'callback', 'flow_already_signed_in', await callback('google', 'local-demo-ticket'));
+      await page('Saving your choice', 'consent submit', 'joiner_invalid', await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: 'Bad Handle!' }, { cookie, origin }));
+      await page('Saving your choice', 'consent submit', 'decision_invalid', await post('/mcp/oauth/consent', { flow, decision: 'maybe' }, { cookie, origin }));
+      // Every sentence is driven by a real refusal, and each reason reads differently.
+      expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
+      expect(new Set(Object.values(BROWSER_REFUSALS)).size).toBe(Object.keys(BROWSER_REFUSALS).length);
+      // Client endpoints keep the OAuth JSON error.
+      const token = await post('/mcp/oauth/token', { grant_type: 'password', resource: origin + '/mcp' });
+      expect([token.status, token.headers.get('content-type'), await token.json()]).toEqual([400, 'application/json', { error: 'unsupported_grant_type' }]);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('has a page sentence for every reason a browser step can refuse with', () => {
+    const source = readFileSync(new URL('./rooms-mcp-oauth.ts', import.meta.url), 'utf8');
+    const section = (from: string, to: string) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+    // The browser branches, plus the body reader and flow lookup they call.
+    const browser = section("path === '/mcp/oauth/authorize') {", "path === '/mcp/oauth/token') {")
+      + section('export async function mcpBody(', 'function string(') + section('private async flow(', 'private async client(');
+    const reasons = [...browser.matchAll(/new Refusal\([^,]+, '([a-z_]+)'/g)].map(match => match[1]!);
+    expect(reasons.length).toBeGreaterThan(20);
+    expect(reasons.filter(reason => !BROWSER_REFUSALS[reason])).toEqual([]);
   });
   it('binds single-use authorization codes to the client, redirect, verifier and resource', async () => {
     const grant = await authorize();

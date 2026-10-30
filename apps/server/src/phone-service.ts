@@ -9267,6 +9267,7 @@ export class PhoneService {
 
   /** Project historical Room openings without private objectives or lifecycle outcomes. */
   private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    messages = await this.decorateApprovalIdentities(messages);
     messages = await this.decorateApprovalSources(messages);
     messages = await this.decorateVoiceCallReasons(roomId, messages);
     const cornerIds = [...new Set(messages.flatMap((message) => {
@@ -9300,6 +9301,44 @@ export class PhoneService {
   private async decorateMessageCards(roomId: string, messages: RoomViewMessage[], viewerId: string): Promise<RoomViewMessage[]> {
     messages = messages.filter(message => !message.onboarding || message.onboarding.requesterId === viewerId);
     return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
+  }
+
+  /** Approval snapshots can outlive an avatar. Resolve all their identities in one read. */
+  private async decorateApprovalIdentities(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    const ids = new Set<string>();
+    for (const message of messages) {
+      const card = message.grantRequest ?? message.squireApproval;
+      if (!card) continue;
+      for (const person of [card.agent, card.owner,
+        ...('requester' in card ? [card.requester] : [])]) {
+        if (person?.pubkey) ids.add(person.pubkey);
+      }
+    }
+    if (!ids.size) return messages;
+    const rows = await this.database.query<IdentityRow>(
+      `SELECT id,kind,name,handle,avatar,face_id FROM identities WHERE id=ANY($1::text[])`,
+      [[...ids]],
+    );
+    const current = new Map(rows.rows.map(row => [row.id, identity(row, this.publicOrigin)]));
+    const resolve = (person: RoomViewIdentity): RoomViewIdentity =>
+      !person ? person : current.get(person.pubkey) ?? {
+        ...person,
+        ...(person.avatar ? { avatar: assetUrl(person.avatar, this.publicOrigin) } : {}),
+      };
+    return messages.map(message => ({
+      ...message,
+      ...(message.grantRequest ? { grantRequest: {
+        ...message.grantRequest,
+        agent: resolve(message.grantRequest.agent),
+        owner: resolve(message.grantRequest.owner),
+        requester: resolve(message.grantRequest.requester),
+      } } : {}),
+      ...(message.squireApproval ? { squireApproval: {
+        ...message.squireApproval,
+        agent: resolve(message.squireApproval.agent),
+        ...(message.squireApproval.owner ? { owner: resolve(message.squireApproval.owner) } : {}),
+      } } : {}),
+    }));
   }
 
   private async decorateAppSignInCards(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {

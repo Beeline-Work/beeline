@@ -33,8 +33,8 @@ function setupTurn(generation: string) {
   })) vi.stubEnv(key, value);
 }
 
-it('Reproduction ARTIFACT-REPORT waits for an in-flight artifact before delivering done', async () => {
-  setupTurn('upload-success');
+it.each(['report', 'post'])('Reproduction ARTIFACT-REPORT: %s waits for an in-flight artifact', async (delivery) => {
+  setupTurn('upload-success-' + delivery);
   let release!: () => void;
   const uploading = new Promise<void>(resolve => { release = resolve; });
   let started!: () => void;
@@ -47,12 +47,12 @@ it('Reproduction ARTIFACT-REPORT waits for an in-flight artifact before deliveri
       return Response.json({ url: 'http://daemon.test/v1/media/00000000-0000-4000-8000-000000000001' });
     }
     if (url.pathname.endsWith('/postAgentAttachment')) attachments.push(JSON.parse(String(init.body)).attachment);
-    if (url.pathname.endsWith('/report')) delivered = [...attachments];
+    if (url.pathname.endsWith('/report') || url.pathname.endsWith('/postCornerMessage')) delivered = [...attachments];
     return Response.json({ delivered: true });
   });
   const upload = callAgentTool('post_artifact', { path: join(scratch, 'evidence.txt'), mime: 'text/plain', title: 'evidence.txt' }, 'upload');
   await startedUpload;
-  const report = callAgentTool('report', { status: 'done', text: 'done: evidence ready' }, 'report');
+  const report = callAgentTool(delivery, { ...(delivery === 'report' ? { status: 'done' } : {}), text: 'done: evidence ready' }, 'report');
   await new Promise(resolve => setTimeout(resolve, 20));
   const reportedEarly = delivered !== undefined;
   release();
@@ -95,4 +95,50 @@ it('forwards an explicit report recipient through the tool to the daemon', async
   });
   await callAgentTool('report', { status: 'done', text: 'done: release finished', to: '@ruby' }, 'report-to');
   expect(input).toMatchObject({ to: '@ruby', status: 'done', text: 'done: release finished' });
+});
+
+it('Reproduction upload-1: a successfully queued replacement unblocks the report', async () => {
+  setupTurn('replacement');
+  let fail = true;
+  let reported = false;
+  vi.stubGlobal('fetch', async (url: URL) => {
+    if (url.pathname === '/v1/daemon/artifacts') {
+      if (fail) return Response.json({ error: 'storage_unavailable' }, { status: 503 });
+      return Response.json({ url: 'http://daemon.test/v1/media/00000000-0000-4000-8000-000000000001' });
+    }
+    if (url.pathname.endsWith('/report')) reported = true;
+    return Response.json({ delivered: true });
+  });
+  await expect(callAgentTool('post_artifact', { path: join(scratch, 'evidence.txt') }, 'failed')).rejects.toThrow();
+  fail = false;
+  await callAgentTool('post_artifact', { path: join(scratch, 'evidence.txt') }, 'replacement');
+  await expect(callAgentTool('report', { status: 'done', text: 'done: evidence.txt attached' }, 'report')).resolves.toContain('delivered');
+  expect(reported).toBe(true);
+});
+
+for (const name of ['order', 'report', 'post']) {
+  it(`Reproduction files-1: ${name} refuses a foreign workspace temp path before sending`, async () => {
+    setupTurn(`foreign-${name}`);
+    const fetchMock = vi.fn(async () => Response.json({ delivered: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const text = 'done: read /tmp/another-agent-workspace/evidence.txt';
+    await expect(callAgentTool(name, { text, ...(name === 'order' ? { address: '22222222-2222-4222-8222-222222222222', agent: 'worker' } : name === 'report' ? { status: 'done' } : {}) }, 'foreign')).rejects.toThrow(/attach|upload/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+}
+
+it('Reproduction upload-1: an unrelated successful file cannot hide missing evidence', async () => {
+  setupTurn('unrelated-success');
+  let fail = true;
+  vi.stubGlobal('fetch', async (url: URL) => {
+    if (url.pathname === '/v1/daemon/artifacts') {
+      if (fail) return Response.json({ error: 'storage_unavailable' }, { status: 503 });
+      return Response.json({ url: 'http://daemon.test/v1/media/00000000-0000-4000-8000-000000000001' });
+    }
+    return Response.json({ delivered: true });
+  });
+  await expect(callAgentTool('post_artifact', { path: join(scratch, 'evidence.txt') }, 'failed')).rejects.toThrow();
+  fail = false;
+  await callAgentTool('post_artifact', { path: join(scratch, 'evidence.txt'), title: 'unrelated.txt' }, 'unrelated');
+  await expect(callAgentTool('report', { status: 'done', text: 'done: evidence attached' }, 'report')).rejects.toThrow('storage_unavailable');
 });

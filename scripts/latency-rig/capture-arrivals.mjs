@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pg from 'pg';
 import os from 'node:os';
 import { calibrateDeviceClock } from './device-clock.mjs';
+import { createDeviceClockReader } from './device-clock-reader.mjs';
 import { pointFor, requireRoomList } from './capture-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
@@ -43,7 +44,9 @@ const loadTimer = setInterval(recordLoad, 10_000);
 loadTimer.unref();
 let capture;
 let captureFd;
+let clockReader;
 try {
+  clockReader = createDeviceClockReader(device);
   const fixture = (await db.query(`SELECT r.id, r.workspace_id FROM rooms r JOIN workspaces w ON w.id=r.workspace_id
     WHERE w.name='Latency Rig 200' AND r.name='Rig room 001' AND r.parent_id IS NULL`)).rows[0];
   if (!fixture) throw new Error('Run seed-local.mjs first');
@@ -151,8 +154,8 @@ try {
         const roomPoint = requireRoomList(xml);
         if (scenario.entry === 'room-list') point = roomPoint;
       }
-      const readDeviceMs = () => Number(adb('shell', 'date', '+%s%3N').trim());
-      const clockBefore = calibrateDeviceClock(readDeviceMs);
+      const readDeviceMs = () => clockReader.read();
+      const clockBefore = await calibrateDeviceClock(readDeviceMs);
       const armedAtMs = clockBefore.deviceMs;
       adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_EXPECT', '-n', 'app.usebeeline/.LatencyRigReceiver',
         '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
@@ -181,7 +184,7 @@ try {
       // A timeout is a censored failure, never evidence that the row painted.
       // Keep collecting the matrix rather than losing every later case.
       await pause(2000);
-      const clockAfter = calibrateDeviceClock(readDeviceMs);
+      const clockAfter = await calibrateDeviceClock(readDeviceMs);
       const endMs = clockAfter.deviceMs;
       attempts.push({ ...moment, targetId, endMs, clockDomain: 'device',
         clockSync: { before: clockBefore, after: clockAfter } });
@@ -197,6 +200,7 @@ try {
   const moments = attempts.map(({ targetId, ...moment }) => moment);
   await writeFile(`${output}/moments.ndjson`, moments.map((item) => JSON.stringify(item)).join('\n') + '\n');
 } finally {
+  clockReader?.close();
   clearInterval(loadTimer);
   recordLoad();
   await writeFile(`${output}/host-load.json`, JSON.stringify(hostLoad, null, 2));

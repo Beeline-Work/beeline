@@ -775,6 +775,11 @@ export class DaemonService {
               );
         if (['postRoomMessage', 'postCornerMessage', 'order', 'report'].includes(name) && command.review_context?.purpose !== 'repair' && await supersededReview(db, command)) {
           await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [command.id]);
+          await db.query(`UPDATE agent_turns SET status='failed',
+            failure_reason='the review command was superseded',created_at=now()
+            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
+              AND generation_id IS NOT DISTINCT FROM $4`,
+            [scopedRoom, authenticatedAgentId, requestId, command.generation_id]);
           return { ...this.writeResult(), id: command.id, skipped: true } as Output<Name>;
         }
         // Helpers cannot impose an order outcome on an informational wake.
@@ -816,7 +821,10 @@ export class DaemonService {
           ));
         // A lost receipt response may be replayed after the fallback consumed
         // this generation. Never replace its stored failed outcome with success.
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete' &&
+          !(await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+            AND status='working' AND generation_id IS NOT DISTINCT FROM $4`,
+            [scopedRoom, authenticatedAgentId, requestId, command.generation_id])).rowCount) {
           await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
           return this.writeResult() as Output<Name>;
         }

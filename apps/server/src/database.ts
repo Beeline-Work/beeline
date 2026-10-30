@@ -1,3 +1,4 @@
+import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
@@ -3631,6 +3632,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'archived-corner-assignments-v1', cancelArchivedCornerAssignments));
   await dataStep('archived corner wakes', () =>
     workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
+  await dataStep('completed command turns', () =>
+    workflowBackfillOnce(database, 'completed-command-turns-v1', closeCompletedCommandTurns));
   await dataStep('terminal push claims', () =>
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)

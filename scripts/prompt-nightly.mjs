@@ -14,8 +14,16 @@ const SOURCE = 'apps/body/src/prompt-assembly.ts';
 const GUIDE_SOURCE = 'apps/server/src/free-agents.ts';
 const MAX_OUTPUT = 4096;
 const MAX_ROUNDS = 6;
-export const DEFAULT_TOKEN_CAP = 6_000_000;
-export const DEFAULT_COST_CAP = 3;
+export const DEFAULT_TOKEN_CAP = 15_000_000;
+export const DEFAULT_COST_CAP = 12;
+// Small and large model: one nightly cohort replays every arm on both.
+export const DEFAULT_MODELS = ['openai/gpt-6-luna', 'openai/gpt-6.1-sol'];
+// gpt-6.1-sol rejects disabled reasoning; low effort is its smallest accepted setting tested.
+export const REASONING = { 'openai/gpt-6.1-sol': { effort: 'low' } };
+export const PASS_FLOOR = 0.9;
+export const TOKEN_GROWTH_PER_POINT = 0.02;
+export const MAX_TOKEN_GROWTH = 0.1;
+const SHORTENING_INTERVAL_MS = 7 * 24 * 3600_000 - 3600_000;
 export const median = (values) => {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -104,7 +112,7 @@ export function assessExperiment(baseline, candidate, control = []) {
   // in two comparisons. Floor prevents claiming zero uncertainty at zero flips.
   const detectableEffect = noisePairs ? Math.min(1, Math.max(6 / noisePairs,
     2.8 * Math.sqrt(2 * Math.max(noiseRate, 1 / noisePairs) / noisePairs))) : null;
-  return { accepted: enough && !losses && after < before, outcome: !enough ? 'too little data' : !losses && after < before ? 'propose removal' : 'rejected',
+  return { significant: enough, accepted: enough && !losses && after < before, outcome: !enough ? 'too little data' : !losses && after < before ? 'propose removal' : 'rejected',
     gains, losses, pairedSamples: changed.filter(valid).length, noiseFlips: flips, noisePairs, noiseRate,
     controlGains, controlLosses, controlDrift: noisePairs ? (controlGains-controlLosses)/noisePairs : null,
     excessGains, excessLosses, effectPValue, excessPValue, detectableEffect,
@@ -117,7 +125,7 @@ export function budget(tokenCap = DEFAULT_TOKEN_CAP, costCap = DEFAULT_COST_CAP)
     reserve(body) {
       // A UTF-8 byte per input token is conservative; include output/reasoning.
       const bound = Buffer.byteLength(JSON.stringify(body.messages)) + body.max_tokens;
-      if (tokens + reserved + bound > tokenCap || cost + reservedCost + 0.1 > costCap) throw new Error('Weekly replay budget exhausted');
+      if (tokens + reserved + bound > tokenCap || cost + reservedCost + 0.1 > costCap) throw new Error('Replay budget exhausted');
       reserved += bound;
       reservedCost += 0.1;
       return () => { reserved -= bound; reservedCost -= 0.1; };
@@ -127,10 +135,82 @@ export function budget(tokenCap = DEFAULT_TOKEN_CAP, costCap = DEFAULT_COST_CAP)
           !Number.isFinite(usage?.cost) || usage.cost < 0) throw new Error('Provider returned no usable token/cost accounting');
       tokens += usage.total_tokens;
       cost += usage.cost;
-      if (tokens > tokenCap || cost > costCap) throw new Error('Weekly replay budget exceeded');
+      if (tokens > tokenCap || cost > costCap) throw new Error('Replay budget exceeded');
     },
     get tokens() { return tokens; }, get cost() { return cost; },
   };
+}
+
+/** An audit patch may change only the prompt sources the replay loads. */
+export function allowedPatchPath(path) {
+  return path === GUIDE_SOURCE || path.startsWith('apps/body/src/') && !path.split('/').some((part) => part === '..' || part === '');
+}
+
+/** Paths git would touch, read by git itself rather than by parsing hunks. */
+export function patchPaths(file) {
+  const fields = execFileSync('git', ['apply', '--numstat', '-z', file], { cwd: tmpdir(), encoding: 'utf8' }).split('\0');
+  const paths = [];
+  for (let i = 0; i < fields.length; i++) {
+    const stat = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(fields[i]);
+    if (!stat) continue;
+    if (stat[1] === '-') throw new Error('Candidate patch contains a binary change');
+    if (stat[3]) paths.push(stat[3]);
+    else paths.push(fields[++i], fields[++i]);
+  }
+  return paths;
+}
+
+export function validateCandidatePatch(file) {
+  const text = readFileSync(file, 'utf8');
+  const paths = text.trim() ? patchPaths(file) : [];
+  if (!paths.length) throw new Error('Candidate patch changes no files');
+  const outside = paths.filter((path) => !allowedPatchPath(path));
+  if (outside.length) throw new Error(`Candidate patch touches paths outside apps/body/src and ${GUIDE_SOURCE}: ${outside.join(', ')}`);
+  return { text, paths, sha256: createHash('sha256').update(text).digest('hex') };
+}
+
+export function applyCandidatePatch(tree, file) {
+  validateCandidatePatch(file);
+  execFileSync('git', ['init', '-q'], { cwd: tree });
+  execFileSync('git', ['apply', '--whitespace=nowarn', file], { cwd: tree });
+}
+
+/** D2: every requested model must reach the floor; a missing model rate never counts. */
+export function floorReached(rates, models, floor = PASS_FLOOR) {
+  return models.length > 0 && models.every((model) => typeof rates?.[model] === 'number' && rates[model] >= floor);
+}
+
+export function chooseMode({ patch, rates, models }) {
+  if (patch) return 'audit';
+  return floorReached(rates, models) ? 'shorten' : 'none';
+}
+
+const historyRates = (entry) => Object.fromEntries(Object.entries(entry?.models ?? {}).map(([id, m]) => [id, m.passRate]));
+
+/** Once the floor holds, shortening runs weekly; nights in between spend nothing. */
+export function weeklyShorteningSkip(prior, models, now) {
+  const latest = prior.findLast((entry) => entry.status === 'complete' && entry.models);
+  if (!floorReached(historyRates(latest), models)) return undefined;
+  const last = prior.findLast((entry) => entry.experiment?.mode === 'shorten');
+  if (last && now - Date.parse(last.startedAt) < SHORTENING_INTERVAL_MS) return `skipped: weekly shortening not due (last ${last.startedAt.slice(0, 10)})`;
+}
+
+/**
+ * D1: pooled paired significance, no per-model net loss, and median tokens per
+ * turn may grow at most 2% per pooled percentage point gained, capped at 10%.
+ */
+export function decideCandidate(pooled, perModel) {
+  const gainPoints = pooled.pairedSamples ? 100 * (pooled.gains - pooled.losses) / pooled.pairedSamples : 0;
+  const tokenAllowance = Math.min(MAX_TOKEN_GROWTH, TOKEN_GROWTH_PER_POINT * Math.max(gainPoints, 0));
+  const tokenGrowth = Object.fromEntries(Object.entries(perModel).map(([id, a]) => [id, a.before ? (a.after - a.before) / a.before : null]));
+  const netLoss = Object.entries(perModel).filter(([, a]) => a.losses > a.gains).map(([id]) => id);
+  const costly = Object.entries(tokenGrowth).filter(([, growth]) => growth === null || growth > tokenAllowance).map(([id]) => id);
+  const percent = (value) => `${(100 * value).toFixed(1)}%`;
+  const outcome = !pooled.significant ? 'too little data'
+    : netLoss.length ? `rejected: losses exceed gains on ${netLoss.join(', ')}`
+    : costly.length ? `rejected: token growth ${costly.map((id) => `${id} ${tokenGrowth[id] === null ? 'unknown' : percent(tokenGrowth[id])}`).join(', ')} above ${percent(tokenAllowance)} allowance`
+    : 'propose prompt change';
+  return { accepted: outcome === 'propose prompt change', outcome, gainPoints, tokenAllowance, tokenGrowth };
 }
 
 /** JSON schema vocabulary used by the mounted tool surface. No coercion or repair. */
@@ -285,8 +365,9 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
   };
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const answerSchema = { type: 'object', properties: { calls: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, args: { type: 'object' } }, required: ['name', 'args'], additionalProperties: false } }, text: { type: 'string' } }, required: ['calls', 'text'], additionalProperties: false };
-    const body = { model, messages, seed, provider: { require_parameters: true }, stream: false, max_tokens: MAX_OUTPUT, reasoning: { enabled: false }, usage: { include: true },
-      ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'replay_turn', strict: true, schema: answerSchema } } } : {}) };
+    // Free-form args cannot satisfy OpenAI strict schemas; validSchema enforces the shape locally.
+    const body = { model, messages, seed, provider: { require_parameters: true }, stream: false, max_tokens: MAX_OUTPUT, reasoning: REASONING[model] ?? { enabled: false }, usage: { include: true },
+      ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'replay_turn', strict: false, schema: answerSchema } } } : {}) };
     let response, release;
     try {
       release = ledger.reserve(body);
@@ -421,90 +502,166 @@ export function fileTransport(directory) {
   };
 }
 
-export async function runNightly({ out, history, request, tokenCap, costCap, root = ROOT, label = 'weekly replay' }) {
+/** Baseline scoring for one model or the pooled cohort; only fully scored cases count. */
+export function scoreRows(rows, eligible) {
+  const scoredCases = rows.filter(row => row.scored === FIXED_SAMPLES && typeof row.pass === 'boolean').length;
+  const passed = scoredCases ? rows.filter(row => row.pass === true).length : null;
+  const formatInvalidCases = rows.filter(row => row.samples.some(sample => sample.status === 'format')).length;
+  return { passed, scoredCases, formatInvalidCases, unscoredCases: eligible - scoredCases,
+    passRate: scoredCases ? passed / scoredCases : null,
+    overallPassRate: scoredCases === eligible ? passed / scoredCases : null };
+}
+
+const medianTokens = (rows) => median(rows.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
+const ARMS = ['baseline', 'control', 'candidate'];
+
+export async function runNightly({ out, history, request, tokenCap, costCap, root = ROOT, label = 'nightly replay', models = DEFAULT_MODELS, candidatePatch, now = Date.now() }) {
   mkdirSync(out, { recursive: true });
-  const startedAt = new Date().toISOString();
+  const startedAt = new Date(now).toISOString();
   const workingTreeDiffHash = createHash('sha256').update(execFileSync('git', ['diff', '--no-ext-diff', 'HEAD'], { cwd: root })).digest('hex');
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-  // Read the production default, rather than maintain a separate model choice.
-  const model = readFileSync(join(root, GUIDE_SOURCE), 'utf8')
-    .match(/model: env\.BEELINE_FREE_AGENT_MODEL \|\| '([^']+)'/)?.[1];
-  if (!model) throw new Error('Cannot determine the production free-agent model');
+  const prior = existsSync(history) ? readFileSync(history, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
+  // Reject an out-of-scope patch before any paid request.
+  const patch = candidatePatch ? validateCandidatePatch(candidatePatch) : undefined;
+  const notDue = patch ? undefined : weeklyShorteningSkip(prior, models, now);
+  if (notDue) {
+    const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${notDue}; both models at or above ${100 * PASS_FLOOR}%; no replay, no tokens.`;
+    writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
+    console.log(summary);
+    return { startedAt, status: 'skipped', experiment: { outcome: notDue }, tokens: 0, cost: 0 };
+  }
   const allCases = loadCases();
-  const skipped = allCases.filter(needsSquire).map(({ id, section }) => ({ id, section, status: 'skipped:squire', reason: 'Requires a Squire browser session; excluded by the weekly cohort policy' }));
+  const skipped = allCases.filter(needsSquire).map(({ id, section }) => ({ id, section, status: 'skipped:squire', reason: 'Requires a Squire browser session; excluded by the nightly cohort policy' }));
   const cases = allCases.filter((testCase) => !needsSquire(testCase));
   const source = await loadSource(root);
   const problems = check(source, allCases);
   if (problems.length) throw new Error(problems.join('\n'));
+  // One ledger caps the whole run across both models.
   const ledger = budget(tokenCap, costCap);
-  const result = { startedAt, commit, workingTreeDiffHash, model, schemaVersion: 2, label, status: 'running', caseCount: allCases.length, eligibleCount: cases.length, skipped, baseline: [], control: [], candidate: [], experiment: { outcome: 'not run' } };
-  const save = () => writeFileSync(join(out, 'result.json'), `${JSON.stringify({ ...result, tokens: ledger.tokens, cost: ledger.cost }, null, 2)}\n`);
-  let temp;
+  const perModel = Object.fromEntries(models.map((model) => [model, { baseline: [], control: [], candidate: [] }]));
+  const result = { startedAt, commit, workingTreeDiffHash, model: models.join(','), schemaVersion: 3, label, status: 'running', caseCount: allCases.length, eligibleCount: cases.length, skipped,
+    baseline: [], control: [], candidate: [], experiment: { outcome: 'not run' } };
+  // Pooled rows keep case identity per model, so pairing never crosses models.
+  const pool = (arm) => models.flatMap((model) => perModel[model][arm].map((row) => ({ ...row, id: `${model}:${row.id}`, model })));
+  // Rows are stored once, pooled at the top level; per-model entries hold only summaries.
+  const save = () => writeFileSync(join(out, 'result.json'), `${JSON.stringify({ ...result, ...Object.fromEntries(ARMS.map((name) => [name, pool(name)])),
+    models: Object.fromEntries(models.map((model) => { const { baseline, control, candidate, ...rest } = perModel[model]; return [model, rest]; })),
+    tokens: ledger.tokens, cost: ledger.cost }, null, 2)}\n`);
+  const arm = (name, armSource) => Promise.all(models.map(async (model) => {
+    perModel[model][name] = await replaySuite(armSource, cases, { model, request, ledger, onCase(row) { perModel[model][name].push(row); save(); } });
+  }));
+  let temp, candidateText;
   try {
-    result.baseline = await replaySuite(source, cases, { model, request, ledger, onCase(row) { result.baseline.push(row); save(); } });
-    result.control = await replaySuite(source, cases, { model, request, ledger, onCase(row) { result.control.push(row); save(); } });
-    result.noise = assessExperiment(result.baseline, result.baseline, result.control);
-    const text = readFileSync(join(root, SOURCE), 'utf8');
-    const prior = existsSync(history) ? readFileSync(history, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
-    const block = chooseBlock(removalBlocks(text), result.baseline, allCases, prior.at(-1)?.experiment?.block?.id, skipped);
-    if (block) {
-      result.experiment = { outcome: 'running', block };
+    let candidateSource;
+    if (patch) {
       temp = buildCandidateTree(root);
-      const candidateText = text.slice(0, block.start) + "''" + text.slice(block.end);
-      writeFileSync(join(temp, SOURCE), candidateText);
-      const candidateSource = await loadSource(temp);
+      applyCandidatePatch(temp, candidatePatch);
+      candidateSource = await loadSource(temp);
+    }
+    await arm('baseline', source);
+    await arm('control', source);
+    for (const model of models) perModel[model].noise = assessExperiment(perModel[model].baseline, perModel[model].baseline, perModel[model].control);
+    result.noise = assessExperiment(pool('baseline'), pool('baseline'), pool('control'));
+    const rates = Object.fromEntries(models.map((model) => [model, scoreRows(perModel[model].baseline, cases.length).passRate]));
+    result.floorReached = floorReached(rates, models);
+    const mode = chooseMode({ patch, rates, models });
+    let block;
+    if (mode === 'audit') result.experiment = { mode, outcome: 'running', patch: { paths: patch.paths, sha256: patch.sha256 } };
+    else if (mode === 'shorten') {
+      const text = readFileSync(join(root, SOURCE), 'utf8');
+      const lastBlock = prior.findLast((entry) => entry.experiment?.block)?.experiment.block.id;
+      block = chooseBlock(removalBlocks(text), models.flatMap((model) => perModel[model].baseline), allCases, lastBlock, skipped);
+      if (block) {
+        result.experiment = { mode, outcome: 'running', block };
+        temp = buildCandidateTree(root);
+        candidateText = text.slice(0, block.start) + "''" + text.slice(block.end);
+        writeFileSync(join(temp, SOURCE), candidateText);
+        candidateSource = await loadSource(temp);
+      } else result.experiment = { mode, outcome: 'skipped: all blocks protected by failing cases' };
+    } else result.experiment = { mode, outcome: 'skipped: no audit candidate' };
+    if (candidateSource) {
       const invalid = check(candidateSource, allCases);
       if (invalid.length) result.experiment.outcome = `rejected: ${invalid.join('; ')}`;
       else {
-        result.candidate = await replaySuite(candidateSource, cases, { model, request, ledger,
-          onCase(row) { result.candidate.push(row); save(); } });
-        const assessment = assessExperiment(result.baseline, result.candidate, result.control);
-        result.experiment = { ...result.experiment, ...assessment, outcome: assessment.outcome };
-        if (assessment.accepted) {
-          writeFileSync(join(out, 'prompt-assembly.ts'), candidateText);
-          writeFileSync(join(out, 'proposal.md'), `Remove one prompt paragraph after weekly replay\n\n## Reproduced\nNot a defect report. Experiment ${block.id} on ${commit}, model ${model}.\n\n## Demonstrated\nReplayed all ${cases.length} cases on baseline and candidate using fixed paired samples and an unchanged control. Baseline ${result.baseline.filter((r) => r.pass).length}/${cases.length}; candidate ${result.candidate.filter((r) => r.pass).length}/${cases.length}. Median tokens per simulated turn: ${assessment.before} → ${assessment.after}. No previously passing case regressed. Total weekly replay tokens: ${ledger.tokens}; cost: $${ledger.cost.toFixed(6)}.\n\nNormal independent review and merge authority still apply. Run artifact contains per-case samples and accounting.\n`);
+        await arm('candidate', candidateSource);
+        const pooled = assessExperiment(pool('baseline'), pool('candidate'), pool('control'));
+        for (const model of models) {
+          const assessment = assessExperiment(perModel[model].baseline, perModel[model].candidate, perModel[model].control);
+          perModel[model].experiment = { gains: assessment.gains, losses: assessment.losses, before: assessment.before, after: assessment.after,
+            passRateBefore: rates[model], passRateAfter: scoreRows(perModel[model].candidate, cases.length).passRate };
+        }
+        const modelExperiments = Object.fromEntries(models.map((model) => [model, perModel[model].experiment]));
+        let decision;
+        if (mode === 'audit') decision = decideCandidate(pooled, modelExperiments);
+        else {
+          // Shortening keeps both models at or above the floor.
+          const kept = floorReached(Object.fromEntries(models.map((model) => [model, modelExperiments[model].passRateAfter])), models);
+          decision = { accepted: pooled.accepted && kept, outcome: pooled.accepted && !kept ? `rejected: below ${100 * PASS_FLOOR}% floor` : pooled.outcome };
+        }
+        result.experiment = { ...result.experiment, ...pooled, ...decision, perModel: modelExperiments };
+        if (decision.accepted) {
+          const rows = models.map((model) => {
+            const e = modelExperiments[model];
+            const rate = (value) => value === null ? 'unscored' : `${(100 * value).toFixed(1)}%`;
+            return `| ${model} | ${rate(e.passRateBefore)} | ${rate(e.passRateAfter)} | ${e.gains} | ${e.losses} | ${e.before} | ${e.after} |`;
+          }).join('\n');
+          const change = mode === 'audit' ? `Apply the audited prompt change in candidate.patch (sha256 ${patch.sha256}); its reasons per failing case are in the run's audit.md.` : `Remove one prompt paragraph (${block.id}).`;
+          if (mode === 'audit') writeFileSync(join(out, 'candidate.patch'), patch.text);
+          else writeFileSync(join(out, 'prompt-assembly.ts'), candidateText);
+          writeFileSync(join(out, 'proposal.md'), `${mode === 'audit' ? 'Improve the agent prompt after nightly replay' : 'Remove one prompt paragraph after weekly replay'}\n\n## Reproduced\nNot a defect report. ${change} Run on ${commit}, models ${models.join(', ')}.\n\n## Demonstrated\nReplayed all ${cases.length} eligible cases per model on baseline, unchanged control and candidate with fixed paired seeds.\n\n| Model | Baseline pass rate | Candidate pass rate | Gains | Losses | Median tokens/turn before | After |\n| --- | --- | --- | --- | --- | --- | --- |\n${rows}\n\nPooled paired test: ${pooled.gains} gains, ${pooled.losses} losses over ${pooled.pairedSamples} samples; p ${pooled.effectPValue.toExponential(2)} against baseline, ${pooled.excessPValue.toExponential(2)} against control. Decision: ${decision.outcome}. Total replay tokens: ${ledger.tokens}; cost: $${ledger.cost.toFixed(6)}.\n\nNormal independent review and merge authority still apply. The run artifact contains per-case samples and accounting.\n`);
         }
       }
-    } else result.experiment.outcome = 'skipped: all blocks protected by failing cases';
-    result.status = [result.baseline, result.control, result.candidate].some(rows => rows.some(r => r.samples.some(s => s.status === 'incomplete'))) ? 'incomplete' : 'complete';
+    }
+    for (const model of models) perModel[model].experiment ??= { outcome: result.experiment.outcome };
+    result.status = models.some((model) => ARMS.some((name) => perModel[model][name].some(r => r.samples.some(s => s.status === 'incomplete')))) ? 'incomplete' : 'complete';
   } catch (error) {
     result.status = 'incomplete';
     result.error = error.message;
     result.experiment.outcome = 'incomplete; no proposal';
   } finally {
     if (temp) rmSync(temp, { recursive: true, force: true });
+    for (const name of ARMS) result[name] = pool(name);
     save();
   }
-  result.classes = { baseline: classCounts(result.baseline), control: classCounts(result.control), candidate: classCounts(result.candidate) };
-  result.diagnostics = Object.fromEntries(['baseline', 'control', 'candidate'].map(arm => [arm, diagnostics(result[arm])]));
-  const scoredCases = result.baseline.filter(row => row.scored === FIXED_SAMPLES && typeof row.pass === 'boolean').length;
-  const passed = scoredCases ? result.baseline.filter(row => row.pass === true).length : null;
-  const formatInvalidCases = result.baseline.filter(row => row.samples.some(sample => sample.status === 'format')).length;
-  result.scoring = { passed, scoredCases, formatInvalidCases, unscoredCases: cases.length - scoredCases,
-    passRate: scoredCases ? passed / scoredCases : null,
-    overallPassRate: scoredCases === cases.length ? passed / scoredCases : null };
+  result.classes = Object.fromEntries(ARMS.map(name => [name, classCounts(result[name])]));
+  result.diagnostics = Object.fromEntries(ARMS.map(name => [name, diagnostics(result[name])]));
+  result.scoring = scoreRows(result.baseline, cases.length * models.length);
+  const modelSummaries = Object.fromEntries(models.map((model) => {
+    const scoring = scoreRows(perModel[model].baseline, cases.length);
+    perModel[model].scoring = scoring;
+    perModel[model].classes = Object.fromEntries(ARMS.map(name => [name, classCounts(perModel[model][name])]));
+    return [model, { passed: scoring.passed, scoredCases: scoring.scoredCases, passRate: scoring.passRate,
+      medianTokensPerTurn: medianTokens(perModel[model].baseline), experiment: perModel[model].experiment }];
+  }));
   save();
-  const total = median(result.baseline.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
+  const total = medianTokens(result.baseline);
+  const { passed, scoredCases, formatInvalidCases } = result.scoring;
   const rate = scoredCases
-    ? `${passed}/${scoredCases} behavior-scored cases passed (${(100 * result.scoring.passRate).toFixed(1)}%); ${formatInvalidCases} format-invalid cases; ${result.scoring.unscoredCases} unscored cases${result.scoring.overallPassRate === null ? '; overall pass rate unavailable' : ''}`
+    ? `${passed}/${scoredCases} pooled behavior-scored cases passed (${(100 * result.scoring.passRate).toFixed(1)}%); ${formatInvalidCases} format-invalid cases; ${result.scoring.unscoredCases} unscored cases${result.scoring.overallPassRate === null ? '; overall pass rate unavailable' : ''}`
     : `no behavior verdicts (${formatInvalidCases} format-invalid cases); behavior pass rate unavailable; ${result.scoring.unscoredCases} unscored cases; overall pass rate unavailable`;
-  const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([arm, d]) => [arm, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));
-  const reasons = Object.entries(result.diagnostics).flatMap(([arm, d]) => {
+  const perModelRates = models.map((model) => {
+    const m = modelSummaries[model];
+    return `${model.replace(/^.*\//, '')} ${m.scoredCases ? `${m.passed}/${m.scoredCases} (${(100 * m.passRate).toFixed(1)}%)` : 'unscored'}`;
+  }).join(', ');
+  const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([name, d]) => [name, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));
+  const reasons = Object.entries(result.diagnostics).flatMap(([name, d]) => {
     const groups = new Map();
     for (const s of d.incomplete) {
       const key = `${s.terminal}: ${s.reason}${s.call ? ` (${JSON.stringify(s.call)})` : ''}`;
       const group = groups.get(key) ?? [];
       group.push(`${s.id}@${s.seed}`); groups.set(key, group);
     }
-    return [...groups].map(([reason, ids]) => `${arm} incomplete — ${reason}: ${ids.join(', ')}`);
+    return [...groups].map(([reason, ids]) => `${name} incomplete — ${reason}: ${ids.join(', ')}`);
   });
-  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; diagnostics ${JSON.stringify(diagnosticCounts)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; detectable effect (80% power approximation) ${result.noise?.detectableEffect ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.\n${reasons.join('\n')}`;
+  const experimentName = result.experiment.block?.id ?? (result.experiment.patch ? `patch ${result.experiment.patch.paths.join(', ')}` : 'none');
+  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; baseline ${perModelRates}; ${result.floorReached ? `both models at or above ${100 * PASS_FLOOR}%` : `below ${100 * PASS_FLOOR}% floor`}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; diagnostics ${JSON.stringify(diagnosticCounts)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; detectable effect (80% power approximation) ${result.noise?.detectableEffect ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${experimentName}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.\n${reasons.join('\n')}`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
-  appendFileSync(history, `${JSON.stringify({ schemaVersion: 2, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model, status: result.status, ...result.scoring, cases: cases.length, skipped, medianTokensPerTurn: total,
-    tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, pass, medianTokensPerTurn, proportion, interval, scored }) => ({ id, pass, medianTokensPerTurn, proportion, interval, scored })), experiment: result.experiment })}\n`);
+  appendFileSync(history, `${JSON.stringify({ schemaVersion: 3, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model: result.model, status: result.status, ...result.scoring, cases: cases.length, skipped, medianTokensPerTurn: total,
+    tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, model, pass, medianTokensPerTurn, proportion, interval, scored }) => ({ id, model, pass, medianTokensPerTurn, proportion, interval, scored })),
+    floorReached: Boolean(result.floorReached), models: modelSummaries, experiment: result.experiment })}\n`);
   console.log(summary);
-  return { ...result, tokens: ledger.tokens, cost: ledger.cost };
+  return { ...result, models: perModel, tokens: ledger.tokens, cost: ledger.cost };
 }
 
 async function main() {
@@ -517,7 +674,11 @@ async function main() {
   const tokenCap = Number(option('--token-cap', DEFAULT_TOKEN_CAP));
   const costCap = Number(option('--cost-cap', DEFAULT_COST_CAP));
   if (![tokenCap, costCap].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Budgets must be positive finite numbers');
-  const result = await runNightly({ out, history, request: fileTransport(resolve(exchange)), tokenCap, costCap, label: option('--label', 'weekly replay') });
-  if (result.status !== 'complete') process.exitCode = 1;
+  const models = option('--models', DEFAULT_MODELS.join(',')).split(',').map((model) => model.trim()).filter(Boolean);
+  if (!models.length) throw new Error('--models needs at least one model');
+  const patch = option('--candidate-patch');
+  const result = await runNightly({ out, history, request: fileTransport(resolve(exchange)), tokenCap, costCap, models,
+    candidatePatch: patch && resolve(patch), label: option('--label', 'nightly replay') });
+  if (!['complete', 'skipped'].includes(result.status)) process.exitCode = 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

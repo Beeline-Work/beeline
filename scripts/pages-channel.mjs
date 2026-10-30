@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { validateBundleDirectory } from './pages-site.mjs';
 
 export const CHANNEL_TAG = 'helper-update-channel';
+// The Mac input hashes beside the published bundles let the next release
+// carry an unchanged Mac bundle forward instead of rebuilding it.
+export const MAC_INPUT_FILES = ['mac-helper-inputs-darwin-arm64.json', 'mac-helper-inputs-darwin-x64.json'];
 
 export async function downloadPagesChannel({ github, repo, directory }) {
   const { data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag: CHANNEL_TAG });
@@ -37,6 +40,9 @@ export async function downloadPagesChannel({ github, repo, directory }) {
         throw new Error('durable recovery channel has an unsafe filename');
       await writeFile(join(directory, name), await download(name));
     }
+  for (const name of MAC_INPUT_FILES) {
+    if (release.assets.some((entry) => entry.name === name)) await writeFile(join(directory, name), await download(name));
+  }
   await writeFile(join(directory, 'manifest.json'), manifestBytes);
   return (await validateBundleDirectory(directory)).manifest;
 }
@@ -69,7 +75,14 @@ export async function publishPagesChannel({
   }
   // A retry replaces a partial backup too. Never update the manifest before
   // its payloads; an interrupted write cannot pass downloadPagesChannel.
-  for (const name of [...files, 'manifest.json']) {
+  const inputs = [];
+  for (const name of MAC_INPUT_FILES) {
+    try {
+      await readFile(join(directory, name));
+      inputs.push(name);
+    } catch { /* A bundle built without input hashes is simply not carried. */ }
+  }
+  for (const name of [...files, ...inputs, 'manifest.json']) {
     const previous = release.assets.find((asset) => asset.name === name);
     if (previous) await github.rest.repos.deleteReleaseAsset({ ...repo, asset_id: previous.id });
     const data = await readFile(join(directory, name));

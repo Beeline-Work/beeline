@@ -23,20 +23,19 @@ jobs:
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 18
     steps:
-      - name: Download the release record
+      # The release record lives on the GitHub Release the run published.
+      - uses: actions/checkout@v4
+      - name: Read the release record this run published
         id: index
         continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: unified-release-index
-          path: ${{ runner.temp }}/release
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-record.mjs for-run --run-id "${{ github.event.workflow_run.id }}" --output "$RUNNER_TEMP/release/release.json"
       - name: Read the server release identity
         id: release
         if: steps.index.outcome == 'success'
         run: |
-          node - "$RUNNER_TEMP/release/release-attempt.json" >> "$GITHUB_OUTPUT" <<'NODE'
+          node - "$RUNNER_TEMP/release/release.json" >> "$GITHUB_OUTPUT" <<'NODE'
           const release = require(process.argv[2]);
           if (release.plan?.selected?.includes('server') && release.components?.server?.state === 'checked') {
             console.log(`sha=${release.sourceSha}`);

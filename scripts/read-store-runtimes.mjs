@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { appStoreClient } from './ios-store-build.mjs';
@@ -6,24 +5,16 @@ import { mintAccessToken } from './play-token.mjs';
 import { publicationSeed } from './seed-store-runtime-history.mjs';
 import { playLiveBuilds, resolveStoreBuilds } from '../apps/mobile/scripts/store-runtime-targets.mjs';
 
-function gh(args, binary = false) {
-  const result = spawnSync('gh', args, { encoding: binary ? undefined : 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 30_000 });
-  if (result.status !== 0) throw new Error('Native runtime evidence lookup failed');
-  return binary ? result.stdout : JSON.parse(result.stdout);
-}
+const COMMITTED_BUILDS = new URL('../apps/mobile/store/native-runtime-builds.json', import.meta.url);
 
-// Each native upload records a small identity artifact, separate from the large
-// binary. Previously resolved identities survive in the cumulative OTA index.
-export function nativeBuildInventory(previous = []) {
-  const artifacts = gh(['api', '--paginate', '--slurp', 'repos/{owner}/{repo}/actions/artifacts?per_page=100'])
-    .flatMap(page => page.artifacts).filter(a => !a.expired && a.workflow_run?.head_branch === 'main' && a.name.startsWith('store-runtime-'));
-  const builds = [...JSON.parse(readFileSync(new URL('../apps/mobile/store/native-runtime-builds.json', import.meta.url), 'utf8')), ...previous];
-  for (const artifact of artifacts) {
-    if (builds.some(build => build.artifactId === artifact.id)) continue;
-    const archive = gh(['api', `repos/{owner}/{repo}/actions/artifacts/${artifact.id}/zip`], true);
-    const extracted = spawnSync('python3', ['-c', 'import io,sys,zipfile; sys.stdout.buffer.write(zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).read("store-runtime.json"))'], { input: archive, encoding: 'utf8', timeout: 10_000 });
-    if (extracted.status !== 0) throw new Error('Cannot read native runtime evidence');
-    builds.push({ ...JSON.parse(extracted.stdout), artifactId: artifact.id });
+// Store build identities (build number -> runtime) come from the committed
+// list and from the release record of the previous release, which records the
+// builds this pipeline uploaded. No Actions artifact is read.
+export function knownBuilds(previous = []) {
+  const builds = [...JSON.parse(readFileSync(COMMITTED_BUILDS, 'utf8'))];
+  for (const build of previous) {
+    if (!builds.some(b => b.platform.toLowerCase() === build.platform.toLowerCase()
+      && String(b.buildNumber) === String(build.buildNumber))) builds.push(build);
   }
   return builds;
 }
@@ -112,10 +103,7 @@ export async function readStores({ builds, env = process.env, fetchImpl = fetch,
 
 async function main() {
   const previous = process.argv[2] ? JSON.parse(readFileSync(process.argv[2], 'utf8')) : {};
-  let builds;
-  try { builds = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || process.env.EXPO_ASC_KEY_ID
-    ? nativeBuildInventory(previous.builds) : previous.builds ?? []; }
-  catch { builds = [...JSON.parse(readFileSync(new URL('../apps/mobile/store/native-runtime-builds.json', import.meta.url), 'utf8')), ...(previous.builds ?? [])]; }
+  const builds = knownBuilds(previous.builds ?? []);
   try {
     for (const build of await easBuildInventory()) {
       if (!build.appBuildVersion || !build.runtimeVersion) continue;
@@ -125,10 +113,8 @@ async function main() {
     }
   } catch { /* Missing identities fail closed per store. */ }
   const stores = await readStores({ builds });
-  let previouslyLive = previous.previouslyLive;
-  if (!previouslyLive) {
-    try { previouslyLive = publicationSeed(builds); } catch { previouslyLive = []; }
-  }
+  let previouslyLive = previous.previouslyLive ?? [];
+  try { previouslyLive = [...publicationSeed(builds), ...previouslyLive]; } catch { /* Keep the recorded history. */ }
   console.log(JSON.stringify({ observedAt: new Date().toISOString(), stores, builds, previouslyLive }));
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) await main();

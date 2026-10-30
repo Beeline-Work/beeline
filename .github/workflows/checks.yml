@@ -239,6 +239,16 @@ jobs:
               - 'scripts/verify-workflow-paths.mjs'
               - 'scripts/release-preflight*'
               - 'scripts/unified-release*'
+              - 'scripts/release-record*'
+              - 'scripts/release-artifact-allowlist*'
+              - 'scripts/ota-release.test.mjs'
+              - 'scripts/read-store-runtimes.mjs'
+              - 'scripts/seed-store-runtime-history.mjs'
+              - 'scripts/store-runtime-targets.test.mjs'
+              - 'scripts/pages-channel.mjs'
+              - 'apps/mobile/scripts/ota-release.mjs'
+              - 'apps/mobile/scripts/store-runtime-targets.mjs'
+              - 'apps/mobile/store/**'
               - 'scripts/mobile-store-minimum*'
               - 'scripts/dispatch-production-release.mjs'
               - 'scripts/ios-store-build*'
@@ -667,10 +677,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The OTA delivery-index governor tests (mobileOtaRelease.test.ts)
-          # enumerate HEAD~2..HEAD through real git; a depth-1 checkout makes
-          # `git rev-parse HEAD~2` fail while still echoing the literal arg,
-          # which poisons the test's commit ranges.
+          # Some mobile tests read recent history through real git; a depth-1
+          # checkout makes `git rev-parse HEAD~2` fail.
           fetch-depth: 3
       - uses: ./.github/actions/ci-workspace
         with:
@@ -990,7 +998,11 @@ jobs:
       - name: Test iOS upload identity and Apple processing verification
         run: node --test scripts/ios-store-build.test.mjs
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/mobile-store-minimum.test.mjs
+        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/ota-release.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs
+      # Release state lives in the systems that own it and the published
+      # GitHub Release record; artifacts and caches carry build outputs only.
+      - name: Refuse release state in artifacts and caches
+        run: node scripts/release-artifact-allowlist.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
       # every pull request (a test can be deleted without touching a workflow);
       # here it is where a workflow author gets the message.

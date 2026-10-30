@@ -10,10 +10,10 @@
   requires the emulator device proof.
 - **Store publishing is explicit and consent-gated.** `store_track` stays
   `none` unless the project owner explicitly dispatches with a track
-  (`internal`, `beta`, or `production`). The one exception the planner enforces
-  is a runtime-pin change: a new runtime needs a new store binary as its
-  anchor, so planning refuses until a store track is named - and naming it is
-  still an explicit operator decision.
+  (`internal`, `beta`, or `production`). A runtime-pin change does not change
+  this: the release still finishes, the OTA goes to every runtime live in the
+  stores today, and the new runtime waits for a store release the owner
+  chooses. Planning prints a notice; it never fails and never adds a store leg.
 - **iOS production includes App Review.** After Apple confirms the exact uploaded
   build is VALID, `store_track=production` attaches it to the matching App Store
   version, sets release notes from the committed store metadata, and submits it
@@ -72,11 +72,11 @@ A person can cancel a stuck run in GitHub Actions → Unified production release
 → the run → Cancel workflow, or run `gh-axi run cancel <run-id>`. Wait for
 cancellation to finish before dispatching recovery.
 
-Keep the v0.1.90–v0.1.94 draft releases and their assets intact. They represent
-partially shipped attempts, not verified successful releases. On an explicit
-owner release command, use a fresh routine identity (allocation skips drafts),
-or deliberately recover an existing identity after inspecting its checkpoints.
-Do not publish a draft merely because a server or OTA leg completed.
+`initialize` reserves each identity as a draft GitHub release at once. A
+draft is an attempt that has not published. A later dispatch of the same commit
+resumes that draft's version, so every leg sees what the attempt already
+shipped; a dispatch of another commit skips the draft's version and is never
+blocked by it. A successful release deletes the drafts below its version.
 
 The workflow pins current `main`, includes every merge at that
 HEAD, keeps automatic component selection, uses the established `store_track=none`
@@ -88,8 +88,8 @@ explicitly request the device proof, or make a deliberate store submission -
 never for a routine release.
 
 The initializer compares the pinned main SHA with every component's own source
-SHA in the last successful `unified-release-index` and writes
-`release-plan.json`. Its explicit path map is
+SHA in the newest published GitHub Release's `release.json` (see *Release
+memory* below) and writes `release-plan.json`. Its explicit path map is
 `COMPONENT_PATH_RULES` in `scripts/unified-release.mjs`. The plan selects
 `server`, `helper`, `mobile-ota`, `mobile-native`, `desktop`, and `website`
 independently. `selection=all` is a recovery-only, deliberate full-release
@@ -105,21 +105,12 @@ warning annotation and a Store build required job summary naming the affected
 platforms. This notice is informational and does not block merge; it brings
 the store-track decision into PR review before release planning.
 
-The per-platform native runtime pins couple OTA and store delivery: when
-`apps/mobile/native-fingerprint.json` changes `android.runtimeVersion` or
-`ios.runtimeVersion`, planning requires `mobile-native` plus a non-`none` store
-track, records both platforms' old and new pins, and builds/submits only the
-platforms whose pins changed. Legacy release records with one global
-`runtimeVersion` still resolve that pin for both platforms. OTA promotion waits
-until the selected store binaries have been submitted. A retry with the same
-pinned release identity resumes both components from their saved stages.
-
-Exception - pin RESTORE: a pin change that reverts to runtime versions whose
-store binaries already exist needs no new store submission. Planning such a
-release as OTA-only requires the explicit `allow_pin_restore` workflow input
-(or `--allow-pin-restore`): it ships only `mobile-ota`, records
-`plan.pinRestore: true`, and never builds or submits store binaries. It is a
-deliberate consent gate, never inferred from pin direction.
+The per-platform native runtime pins no longer gate an OTA release. When
+`apps/mobile/native-fingerprint.json` changes a runtime pin and `store_track`
+is `none`, the plan ships the OTA to the runtimes live in the stores and prints
+a notice; the new runtime gets OTAs once a store release puts it live. With an
+explicit store track, native builds run only for the platforms whose pins
+changed. The `allow_pin_restore` input is accepted and ignored.
 
 iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
 and are submitted to TestFlight from its generated IPA. The iOS leg inspects the
@@ -158,9 +149,11 @@ last shipped and the release commit).
 Planning and the release record run on GitHub-hosted runners. Jobs that need
 production host tools run on the `beeline-prod-host` pool, which has two
 runners (`beeline-production`, `beeline-production-squire-2`), so the server
-and the mobile OTA run side by side. With an unchanged runtime pin and no
-requested device proof, `mobile_ota` starts as soon as the plan exists;
-`mobile_ota_after_native` waits for store binaries or the proof otherwise.
+and the mobile OTA run side by side. `mobile_ota` starts as soon as the plan
+exists; only an explicitly requested device proof routes the OTA through
+`mobile_ota_after_proof`, which publishes nothing unless the proof passed.
+Every self-hosted job first checks its runner has the tools it needs
+(`.github/actions/require-tools`) and fails with one clear line if not.
 
 Each job sets up Node 22 once and installs once with `scripts/npm-ci-timed.sh`,
 which prints the install's wall time, cache misses, and slowest registry
@@ -207,10 +200,14 @@ second smoke check or convergence wait repeats that proof. A failed Machine
 update gets one retry. Any failed update or sample restores the canary to the
 exact `previousImageRef` and fails the release. A fleet left split by an
 interrupted release converges on the new image the same way, and on failure
-each Machine returns to the image it ran before. `server-image-ledger-<release>` retains the previous and candidate
-image refs for 90 days. The `Server image rollback recovery` workflow can
-redeploy an explicitly named `registry.fly.io` image, or the latest ledger's
-predecessor; it defaults to `dry_run=true`.
+each Machine returns to the image it ran before. A rerun whose Machines all
+already run this release's image deploys nothing. The release record keeps the
+image and the image it replaced. The `Server image rollback recovery` workflow
+reads the Machines' current images from Fly and the newest published release
+record: if that release is live it returns to the image before it; if the
+Machines run an image from a later attempt that never published, it returns to
+the newest published release. An explicit `image_ref` overrides both. It
+defaults to `dry_run=true` and shares the release's concurrency group.
 
 The canary ordering and rollback plan are covered without production by:
 
@@ -218,32 +215,19 @@ The canary ordering and rollback plan are covered without production by:
 node --test scripts/unified-release.test.mjs
 ```
 
-A failed attempt stores its release state. The release never redispatches
-itself. An explicit recovery dispatch with the same `release_version` and
-`release_sha` skips checked components, reuses successful immutable build
-artifacts, and reruns only unfinished component work. A mobile OTA whose
-earlier attempt never started production promotion publishes its exact beta
-candidate as a first attempt; one whose promotion started (recorded as
-`promoted`) only recovers that exact promotion and refuses partial or
-superseded production groups. When an earlier attempt at
-this identity already merged the three-platform daemon artifact, `initialize`
-resolves the run holding it once and the helper leg promotes those exact bytes,
-so neither macOS bundle is rebuilt. When no reusable artifact resolves - it
-expired, was deleted, or the lookup errored - the macOS legs rebuild instead of
-dead-ending, and a fresh release identity has no such artifact and always builds
-them. Missing identities, unknown selections, missing carried references, and
-absent selected artifacts fail closed. Helper fleet uptake is recorded once as
+A failed attempt stores nothing. The release never redispatches itself. A
+rerun (same commit, routine or with `release_version`/`release_sha`) plans the
+same legs and each leg asks its own system what already shipped: the server
+asks Fly which image each Machine runs, the helper asks Pages which version
+its manifest serves and npm whether the package exists, the phone OTA asks EAS
+which runtimes the release branch already holds and where each channel points,
+and `release_result` reuses the draft release. Nothing is published twice.
+Missing identities, unknown selections, missing carried references, and absent
+selected outputs fail closed. Helper fleet uptake is recorded once as
 post-release observability; installed-helper convergence never gates delivery.
 
-Routine version allocation skips every version already held by a GitHub release
-record, including unpublished drafts from failed or partially shipped
-attempts. Those records and assets remain intact; the next routine dispatch
-gets a fresh version without deleting a draft. Explicit recovery keeps the
-existing identity. A release listing failure stops initialization before
-anything ships.
-
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
-does not rebuild components, replace the release index, upload release assets,
+does not rebuild components, replace the release record, upload release assets,
 or send a duplicate client notification.
 
 The desktop leg signs the app, notarizes and staples the macOS disk image once
@@ -262,7 +246,7 @@ took. Duration never fails an attempt. The summary reports the fix-to-phone time
 OTA completion checkpoint exists) and the whole-run time. A whole run over the
 45-minute soft limit is marked **slow** in the summary; it still publishes the
 release record. Component jobs have explicit timeouts and network smoke checks
-have second-scale limits. The final index records outcome, duration,
+have second-scale limits. The release record records outcome, duration,
 selected/carried components, and, for a failed attempt, the unfinished
 component list as its failure class.
 
@@ -273,9 +257,50 @@ node --test scripts/unified-release.test.mjs
 ```
 
 Those fixtures cover canary ordering and window verdicts, rollback selection,
-the server image ledger, no-input defaults, per-component published-input drift,
-shared-path fanout, carry-forward, same-identity no-op and recovery continuation,
-missing artifacts, and completion/publication checks.
+no-input defaults, per-component published-input drift, shared-path fanout,
+carry-forward, same-identity no-op and reruns, and completion/publication
+checks. `scripts/release-record.test.mjs` covers identity, migration, the
+record's facts and both rollback targets; `scripts/ota-release.test.mjs` covers
+the phone OTA against a stand-in eas-cli.
+
+## Release memory
+
+The permanent GitHub Release is the pipeline's only memory. Each published
+release carries one `release.json`, uploaded before the release is published:
+per-component version and source commit, the server image and the image it
+replaced, the phone OTA branch, its targets and the branch before it, the
+desktop updater counter, and the store builds this pipeline uploaded.
+`scripts/release-record.mjs` reads the newest published release; a release
+published before `release.json` existed is read as a migration record whose
+OTA branch is the legacy `production` branch.
+
+Jobs hand facts to each other only through job outputs. No Actions artifact,
+cache or run lookup carries state between jobs or runs. Artifacts carry build
+outputs only: Mac helper binaries, the Android AAB for the emulator proof,
+desktop installers, the R8 mapping, and proof evidence.
+`scripts/release-artifact-allowlist.mjs` parses every release workflow and the
+local actions they use, and CI fails on any other upload, download, cache,
+cross-run download or Actions-artifact lookup.
+
+## Phone OTA by channel pointer
+
+Each release publishes to its own EAS branch, `release-<version>`, one update
+per runtime live in the stores, and points the `beta` channel at it. Promotion
+points the `production` channel at the same branch
+(`eas channel:edit production --branch release-<version>`), so production
+serves the exact bundles beta got, on every live runtime at once. Every live
+runtime must be on the branch before any channel moves. A rerun publishes only
+the runtimes the branch lacks and skips a channel that already points at it; a
+branch never mixes two source commits.
+
+`Mobile OTA rollback recovery` points `production` back: to the branch before
+the newest published release if that release is live, or to the newest
+published release if production serves a later attempt that never published.
+Runtimes the current branch serves but the rollback branch lacks first get a
+roll-back-to-embedded directive on the rollback branch, so no phone keeps the
+bad update. The first release on this scheme records `production` (the old
+fixed branch) as its rollback branch. The rollback shares the release's
+concurrency group and has a `dry_run` mode.
 
 ## Compatibility and signing invariants
 
@@ -284,22 +309,18 @@ missing artifacts, and completion/publication checks.
   review gets no OTA target. OTA history, uploads and TestFlight do not count as store publication.
   Play uses `applications/app.usebeeline/tracks/production/releases` and its
   `PUBLISHED` lifecycle state (not edit-track `completed`, which can await review).
-  ASC uses distributed iOS versions and their exact build identities. Native
-  upload identity artifacts map build numbers to runtime pins; the cumulative
-  OTA index retains resolved identities and store publication observations.
-  Unknown binary identities or unreadable stores preserve that platform's
-  entire previous release target set. Older ledgers conservatively derive the
-  previous set from EAS promotion messages, retaining all observed targets if
-  that release identity is unavailable. The Play history seed is parsed once
-  from its captured production release history; an undated upload is excluded.
-  No release timeout increases. Promotion and rollback use the
-  exact target list recorded in the release ledger.
-- For a deterministic offline plan, pass `publish --dry-run --production-history
-  <eas.json> --store-status <stores.json>`. The latter contains `stores.android`
-  and `stores.ios`, each with `status: "readable"` and `live` platform/runtime
-  records, plus optional `previouslyLive` and `previousTargets`. Snapshots are
-  rejected for live publishing. Without store evidence the dry run preserves
-  previous targets; it does not infer publication from the old native ledger.
+  ASC uses distributed iOS versions and their exact build identities. Build
+  numbers map to runtime pins through the committed
+  `apps/mobile/store/native-runtime-builds.json`, the store builds recorded in
+  the previous release record, and EAS build metadata. Unknown binary
+  identities or an unreadable store keep that platform's targets from the
+  previous release record (or, on the first release of this scheme, the
+  runtimes production serves now). The Play history seed is parsed from its
+  captured production release history; an undated upload is excluded.
+- For a deterministic offline target plan, run
+  `node scripts/ota-release.mjs targets --store-status <stores.json>` from
+  `apps/mobile`. The file holds `stores.android` and `stores.ios`, each with
+  `status: "readable"` and `live` platform/runtime records.
 
 - Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives in `ANDROID_SIDELOAD_*` secrets and the Trusty Squire vault; see the [signing guide](../apps/mobile/android-signing/README.md) for rotation and recovery.
 
@@ -314,7 +335,7 @@ Its failure identifies queued/running probes for investigation.
 
 The native leg runs the existing Expo fingerprint gate with the mobile Node 22
 toolchain, then compares both platform fingerprints and runtime pins with the
-`mobile-native.sourceSha` in the last successful `unified-release-index`. It fails
+`mobile-native.sourceSha` in the newest published release record. It fails
 explicitly when no released baseline exists, fingerprints differ, or a platform
 needs a new store build/verified pin restore. Scheduled and manual preflights
 remain strict. No signing, promotion, deployment or

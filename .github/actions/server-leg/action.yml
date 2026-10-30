@@ -3,6 +3,11 @@
 # once, and canaries the exact release SHA across the two Fly Machines. The
 # caller checks out the release SHA, installs the migration CLI, and owns
 # runner, timeout, and concurrency.
+#
+# Fly is the only memory: a rerun whose Machines already all run this release's
+# image does nothing, and a fleet left split by an interrupted release is
+# finished on the new image instead of refused. The image and the image it
+# replaced leave through step outputs into the release record.
 name: Server release leg
 description: Build the exact server image once and deploy it to Fly.io behind a canary
 
@@ -12,19 +17,54 @@ inputs:
   release_version:
     required: true
 
+outputs:
+  image_ref:
+    description: The image every Machine runs after this leg
+    value: ${{ steps.fleet.outputs.image_ref }}
+  previous_image_ref:
+    description: The image the fleet ran before this leg (empty on a rerun that found the release already live)
+    value: ${{ steps.fleet.outputs.previous_image_ref }}
+
 runs:
   using: composite
   steps:
     - name: Verify Fly.io deployment authority
       shell: bash
       run: flyctl auth whoami
-    - name: Build the exact Fly image and capture the two-Machine rollback plan
+    - name: Ask Fly whether this release already runs
+      id: fleet
       shell: bash
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
         mkdir -p "$RUNNER_TEMP/server-release"
         flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/machines-before.json"
+        image_ref="registry.fly.io/beeline-server:${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
+        node - "$RUNNER_TEMP/server-release/machines-before.json" "$image_ref" >> "$GITHUB_OUTPUT" <<'NODE'
+        const [file, image] = process.argv.slice(2);
+        const machines = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
+        const tag = (ref) => String(ref ?? '').replace(/@sha256:[0-9a-f]+$/, '');
+        const images = machines.map((m) => tag(m.config?.image ?? m.imageRef));
+        for (const [i, m] of machines.entries()) console.error(`${m.id}: ${images[i]}`);
+        const live = images.length > 0 && images.every((ref) => ref === image);
+        const others = [...new Set(images.filter((ref) => ref !== image))];
+        console.log(`image_ref=${image}`);
+        console.log(`shipped=${live}`);
+        // Only an unsplit fleet names one previous image.
+        console.log(`previous_image_ref=${others.length === 1 ? others[0] : ''}`);
+        NODE
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+    - name: This release already runs on every Machine
+      if: steps.fleet.outputs.shipped == 'true'
+      shell: bash
+      run: echo "Every beeline-server Machine already runs ${{ steps.fleet.outputs.image_ref }}; nothing to deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+    - name: Build the exact Fly image and capture the two-Machine rollback plan
+      if: steps.fleet.outputs.shipped != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
         image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
         image_ref="registry.fly.io/beeline-server:$image_label"
         build_started=$SECONDS
@@ -40,16 +80,13 @@ runs:
         node scripts/unified-release.mjs server-deploy-plan \
           --machines "$RUNNER_TEMP/server-release/machines-before.json" \
           --image "$image_ref" --output "$RUNNER_TEMP/server-release/server-deploy-plan.json"
-        node scripts/unified-release.mjs server-ledger \
-          --plan "$RUNNER_TEMP/server-release/server-deploy-plan.json" \
-          --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
-          --output "$RUNNER_TEMP/server-release/server-image-ledger.json"
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
 
     - name: Run schema migrations and backfills once before Machine updates
       id: migrate
+      if: steps.fleet.outputs.shipped != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -82,11 +119,11 @@ runs:
         npm run migrate -w @beeline/server
 
     - name: Canary one Machine for ninety seconds, then update its peer
+      if: steps.fleet.outputs.shipped != 'true'
       shell: bash
       run: |
         set -euo pipefail
         plan="$RUNNER_TEMP/server-release/server-deploy-plan.json"
-        ledger="$RUNNER_TEMP/server-release/server-image-ledger.json"
         read_plan() { node -e 'const p=require(process.argv[1]);process.stdout.write(String(p[process.argv[2]]))' "$plan" "$1"; }
         canary="$(read_plan canaryMachineId)"
         second="$(read_plan secondMachineId)"
@@ -141,8 +178,6 @@ runs:
             else
               echo "CRITICAL: rollback left the fleet on unexpected images; run server-rollback.yml" >&2
             fi
-            node scripts/unified-release.mjs server-ledger --plan "$plan" \
-              --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state rolled-back --output "$ledger"
           fi
           exit "$status"
         }
@@ -287,8 +322,6 @@ runs:
         wait_for_machine_ready "$second"
         fleet_updated=1
         trap - ERR
-        node scripts/unified-release.mjs server-ledger --plan "$plan" \
-          --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state deployed --output "$ledger"
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}

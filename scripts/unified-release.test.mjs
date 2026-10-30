@@ -18,7 +18,6 @@ import {
   SERVER_CANARY_SAMPLES,
   SERVER_CANARY_WINDOW_SECONDS,
   DESKTOP_VERSION_BASELINE,
-  createServerImageLedger,
   evaluateServerCanarySample,
   evaluateServerCanaryPromotion,
   evaluateServerCanaryWindow,
@@ -33,136 +32,18 @@ import {
   planServerCanaryDeployment,
   releasePlanSummary,
   runtimePinChangeFromPublishedInputs,
-  retryPlan,
+  pendingComponents,
+  applyJobFacts,
+  planOutputs,
+  otaMemory,
   selectReleaseComponents,
   selectReleaseComponentsFromPublishedInputs,
-  selectServerRollbackImage,
-  releaseVersionForSource,
 } from './unified-release.mjs';
 
 const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
 const RELEASE_SCRIPT = fileURLToPath(new URL('./unified-release.mjs', import.meta.url));
-
-test('OTA retry downloads the earlier candidate and recovers only its exact production groups', () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  const action = parse(readFileSync(new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url), 'utf8'));
-  const reuse = action.runs.steps.find((step) => step.id === 'reuse');
-  const promoteDownload = action.runs.steps.find((step) =>
-    step.uses === 'actions/download-artifact@v4' && step.if === "inputs.phase == 'promote'");
-  const promote = action.runs.steps.find((step) => step.id === 'promotion');
-  assert.match(reuse.if, /inputs\.phase == 'promote'/);
-  assert.match(reuse.with.script, /listArtifactsForRepo/);
-  assert.match(promoteDownload.with['run-id'], /steps\.reuse\.outputs\.run_id/);
-  assert.ok(promoteDownload.with['github-token']);
-  assert.match(promote.run, /recover-promotion/);
-  assert.match(promote.run, /retry-attempt/);
-  assert.match(promote.run, /if \[ "\$\(cat "\$RUNNER_TEMP\/mobile-ota-recovery.txt"\)" = new \]/);
-  for (const job of ['mobile_ota', 'mobile_ota_after_native']) {
-    assert.equal(workflow.jobs[job]['timeout-minutes'], 18);
-    assert.equal(workflow.jobs[job].steps[0].with.ref, '${{ needs.initialize.outputs.release_sha }}');
-    // A recovery of an attempted identity only recovers its exact promotion.
-    for (const leg of workflow.jobs[job].steps.filter((step) => step.uses === './.github/actions/mobile-ota-leg')) {
-      assert.equal(leg.with.retry_attempt, "${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}");
-    }
-    // The marker is its own step before the promote leg, so a job that fails
-    // mid-promotion still reports it.
-    const steps = workflow.jobs[job].steps;
-    const marker = steps.findIndex((step) => step.id === 'promote_started');
-    assert.ok(marker >= 0 && marker === steps.findIndex((step) => step.id === 'promote') - 1);
-    assert.equal(workflow.jobs[job].outputs.promote_started, '${{ steps.promote_started.outputs.started }}');
-  }
-  assert.equal(workflow.jobs.initialize.outputs.stage_mobile_ota, '${{ steps.plan.outputs.stage_mobile_ota }}');
-
-  const dir = mkdtempSync(join(tmpdir(), 'ota-recovery-'));
-  try {
-    const ledgerPath = join(dir, 'ledger.json');
-    const indexPath = join(dir, 'index.json');
-    const resultPath = join(dir, 'result.txt');
-    const mockPath = join(dir, 'eas.cjs');
-    const targetList = [
-      { platform: 'android', runtimeVersion: '31', group: 'beta-android' },
-      { platform: 'ios', runtimeVersion: '31', group: 'beta-ios' },
-    ];
-    const baseLedger = {
-      schemaVersion: 2, status: 'beta', sourceSha: NEW_SHA, releaseVersion: 'v0.0.128',
-      candidateTargets: targetList, updateTargets: targetList.map(({ platform, runtimeVersion }) => ({ platform, runtimeVersion })),
-      delivery: { state: 'built', runId: '36277001426', attempt: 1 },
-    };
-    const baseIndex = { schemaVersion: 1, merges: [{ sha: NEW_SHA, state: 'built', attempts: [] }] };
-    const listed = targetList.map((target) => ({
-      group: `production-${target.platform}`, runtimeVersion: target.runtimeVersion,
-      platforms: target.platform,
-      message: `"promote beta ${target.group} (${NEW_SHA.slice(0, 12)})" (55 minutes ago by lunchboxfortwo)`,
-    }));
-    writeFileSync(mockPath, '#!/usr/bin/env node\nprocess.stdout.write(process.env.MOCK_EAS_LIST);\n');
-    chmodSync(mockPath, 0o755);
-    const run = (payload) => spawnSync(process.execPath, [
-      'scripts/ota-release.mjs', 'recover-promotion', '--ledger', ledgerPath,
-      '--index', indexPath, '--result', resultPath, '--retry-attempt', '3', '--run-id', '36290000000',
-    ], {
-      cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
-      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: payload }) },
-    });
-    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
-    writeFileSync(indexPath, JSON.stringify(baseIndex));
-    const recovered = run(listed);
-    assert.equal(recovered.status, 0, recovered.stderr);
-    assert.equal(readFileSync(resultPath, 'utf8'), 'recovered\n');
-    assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'production');
-    assert.deepEqual(JSON.parse(readFileSync(indexPath)).merges[0].published.groupIds.sort(),
-      ['production-android', 'production-ios']);
-    assert.equal(JSON.parse(readFileSync(indexPath)).merges[0].attempts[0].runId, '36290000000');
-    for (const command of ['assert-promotion', 'assert-production-list']) {
-      const verified = spawnSync(process.execPath, [
-        'scripts/ota-release.mjs', command, '--ledger', ledgerPath, '--index', indexPath,
-      ], {
-        cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
-        env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: listed }) },
-      });
-      assert.equal(verified.status, 0, `${command}: ${verified.stderr}`);
-    }
-
-    // Reproduction pinned-ota-recovery: a recovery whose earlier attempt never
-    // started promotion runs at attempt 1, so an empty production list
-    // promotes the exact candidate instead of refusing.
-    const runAt = (attempt, payload) => spawnSync(process.execPath, [
-      'scripts/ota-release.mjs', 'recover-promotion', '--ledger', ledgerPath,
-      '--index', indexPath, '--result', resultPath, '--retry-attempt', attempt, '--run-id', '36290000000',
-    ], {
-      cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
-      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: payload }) },
-    });
-    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
-    writeFileSync(indexPath, JSON.stringify(baseIndex));
-    const unstarted = runAt('1', []);
-    assert.equal(unstarted.status, 0, unstarted.stderr);
-    assert.equal(readFileSync(resultPath, 'utf8'), 'new\n');
-    // A started promotion (attempt 2) still refuses to republish blindly.
-    const started = runAt('2', []);
-    assert.notEqual(started.status, 0);
-    assert.match(started.stderr, /refusing to republish on a retry/);
-
-    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
-    writeFileSync(indexPath, JSON.stringify(baseIndex));
-    const missing = run(listed.map((target) => ({ ...target, message: 'different release' })));
-    assert.notEqual(missing.status, 0);
-    assert.match(missing.stderr, /refusing to republish on a retry/);
-    assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'beta');
-    const partial = run([{ ...listed[0] }, { ...listed[1], message: 'different release' }]);
-    assert.notEqual(partial.status, 0);
-    assert.match(partial.stderr, /Only 1\/2 exact OTA targets are current/);
-    assert.equal(JSON.parse(readFileSync(ledgerPath)).status, 'beta');
-    const prefixOnly = run(listed.map((target) => ({
-      ...target, message: target.message.replace('" (55 minutes', ' with different bytes" (55 minutes'),
-    })));
-    assert.notEqual(prefixOnly.status, 0);
-    assert.match(prefixOnly.stderr, /refusing to republish on a retry/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 test('the release planner reads its desktop migration floor from the Tauri version file', () => {
   const desktopVersion = JSON.parse(readFileSync(
@@ -403,20 +284,6 @@ test('server promotion needs sustained clean samples and rejects a late relapse'
   assert.doesNotMatch(promotion.run, /canary_ever_clean/);
 });
 
-test('server image ledger pins the automatic and manual rollback image', () => {
-  const plan = planServerCanaryDeployment([
-    { id: 'a', imageRef: 'registry.fly.io/beeline-server:old' },
-    { id: 'b', imageRef: 'registry.fly.io/beeline-server:old' },
-  ], 'registry.fly.io/beeline-server:new');
-  const ledger = createServerImageLedger({ version: 'v0.0.9', sourceSha: NEW_SHA, plan });
-  assert.equal(ledger.previousImageRef, 'registry.fly.io/beeline-server:old');
-  assert.equal(selectServerRollbackImage({ ledger }), ledger.previousImageRef);
-  assert.equal(selectServerRollbackImage({
-    explicitImageRef: 'registry.fly.io/beeline-server:named', ledger,
-  }), 'registry.fly.io/beeline-server:named');
-  assert.throws(() => selectServerRollbackImage({ ledger: {} }), /no valid previous/);
-});
-
 test('server deployment plan prints both success and rollback ordering', () => {
   const root = mkdtempSync(join(tmpdir(), 'beeline-canary-plan-'));
   try {
@@ -506,7 +373,7 @@ test('each component job result is its release checkpoint', () => {
     server: { result: 'success', outputs: {} },
     helper: { result: 'skipped', outputs: {} },
     mobile_ota: { result: 'skipped', outputs: {} },
-    mobile_ota_after_native: { result: 'success', outputs: { completed_at: '1700000600' } },
+    mobile_ota_after_proof: { result: 'success', outputs: { completed_at: '1700000600' } },
     mobile_native_android: { result: 'success', outputs: {} },
     mobile_native_ios: { result: 'skipped', outputs: {} },
     desktop_installers: { result: 'failure', outputs: {} },
@@ -516,18 +383,13 @@ test('each component job result is its release checkpoint', () => {
   assert.deepEqual(checkpointsFromJobs(needs(), identity), [
     { component: 'server', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `server-artifact-v0.0.9-${NEW_SHA}` },
     { component: 'mobile-ota', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked',
-      artifactRef: `mobile-ota-promoted-v0.0.9-${NEW_SHA}`, completedAt: 1_700_000_600 },
+      artifactRef: `mobile-ota-release-v0.0.9-${NEW_SHA}`, completedAt: 1_700_000_600 },
     { component: 'website', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `website-v0.0.9-${NEW_SHA}` },
     { component: 'mobile-native', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `mobile-native-v0.0.9-${NEW_SHA}` },
   ]);
-  // An OTA job that failed after production promotion started records it.
-  const promotedOta = checkpointsFromJobs(needs({
-    mobile_ota_after_native: { result: 'failure', outputs: { promote_started: 'true' } },
-  }), identity).find((checkpoint) => checkpoint.component === 'mobile-ota');
-  assert.equal(promotedOta.state, 'promoted');
-  // One that failed before promotion leaves the OTA pending.
+  // A failed OTA job leaves the OTA pending; a rerun asks EAS what shipped.
   assert.ok(!checkpointsFromJobs(needs({
-    mobile_ota_after_native: { result: 'failure', outputs: { promote_started: '' } },
+    mobile_ota_after_proof: { result: 'failure', outputs: {} },
   }), identity).some((checkpoint) => checkpoint.component === 'mobile-ota'));
   // A required native platform that did not build leaves mobile-native unchecked.
   assert.ok(!checkpointsFromJobs(needs({ mobile_native_android: { result: 'failure', outputs: {} } }), identity)
@@ -538,7 +400,7 @@ test('each component job result is its release checkpoint', () => {
     helper: { result: 'success', outputs: {} },
     initialize: { result: 'success', outputs: { ...needs().initialize.outputs, run_helper: 'true' } },
   }), identity));
-  assert.deepEqual(Object.entries(retryPlan(state)).filter(([, open]) => open).map(([component]) => component), ['desktop']);
+  assert.deepEqual(Object.entries(pendingComponents(state)).filter(([, open]) => open).map(([component]) => component), ['desktop']);
 });
 
 test('routine auto selection catches lagging consumers from each published component sha', () => {
@@ -555,8 +417,6 @@ test('routine auto selection catches lagging consumers from each published compo
     'mobile-ota',
     'website',
   ]);
-  assert.equal(releaseVersionForSource(deliveredPrevious(), NEW_SHA), 'v0.0.9');
-  assert.equal(releaseVersionForSource({ ...deliveredPrevious(), sourceSha: NEW_SHA }, NEW_SHA), 'v0.0.8');
 });
 
 test('routine CLI derives lagging consumers from real published git history', () => {
@@ -597,10 +457,6 @@ test('routine CLI derives lagging consumers from real published git history', ()
     const summaryPath = join(root, 'summary.json');
     writeFileSync(previousPath, `${JSON.stringify(previous)}\n`);
 
-    assert.equal(
-      run('node', [RELEASE_SCRIPT, 'release-version', '--previous', previousPath, '--sha', releaseSha], root).trim(),
-      previous.version,
-    );
     run('node', [
       RELEASE_SCRIPT, 'component-paths', '--previous', previousPath, '--sha', releaseSha,
       '--output', componentPathsPath, '--paths-output', pathsPath,
@@ -633,7 +489,7 @@ test('routine CLI derives lagging consumers from real published git history', ()
   }
 });
 
-test('routine same-head release supplements lagging shared UI consumers and retries in place', () => {
+test('routine same-head release supplements lagging shared UI consumers and reruns in place', () => {
   const previous = deliveredPrevious();
   previous.sourceSha = NEW_SHA;
   previous.components.server = {
@@ -655,7 +511,7 @@ test('routine same-head release supplements lagging shared UI consumers and retr
     component === 'server' ? [] : sharedUiPaths,
   ]));
   const selected = selectReleaseComponentsFromPublishedInputs(componentPaths);
-  const version = releaseVersionForSource(previous, NEW_SHA);
+  const version = previous.version;
   const state = initializeRelease({
     version,
     sourceSha: NEW_SHA,
@@ -673,33 +529,20 @@ test('routine same-head release supplements lagging shared UI consumers and retr
     assert.equal(state.components[component].sourceSha, NEW_SHA);
   }
 
-  for (const stage of ['built', 'promoted', 'checked']) markComponentStage(state, 'mobile-ota', stage);
-  const retry = initializeRelease({
-    version,
-    sourceSha: NEW_SHA,
-    retry: state,
-  });
-  assert.equal(retry.components['mobile-ota'].state, 'checked');
-  assert.equal(retry.components.website.state, 'pending');
-  assert.deepEqual(retryPlan(retry), {
-    server: false,
-    helper: false,
-    'mobile-ota': false,
-    'mobile-native': false,
-    desktop: false,
-    website: true,
-  });
+  // A rerun plans the same legs again; each leg asks its system what shipped.
+  const rerun = initializeRelease({ version, sourceSha: NEW_SHA, previous, selectedComponents: selected });
+  assert.deepEqual(pendingComponents(rerun), pendingComponents(state));
 
-  for (const stage of ['built', 'promoted', 'checked']) markComponentStage(retry, 'website', stage);
-  finalizeRelease(retry);
+  for (const component of selected) for (const stage of ['built', 'promoted', 'checked']) markComponentStage(rerun, component, stage);
+  finalizeRelease(rerun);
   const noChanges = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [component, []]));
   const noOp = initializeRelease({
-    version: releaseVersionForSource(retry, NEW_SHA),
+    version: rerun.version,
     sourceSha: NEW_SHA,
-    previous: retry,
+    previous: rerun,
     selectedComponents: selectReleaseComponentsFromPublishedInputs(noChanges),
   });
-  assert.deepEqual(noOp, retry);
+  assert.deepEqual(noOp, rerun);
 });
 
 test('R-release-timeout: routine native input changes carry binaries while recovery remains explicit', () => {
@@ -720,9 +563,8 @@ test('R-release-timeout: routine native input changes carry binaries while recov
     for (const storeTrack of ['internal', 'beta', 'production']) {
       assert.ok(select({ storeTrack }).includes('mobile-native'));
     }
-    assert.throws(() => select({ runtimePin: { changed: true, previous: '23', next: '24' } }), /--store-track/);
-    assert.ok(!select({ runtimePin: { changed: true, previous: '24', next: '23' },
-      allowPinRestore: true }).includes('mobile-native'));
+    // A pin change is not a store consent: it neither fails nor adds a store leg.
+    assert.ok(!select({ runtimePin: { changed: true, previous: '23', next: '24' } }).includes('mobile-native'));
   }
 });
 
@@ -818,19 +660,6 @@ test('store choice explicitly selects a native mobile binary', () => {
   assert.ok(!selectReleaseComponents(['.github/workflows/unified-release.yml']).includes('mobile-native'));
 });
 
-test('runtime pin selection requires a native store submission only when the pin changes', () => {
-  const unchanged = { changed: false, previous: '23', next: '23' };
-  const changed = { changed: true, previous: '23', next: '24' };
-  assert.deepEqual(selectReleaseComponents(['apps/mobile/sources/index.ts'], { runtimePin: unchanged }), [
-    'mobile-ota', 'website',
-  ]);
-  assert.throws(
-    () => selectReleaseComponents([], { selection: 'mobile-ota', storeTrack: 'internal', runtimePin: changed }),
-    /runtime pin changed 23 -> 24: mobile-native \(store binaries\) must ship in this release; add it or revert the pin/,
-  );
-  assert.deepEqual(selectReleaseComponents([], { storeTrack: 'internal', runtimePin: changed }), ['mobile-native']);
-});
-
 test('runtime pin change reads the published and release trees', () => {
   const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
     gitShow: (sha) => JSON.stringify({ runtimeVersion: sha === OLD_SHA ? '23' : '24' }),
@@ -854,6 +683,81 @@ test('runtime pin change reads the published and release trees', () => {
   assert.deepEqual(state.plan.nativePlatforms, ['android', 'ios']);
 });
 
+// Reproduction PIN-STORE-NONE (runs 40980492449, 40803542083, 40686644708,
+// 40027907679, 39312903562): a merge bumped the phone runtime pin and a
+// routine release (store_track none) failed in planning with
+// "runtime pin changed ... --store-track must name the store submission track".
+test('PIN-STORE-NONE: a runtime-pin change with store_track none plans an OTA release and no store leg', () => {
+  const changed = { changed: true, changedPlatforms: ['android'], previous: { android: '40', ios: '36' }, next: { android: '43', ios: '36' } };
+  for (const select of [
+    () => selectReleaseComponents(['apps/mobile/native-fingerprint.json', 'apps/mobile/sources/index.ts'], {
+      selection: 'auto', storeTrack: 'none', runtimePin: changed,
+    }),
+    () => selectReleaseComponentsFromPublishedInputs(Object.fromEntries(RELEASE_COMPONENTS.map((component) =>
+      [component, ['apps/mobile/native-fingerprint.json', 'apps/mobile/sources/index.ts']])), {
+      selection: 'auto', storeTrack: 'none', runtimePin: changed,
+    }),
+  ]) {
+    const selected = select();
+    assert.ok(selected.includes('mobile-ota'));
+    assert.ok(!selected.includes('mobile-native'));
+  }
+  // Explicit selections without mobile-native no longer fail either.
+  assert.deepEqual(selectReleaseComponents([], { selection: 'mobile-ota', storeTrack: 'none', runtimePin: changed }), ['mobile-ota']);
+  // Store publishing stays explicit consent: only --store-track adds it.
+  assert.deepEqual(selectReleaseComponents([], { storeTrack: 'internal', runtimePin: changed }), ['mobile-native']);
+});
+
+test('PIN-STORE-NONE: the plan CLI returns a plan, a notice and no store leg for a pin change', () => {
+  const root = mkdtempSync(join(tmpdir(), 'beeline-pin-test-'));
+  try {
+    run('git', ['init', '--quiet'], root);
+    run('git', ['config', 'user.email', 'release-test@usebeeline.app'], root);
+    run('git', ['config', 'user.name', 'Release Test'], root);
+    const pin = (android) => JSON.stringify({ android: { runtimeVersion: android }, ios: { runtimeVersion: '36' } });
+    writeFixture(root, 'apps/mobile/native-fingerprint.json', `${pin('40')}\n`);
+    run('git', ['add', '.'], root);
+    run('git', ['commit', '--quiet', '-m', 'store pins'], root);
+    const oldSha = run('git', ['rev-parse', 'HEAD'], root).trim();
+    writeFixture(root, 'apps/mobile/native-fingerprint.json', `${pin('43')}\n`);
+    writeFixture(root, 'apps/mobile/sources/index.ts', 'export const fix = true;\n');
+    run('git', ['add', '.'], root);
+    run('git', ['commit', '--quiet', '-m', 'bump android runtime'], root);
+    const releaseSha = run('git', ['rev-parse', 'HEAD'], root).trim();
+    const previous = deliveredPrevious();
+    previous.sourceSha = oldSha;
+    for (const component of RELEASE_COMPONENTS) previous.components[component].sourceSha = oldSha;
+    previous.components['mobile-ota'].otaBranch = 'release-v0.0.8';
+    previous.components['mobile-ota'].otaTargets = ['android@40', 'android@39', 'android@38', 'ios@36', 'ios@34', 'ios@31'];
+    const previousPath = join(root, 'previous.json');
+    writeFileSync(previousPath, `${JSON.stringify(previous)}\n`);
+    run('node', [RELEASE_SCRIPT, 'component-paths', '--previous', previousPath, '--sha', releaseSha,
+      '--output', join(root, 'component-paths.json'), '--paths-output', join(root, 'paths.txt')], root);
+    const outputs = join(root, 'outputs.txt');
+    const stdout = run('node', [
+      RELEASE_SCRIPT, 'plan', '--version', 'v0.0.9', '--sha', releaseSha, '--previous', previousPath,
+      '--paths', join(root, 'paths.txt'), '--component-paths', join(root, 'component-paths.json'),
+      '--selection', 'auto', '--store-track', 'none', '--state', join(root, 'state.json'),
+      '--summary', join(root, 'summary.json'), '--outputs', outputs,
+    ], root);
+    assert.match(stdout, /Runtime pin changed without a store release::android 40 -> 43/);
+    const lines = Object.fromEntries(readFileSync(outputs, 'utf8').trim().split('\n').map((line) => {
+      const index = line.indexOf('=');
+      return [line.slice(0, index), line.slice(index + 1)];
+    }));
+    assert.equal(lines.run_mobile_ota, 'true');
+    assert.equal(lines.run_mobile_native, 'false');
+    assert.equal(lines.runtime_pin_changed, 'true');
+    // The OTA leg is handed the runtimes the previous release served.
+    assert.deepEqual(JSON.parse(lines.ota_memory).previousTargets.map((t) => `${t.platform}@${t.runtimeVersion}`),
+      ['android@40', 'android@39', 'android@38', 'ios@36', 'ios@34', 'ios@31']);
+    assert.equal(JSON.parse(lines.ota_memory).previousBranch, 'release-v0.0.8');
+    assert.equal(JSON.parse(lines.release_state).plan.paths, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('per-platform pins select only the changed platform native release', () => {
   for (const changed of ['android', 'ios']) {
     const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
@@ -863,13 +767,7 @@ test('per-platform pins select only the changed platform native release', () => 
       }),
     });
     assert.deepEqual(pins.changedPlatforms, [changed]);
-    assert.throws(() => selectReleaseComponents([], { runtimePin: pins }), /--store-track/);
-    assert.throws(
-      () => selectReleaseComponents([], {
-        selection: 'mobile-ota', storeTrack: 'internal', runtimePin: pins,
-      }),
-      /mobile-native/,
-    );
+    assert.deepEqual(selectReleaseComponents([], { runtimePin: pins }), []);
     const selectedComponents = selectReleaseComponents([], {
       storeTrack: 'internal', runtimePin: pins,
     });
@@ -889,38 +787,6 @@ test('per-platform pins select only the changed platform native release', () => 
   assert.throws(() => runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
     gitShow: () => JSON.stringify({ ios: { runtimeVersion: '24' } }),
   }), /android.runtimeVersion/);
-});
-
-test('reproduces #1088: a runtime pin bump cannot plan an OTA without store binaries', () => {
-  assert.throws(
-    () => selectReleaseComponents(['apps/mobile/native-fingerprint.json'], {
-      selection: 'auto',
-      storeTrack: 'none',
-      runtimePin: { changed: true, previous: '23', next: '24' },
-    }),
-    /runtime pin changed 23 -> 24/,
-  );
-});
-
-test('allowPinRestore ships an OTA-only pin restore without mobile-native and records pinRestore', () => {
-  const pins = runtimePinChangeFromPublishedInputs(deliveredPrevious(), NEW_SHA, {
-    gitShow: (sha) => JSON.stringify(sha === OLD_SHA ? { runtimeVersion: '23' } : {
-      android: { runtimeVersion: '24' }, ios: { runtimeVersion: '24' },
-    }),
-  });
-  assert.equal(pins.changed, true);
-  const selected = selectReleaseComponents(['apps/mobile/sources/index.ts'], {
-    selection: 'auto', storeTrack: 'none', runtimePin: pins, allowPinRestore: true,
-  });
-  assert.ok(selected.includes('mobile-ota'));
-  assert.ok(!selected.includes('mobile-native'));
-  const state = initializeRelease({
-    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
-    selectedComponents: selected, runtimePin: pins,
-  });
-  state.plan.pinRestore = true;
-  assert.equal(state.plan.pinRestore, true);
-  assert.deepEqual(state.plan.nativePlatforms, ['android', 'ios']);
 });
 
 test('the path map has no duplicate matcher and names only real components', () => {
@@ -994,7 +860,7 @@ test('same-identity selection supplements only a stale carried component', () =>
 
   assert.equal(supplemental.state, 'planned');
   assert.deepEqual(supplemental.plan.selected, ['helper']);
-  assert.deepEqual(retryPlan(supplemental), {
+  assert.deepEqual(pendingComponents(supplemental), {
     server: false,
     helper: true,
     'mobile-ota': false,
@@ -1023,7 +889,7 @@ test('same-identity selection supplements only a stale carried component', () =>
     version: 'v0.0.9', sourceSha: NEW_SHA, previous: supplemental, selectedComponents: ['helper'],
   });
   assert.deepEqual(repeated, supplemental);
-  assert.ok(Object.values(retryPlan(repeated)).every((runnable) => !runnable));
+  assert.ok(Object.values(pendingComponents(repeated)).every((runnable) => !runnable));
 });
 
 test('same-identity auto selection with no source changes remains a no-op', () => {
@@ -1037,33 +903,7 @@ test('same-identity auto selection with no source changes remains a no-op', () =
   }), initial);
 });
 
-test('selective retry keeps the identity and reruns only an unfinished component', () => {
-  const state = initializeRelease({
-    version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents: ['server', 'helper'],
-  });
-  for (const stage of ['built', 'promoted', 'checked']) markComponentStage(state, 'server', stage);
-  markComponentStage(state, 'helper', 'built');
-  assert.deepEqual(retryPlan(state), {
-    server: false,
-    helper: true,
-    'mobile-ota': false,
-    'mobile-native': false,
-    desktop: false,
-    website: false,
-  });
-  const retry = initializeRelease({
-    version: 'v0.0.9', sourceSha: NEW_SHA, retry: state, startedAt: '2026-09-09T13:00:00.000Z',
-  });
-  assert.equal(retry.components.server.state, 'checked');
-  assert.equal(retry.components.helper.state, 'built');
-  assert.equal(retry.startedAt, '2026-09-09T13:00:00.000Z');
-  assert.throws(
-    () => initializeRelease({ version: 'v0.0.10', sourceSha: NEW_SHA, retry: state }),
-    /retry identity/,
-  );
-});
-
-test('retry checkpoints preserve successful build and promotion stages without regression', () => {
+test('checkpoints preserve successful build and promotion stages without regression', () => {
   const state = initializeRelease({
     version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(), selectedComponents: ['server'],
   });
@@ -1073,7 +913,7 @@ test('retry checkpoints preserve successful build and promotion stages without r
   ]);
   assert.equal(state.components.server.state, 'promoted');
   assert.equal(state.components.server.artifactRef, 'server-ref');
-  assert.equal(retryPlan(state).server, true);
+  assert.equal(pendingComponents(state).server, true);
 });
 
 test('final manifest refuses absent artifacts and records outcome duration', () => {
@@ -1172,9 +1012,12 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
-  assert.match(source, /version_args=\(release-version --sha "\$release_sha" --reserved-versions/);
-  assert.match(source, /version_args\+=\(--previous "\$previous"\)/);
-  assert.match(source, /release_sha="\$\{REQUESTED_SHA:-\$GITHUB_SHA\}"/);
+  // Identity comes from GitHub Releases: the previous record and any draft at
+  // this commit. Nothing is read from an earlier run.
+  const identity = workflow.jobs.initialize.steps.find((step) => step.id === 'identity');
+  assert.match(identity.run, /release-record\.mjs identity --sha "\$release_sha" --requested "\$REQUESTED_VERSION"/);
+  assert.match(identity.run, /ghr_create "\$version" --target "\$release_sha" .*--draft/);
+  assert.match(identity.run, /release_sha=\$\(git rev-parse --verify "\$\{REQUESTED_SHA:-\$GITHUB_SHA\}\^\{commit\}"\)/);
   assert.match(source, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
   // The checkout already holds full history; planning fetches nothing again.
   assert.doesNotMatch(workflow.jobs.initialize.steps.find((step) => step.id === 'plan').run, /git fetch/);
@@ -1183,96 +1026,51 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.server.if, "needs.initialize.outputs.run_server == 'true'");
   assert.match(source, /needs\.initialize\.outputs\.run_helper == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_mobile_ota == 'true'/);
-  // Server and the unchanged-pin OTA both start from the plan alone, so the
-  // two production host runners take them side by side.
+  // Server and the OTA both start from the plan alone, so the two production
+  // host runners take them side by side. The OTA never waits for a store
+  // binary; only a requested device proof holds it.
   assert.equal(workflow.jobs.server.needs, 'initialize');
   assert.equal(workflow.jobs.mobile_ota.needs, 'initialize');
-  assert.match(workflow.jobs.mobile_ota.if, /runtime_pin_changed != 'true' && inputs\.run_release_proof != true/);
-  assert.deepEqual(workflow.jobs.mobile_ota_after_native.needs, ['initialize', 'mobile_native_android', 'mobile_native_ios', 'release_proof']);
-  assert.match(workflow.jobs.mobile_ota_after_native.if, /runtime_pin_changed == 'true' \|\| inputs\.run_release_proof == true/);
-  assert.match(workflow.jobs.mobile_ota_after_native.if, /stage_mobile_native == 'checked'/);
-  assert.match(workflow.jobs.mobile_ota_after_native.if, /needs\.mobile_native_android\.result == 'success'/);
-  assert.match(workflow.jobs.mobile_ota_after_native.if, /needs\.mobile_native_ios\.result == 'success'/);
+  assert.deepEqual(workflow.jobs.mobile_ota_after_proof.needs, ['initialize', 'release_proof']);
   for (const [pinChanged, proof, expected] of [
-    ['false', false, 'mobile_ota'], ['true', false, 'mobile_ota_after_native'],
-    ['false', true, 'mobile_ota_after_native'], ['true', true, 'mobile_ota_after_native'],
+    ['false', false, 'mobile_ota'], ['true', false, 'mobile_ota'],
+    ['false', true, 'mobile_ota_after_proof'], ['true', true, 'mobile_ota_after_proof'],
   ]) {
     const values = {
       'needs.initialize.result': 'success',
       'needs.initialize.outputs.run_mobile_ota': 'true',
       'needs.initialize.outputs.runtime_pin_changed': pinChanged,
-      'needs.initialize.outputs.stage_mobile_native': 'pending',
-      'needs.initialize.outputs.native_android': 'true',
-      'needs.initialize.outputs.native_ios': 'true',
-      'needs.mobile_native_android.result': 'success',
-      'needs.mobile_native_ios.result': 'success',
       'inputs.run_release_proof': proof,
     };
-    const running = ['mobile_ota', 'mobile_ota_after_native'].filter((job) => githubGate(workflow.jobs[job].if, values));
+    const running = ['mobile_ota', 'mobile_ota_after_proof'].filter((job) => githubGate(workflow.jobs[job].if, values));
     assert.deepEqual(running, [expected], `pin changed ${pinChanged}, proof ${proof}`);
   }
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_native',
+    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
     'mobile_native_android', 'mobile_native_ios', 'desktop_installers', 'website', 'release_proof',
   ]);
   assert.equal(workflow.jobs.desktop_checkpoint, undefined);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_website == 'true'/);
-  // One result record: job results become checkpoints in release_result, not
-  // a dozen per-stage artifacts.
-  assert.doesNotMatch(source, /release-checkpoint-/);
-  // Two small native identity artifacts map store build numbers to runtimes.
-  assert.equal((source.match(/actions\/upload-artifact@v4/g) ?? []).length, 11);
+  // One result record: job results become checkpoints in release_result, and
+  // jobs hand facts over through job outputs, never through artifacts.
+  assert.doesNotMatch(source, /release-checkpoint-|unified-release-index|unified-release-state|unified-release-plan|server-image-ledger|store-runtime-|run-id:/);
   const result = workflow.jobs.release_result.steps.find((step) => step.id === 'result');
   assert.equal(result.env.NEEDS, '${{ toJSON(needs) }}');
+  assert.equal(result.env.RELEASE_STATE, '${{ needs.initialize.outputs.release_state }}');
   assert.match(result.run, /unified-release\.mjs job-checkpoints --needs/);
-  // A recovery whose earlier attempt already produced the complete merged
-  // helper artifact skips the cold Mac cargo builds and reuses it; a fresh
-  // identity builds the Mac bundles. The reuse decision is made once in
-  // initialize and consumed everywhere else.
-  const helperReuse = workflow.jobs.initialize.steps.find((step) => step.id === 'helper_reuse');
-  assert.match(helperReuse.uses, /actions\/github-script@v7/);
-  assert.equal(helperReuse.if, "steps.plan.outputs.run_helper == 'true'");
-  assert.match(workflow.jobs.initialize.outputs.helper_reuse_run_id, /steps\.helper_reuse\.outputs\.run_id/);
+  assert.match(result.run, /apply-facts --state/);
+  // The Mac bundles travel only inside this run; the helper leg merges them.
   const darwinDownloads = workflow.jobs.helper.steps.filter(
     (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
   );
   assert.equal(darwinDownloads.length, 2);
-  // The Mac merge inputs travel only when helper_macos produced them, so
-  // daemon-leg's own assertion still names them when they are absent.
-  const helperBuild = workflow.jobs.helper.steps.find(
-    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'build',
-  );
-  assert.match(helperBuild.with.reuse_run_id, /needs\.initialize\.outputs\.helper_reuse_run_id/);
-  for (const key of ['darwin_arm64_bundle_dir', 'darwin_x64_bundle_dir']) {
-    assert.match(helperBuild.with[key], /needs\.helper_macos\.result == 'success'/, key);
-  }
+  assert.ok(darwinDownloads.every((step) => step.with['run-id'] === undefined));
   const daemonLeg = parse(readFileSync(new URL('../.github/actions/daemon-leg/action.yml', import.meta.url), 'utf8'));
-  assert.equal(daemonLeg.inputs.reuse_run_id.default, '');
-  assert.equal(daemonLeg.runs.steps.filter((step) => step.id === 'reuse').length, 0);
-  const buildSteps = daemonLeg.runs.steps.filter((step) => String(step.if).includes("inputs.phase == 'build'"));
-  // Exactly one build step downloads the reused bytes; the fresh-build steps
-  // stay off for a reuse, and the caller installs Node, Rust and npm once.
-  assert.deepEqual(
-    buildSteps.map((step) => {
-      if (String(step.if).includes("inputs.reuse_run_id != ''")) return 'reuse';
-      if (String(step.if).includes("inputs.reuse_run_id == ''")) return 'build';
-      return 'always';
-    }),
-    ['reuse', 'build', 'build', 'always'],
-  );
+  assert.equal(daemonLeg.inputs.reuse_run_id, undefined);
+  assert.ok(!daemonLeg.runs.steps.some((step) => /artifact/.test(String(step.uses))));
   assert.ok(!daemonLeg.runs.steps.some((step) => /setup-node|rust-toolchain/.test(String(step.uses))));
-  // Promote reads the artifact back from the run that holds it.
-  const promoteDownload = daemonLeg.runs.steps.find(
-    (step) => step.uses === 'actions/download-artifact@v4' && String(step.if).includes("inputs.phase == 'promote'"),
-  );
-  assert.match(promoteDownload.with['run-id'], /inputs\.reuse_run_id \|\| github\.run_id/);
-  assert.ok(promoteDownload.with['github-token']);
-  const helperPromote = workflow.jobs.helper.steps.find(
-    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'promote',
-  );
-  assert.match(helperPromote.with.reuse_run_id, /needs\.initialize\.outputs\.helper_reuse_run_id/);
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);
   assert.doesNotMatch(source, /rolling [0-9]+ release attempts/);
@@ -1298,20 +1096,20 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.equal(notification['continue-on-error'], true);
   const summary = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Surface release outcome'));
   assert.match(summary.env.NOTIFICATION_STATE, /no_op == 'true'/);
+  const publishStep = 'Publish the one GitHub release record with its release.json and stable desktop downloads';
   for (const name of [
-    'Publish immutable attempt state for manual recovery of this identity',
-    'Create the one GitHub release record and preserve stable desktop downloads',
+    publishStep,
     'Notify clients without changing the authoritative release outcome',
-    'Finalize successful delivery after every selected promotion and record',
-    'Publish the one successful release index',
+    'Finalize the release record',
+    'Remove drafts this release supersedes',
   ]) {
     const step = workflow.jobs.release_result.steps.find((candidate) => candidate.name === name);
-    assert.match(step.if, /no_op != 'true'/);
+    assert.match(step.if, /no_op != 'true'/, name);
   }
-  assert.match(
-    workflow.jobs.release_result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads').if,
-    /steps\.result\.outputs\.outcome == 'success'/,
-  );
+  const publish = workflow.jobs.release_result.steps.find((step) => step.name === publishStep);
+  assert.match(publish.if, /steps\.result\.outputs\.outcome == 'success'/);
+  // The record is on the release before it is published.
+  assert.ok(publish.run.indexOf('ghr_upload_verified "$RELEASE_VERSION" "$state"') < publish.run.indexOf('ghr_publish'));
   assert.match(summary.env.NOTIFICATION_STATE, /steps\.notification\.outputs\.state/);
   const genuineFailure = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Fail the attempt'));
   assert.equal(genuineFailure.if, "steps.result.outputs.outcome != 'success'");
@@ -1321,12 +1119,13 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.doesNotMatch(release, /createWorkflowDispatch/);
   const resultStep = workflow.jobs.release_result.steps.find((step) => step.name === "Record each component job's result and classify the attempt");
   const otaLeg = parse(readFileSync(new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url), 'utf8'));
-  const otaLedger = otaLeg.runs.steps.find((step) => step.id === 'ledger');
-  assert.match(otaLedger.run, /no rollback ledger/);
-  assert.match(otaLedger.run, /completed_at=\$\(date \+%s\)/);
-  assert.equal(otaLeg.outputs.completed_at.value, '${{ steps.ledger.outputs.completed_at }}');
-  for (const job of ['mobile_ota', 'mobile_ota_after_native']) {
-    assert.equal(workflow.jobs[job].outputs.completed_at, '${{ steps.promote.outputs.completed_at }}');
+  const otaPromote = otaLeg.runs.steps.find((step) => step.id === 'promote');
+  assert.match(otaPromote.run, /ota-release\.mjs promote/);
+  assert.match(otaPromote.run, /completed_at=\$\(date \+%s\)/);
+  assert.equal(otaLeg.outputs.completed_at.value, '${{ steps.promote.outputs.completed_at }}');
+  for (const job of ['mobile_ota', 'mobile_ota_after_proof']) {
+    assert.equal(workflow.jobs[job].outputs.completed_at, '${{ steps.ota.outputs.completed_at }}');
+    assert.equal(workflow.jobs[job].outputs.ota_branch, '${{ steps.ota.outputs.ota_branch }}');
   }
   assert.match(resultStep.run, /unified-release\.mjs classify-attempt/);
   assert.doesNotMatch(resultStep.run, /build-ran|budget/);
@@ -1342,10 +1141,16 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const canaryIndex = serverLegActionSteps.findIndex((step) => step.name === 'Canary one Machine for ninety seconds, then update its peer');
   assert.ok(migrationIndex < canaryIndex);
   assert.doesNotMatch(serverLeg, /machines-touched|migration-failed\.json/);
-  assert.match(release, /unified-release-index/);
   assert.match(release, /store_track:/);
-  assert.match(rollback, /mobile-ota-rollback-/);
-  assert.match(serverRollback, /server-image-ledger-/);
+  // Rollbacks read the live systems and the published release record.
+  assert.match(rollback, /release-record\.mjs ota-rollback-target/);
+  assert.match(rollback, /ota-release\.mjs channel-branch --channel production/);
+  assert.match(serverRollback, /release-record\.mjs server-rollback-image/);
+  assert.match(serverRollback, /flyctl machine list --app beeline-server --json/);
+  for (const source of [rollback, serverRollback]) {
+    assert.deepEqual(parse(source).concurrency, { group: 'unified-production-release', 'cancel-in-progress': false });
+    assert.doesNotMatch(source, /(?:upload|download)-artifact/);
+  }
   assert.match(serverRollback, /default: true/);
   assert.match(serverRollback, /flyctl machine update/);
   assert.match(serverLeg, /MIGRATION_DATABASE_URL/);
@@ -1424,45 +1229,6 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   }
 });
 
-test('a desktop-carrying retry fetches this release\'s installers, never the previous release\'s', () => {
-  const release = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
-  const workflow = parse(release);
-  // Regression: on the v0.0.100-82f1cfb1 retry (runs 34879012393/34879066960)
-  // the release-record step read components.desktop.version (= the release
-  // being created, because desktop was already checked by an earlier attempt)
-  // as the previous version and `gh release download` answered `release not
-  // found`. A checked desktop carries THIS release's version, so the retry
-  // must fetch the original attempt's artifacts instead.
-  const locate = workflow.jobs.release_result.steps.find((step) => step.id === 'desktop_retry_artifacts');
-  assert.ok(locate, 'release_result must locate the original attempt\'s desktop installers');
-  assert.match(locate.if, /run_desktop != 'true'/);
-  assert.match(locate.if, /stage_desktop == 'checked'/);
-  assert.match(locate.if, /no_op != 'true'/);
-  assert.match(locate.uses, /actions\/github-script@v7/);
-  assert.match(locate.with.script, /beeline-desktop-release-/);
-  assert.match(locate.with.script, /listArtifactsForRepo/);
-  assert.match(locate.with.script, /core\.setFailed/);
-  const download = workflow.jobs.release_result.steps.find((step) => step.name === 'Download the desktop installers built by the original attempt');
-  assert.ok(download, 'release_result must download the original attempt\'s desktop installers');
-  assert.match(download.uses, /actions\/download-artifact@v4/);
-  assert.match(download.with['run-id'], /steps\.desktop_retry_artifacts\.outputs\.run_id/);
-  assert.ok(download.with['github-token']);
-  // Only a CARRIED desktop reads installers from the previous release.
-  const record = workflow.jobs.release_result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
-  assert.equal(record.env.STAGE_DESKTOP, "${{ needs.initialize.outputs.stage_desktop }}");
-  assert.match(record.run, /\[ "\$RUN_DESKTOP" != true \] && \[ "\$STAGE_DESKTOP" != checked \]/);
-  assert.match(record.run, /\[ "\$RUN_DESKTOP" = true \] \|\| \[ "\$STAGE_DESKTOP" = checked \]/);
-  // The fresh manifest is built whenever desktop installers belong to this
-  // release — a fresh build or a checked retry — and the rollback manifest
-  // reads the superseded release in both of those cases.
-  const manifest = workflow.jobs.release_result.steps.find((step) => step.name === 'Build the signed desktop update manifest');
-  assert.match(manifest.if, /needs\.initialize\.outputs\.run_desktop == 'true' \|\| needs\.initialize\.outputs\.stage_desktop == 'checked'/);
-  const preserve = workflow.jobs.release_result.steps.find((step) => step.name === 'Preserve the previous updater manifest for publication rollback');
-  assert.match(preserve.run, /\[ "\$RUN_DESKTOP" = true \] \|\| \[ "\$STAGE_DESKTOP" = checked \]/);
-  assert.match(preserve.run, /supersedes\?\.version/);
-  assert.match(preserve.run, /components\.desktop\.version/);
-});
-
 test('canonical routine release guidance is a single no-input dispatch', () => {
   const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
   const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
@@ -1493,82 +1259,6 @@ function evaluateWorkflowCondition(expression, context) {
   ));
 }
 
-test('every helper run has either a reused artifact or a Mac rebuild, never neither', () => {
-  const workflow = parse(
-    readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
-  );
-  const { helper_macos: macos, helper } = workflow.jobs;
-  const buildPhase = helper.steps.find(
-    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'build',
-  );
-  const promotePhase = helper.steps.find(
-    (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'promote',
-  );
-  const darwinDownload = helper.steps.find(
-    (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
-  );
-  // Both daemon-leg phases always run; the leg itself picks reuse or build.
-  assert.equal(buildPhase.if, undefined);
-  assert.equal(promotePhase.if, undefined);
-
-  function resolve({ reuseRunId, macResult }) {
-    const initialize = { result: 'success', outputs: { run_helper: 'true', helper_reuse_run_id: reuseRunId } };
-    const macosRuns = evaluateWorkflowCondition(macos.if, { inputs: {}, needs: { initialize }, steps: {} });
-    const needs = { initialize, helper_macos: { result: macosRuns ? macResult : 'skipped' } };
-    const context = { inputs: {}, needs, steps: {} };
-    return {
-      rebuilds: macosRuns,
-      helperRuns: evaluateWorkflowCondition(helper.if, context),
-      downloadsMacBundles: evaluateWorkflowCondition(darwinDownload.if, context),
-    };
-  }
-
-  // A fresh identity produces new Mac artifacts and merges them.
-  assert.deepEqual(resolve({ reuseRunId: '', macResult: 'success' }), {
-    rebuilds: true, helperRuns: true, downloadsMacBundles: true,
-  });
-  // A recovery whose merged artifact already exists skips the Mac entirely.
-  assert.deepEqual(resolve({ reuseRunId: '4242', macResult: 'success' }), {
-    rebuilds: false, helperRuns: true, downloadsMacBundles: false,
-  });
-  // A failed Mac build never promotes a helper with missing bytes.
-  assert.equal(resolve({ reuseRunId: '', macResult: 'failure' }).helperRuns, false);
-});
-
-test('fresh Mac bundle carry is optional and every failure selects the cold build', () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  const lookup = workflow.jobs.initialize.steps.find(step => step.id === 'previous_mac');
-  const steps = workflow.jobs.helper_macos.steps;
-  const download = steps.find(step => step.id === 'previous_bundle');
-  const carry = steps.find(step => step.id === 'carry_bundle');
-  const cold = steps.find(step => step.name === 'Build and install-verify the native helper');
-  assert.match(lookup.if, /steps\.helper_reuse\.outputs\.run_id == ''/);
-  assert.match(lookup.with.script, /successful\.length !== 1/);
-  assert.match(lookup.with.script, /run\.data\.conclusion === 'success'/);
-  assert.equal(download['continue-on-error'], true);
-  assert.equal(carry['continue-on-error'], true);
-  assert.match(carry.run, /--carry-forward/);
-  for (const [downloadOutcome, carryOutcome, expectedCold] of [
-    ['skipped', 'skipped', true],
-    ['failure', 'skipped', true],
-    ['success', 'failure', true],
-    ['success', 'success', false],
-  ]) {
-    const context = { inputs: {}, needs: {}, steps: {
-      previous_bundle: { outcome: downloadOutcome }, carry_bundle: { outcome: carryOutcome },
-    } };
-    assert.equal(evaluateWorkflowCondition(carry.if, context), downloadOutcome === 'success');
-    assert.equal(evaluateWorkflowCondition(cold.if, context), expectedCold);
-  }
-  const upload = steps.find(step => step.uses === 'actions/upload-artifact@v4');
-  assert.match(upload.with.path, /mac-helper-inputs\.json/);
-  // The three-platform merge validates the recovery bootstrap in every input directory.
-  assert.match(upload.with.path, /beeline-bootstrap\.mjs\n/);
-  assert.match(upload.with.path, /beeline-bootstrap\.mjs\.sha256/);
-  assert.equal(lookup['continue-on-error'], true);
-  assert.match(workflow.jobs.initialize.outputs.previous_mac_run_id, /steps\.previous_mac\.outputs\.run_id/);
-});
-
 test('release_result records a fully delivered slow attempt as a success', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
@@ -1589,13 +1279,12 @@ test('release_result records a fully delivered slow attempt as a success', () =>
           ...Object.fromEntries(RELEASE_COMPONENTS.map((component) => [`run_${component.replace('-', '_')}`, 'true'])),
           native_android: 'true', native_ios: 'true',
         } },
-        ...Object.fromEntries(['server', 'helper', 'desktop_installers', 'website',
+        ...Object.fromEntries(['helper', 'desktop_installers', 'website',
           'mobile_native_android', 'mobile_native_ios'].map((job) => [job, { result: 'success', outputs: {} }])),
-        mobile_ota: { result: otaResult, outputs: { completed_at: String(now - 60) } },
-        mobile_ota_after_native: { result: 'skipped', outputs: {} },
+        server: { result: 'success', outputs: { image_ref: `registry.fly.io/beeline-server:0.0.9-${NEW_SHA.slice(0, 12)}`, previous_image_ref: 'registry.fly.io/beeline-server:0.0.8-111111111111' } },
+        mobile_ota: { result: otaResult, outputs: { completed_at: String(now - 60), ota_branch: 'release-v0.0.9', ota_targets: 'android@40,ios@36' } },
+        mobile_ota_after_proof: { result: 'skipped', outputs: {} },
       };
-      mkdirSync(join(root, 'release'), { recursive: true });
-      writeFileSync(join(root, 'release', 'unified-release.json'), JSON.stringify(state));
       const output = join(root, 'github-output');
       writeFileSync(output, '');
       execFileSync('bash', ['-c', classify.run], {
@@ -1608,6 +1297,9 @@ test('release_result records a fully delivered slow attempt as a success', () =>
           GITHUB_OUTPUT: output,
           TRIGGER_EPOCH: String(now - triggerAgoSeconds),
           NEEDS: JSON.stringify(needs),
+          RELEASE_STATE: JSON.stringify(state),
+          PREVIOUS_RECORD: '',
+          NO_OP: 'false',
           RELEASE_VERSION: identity.version,
           RELEASE_SHA: identity.sourceSha,
           RELEASE_ID: `${identity.version}-${identity.sourceSha}`,
@@ -1692,11 +1384,11 @@ test('the emulator release proof gates OTA promotion', () => {
   // is blocked loudly. Any OTA promoted without a proof is recorded UNPROVEN
   // on the release.
   assert.match(proof.if, /inputs\.run_release_proof == true/);
-  const ota = workflow.jobs.mobile_ota_after_native;
-  const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
-  assert.match(promote.if, /needs\.release_proof\.result == 'success' \|\| inputs\.run_release_proof != true/);
+  const ota = workflow.jobs.mobile_ota_after_proof;
+  // The refusal runs before anything is published.
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
-  assert.equal(refuse.if, "inputs.run_release_proof == true && needs.release_proof.result != 'success'");
+  assert.ok(ota.steps.indexOf(refuse) < ota.steps.findIndex((step) => step.uses === './.github/actions/mobile-ota-leg'));
+  assert.equal(refuse.if, "needs.release_proof.result != 'success'");
   assert.match(refuse.run, /exit 1/);
   assert.match(refuse.run, /The proof was explicitly requested for this release, so promotion stays blocked/);
   assert.match(refuse.run, /result: \$\{\{ needs\.release_proof\.result \}\}/);
@@ -1705,10 +1397,10 @@ test('the emulator release proof gates OTA promotion', () => {
 
   // An unrequested proof records the unproven promotion on the release.
   const result = workflow.jobs.release_result;
-  const fin = result.steps.find((step) => step.name === 'Finalize successful delivery after every selected promotion and record');
+  const fin = result.steps.find((step) => step.name === 'Finalize the release record');
   assert.match(fin.env.RELEASE_PROOF_UNPROVEN, /needs\.initialize\.outputs\.run_mobile_ota == 'true' && inputs\.run_release_proof != true/);
   assert.match(fin.run, /--unproven/);
-  const record = result.steps.find((step) => step.name === 'Create the one GitHub release record and preserve stable desktop downloads');
+  const record = result.steps.find((step) => step.name?.startsWith('Publish the one GitHub release record'));
   assert.match(record.env.RELEASE_PROOF_UNPROVEN, /needs\.initialize\.outputs\.run_mobile_ota == 'true' && inputs\.run_release_proof != true/);
   assert.match(record.run, /Promoted without a device proof/);
 });
@@ -1830,8 +1522,7 @@ test('the release proof is consent-gated; a requested proof that fails blocks pr
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
   const proofIf = workflow.jobs.release_proof.if;
-  const ota = workflow.jobs.mobile_ota_after_native;
-  const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
+  const ota = workflow.jobs.mobile_ota_after_proof;
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
 
   const proofEnv = ({ native_android = 'true', native_result = 'success', run_mobile_ota = 'true', requested = false } = {}) => ({
@@ -1855,7 +1546,7 @@ test('the release proof is consent-gated; a requested proof that fails blocks pr
   // run 34972989027's exact shape.
   const carried = proofEnv({ native_result: 'skipped', requested: true });
   assert.equal(githubGate(proofIf, carried), true, 'a skipped native build must not stop a requested proof');
-  assert.equal(githubGate(ota.if, carried), true, 'mobile_ota runs its build phase for the carried shape');
+  assert.equal(githubGate(ota.if, carried), true, 'the OTA waits for the requested proof in the carried shape');
   assert.equal(
     githubGate(proofIf, proofEnv({ native_android: 'false', native_result: 'skipped', requested: true })),
     true,
@@ -1864,23 +1555,17 @@ test('the release proof is consent-gated; a requested proof that fails blocks pr
   // Only a native build that genuinely FAILED stops a requested proof.
   assert.equal(githubGate(proofIf, proofEnv({ native_result: 'failure', requested: true })), false);
 
-  // Promotion truth table: OTA promotes whenever the proof was not requested;
-  // when it WAS requested, only a successful proof promotes and every other
-  // outcome blocks promotion AND fails the job at the refusal step.
-  const gateEnv = (proof, requested) => ({
-    'needs.initialize.outputs.stage_mobile_ota': 'pending',
-    'needs.release_proof.result': proof,
-    'inputs.run_release_proof': requested,
-  });
-  for (const proof of ['success', 'failure', 'skipped', 'cancelled']) {
-    assert.equal(githubGate(promote.if, gateEnv(proof, false)), true, `promote(${proof}, not requested)`);
-    assert.equal(githubGate(refuse.if, gateEnv(proof, false)), false, `refuse(${proof}, not requested)`);
+  // Promotion truth table: an unrequested proof routes the OTA through
+  // mobile_ota, which never waits; a requested proof routes it through
+  // mobile_ota_after_proof, where only a successful proof gets past the
+  // refusal step that runs before anything is published.
+  for (const requested of [false, true]) {
+    const values = { ...proofEnv({ requested }) };
+    assert.equal(githubGate(workflow.jobs.mobile_ota.if, values), !requested);
+    assert.equal(githubGate(ota.if, values), requested);
   }
-  assert.equal(githubGate(promote.if, gateEnv('success', true)), true, 'promote(success, requested)');
-  assert.equal(githubGate(refuse.if, gateEnv('success', true)), false, 'refuse(success, requested)');
-  for (const proof of ['failure', 'skipped', 'cancelled']) {
-    assert.equal(githubGate(promote.if, gateEnv(proof, true)), false, `promote(${proof}, requested)`);
-    assert.equal(githubGate(refuse.if, gateEnv(proof, true)), true, `refuse(${proof}, requested)`);
+  for (const proof of ['success', 'failure', 'skipped', 'cancelled']) {
+    assert.equal(githubGate(refuse.if, { 'needs.release_proof.result': proof }), proof !== 'success', `refuse(${proof})`);
   }
 });
 
@@ -1902,7 +1587,7 @@ test('a built-but-never-promoted mobile OTA classifies the attempt as a failed c
     { component: 'website', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: 'website-ref' },
   ]);
   assert.deepEqual(
-    Object.entries(retryPlan(state)).filter(([, runnable]) => runnable).map(([component]) => component),
+    Object.entries(pendingComponents(state)).filter(([, runnable]) => runnable).map(([component]) => component),
     ['mobile-ota'],
   );
   assert.throws(
@@ -1995,13 +1680,15 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.equal(appReview.if, "inputs.store_track == 'production'");
     assert.match(appReview.run, /ios-store-build\.mjs submit/);
     assert.ok(ios.steps.indexOf(appReview) > ios.steps.indexOf(iosSubmit));
-    assert.ok(ios.steps.indexOf(appReview) < ios.steps.findIndex((step) => step.name === 'Preserve iOS build evidence'));
-    const androidEvidence = androidSteps.find((step) => step.name === 'Preserve Android build evidence');
-    const iosEvidence = ios.steps.find((step) => step.name === 'Preserve iOS build evidence');
+    // Store build numbers reach the release record through job outputs.
+    const iosIdentity = ios.steps.find((step) => step.id === 'ios_identity');
+    assert.ok(ios.steps.indexOf(appReview) < ios.steps.indexOf(iosIdentity));
+    assert.equal(ios.outputs.build_number, '${{ steps.ios_identity.outputs.build_number }}');
+    assert.equal(android.outputs.version_code, '${{ steps.play-upload.outputs.version_code }}');
+    const androidEvidence = androidSteps.find((step) => step.name === 'Hand the AAB to the release proof in this run');
     assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');
     assert.match(androidEvidence.with.path, /android-build\.json[\s\S]*beeline\.aab/);
-    assert.equal(iosEvidence.with.name, 'mobile-native-ios-build-${{ needs.initialize.outputs.release_id }}');
-    assert.equal(iosEvidence.with.path, '${{ runner.temp }}/ios-build.json');
+    assert.ok(!ios.steps.some((step) => step.uses === 'actions/upload-artifact@v4'));
 
     assert.equal(cleanup.if, 'always()');
     assert.match(cleanup.run, /rm -f .*AuthKey_.*beeline-ios\.ipa/);
@@ -2047,59 +1734,6 @@ test('helper job accommodates the npm visibility deadline plus publication overh
   assert.ok(budgetMs >= NPM_VISIBILITY_TIMEOUT_MS + 5 * 60_000, 'helper job must allow the default npm visibility deadline plus five minutes for setup and publication');
 });
 
-
-test('release-manual-recovery: the dispatch initializer resumes a failed identity', () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  const plan = workflow.jobs.initialize.steps.find((step) => step.id === 'plan');
-  const dir = mkdtempSync(join(tmpdir(), 'manual-release-retry-'));
-  try {
-    mkdirSync(join(dir, 'retry'));
-    const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    // Keep git reads and the release planner real. Only remote operations are mocked.
-    const shell = `git() {
-      if [ "$1" = fetch ] || [ "$1" = merge-base ]; then return 0; fi
-      command git "$@"
-    }
-    ghr_requested_version_guard() { return 0; }
-    `;
-    // The sourced helper defines the guard, so install its stub after sourcing.
-    const run = plan.run.replace('. scripts/gh-release-retry.sh', '. scripts/gh-release-retry.sh\n' + shell);
-    {
-      const retry = initializeRelease({ version: 'v0.0.9', sourceSha });
-      retry.delivery = { state: 'failure', failureClass: 'component:server' };
-      writeFileSync(join(dir, 'retry/release-attempt.json'), JSON.stringify(retry));
-      const result = spawnSync('bash', ['-euc', run], { encoding: 'utf8', env: {
-        ...process.env, RUNNER_TEMP: dir, PLAN_ONLY: 'false', REQUESTED_SHA: sourceSha,
-        REQUESTED_VERSION: 'v0.0.9', SELECTION: 'all', STORE_TRACK: 'none',
-        GITHUB_OUTPUT: join(dir, 'outputs'), GITHUB_STEP_SUMMARY: join(dir, 'summary'),
-      } });
-      assert.equal(result.status, 0, result.stderr);
-      const summary = JSON.parse(readFileSync(join(dir, 'release-plan.json'), 'utf8'));
-      assert.equal(summary.identity, `v0.0.9@${sourceSha}`);
-      assert.ok(Object.values(summary.retry).every(Boolean));
-      assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /run_server=true/);
-      // Never promoted: the OTA recovers as a first attempt.
-      assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /^stage_mobile_ota=pending$/m);
-    }
-    {
-      // Promotion started before the attempt failed: the OTA leg recovers
-      // only that exact promotion.
-      const retry = initializeRelease({ version: 'v0.0.9', sourceSha });
-      applyComponentCheckpoints(retry, [{ component: 'mobile-ota', version: 'v0.0.9', sourceSha, state: 'promoted', artifactRef: 'ota' }]);
-      writeFileSync(join(dir, 'retry/release-attempt.json'), JSON.stringify(retry));
-      writeFileSync(join(dir, 'outputs'), '');
-      const result = spawnSync('bash', ['-euc', run], { encoding: 'utf8', env: {
-        ...process.env, RUNNER_TEMP: dir, REQUESTED_SHA: sourceSha,
-        REQUESTED_VERSION: 'v0.0.9', SELECTION: 'all', STORE_TRACK: 'none',
-        GITHUB_OUTPUT: join(dir, 'outputs'), GITHUB_STEP_SUMMARY: join(dir, 'summary'),
-      } });
-      assert.equal(result.status, 0, result.stderr);
-      const outputs = readFileSync(join(dir, 'outputs'), 'utf8');
-      assert.match(outputs, /^stage_mobile_ota=promoted$/m);
-      assert.match(outputs, /^run_mobile_ota=true$/m);
-    }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
 
 test('both native builds apply the one resolved store version before EAS, with no extra jobs or inputs', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
@@ -2179,4 +1813,92 @@ test('missing-sourcemap: web hosting waits for private map upload before deploym
   const web = workflow.jobs.website.steps.find(step => step.uses === './.github/actions/web-app-leg');
   assert.equal(web.with.sentry_auth_token, '${{ secrets.SENTRY_AUTH_TOKEN }}');
   assert.deepEqual(COMPONENT_PATH_RULES.find(rule => rule.exact === 'apps/mobile/scripts/prepare-web-sourcemaps.mjs').components, ['website']);
+});
+
+test('a carried desktop re-attaches the installers of the release that built them; a rerun rebuilds in-run', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const steps = workflow.jobs.release_result.steps;
+  // No step looks for an earlier attempt's installers.
+  assert.ok(!steps.some((step) => step.with?.['run-id'] || /listArtifactsForRepo/.test(step.with?.script ?? '')));
+  const download = steps.find((step) => step.name === 'Download newly built stable desktop installers');
+  assert.match(download.if, /run_desktop == 'true'/);
+  const record = steps.find((step) => step.name?.startsWith('Publish the one GitHub release record'));
+  assert.match(record.run, /if \[ "\$RUN_DESKTOP" != true \]; then/);
+  assert.match(record.run, /gh release download "\$previous_version" --pattern 'Beeline-\*'/);
+  const manifest = steps.find((step) => step.name === 'Build the signed desktop update manifest');
+  assert.match(manifest.if, /needs\.initialize\.outputs\.run_desktop == 'true'/);
+  const preserve = steps.find((step) => step.name === 'Preserve the previous updater manifest for publication rollback');
+  assert.match(preserve.run, /supersedes\?\.version/);
+  assert.match(preserve.run, /components\.desktop\.version/);
+});
+
+test('the helper asks Pages what shipped; a Mac bundle is carried from the published channel or built cold', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const { helper_macos: macos, helper } = workflow.jobs;
+  const shipped = macos.steps.find((step) => step.id === 'shipped');
+  assert.match(shipped.run, /m\.version===process\.env\.RELEASE_VERSION&&m\.sourceCommit===process\.env\.RELEASE_SHA/);
+  const download = macos.steps.find((step) => step.id === 'previous_bundle');
+  const carry = macos.steps.find((step) => step.id === 'carry_bundle');
+  const cold = macos.steps.find((step) => step.name === 'Build and install-verify the native helper');
+  assert.match(download.with.script, /downloadPagesChannel/);
+  assert.equal(download['continue-on-error'], true);
+  assert.equal(carry['continue-on-error'], true);
+  assert.match(carry.run, /--carry-forward/);
+  for (const [downloadOutcome, carryOutcome, expectedCold] of [
+    ['skipped', 'skipped', true], ['failure', 'skipped', true], ['success', 'failure', true], ['success', 'success', false],
+  ]) {
+    const context = { inputs: {}, needs: {}, steps: {
+      shipped: { outputs: { shipped: 'false' } },
+      previous_bundle: { outcome: downloadOutcome }, carry_bundle: { outcome: carryOutcome },
+    } };
+    assert.equal(evaluateWorkflowCondition(carry.if, context), downloadOutcome === 'success');
+    assert.equal(evaluateWorkflowCondition(cold.if, context), expectedCold);
+  }
+  // Already on Pages: nothing builds, and the helper leg skips both phases.
+  const shippedContext = { inputs: {}, needs: {}, steps: {
+    shipped: { outputs: { shipped: 'true' } }, previous_bundle: { outcome: 'skipped' }, carry_bundle: { outcome: 'skipped' },
+  } };
+  assert.equal(evaluateWorkflowCondition(cold.if, shippedContext), false);
+  for (const phase of ['build', 'promote']) {
+    const leg = helper.steps.find((step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === phase);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'true' } } } }), false);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'false' } } } }), true);
+  }
+  // A failed Mac build never promotes a helper with missing bytes.
+  const initialize = { result: 'success', outputs: { run_helper: 'true' } };
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'failure' } } }), false);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'success' } } }), true);
+  const upload = macos.steps.find((step) => step.uses === 'actions/upload-artifact@v4');
+  assert.match(upload.with.path, /mac-helper-inputs\.json/);
+  assert.match(upload.with.path, /beeline-bootstrap\.mjs\n/);
+  assert.match(upload.with.path, /beeline-bootstrap\.mjs\.sha256/);
+});
+
+// Reproduction ARTIFACT-NOT-FOUND (run 41070446048): beta was published, then
+// production promotion died on "Unable to download artifact(s): Not Found"
+// because the OTA candidate ledger travelled through an Actions artifact.
+test('ARTIFACT-NOT-FOUND: a rerun plans from the published record alone and reads no attempt file', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const plan = workflow.jobs.initialize.steps.find((step) => step.id === 'plan');
+  const dir = mkdtempSync(join(tmpdir(), 'release-rerun-'));
+  try {
+    const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const runPlan = () => {
+      writeFileSync(join(dir, 'outputs'), '');
+      const result = spawnSync('bash', ['-euc', plan.run], { encoding: 'utf8', env: {
+        ...process.env, RUNNER_TEMP: dir, RELEASE_SHA: sourceSha, RELEASE_VERSION: 'v0.0.9',
+        SELECTION: 'all', STORE_TRACK: 'none',
+        GITHUB_OUTPUT: join(dir, 'outputs'), GITHUB_STEP_SUMMARY: join(dir, 'summary'),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const outputs = readFileSync(join(dir, 'outputs'), 'utf8');
+      return outputs.replace(/"(?:startedAt|updatedAt)":"[^"]+"/g, '');
+    };
+    const first = runPlan();
+    assert.match(first, /^run_server=true$/m);
+    assert.match(first, /^run_mobile_ota=true$/m);
+    // The second attempt of the same identity plans exactly the same legs.
+    assert.equal(runPlan(), first);
+    assert.doesNotMatch(plan.run, /retry|attempt|artifact/i);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

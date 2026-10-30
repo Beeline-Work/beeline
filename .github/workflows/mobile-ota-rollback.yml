@@ -1,138 +1,90 @@
-# Manual recovery only: republish a known-good production update group. This
-# never releases current main. With no `rollback_group`, the predecessor is
-# read from the newest successful release run's `mobile-ota-promoted-<sha>`
-# ledger artifact. That ledger also supplies the exact current groups so the
-# rollback cannot overwrite a newer release or miss a rollout runtime. A
-# runtime's first production release has no predecessor group; its rollback
-# rolls every current target back to the embedded update instead.
+# Manual recovery only: point the production channel back at the previous
+# release's OTA branch. This never releases current main.
+#
+# The target comes from real systems, never from a run artifact: the
+# production channel says which branch phones get now, and the newest
+# published GitHub Release's release.json names its own OTA branch and the one
+# before it. If production serves a branch from a later attempt that never
+# published (it failed elsewhere), the rollback returns to the newest
+# published release. Runtimes the current branch serves but the rollback
+# branch lacks get a roll-back-to-embedded directive first, so no phone keeps
+# the bad update.
 name: Mobile OTA rollback recovery (does not release current main)
 
 on:
   workflow_dispatch:
     inputs:
-      rollback_group:
-        description: Optional comma-separated known-good source groups; defaults to the latest release ledger predecessor
+      branch:
+        description: Optional EAS branch to point production at (for example release-v0.2.31); defaults to the release before the live one
         type: string
         required: false
       dry_run:
-        description: Verify EAS rollback prerequisites and print the rollback command without changing production
+        description: Resolve and print the rollback without changing production
         type: boolean
         default: false
         required: false
 
 permissions:
-  actions: read
   contents: read
+
+# A rollback and a release never move the production pointer at the same time.
+concurrency:
+  group: unified-production-release
+  cancel-in-progress: false
 
 jobs:
   rollback:
-    name: Republish last-known-good production group
+    name: Point production at the previous release branch
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: git gh
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Find latest successful production-delivery ledger
-        id: ledger_run
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, { owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'unified-release.yml', status: 'success', per_page: 100 });
-            for (const run of runs) {
-              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({ owner: context.repo.owner, repo: context.repo.repo, run_id: run.id });
-              if (artifacts.data.artifacts.some((artifact) => artifact.name.startsWith('mobile-ota-promoted-') && !artifact.expired)) {
-                core.setOutput('run_id', String(run.id)); return;
-              }
-            }
-            core.setFailed('No non-expired successful production-delivery ledger was found.');
-
-      - name: Download last-known-good ledger
-        uses: actions/download-artifact@v4
-        with:
-          pattern: mobile-ota-promoted-*
-          path: ${{ runner.temp }}/last-good
-          merge-multiple: true
-          run-id: ${{ steps.ledger_run.outputs.run_id }}
-          github-token: ${{ github.token }}
-
-      - name: Resolve rollback source group
-        id: rollback_source
-        env:
-          EXPLICIT_GROUP: ${{ inputs.rollback_group }}
-        run: |
-          set -euo pipefail
-          group="$EXPLICIT_GROUP"
-          node -e '
-              const fs = require("node:fs"); const path = require("node:path");
-              const [root, output, explicit] = process.argv.slice(1);
-              const file = fs.readdirSync(root, { recursive: true }).find((entry) => entry.endsWith("mobile-ota-ledger.json"));
-              if (!file) throw new Error("downloaded artifact has no mobile-ota-ledger.json");
-              const ledger = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
-              // The scalar carries the complete target group set, including
-              // both iOS runtimes during rollout. Older ledgers fall back to
-              // their platform map.
-              const anchor = ledger.previousProductionGroupId ?? ledger.previousProductionGroupIds;
-              const ids = [...new Set((typeof anchor === "string" ? anchor.split(",") : Object.values(anchor ?? {})).map((id) => String(id).trim()).filter(Boolean))];
-              const current = ledger.production?.groupId ?? ledger.production?.groupIds;
-              const currentIds = [...new Set((typeof current === "string" ? current.split(",") : Object.values(current ?? {})).map((id) => String(id).trim()).filter(Boolean))];
-              const rollbackIds = explicit ? explicit.split(",").map((id) => id.trim()).filter(Boolean) : ids;
-              if (currentIds.length === 0) throw new Error("release ledger has no production.groupId");
-              if (explicit && rollbackIds.length === 0) throw new Error("explicit rollback_group resolved to no group id");
-              // The FIRST production release on a runtime has no earlier
-              // update group to republish, so the ledger carries no
-              // previousProductionGroupId. That is not a failure: the store
-              // binary built for that release carries the only known-good
-              // bundle, so the rollback rolls every current production target
-              // back to the embedded update instead.
-              const embeddedOnly = rollbackIds.length === 0;
-              if (embeddedOnly) console.log("no previousProductionGroupId on the ledger; rolling back to the embedded update of the release store binary");
-              fs.appendFileSync(output, "group_id=" + rollbackIds.join(",") + "\ncurrent_group_id=" + currentIds.join(",") + "\nembedded_only=" + embeddedOnly + "\n");
-            ' "$RUNNER_TEMP/last-good" "$GITHUB_OUTPUT" "$group"
-
-      # EAS loads app.config.js and its local Expo plugins before it can issue
-      # the guarded update:list/republish operation.
+      - uses: ./.github/actions/eas-cli
+      # EAS loads app.config.js and its local Expo plugins before any channel
+      # or branch command.
       - name: Install mobile dependencies for EAS project context
         working-directory: apps/mobile
-        run: npm ci
-
-      - name: Republish rollback group to production
-        working-directory: apps/mobile
+        run: bash ../../scripts/npm-ci-timed.sh
+      - name: Resolve the rollback branch
+        id: target
         env:
-          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
-          ROLLBACK_GROUP: ${{ steps.rollback_source.outputs.group_id }}
-          EXPECTED_CURRENT_GROUP: ${{ steps.rollback_source.outputs.current_group_id }}
-          EMBEDDED_ONLY: ${{ steps.rollback_source.outputs.embedded_only }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          EXPLICIT_BRANCH: ${{ inputs.branch }}
         run: |
           set -euo pipefail
-          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
-          if [ -z "${EXPO_TOKEN:-}" ]; then exit 2; fi
-          # This read-only probe exercises the same EAS project loading and
-          # production lookup that must succeed before an automatic rollback.
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            npx --yes eas-cli@22.2.0 update:list --branch production --limit 1 --json --non-interactive >/dev/null
-          fi
-          # Embedded-only mode serves a runtime's first production release: no
-          # predecessor group exists, so every current target rolls back to
-          # the embedded update of this release's store binary.
-          if [ "$EMBEDDED_ONLY" = "true" ]; then
-            args=(rollback --embedded --expected-current-group "$EXPECTED_CURRENT_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json")
-          else
-            args=(rollback --group "$ROLLBACK_GROUP" --expected-current-group "$EXPECTED_CURRENT_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json")
-          fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then args+=(--dry-run); fi
-          node scripts/ota-release.mjs "${args[@]}"
-
-      - name: Record rollback dry-run proof
-        if: inputs.dry_run
+          test -n "${EXPO_TOKEN:-}" || { echo 'EXPO_TOKEN is unavailable' >&2; exit 2; }
+          current=$(cd apps/mobile && node scripts/ota-release.mjs channel-branch --channel production)
+          echo "production currently points at: $current"
+          node scripts/release-record.mjs previous --output "$RUNNER_TEMP/record/release.json"
+          node scripts/release-record.mjs ota-rollback-target --record "$RUNNER_TEMP/record/release.json" \
+            --current "$current" --explicit "$EXPLICIT_BRANCH" | tee "$RUNNER_TEMP/target.txt"
+          {
+            echo "current=$current"
+            grep -E '^(branch|noop)=' "$RUNNER_TEMP/target.txt"
+          } >> "$GITHUB_OUTPUT"
+      - name: Point production at the rollback branch
+        if: steps.target.outputs.noop != 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          TARGET: ${{ steps.target.outputs.branch }}
+          CURRENT: ${{ steps.target.outputs.current }}
         run: |
-          printf '%s\n' '{"status":"dry-run","operation":"guarded-rollback-command"}' > "$RUNNER_TEMP/mobile-ota-rollback.json"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mobile-ota-rollback-${{ github.run_id }}
-          path: ${{ runner.temp }}/mobile-ota-rollback.json
-          if-no-files-found: error
-          retention-days: 90
+          set -euo pipefail
+          args=(rollback --channel production --to-branch "$TARGET" --expected-current "$CURRENT" --output "$RUNNER_TEMP/rollback.json")
+          if [ "${{ inputs.dry_run }}" = true ]; then args+=(--dry-run); fi
+          node scripts/ota-release.mjs "${args[@]}"
+          {
+            echo "## Phone OTA rollback${{ inputs.dry_run && ' (dry run)' || '' }}"
+            echo "- production: $CURRENT -> $TARGET"
+            echo '```json'
+            cat "$RUNNER_TEMP/rollback.json" 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,3 +1,4 @@
+import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
 import { NEXT_DAY_CHECKIN_SCHEMA } from './next-day-checkin.js';
@@ -3567,6 +3568,7 @@ export async function migrate(
      ON messages(room_id,(card->>'approvalId')) WHERE card_type='squire-approval-decision'`,
   ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
+  await ddlScript('agent corner holds', AGENT_CORNER_HOLDS_SCHEMA);
   await retryMigrationStep('corner forwarded item index', () => createIndexConcurrently(
     database, 'messages_source_room_idx',
     `CREATE INDEX CONCURRENTLY messages_source_room_idx

@@ -2112,7 +2112,7 @@ export class DaemonService {
             [command.root_source_message_id],
           )).rows[0];
           if (!actor) throw new Error('hold requires a human requester');
-          return setCornerHold(db, hold, actor.author_id);
+          return setCornerHold(db, hold, actor.author_id, authenticatedAgentId);
         });
         const reconcile = async () => { await this.github?.reconcileQueuedCorners(hold.cornerId); };
         if (this.afterCommit) this.afterCommit(reconcile);
@@ -8606,7 +8606,7 @@ export class DaemonService {
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       if (input.hold === true) {
         if (!commissionedBy) throw new Error('hold requires a human requester');
-        await setCornerHold(db, { cornerId }, commissionedBy);
+        await setCornerHold(db, { cornerId }, commissionedBy, agentId);
       }
       if (input.brief) {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];

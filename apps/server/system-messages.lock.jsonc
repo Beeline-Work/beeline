@@ -1,4 +1,5 @@
 // One-tap YouTube upload reservation and restoration metadata approved by lunchboxfortwo, message 3044ec74214ab08b7beb3d898e065d6d6b6f3e1bc5c15deeef16dbf6a1a57650 (brief revision 3). Only consumeStarterVideoPost and restoreStarterVideoPost snapshots changed; no visible System wording changed.
+// Agent hold attribution approved by lunchboxfortwo, message ca03506cb9c3e45ad66966427a7a45df4e1d5ece9da9bd55f491dcd1dab44229, brief revision 1: existing hold line names its agent setter; setCornerHold wrapper only, verb unchanged.
 // Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays through helper parameters and destructured bindings; no producer source or displayed wording changed.
 // Save to vault card and saved receipt approved by lunchboxfortwo, brief revision 2, message 2df3e0f5a54cd95512707fd11e51f20cc7c399f4bedf1934adf7f9bfdfd4634e; vault producers and their transitive wrappers only.
 // MCP send_message threaded-reply wrapper approved by lunchboxfortwo, Room request 7fd0f8d926c4f91c53dac705cb0735248ae1a6ea2630fb053e4c5e78c2810888 (brief revision 5, criterion 10); client-authored text, no System wording changes.
@@ -2228,11 +2229,14 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-holds.ts:setCornerHold:wrapper:4f53cda18c2baa0c",
+    "id": "src/corner-holds.ts:setCornerHold:wrapper:49693a3cec3712af",
     "file": "apps/server/src/corner-holds.ts",
     "kind": "wrapper",
-    "template": "writeHoldMessage(db, input.cornerId, row.id, actorId)",
-    "literals": [],
+    "template": "writeHoldMessage(db, input.cornerId, row.id, agentId ?? actorId)",
+    "literals": [
+      "binary:??",
+      "end:expression"
+    ],
     "occurrences": 1
   },
   {

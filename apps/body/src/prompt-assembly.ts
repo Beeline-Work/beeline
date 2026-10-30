@@ -8,6 +8,7 @@ import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 import type { MachineHost } from './machine-host.js';
+import type { KvmAccess } from './kvm-device-access.js';
 import { SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
 import { placeBeelineApps } from './minimal-tool-surface.js';
 
@@ -72,9 +73,10 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * agent gets and 4,970 for one surface's own rules. A code corner on an
  * Android host with the no-host-gh pull-request path is the largest prompt. A
  * capability-route rule adds only the 301 bytes beyond the former ceiling
- * required by the largest variant.
+ * required by the largest variant. A denied /dev/kvm adds its one advice
+ * line, at most the 320-byte `kvm` section budget.
  */
-export const SESSION_BUDGET_BYTES = 7_691;
+export const SESSION_BUDGET_BYTES = 8_011;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -109,6 +111,8 @@ export interface SessionPromptContext {
   readonly githubCli?: CornerGitHubCli;
   /** This agent's emulator console port, when the host has an Android SDK (`android-agent-env.ts`). */
   readonly android?: { readonly emulatorPort: string; readonly leased?: boolean };
+  /** This session's `/dev/kvm` probe (`kvm-device-access.ts`). Unprobed never claims it works. */
+  readonly kvm?: KvmAccess;
   readonly reviewerHandle?: string;
   /**
    * This agent holds the parent Room's reviewer post
@@ -320,7 +324,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 1_360,
     layer: 'session',
     surfaces: EVERYWHERE,
-    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, writableHome, worktree, android }) =>
+    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, writableHome, worktree, android, kvm }) =>
       paragraphs(
         machineHost &&
           `Already running on machine ${JSON.stringify(machineHost.hostname)}${machineHost.tailscaleName ? ` (MagicDNS: ${JSON.stringify(machineHost.tailscaleName)})` : ''}. Run commands locally; do not SSH to this machine.`,
@@ -354,10 +358,21 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           android &&
           (android.leased
             ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`. This corner keeps its emulator and app until the corner closes. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
-            : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`),
+            : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME${kvm?.status === 'works' ? ',' : ' and'} AVDs are in $ANDROID_AVD_HOME${kvm?.status === 'works' ? ', and /dev/kvm works' : ''}. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`),
         surface === 'repo-less-corner' &&
           "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with your native tools (or use scratch_io when mounted), then send them with post_artifact.\nDo not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.",
       ),
+  },
+  {
+    id: 'kvm',
+    topic: 'why /dev/kvm is denied',
+    why: {
+      'core.kvm': 'An agent denied /dev/kvm never learned whether to request a device grant or ask the host admin, and a prompt still said /dev/kvm works.',
+    },
+    budgetBytes: 320,
+    layer: 'session',
+    surfaces: EVERYWHERE,
+    render: ({ kvm }) => (kvm && 'advice' in kvm ? kvm.advice : ''),
   },
   {
     id: 'talking',

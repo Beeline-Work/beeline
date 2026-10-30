@@ -1,28 +1,51 @@
 import { spawnSync } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
 
-/** A mount cannot override the device's host ACL. Never try other devices or sudo. */
-export function prepareGrantedKvmAccess(devices: readonly string[], dependencies = {
+/**
+ * What this session can do with `/dev/kvm`. `advice` is the one line the agent
+ * reads in its prompt; `unavailable` (no device on this host) carries none.
+ */
+export type KvmAccess =
+  | { readonly status: 'works' }
+  | { readonly status: 'unavailable'; readonly detail: string }
+  | { readonly status: 'needs-grant'; readonly advice: string }
+  | { readonly status: 'host-denied'; readonly advice: string };
+
+const NEEDS_GRANT =
+  '/dev/kvm is present but this session cannot open it. To run an Android emulator, ask with request_grant(kind:device, target:"/dev/kvm", reason, purpose); an approved grant lets the helper open it next session.';
+
+function hostDenied(uid: number | undefined): string {
+  return uid === undefined
+    ? 'Your /dev/kvm grant is approved, but the host blocks this helper user and its uid is unknown. Ask the host admin to grant the helper user rw on /dev/kvm (docs/android-kvm-access.md); another grant will not help.'
+    : `Your /dev/kvm grant is approved, but the host blocks helper uid ${uid}. Ask the host admin to run \`sudo setfacl -m u:${uid}:rw /dev/kvm\` (docs/android-kvm-access.md); another grant will not help.`;
+}
+
+/**
+ * Probes `/dev/kvm` for this helper user. Only an approved grant attempts the
+ * exact user ACL; a mount cannot override the device's host ACL. Never try
+ * other devices or sudo.
+ */
+export function prepareKvmAccess(devices: readonly string[], dependencies = {
   uid: () => process.getuid?.(),
   probe: () => { const fd = openSync('/dev/kvm', 'r+'); closeSync(fd); },
   acl: (uid: number) => {
     const result = spawnSync('setfacl', ['-m', `u:${uid}:rw`, '/dev/kvm'], { encoding: 'utf8', timeout: 5_000 });
     if (result.error || result.status !== 0) throw new Error(result.error?.message ?? result.stderr.trim());
   },
-}): string | undefined {
-  if (!devices.includes('/dev/kvm')) return;
-  try { dependencies.probe(); return; } catch (error) {
+}): KvmAccess {
+  try { dependencies.probe(); return { status: 'works' }; } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EACCES')
-      return `/dev/kvm is unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      return { status: 'unavailable', detail: error instanceof Error ? error.message : String(error) };
   }
-  const uid = dependencies.uid();
-  if (uid === undefined || !Number.isSafeInteger(uid) || uid < 0)
-    return '/dev/kvm permission denied; cannot determine the helper host user';
+  if (!devices.includes('/dev/kvm')) return { status: 'needs-grant', advice: NEEDS_GRANT };
+  const raw = dependencies.uid();
+  const uid = raw !== undefined && Number.isSafeInteger(raw) && raw >= 0 ? raw : undefined;
+  if (uid === undefined) return { status: 'host-denied', advice: hostDenied(undefined) };
   try {
     dependencies.acl(uid);
     dependencies.probe();
-    return;
+    return { status: 'works' };
   } catch {
-    return `/dev/kvm permission denied for helper uid ${uid}. An approved device grant mounts the node but cannot bypass its host ACL. Ask the host administrator to grant this helper user read/write access on the host (see docs/android-kvm-access.md), then retry.`;
+    return { status: 'host-denied', advice: hostDenied(uid) };
   }
 }

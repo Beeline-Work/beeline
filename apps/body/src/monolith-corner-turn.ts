@@ -102,6 +102,7 @@ import {
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
+import { prepareKvmAccess } from './kvm-device-access.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import {
   approvedDeviceGrant,
@@ -1210,6 +1211,8 @@ export class MonolithCornerTurnLoop {
     // protected supervisorRoot above, so it needs its own re-bind.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
+    const kvm = prepareKvmAccess(grantedDevices);
+    if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -1401,6 +1404,7 @@ export class MonolithCornerTurnLoop {
       squireAvailable: Boolean(squireScope.relay),
       ...this.sessionPromptContext!,
       machineHost: await machineHost(),
+      kvm,
       githubCli: this.cornerGitHubCli,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }

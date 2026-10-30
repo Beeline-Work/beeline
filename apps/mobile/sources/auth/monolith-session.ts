@@ -425,10 +425,10 @@ export class MonolithSession {
   async fetch(
     input: string,
     init: RequestInit = {},
-    options: { timeoutMs?: number; idempotent?: boolean; fetchImpl?: typeof fetch } = {},
+    options: { timeoutMs?: number; idempotent?: boolean; fetchImpl?: typeof fetch; afterRoomDraw?: boolean } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
-    if (isOptionalRoomRequest(input)) {
+    if (options.afterRoomDraw ?? isOptionalRoomRequest(input)) {
       const draw = waitForRoomDraw(init.signal);
       if (draw) await draw;
       if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();

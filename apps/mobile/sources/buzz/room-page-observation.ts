@@ -15,7 +15,8 @@ export async function reportRoomPageObservation(
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ durationMs, failed, ...(network ? { network } : {}) }),
       },
-      { timeoutMs: 5_000 },
+      // Failed reads still report immediately when there is no Room to draw.
+      { timeoutMs: 5_000, afterRoomDraw: !failed },
     );
   } catch {
     // Metrics never gate navigation or paint.

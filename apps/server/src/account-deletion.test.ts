@@ -237,6 +237,41 @@ describe('deleteAccount', () => {
     )).rows).toEqual([{ ...before[0], deleted_by: DELETED_ACCOUNT_IDENTITY_ID }]);
   });
 
+  it('deletes an account with stored agent traces and preserves another account (R-ACCOUNT-TRACES)', async () => {
+    const partnerAgent = 'c'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Partner Bee','partner-bee')`,
+      [partnerAgent],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
+    // Both agents have diagnostics in the same surviving shared Room.
+    await database.query(
+      `INSERT INTO agent_turn_traces(room_id,request_id,agent_id,outcome,trace) VALUES
+         ($1,'owner-trace',$2,'complete','{"steps":[]}'::jsonb),
+         ($1,'partner-trace',$3,'complete','{"steps":["keep"]}'::jsonb)`,
+      [ROOM, AGENT, partnerAgent],
+    );
+    const partnerTrace = (await database.query(
+      `SELECT * FROM agent_turn_traces WHERE agent_id=$1`, [partnerAgent],
+    )).rows;
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(`SELECT 1 FROM agents WHERE owner_id=$1`, [OWNER], 0);
+    await expectRowCount(`SELECT 1 FROM agent_turn_traces WHERE agent_id=$1`, [AGENT], 0);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[PARTNER, partnerAgent]], 2);
+    await expectRowCount(`SELECT 1 FROM agents WHERE agent_id=$1 AND owner_id=$2`, [partnerAgent, PARTNER], 1);
+    expect((await database.query(
+      `SELECT * FROM agent_turn_traces WHERE agent_id=$1`, [partnerAgent],
+    )).rows).toEqual(partnerTrace);
+  });
+
   it('deletes the account and its agents through the real operation path, anonymising shared content', async () => {
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;

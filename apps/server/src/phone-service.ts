@@ -8494,6 +8494,7 @@ export class PhoneService {
       // Receipts, output streams and authority rows that point at the gone ids.
       await database.query(`DELETE FROM live_outputs WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM work_schedules WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);

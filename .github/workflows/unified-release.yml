@@ -693,8 +693,13 @@ jobs:
       needs.initialize.outputs.run_mobile_ota == 'true' &&
       needs.initialize.outputs.runtime_pin_changed != 'true' && inputs.run_release_proof != true
     runs-on: [self-hosted, beeline-prod-host]
-    # Six runtime targets (each pin plus the two latest shipped runtimes) and
-    # one bundle per platform.
+    env:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+      EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+      EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+      EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+      GH_TOKEN: ${{ github.token }}
+    # Export once per platform; store-live coverage shares those exports.
     timeout-minutes: 18
     outputs:
       completed_at: ${{ steps.promote.outputs.completed_at }}
@@ -746,6 +751,12 @@ jobs:
       (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
       (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success'))
     runs-on: [self-hosted, beeline-prod-host]
+    env:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+      EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+      EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+      EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+      GH_TOKEN: ${{ github.token }}
     timeout-minutes: 18
     outputs:
       completed_at: ${{ steps.promote.outputs.completed_at }}
@@ -990,6 +1001,18 @@ jobs:
           if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
             echo "::warning::Could not compare the Play listing; listing was not uploaded"
           fi
+      - name: Record uploaded Android runtime identity
+        if: steps.play-upload.outputs.version_code != ''
+        env:
+          STORE_BUILD_NUMBER: ${{ steps.play-upload.outputs.version_code }}
+        run: node scripts/write-store-runtime.mjs android "$STORE_BUILD_NUMBER" "$RUNNER_TEMP/store-runtime.json"
+      - name: Preserve Android runtime identity
+        if: steps.play-upload.outputs.version_code != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-runtime-android-${{ steps.play-upload.outputs.version_code }}
+          path: ${{ runner.temp }}/store-runtime.json
+          retention-days: 90
       - name: Retain R8 mapping by Play version code
         if: always() && steps.play-upload.outputs.version_code != ''
         uses: actions/upload-artifact@v4
@@ -1105,6 +1128,16 @@ jobs:
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
+      - name: Record uploaded iOS runtime identity
+        run: |
+          build_number=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).buildNumber' "$RUNNER_TEMP/ios-build.json")
+          node scripts/write-store-runtime.mjs ios "$build_number" "$RUNNER_TEMP/store-runtime.json"
+      - name: Preserve iOS runtime identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-runtime-ios-${{ github.run_id }}
+          path: ${{ runner.temp }}/store-runtime.json
+          retention-days: 90
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:

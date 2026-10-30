@@ -59,6 +59,9 @@ runs:
     - name: Initialize run clock and runner-local paths
       shell: bash
       run: |
+        if [ '${{ inputs.phase }}' = build ]; then
+          echo "OTA_LEG_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+        fi
         {
           echo "DELIVERY_INDEX=$RUNNER_TEMP/mobile-ota-delivery-index.json"
           echo "RUN_LEDGER=$RUNNER_TEMP/mobile-ota-ledger.json"
@@ -255,6 +258,14 @@ runs:
         if-no-files-found: error
         retention-days: 90
         overwrite: true
+    - name: Log OTA leg duration
+      if: inputs.phase == 'promote'
+      shell: bash
+      run: |
+        elapsed="$(( $(date +%s) - OTA_LEG_STARTED_AT ))"
+        echo "ota_leg_seconds=$elapsed"
+        printf 'ota_leg_total\t%s\n' "$elapsed" >> "$TIMINGS_FILE"
+        echo "OTA leg: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
     - name: Store release ledger, timings, and promotion proof
       if: inputs.phase == 'promote'
       uses: actions/upload-artifact@v4

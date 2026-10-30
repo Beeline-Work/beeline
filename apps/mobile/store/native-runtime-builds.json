@@ -1,0 +1,44 @@
+[
+  {
+    "platform": "android",
+    "buildNumber": "127",
+    "runtimeVersion": "38",
+    "evidence": "Upload versionCode 127 in run 39047023529 at 2026-10-17T16:04:30Z; pin was android@38 until 398f044c2 on Oct 18"
+  },
+  {
+    "platform": "android",
+    "buildNumber": "129",
+    "runtimeVersion": "39",
+    "evidence": "Upload versionCode 129 in run 39154561183 at 2026-10-18T18:41:53Z; source 6e51856d5c76b1ba1c0df948c0aaf10e2f0ba6fb pins android@39"
+  },
+  {
+    "platform": "android",
+    "buildNumber": "138",
+    "runtimeVersion": "40",
+    "evidence": "Play production available build 138; upload receipt in run 40028613502 at 2026-10-23T21:51:07Z; source 62a2695724540f2a300bb2f06fd9994fd72ab713 pins android@40"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "81",
+    "runtimeVersion": "31",
+    "evidence": "Unified production release run 36593389428: source 885f7b90b5eece8e99481d988611415a03f435ba pins ios@31; native job increments buildNumber 80 to 81"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "97",
+    "runtimeVersion": "35",
+    "evidence": "Unified production release run 39047023529: IPA verified at 2026-10-17T16:26:25Z; App Store build 7b67e991-6f97-449b-bf86-05886c319b49 VALID"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "98",
+    "runtimeVersion": "36",
+    "evidence": "Unified production release run 39150151270: IPA verified at 2026-10-18T18:06:08Z: app.usebeeline.mobile 0.2.23 (98), iOS runtime 36"
+  },
+  {
+    "platform": "ios",
+    "buildNumber": "88",
+    "runtimeVersion": "34",
+    "evidence": "Authenticated Expo EAS project 58f1e94e-5ce5-475e-9dde-3eaa9e36699c build b95f431a-f41f-4ba8-88db-e68ea9a86bbb: platform IOS, appBuildVersion 88, runtimeVersion 34 (observed 2026-10-30)"
+  }
+]

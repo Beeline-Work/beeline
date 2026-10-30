@@ -1,0 +1,39 @@
+# TEMPORARY read-only probe for the release-pipeline corner; removed before merge.
+# Lists App Store Connect build uploads and their file names (GET only).
+name: iOS upload identity probe (temporary)
+
+on:
+  push:
+    branches: [feature/corner-22cec696f18b]
+    paths: [.github/workflows/ios-upload-identity-probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: List recent build uploads and their files
+        env:
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          node --input-type=module -e "
+            import { appStoreClient } from './scripts/ios-store-build.mjs';
+            const api = appStoreClient();
+            const show = (label, value) => console.log(label, JSON.stringify(value, null, 1).slice(0, 6000));
+            for (const path of [
+              '/v1/apps/6803948500/buildUploads?limit=5&sort=-uploadedDate&include=buildUploadFiles,build',
+              '/v1/apps/6803948500/buildUploads?limit=5&include=buildUploadFiles',
+              '/v1/apps/6803948500/buildUploads?limit=5',
+            ]) {
+              try { const page = await api(path); show(path, page); break; } catch (error) { console.log(path, 'ERROR', error.message); }
+            }
+          "

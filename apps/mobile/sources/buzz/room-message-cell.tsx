@@ -39,12 +39,14 @@ export type RoomMessageRenderer = (
   context: RoomMessageRenderContext,
 ) => React.ReactNode;
 
+const NO_ARRIVING_CARDS: ReadonlySet<string> = new Set();
+
 export function useRoomMessageRenderItem({
   render,
   continuedIds,
   precedingMessageById,
   messageById,
-  arrivingCardIds = new Set(),
+  arrivingCardIds = NO_ARRIVING_CARDS,
   cardMotionStore,
   firstNewMessageId,
   arrivalFlashMessageId = null,
@@ -66,6 +68,15 @@ export function useRoomMessageRenderItem({
 }) {
   const [fallbackMotionStore] = React.useState(createTranscriptCardMotionStore);
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
+  // The row body closes over Room handlers. A fresh payload recreates that
+  // function even when a cached row's text did not change. Keep the latest
+  // function in a ref so the cell's memo can skip unchanged rows.
+  const renderRef = React.useRef(render);
+  renderRef.current = render;
+  const stableRender = React.useCallback<RoomMessageRenderer>(
+    (item, context) => renderRef.current(item, context),
+    [],
+  );
   return React.useCallback(
     ({ item }: { item: ChatDisplayMessage }) => (
       <TranscriptCardMotionBoundary
@@ -76,7 +87,7 @@ export function useRoomMessageRenderItem({
         <RoomMessageCell
           {...presentationForMessage?.(item)}
           item={item}
-          render={render}
+          render={stableRender}
           startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
           continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
           immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
@@ -95,8 +106,8 @@ export function useRoomMessageRenderItem({
       messageById,
       precedingMessageById,
       presentationForMessage,
-      render,
       resolvedCardMotionStore,
+      stableRender,
       sourceLandingFlashMessageId,
     ],
   );

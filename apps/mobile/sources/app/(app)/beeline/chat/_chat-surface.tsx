@@ -118,7 +118,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
-import { cancelScheduledAnimationFrame, scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { cancelScheduledAnimationFrame, scheduleAnimationFrame, yieldToNextPaint } from '@/buzz/host-scheduler';
 import {
   activeChannelAtCursor,
   channelSuggestionCandidates,
@@ -4058,6 +4058,10 @@ export function BuzzChatSurface({
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
         }]);
         landAtOwnSend(provisionalId);
+        // Signing, the outbox write and the send request wait until this row
+        // has a frame. They used to occupy the JS thread first, so the row
+        // painted after the request had already left.
+        await yieldToNextPaint();
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       let preparedTransport: BuzzRigTransport | undefined;

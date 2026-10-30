@@ -324,4 +324,59 @@ describe('RoomMessageCell', () => {
     ).toHaveLength(1);
     expect(renderer.root.findByType('message-row' as any).props.id).toBe('host');
   });
+
+  it('does not render an unchanged row again when a fresh row arrives', () => {
+    const kept: ChatDisplayMessage = { id: 'kept', text: 'Cached', isUser: false, timestamp: 1 };
+    const arrived: ChatDisplayMessage = { id: 'fresh', text: 'Just arrived', isUser: true, timestamp: 2 };
+    const counts = new Map<string, number>();
+    function Harness({ rows }: { rows: ChatDisplayMessage[] }) {
+      // A fresh Room payload recreates this function. Unchanged rows must ignore that.
+      const render: RoomMessageRenderer = (item) => {
+        counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+        return React.createElement('message-row', {
+          id: item.id,
+          text: item.text,
+          deleted: item.deleted === true,
+        });
+      };
+      const renderItem = useRoomMessageRenderItem({
+        render,
+        continuedIds: new Set(),
+        precedingMessageById: new Map(rows.slice(1).map((row, index) => [row.id, rows[index]!])),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return React.createElement(React.Fragment, null,
+        ...rows.map((item) => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    const show = (rows: ChatDisplayMessage[]) => {
+      act(() => {
+        const node = React.createElement(Harness, { rows });
+        if (renderer) renderer.update(node);
+        else renderer = create(node);
+      });
+    };
+    show([kept]);
+    expect(counts.get('kept')).toBe(1);
+    show([kept, arrived]);
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('fresh')).toBe(1);
+    expect(renderer.root.findByProps({ id: 'kept' }).props.text).toBe('Cached');
+
+    const edited = { ...arrived, text: 'Edited after it arrived' };
+    show([kept, edited]);
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('fresh')).toBe(2);
+    expect(renderer.root.findByProps({ id: 'fresh' }).props.text).toBe('Edited after it arrived');
+
+    const deleted = { ...kept, text: 'This message was deleted', deleted: true };
+    show([deleted, edited]);
+    expect(counts.get('kept')).toBe(2);
+    expect(renderer.root.findByProps({ id: 'kept' }).props).toMatchObject({
+      text: 'This message was deleted',
+      deleted: true,
+    });
+    act(() => renderer.unmount());
+  });
 });

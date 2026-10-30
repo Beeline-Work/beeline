@@ -293,10 +293,10 @@ export function AgentProfileView({
             {detail.wake && (
               <View style={styles.section}>
                 <SettingsRow
-                  title="Wake link"
+                  title="Webhook URL"
                   description={wakeError ?? detail.wake.url ?? 'For bots that only run when called.'}
                   descriptionTone={wakeError ? 'danger' : undefined}
-                  descriptionDetail={detail.wake.keySet ? 'Wake key: set' : 'Wake key: not set'}
+                  descriptionDetail={detail.wake.keySet ? 'Auth token: set' : 'Auth token: not set'}
                   actionControl={{
                     label: detail.wake.url ? 'Replace' : 'Set', disabled: wakeSaving,
                     onPress: () => { setWakeUrl(detail.wake?.url ?? ''); setWakeKey(''); setWakeOpen(true); },
@@ -304,10 +304,10 @@ export function AgentProfileView({
                 />
                 {wakeOpen && (
                   <>
-                    <HullDialogInput accessibilityLabel="Wake link" value={wakeUrl}
+                    <HullDialogInput accessibilityLabel="Webhook URL" value={wakeUrl}
                       onChangeText={setWakeUrl} autoCapitalize="none" autoCorrect={false}
                       keyboardType="url" maxLength={2048} editable={!wakeSaving} />
-                    <HullDialogInput accessibilityLabel="Wake key" value={wakeKey}
+                    <HullDialogInput accessibilityLabel="Auth token" value={wakeKey}
                       onChangeText={setWakeKey} secureTextEntry autoCapitalize="none" autoCorrect={false}
                       autoComplete="off" placeholder={detail.wake.keySet ? 'Set — enter a replacement' : 'Not set'}
                       maxLength={512} editable={!wakeSaving} />
@@ -320,7 +320,7 @@ export function AgentProfileView({
                   </>
                 )}
                 {detail.wake.url && (
-                  <Button size="inline" label="Clear wake link" variant="quiet" disabled={wakeSaving}
+                  <Button size="inline" label="Clear webhook" variant="quiet" disabled={wakeSaving}
                     onPress={() => void updateWake(true)} />
                 )}
               </View>

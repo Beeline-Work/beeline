@@ -197,7 +197,7 @@ try {
   const html = await response.text(); assert.match(html, /Joins as/); assert.match(html, /Read your public Rooms/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
   transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the joining member, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
   if (process.argv.includes('--wake-setup')) process.env.BEELINE_MCP_WEBHOOK_KEY = 'synthetic-proof-sealing-key';
-  response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow', ...(process.argv.includes('--wake-setup') ? { wake_url: 'https://hooks.example/proof', wake_key: 'synthetic-wake-key' } : {}) }) });
+  response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow', ...(process.argv.includes('--wake-setup') ? { wake_url: 'https://hooks.example/proof', wake_key: ' Bearer synthetic-wake-key ' } : {}) }) });
   assert.equal(response.status, 302);
   const callback = new URL(response.headers.get('location'));
   assert.equal(callback.searchParams.get('state'), 'local-proof-state'); assert.equal(callback.searchParams.get('iss'), origin);
@@ -236,7 +236,7 @@ try {
       const handle = (await db.query('SELECT handle FROM identities WHERE id=$1', [member])).rows[0].handle;
       for (const path of ['consent', 'profile']) {
         if (path === 'profile') await options.phone.execute('updateAgentWake',
-          { workspaceId: workspace, agentId: member, url: 'https://hooks.example/proof', key: 'synthetic-wake-key' }, person);
+          { workspaceId: workspace, agentId: member, url: 'https://hooks.example/proof', key: ' bearer synthetic-wake-key ' }, person);
         const wake = await options.phone.execute('sendRoomMessage', { roomId: room, text: `@${handle} wake from ${path}` }, person);
         assert.equal((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, wake.messageId])).rowCount, 1);
         assert.equal(await deliverMcpMemberWebhooks(db, transport), 1);

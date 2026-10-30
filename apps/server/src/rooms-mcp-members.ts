@@ -492,7 +492,7 @@ export async function setMcpMemberWebhook(
     const literal = url.hostname.replace(/^\[|\]$/g, '');
     if (isIP(literal) && !publicMcpAddress(literal)) throw new McpToolError('Invalid webhook');
   }
-  const secret = input.secret === undefined ? undefined : input.secret;
+  const secret = typeof input.secret === 'string' ? input.secret.trimStart().replace(/^Bearer /i, '').trim() : input.secret;
   if (secret !== undefined && (typeof secret !== 'string' || !secret || secret.length > 512 || /[\u0000-\u0020\u007f]/.test(secret)))
     throw new McpToolError('Invalid webhook secret');
   if (secret !== undefined && !raw) throw new McpToolError('A webhook secret needs a webhook url');

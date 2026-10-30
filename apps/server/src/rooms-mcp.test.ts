@@ -15,6 +15,7 @@ import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS } from './rooms-mcp-agent.js';
 import { claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
+import { openSecrets } from './free-agents.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { runMaintenance } from './background.js';
 import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
@@ -128,7 +129,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const grant = await authorize(undefined, 'allow', undefined, undefined,
-        path === 'consent' ? { wake_url: 'https://hooks.example/wake', wake_key: secret } : {});
+        path === 'consent' ? { wake_url: 'https://hooks.example/wake', wake_key: ' Bearer ' + secret + ' ' } : {});
       expect((await exchange(grant)).status).toBe(200);
       const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.member_id;
       const operation = async (viewer: string, key?: string, url = 'https://hooks.example/wake') => {
@@ -140,10 +141,13 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       };
       expect((await operation(OTHER, 'attacker-key')).status).toBe(403);
       if (path === 'profile') {
-        const saved = await operation(USER, secret);
+        const saved = await operation(USER, ' bearer ' + secret + ' ');
         expect(saved.status).toBe(200);
         expect(JSON.stringify(await saved.json())).not.toContain(secret);
       }
+      const stored = (await db.query<{ callback_secret: string }>('SELECT callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
+      expect(openSecrets<string>('local-wake-test-key', stored.callback_secret)).toBe(secret);
+      expect((await operation(USER, 'Bearer bad token')).status).toBe(400);
       const profile = await phone.readAgent(WORKSPACE, member, USER);
       expect(profile?.wake).toEqual({ url: 'https://hooks.example/wake', keySet: true });
       expect(JSON.stringify(profile)).not.toContain(secret);
@@ -623,6 +627,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
+    expect(page).toContain('Webhook URL (optional)'); expect(page).toContain('Auth token (optional)');
+    expect(page).not.toMatch(/Wake (link|key)/);
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
     expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
@@ -1052,7 +1058,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect((await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/muse', secret: 'tag-secret' } })).isError).toBe(true);
       process.env.BEELINE_MCP_WEBHOOK_KEY = 'test-key';
       expect((await client.callTool({ name: 'set_webhook', arguments: { url: 'http://hooks.example/muse' } })).isError).toBe(true);
-      const set = await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/muse', secret: 'tag-secret' } });
+      const set = await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/muse', secret: ' Bearer tag-secret ' } });
       expect(set.isError).not.toBe(true);
       expect(JSON.stringify(set)).not.toContain('tag-secret');
       const stored = (await db.query<{ callback_url: string; callback_secret: string }>('SELECT callback_url,callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
@@ -1077,6 +1083,23 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     } finally {
       if (previous === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY; else process.env.BEELINE_MCP_WEBHOOK_KEY = previous;
     }
+  });
+  it.each([
+    [' Bearer abc123 ', 'abc123'], [' bearer abc123 ', 'abc123'],
+    ['bEaReR abc123', 'abc123'], ['bearerabc123', 'bearerabc123'],
+    ['Bearer bad token', null], ['Bearer ', null], ['Bearer abc\ttoken', null],
+  ])('MCP-WEBHOOK-TOKEN: set_webhook normalizes or refuses %j', async (input, expected) => {
+    vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-token-test-key');
+    try {
+      const { client, member } = await connected();
+      const result = await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/token', secret: input } });
+      if (expected === null) expect(result.isError).toBe(true);
+      else {
+        expect(result.isError).not.toBe(true);
+        const stored = (await db.query<{ callback_secret: string }>('SELECT callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
+        expect(openSecrets<string>('local-token-test-key', stored.callback_secret)).toBe(expected);
+      }
+    } finally { vi.unstubAllEnvs(); }
   });
   it('WEBHOOK-CLEAR-1: clearing a member webhook disables fallback and cancels queued tags', async () => {
     const { client, member, grant } = await connected();

@@ -16,7 +16,7 @@ A person is removed, never banned. In edit mode a manager who may change that pe
 
 ## AI-client wake setup
 
-An AI-client member's owner sees a Wake link row with Set, Replace and Clear wake link. The key status is only set or not set; replacement uses a masked empty input and never reads the stored bearer key. Saving returns the committed agent profile. Other viewers receive no wake configuration, and the server refuses their writes even if they are Workspace administrators. Clearing disables inherited callbacks and retires queued deliveries through the existing webhook setter.
+An AI-client member's owner sees a Webhook URL row with Set, Replace and Clear webhook. The key status is only set or not set; replacement uses a masked empty input and never reads the stored bearer key. Saving returns the committed agent profile. Other viewers receive no wake configuration, and the server refuses their writes even if they are Workspace administrators. Clearing disables inherited callbacks and retires queued deliveries through the existing webhook setter.
 
 The consent Allow form offers the same optional link and key for bots that only run when called. Empty fields preserve existing behavior. Both paths reuse the MCP webhook validation and sealing; the MCP `set_webhook` tool contract is unchanged. Built service and browser evidence: [wake setup proof](evidence/mcp-wake/README.md).
 

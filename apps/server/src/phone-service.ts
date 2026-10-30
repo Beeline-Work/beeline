@@ -4560,7 +4560,7 @@ export class PhoneService {
            WHERE m.member_id=$1`, [request.agentId, request.workspaceId])).rows[0];
         if (!member) throw new Error('AI-client member not found');
         if (member.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
-        if (typeof request.url !== 'string') throw new Error('Wake link is invalid');
+        if (typeof request.url !== 'string') throw new Error('Webhook URL is invalid');
         try {
           await this.database.transaction(async tx => {
             await setMcpMemberWebhook(tx, request.agentId, { url: request.url, secret: request.key });
@@ -4569,8 +4569,8 @@ export class PhoneService {
         } catch (error) {
           if (error instanceof McpToolError) {
             if (error.message.includes('not enabled'))
-              throw new Error('Wake keys are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.');
-            throw new Error('Wake setup is invalid. Use a public HTTPS link and a key without spaces or control characters.');
+              throw new Error('Auth tokens are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.');
+            throw new Error('Webhook setup is invalid. Use a public HTTPS URL and an auth token without internal spaces or control characters.');
           }
           throw error;
         }

@@ -70,8 +70,13 @@ try {
       console.log('Edit/Save passed');
     }
     if (decision === 'allow-wake') {
-      await page.getByLabel('Wake link (optional)', { exact: true }).fill('https://hooks.example/browser');
-      await page.getByLabel('Wake key (optional)', { exact: true }).fill('synthetic-browser-wake-key');
+      for (const theme of ['light', 'dark']) {
+        await page.emulateMedia({ colorScheme: theme });
+        await page.setViewportSize({ width: 640, height: 1100 });
+        await page.screenshot({ path: new URL(`../docs/evidence/mcp-wake/consent-after-${theme}.png`, import.meta.url).pathname, fullPage: true });
+      }
+      await page.getByLabel('Webhook URL (optional)', { exact: true }).fill('https://hooks.example/browser');
+      await page.getByLabel('Auth token (optional)', { exact: true }).fill(' Bearer synthetic-browser-wake-key ');
     }
     const posted = page.waitForResponse(
       (r) => r.request().method() === 'POST' && r.url().endsWith('/consent'),

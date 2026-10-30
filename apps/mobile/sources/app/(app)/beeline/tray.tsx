@@ -40,7 +40,6 @@ import {
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
-import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -69,7 +68,15 @@ function first(value: string | string[] | undefined): string {
 }
 
 function sourceTitle(bookmark: MessageBookmarkView): string {
-  return bookmark.roomName.replace(/^#/, '');
+  return bookmark.roomName.replace(/^#/, '').trim();
+}
+
+/** A saved preview draws `**bold**` as bold and drops any unpaired `**`. */
+function boldRuns(text: string): { text: string; bold: boolean }[] {
+  return text.split(/\*\*(?=\S)([^\n]*?\S)\*\*/).flatMap((part, index) => {
+    const run = index % 2 ? part : part.replace(/\*\*/g, '');
+    return run ? [{ text: run, bold: index % 2 === 1 }] : [];
+  });
 }
 
 function clearedLabel(clear: PendingClear): string {
@@ -666,28 +673,31 @@ export default function TrayScreen() {
         testID={`bookmark-${bookmark.messageId}`}
       >
         <View style={styles.originLine} testID={`bookmark-save-line-${bookmark.messageId}`}>
-          <View style={styles.originSource}>
+          <Text numberOfLines={1} style={styles.author}>
+            {bookmark.available ? bookmark.author?.name : 'Source unavailable'}
+          </Text>
+          <Text numberOfLines={1} style={styles.time}>{compactRelativeTime(bookmark.bookmarkedAt, now)}</Text>
+        </View>
+        {bookmark.available ? (
+          <Text numberOfLines={desktop ? 2 : 3} style={[styles.excerpt, styles.quote]}
+            testID={`bookmark-text-${bookmark.messageId}`}>
+            {boldRuns(bookmark.text ?? '').map((run, index) => run.bold
+              ? <Text key={index} style={styles.excerptBold}>{run.text}</Text>
+              : run.text)}
+          </Text>
+        ) : (
+          <Text style={styles.unavailable}>Deleted or no longer accessible</Text>
+        )}
+        {sourceTitle(bookmark) ? (
+          <InlineRow style={styles.source} testID={`bookmark-source-${bookmark.messageId}`}>
             {bookmark.roomKind === 'corner'
               ? <CornerGlyph size={CORNER_META_SIZE} testID={`bookmark-corner-mark-${bookmark.messageId}`} />
               : <Text style={styles.originSigil}>#</Text>}
             <Text numberOfLines={1} style={styles.origin}>{sourceTitle(bookmark)}</Text>
-          </View>
-          <Text numberOfLines={1} style={styles.time}>SAVED {compactRelativeTime(bookmark.bookmarkedAt, now)}</Text>
-        </View>
-        <Text numberOfLines={1} style={styles.author}>{bookmark.available ? bookmark.author?.name : 'Source unavailable'}</Text>
-        {bookmark.available ? (
-          <Text numberOfLines={desktop ? 2 : 3} style={styles.excerpt}>{bookmark.text}</Text>
-        ) : (
-          <Text style={styles.unavailable}>Deleted or no longer accessible</Text>
-        )}
-        <View style={styles.rowFooter}>
-          {!desktop ? (
-            <InlineRow style={styles.openRow}>
-              <Text style={styles.open}>OPEN</Text>
-              <ChevronGlyph color={styles.open.color} size={styles.open.lineHeight} />
-            </InlineRow>
-          ) : null}
-          {desktop && bookmark.available ? (
+          </InlineRow>
+        ) : null}
+        {desktop && bookmark.available ? (
+          <View style={styles.rowFooter}>
             <Button
               accessibilityLabel="Remove bookmark"
               accessibilityRole="button"
@@ -699,8 +709,8 @@ export default function TrayScreen() {
               variant="quiet"
               appearance={{ control: styles.remove, label: styles.removeText }}
             />
-          ) : null}
-        </View>
+          </View>
+        ) : null}
         {!bookmark.available ? (
           <Button
             accessibilityLabel="Remove unavailable bookmark"
@@ -916,30 +926,29 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.buzz.border,
   },
   row: {
-    minHeight: 128, padding: 16,
+    minHeight: 78, padding: theme.buzz.space.md,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.buzz.border,
   },
   rowSelected: { backgroundColor: theme.buzz.bgHighlight },
   rowUnavailable: { opacity: 0.68 },
+  // A saved row reads like a Needs you cell: who and age, the quoted words, then where.
   originLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },
-  originSource: {
-    flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8,
-  },
+  source: { minWidth: 0, alignItems: 'center', gap: theme.buzz.space.sm, marginTop: theme.buzz.space.xs },
   originSigil: { ...theme.buzz.type.meta, color: brand.mark },
-  origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
+  origin: { ...theme.buzz.type.meta, flexShrink: 1, color: theme.buzz.ledgerQuiet },
   time: { ...theme.buzz.type.meta, flexShrink: 0, color: theme.buzz.ledgerQuiet },
-  author: {
-    ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: theme.buzz.space.sm,
-  },
+  author: { ...theme.buzz.type.bodyStrong, flex: 1, color: theme.buzz.textPrimary },
   excerpt: {
-    ...theme.buzz.type.body, color: theme.buzz.textSecondary, marginTop: theme.buzz.space.xs,
+    ...theme.buzz.type.body, color: theme.buzz.textPrimary, marginTop: theme.buzz.space.xs,
+  },
+  excerptBold: { ...theme.buzz.type.bodyStrong },
+  quote: {
+    paddingLeft: theme.buzz.space.sm, borderLeftWidth: 2, borderLeftColor: theme.buzz.borderStrong,
   },
   unavailable: {
     ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs,
   },
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: theme.buzz.space.sm },
-  openRow: { alignItems: 'center', gap: theme.buzz.space.xs },
-  open: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   remove: { minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' },
   removeText: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },
   paneFallback: { flex: 1, justifyContent: 'center' },

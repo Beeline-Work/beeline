@@ -31,7 +31,7 @@ describe('the tray: Needs you and Saved', () => {
   it('parts the drawn corner mark from the title with a spacing step', () => {
     expect(bookmarks).toContain('<CornerGlyph');
     expect(bookmarks).toContain('size={CORNER_META_SIZE}');
-    expect(bookmarks).toContain('gap: 8');
+    expect(bookmarks).toContain('gap: theme.buzz.space.sm, marginTop');
     expect(bookmarks).toContain('styles.originSigil');
     expect(bookmarks).toContain('originSigil: { ...theme.buzz.type.meta, color: brand.mark }');
     expect(bookmarks).not.toContain('originDiamond');

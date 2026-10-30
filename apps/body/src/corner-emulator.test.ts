@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import {
   prepareCornerAdb,
   reapKeptCornerEmulators,
   stopKeptCornerEmulator,
+  stoppedEmulatorLogDir,
   type CornerEmulatorHost,
   type KeptCornerEmulator,
 } from './corner-emulator.js';
@@ -22,9 +23,9 @@ const roots: string[] = [];
 afterEach(async () => {
   await closeCornerEmulatorListeners();
   for (const root of roots) {
-    await stopKeptCornerEmulator(root, 'corner-keep').catch(() => undefined);
-    await stopKeptCornerEmulator(root, 'corner-gone').catch(() => undefined);
-    await stopKeptCornerEmulator(root, 'corner-attack').catch(() => undefined);
+    await stopKeptCornerEmulator(root, 'corner-keep', 'test cleanup').catch(() => undefined);
+    await stopKeptCornerEmulator(root, 'corner-gone', 'test cleanup').catch(() => undefined);
+    await stopKeptCornerEmulator(root, 'corner-attack', 'test cleanup').catch(() => undefined);
   }
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -151,14 +152,14 @@ describe('corner emulator lifetime', () => {
     expect(again).toMatchObject({ ok: true, alreadyRunning: true, serial: started.serial });
     expect((await record(env, cornerId)).pid).toBe(kept.pid);
 
-    const leftAlone = await reapKeptCornerEmulators(supervisor, new Set([cornerId]), async () => true);
+    const leftAlone = await reapKeptCornerEmulators(supervisor, new Set([cornerId]), async () => ({ closed: true, reason: 'archived' }));
     expect(leftAlone).toEqual([]);
     expect(processAlive(kept.pid)).toBe(true);
-    const unconfirmed = await reapKeptCornerEmulators(supervisor, new Set(), async () => false);
+    const unconfirmed = await reapKeptCornerEmulators(supervisor, new Set(), async () => ({ closed: false, reason: 'corner open' }));
     expect(unconfirmed).toEqual([]);
     expect(existsSync(kept.markerPath)).toBe(true);
 
-    expect(await stopKeptCornerEmulator(supervisor, cornerId)).toBe(true);
+    expect(await stopKeptCornerEmulator(supervisor, cornerId, 'test stop')).toBe(true);
     expect(processAlive(kept.pid)).toBe(false);
     expect(existsSync(kept.markerPath)).toBe(false);
     expect(existsSync(kept.instanceRoot)).toBe(false);
@@ -172,10 +173,67 @@ describe('corner emulator lifetime', () => {
     await turn(socketPath, cornerId);
     const kept = await record(env, cornerId);
     expect(processAlive(kept.pid)).toBe(true);
-    const stopped = await reapKeptCornerEmulators(supervisor, new Set(), async () => true);
+    const stopped = await reapKeptCornerEmulators(supervisor, new Set(), async () => ({ closed: true, reason: 'archived' }));
     expect(stopped).toEqual([cornerId]);
     expect(processAlive(kept.pid)).toBe(false);
     expect(existsSync(kept.markerPath)).toBe(false);
+  }, 30_000);
+
+  it('keeps the emulator log tail and stop reason after an explicit stop', async () => {
+    const cornerId = 'corner-keep';
+    const { supervisor, socketPath, env, host } = await layout('retain');
+    await listenCornerEmulator(socketPath, undefined, host);
+    await turn(socketPath, cornerId);
+    const kept = await record(env, cornerId);
+    await appendFile(join(kept.instanceRoot, 'emulator.log'), 'x'.repeat(300 * 1024) + '\nlast guest line before stop\n');
+    expect(await stopKeptCornerEmulator(supervisor, cornerId, 'corner archived; reaped by agent bee')).toBe(true);
+    expect(existsSync(kept.instanceRoot)).toBe(false);
+    const dir = stoppedEmulatorLogDir(env.BEELINE_ANDROID_LEASE_ROOT!);
+    const [file] = await readdir(dir);
+    const retained = await readFile(join(dir, file!), 'utf8');
+    expect(retained.split('\n')[0]).toMatch(
+      new RegExp(`corner=${cornerId} serial=${kept.serial} pid=${kept.pid} running=true reason=corner archived; reaped by agent bee$`));
+    expect(retained).toContain('last guest line before stop');
+    expect(retained.length).toBeLessThan(260 * 1024);
+  }, 30_000);
+
+  it('keeps the exit signal and log when a booted emulator dies on its own', async () => {
+    const cornerId = 'corner-keep';
+    const { socketPath, env, host } = await layout('crash');
+    await listenCornerEmulator(socketPath, undefined, host);
+    await turn(socketPath, cornerId);
+    const kept = await record(env, cornerId);
+    await appendFile(join(kept.instanceRoot, 'emulator.log'), 'guest log before crash\n');
+    process.kill(kept.pid, 'SIGKILL');
+    const dir = stoppedEmulatorLogDir(env.BEELINE_ANDROID_LEASE_ROOT!);
+    for (let i = 0; i < 50 && !(await readdir(dir).catch(() => [])).length; i++)
+      await new Promise((done) => setTimeout(done, 100));
+    const [file] = await readdir(dir);
+    const retained = await readFile(join(dir, file!), 'utf8');
+    expect(retained).toContain('reason=emulator exited (code none, signal SIGKILL)');
+    expect(retained).toContain('guest log before crash');
+    expect(existsSync(kept.instanceRoot)).toBe(false);
+  }, 30_000);
+
+  it('keeps only the newest stop logs', async () => {
+    const cornerId = 'corner-keep';
+    const { supervisor, socketPath, env, host } = await layout('retention');
+    const dir = stoppedEmulatorLogDir(env.BEELINE_ANDROID_LEASE_ROOT!);
+    await mkdir(dir, { recursive: true });
+    const old = new Date(Date.now() - 60_000);
+    for (let i = 0; i < 25; i++) {
+      const path = join(dir, `old-${i}.log`);
+      await writeFile(path, 'old\n');
+      const { utimes } = await import('node:fs/promises');
+      await utimes(path, old, old);
+    }
+    await listenCornerEmulator(socketPath, undefined, host);
+    await turn(socketPath, cornerId);
+    await stopKeptCornerEmulator(supervisor, cornerId, 'newest stop');
+    const files = await readdir(dir);
+    expect(files).toHaveLength(20);
+    const newest = files.filter((file) => file.startsWith(cornerId));
+    expect(newest).toHaveLength(1);
   }, 30_000);
 
   it('rejects a client-selected emulator binary and does not run it', async () => {

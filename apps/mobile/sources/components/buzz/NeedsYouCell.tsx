@@ -204,11 +204,6 @@ export function NeedsYouCell({
       {source}
       {onAction && approval && actions.length ? (
         <View style={styles.actionArea}>
-          {actions.map((action, index) => action.kind === 'external' ? (
-            <Button key={index} label={action.label} size="inline" variant="secondary"
-              accessibilityRole="link" destination="external" disabled={busy !== null} loading={busy === index}
-              onPress={() => void send(action, index)} testID={`needs-you-action-${item.messageId}-${index}`} />
-          ) : null)}
           {choiceActions ? (
             <View style={styles.choices}>
               {actions.map((action, index) =>
@@ -239,13 +234,15 @@ export function NeedsYouCell({
                 const denied = (action: NeedsYouActionView) => (action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny';
                 return Number(denied(b.action)) - Number(denied(a.action));
               }).flatMap(({ action, index }) =>
-                action.kind === 'choice' || action.kind === 'external'
+                action.kind === 'choice'
                   ? []
                   : [
                       {
                         label: action.label,
-                        variant: action.kind === 'skip-choice' ? 'quiet' : (action.kind === 'grant' ? action.decision === 'always' : action.kind === 'write-access' && action.decision !== 'deny') ? 'primary' : 'secondary',
+                        // Squire's own ceremony is this cell's one action, so it is the primary.
+                        variant: action.kind === 'skip-choice' ? 'quiet' : (action.kind === 'external' || (action.kind === 'grant' ? action.decision === 'always' : action.kind === 'write-access' && action.decision !== 'deny')) ? 'primary' : 'secondary',
                         accessibilityRole: 'button',
+                        ...(action.kind === 'external' ? { destination: 'external' as const } : {}),
                         disabled: busy !== null,
                         loading: busy === index,
                         testID: `needs-you-action-${item.messageId}-${index}`,

@@ -1,4 +1,3 @@
-import { prepareGrantedKvmAccess } from './kvm-device-access.js';
 /**
  * OS-level sandbox for ACP harness child processes (bubblewrap).
  *
@@ -725,8 +724,6 @@ export function wrapAgentCommand(input: {
   args?: string[];
 }): WrappedCommand {
   if (!input.bwrapPath) return { command: input.command, args: [...(input.args ?? [])] };
-  const deviceAdvisory = prepareGrantedKvmAccess(input.spec.devices ?? []);
-  if (deviceAdvisory) console.error(`[body] ${deviceAdvisory}`);
   return buildBwrapArgv({
     bwrapPath: input.bwrapPath,
     plan: sandboxMountPlan(input.spec),

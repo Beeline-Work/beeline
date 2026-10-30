@@ -166,6 +166,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
+import { ButtonRow } from '@/components/buzz/ButtonRow';
 import { applyNeedsYouLiveDelta, useNeedsYouCount, useTrayList, holdNeedsYou, acknowledgePaintedNeedsYou } from '@/buzz/needs-you-store';
 import { resetClientState } from '@/sync/client-reset';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
@@ -339,11 +340,15 @@ async function renderTray(): Promise<ReactTestRenderer> {
 }
 
 describe.each([
-  { surface: 'desktop', os: 'web', width: 1200, action: 'REMOVE' },
-  { surface: 'mobile', os: 'ios', width: 390, action: 'OPEN' },
-  { surface: 'R12a compact web', os: 'web', width: 760, action: 'OPEN' },
-])('Bookmarks $surface rows', ({ os, width, action }) => {
-  it('shows each save age once at the right and no footer time', async () => {
+  { surface: 'desktop', os: 'web', width: 1200, remove: true },
+  { surface: 'mobile', os: 'ios', width: 390, remove: false },
+  { surface: 'R12a compact web', os: 'web', width: 760, remove: false },
+])('Bookmarks $surface rows', ({ os, width, remove }) => {
+  const texts = (node: any): string[] =>
+    node.findAllByType('Text' as any).map((textNode: any) =>
+      [textNode.props.children].flat(Infinity).filter((part: unknown) => typeof part === 'string').join(''));
+
+  it('Reproduction R1: reads like a Needs you cell: who and age, the quoted words, then where', async () => {
     layout.os = os;
     layout.width = width;
     const now = 1_700_010_000_000;
@@ -351,7 +356,8 @@ describe.each([
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
     serve({
       bookmarks: [
-        bookmark({ messageCreatedAt: nowSeconds - 7200, bookmarkedAt: nowSeconds - 120 }),
+        bookmark({ messageCreatedAt: nowSeconds - 7200, bookmarkedAt: nowSeconds - 120,
+          text: 'Attached **Inscriptions—ancient signs, personal color.**\n\n**Unclosed' }),
         bookmark({
           messageId: 'gone',
           messageCreatedAt: nowSeconds - 86400,
@@ -360,26 +366,42 @@ describe.each([
           text: undefined,
           author: undefined,
         }),
+        bookmark({ messageId: 'nowhere', roomName: '', bookmarkedAt: nowSeconds - 60 }),
       ],
     });
     try {
       const tree = await renderTray();
-      for (const [id, age] of [
-        ['msg-1', '2m'],
-        ['gone', '1h'],
+      for (const [id, age, who] of [
+        ['msg-1', '2m', person.name],
+        ['gone', '1h', 'Source unavailable'],
       ]) {
         const row = tree.root.findByProps({ testID: `bookmark-${id}` });
-        const line = row.findByProps({ testID: `bookmark-save-line-${id}` });
-        const texts = (node: any) =>
-          node
-            .findAllByType('Text' as any)
-            .map((textNode: any) => [textNode.props.children].flat(Infinity).join(''));
-        expect(texts(line)).toEqual(['Fix fixture', `SAVED ${age}`]);
+        const head = row.findByProps({ testID: `bookmark-save-line-${id}` });
+        // The age alone at the right, as in Needs you: no SAVED stamp, no OPEN.
+        expect(texts(head)).toEqual([who, age]);
         const words = texts(row);
-        expect(words.filter((word: string) => word === `SAVED ${age}`)).toHaveLength(1);
+        expect(words.join(' ')).not.toMatch(/SAVED|OPEN/);
+        expect(words.filter((word) => word === age)).toHaveLength(1);
         expect(words).not.toContain(id === 'gone' ? '1d' : '2h');
-        expect(words).toContain(action);
+        expect(words.includes('REMOVE')).toBe(remove || id === 'gone');
+        // Where it is comes last, after the quoted words.
+        const children = row.findAll((node: any) => typeof node.props.testID === 'string'
+          && /^bookmark-(save-line|text|source)-/.test(node.props.testID) && typeof node.type === 'string')
+          .map((node: any) => node.props.testID.replace(`-${id}`, ''));
+        expect(children.filter((key: string, index: number) => children.indexOf(key) === index))
+          .toEqual(id === 'gone' ? ['bookmark-save-line', 'bookmark-source'] : ['bookmark-save-line', 'bookmark-text', 'bookmark-source']);
+        expect(texts(row.findByProps({ testID: `bookmark-source-${id}` })).join('')).toBe('Fix fixture');
       }
+      // Bold reads as bold; no raw ** reaches the reader.
+      const preview = tree.root.findByProps({ testID: 'bookmark-text-msg-1' });
+      const read = (node: any): string => typeof node === 'string' ? node : (node.children ?? []).map(read).join('');
+      expect(read(preview)).not.toContain('**');
+      expect(read(preview)).toBe('Attached Inscriptions—ancient signs, personal color.\n\nUnclosed');
+      const bold = preview.findAllByType('Text' as any).filter((node: any) => node !== preview
+        && node.props.children === 'Inscriptions—ancient signs, personal color.');
+      expect(bold.length).toBeGreaterThan(0);
+      // A row with no source leaves no empty bottom line.
+      expect(tree.root.findAllByProps({ testID: 'bookmark-source-nowhere' })).toHaveLength(0);
     } finally {
       clock.mockRestore();
     }
@@ -1682,7 +1704,7 @@ describe('Tray section CLEAR', () => {
   });
 });
 
-it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at 760px paints OPEN with a drawn chevron in a compact Tray (crossSecond=%s)', async (crossSecond) => {
+it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at 760px paints a saved row as who and age, words, then where (crossSecond=%s)', async (crossSecond) => {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width: 760, query: '?surface=phone&mode=row',
@@ -1716,8 +1738,7 @@ it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at
     },
   });
   expect(status, stderr).toBe(0);
-  expect(result).toContain('PASS');
-  expect(result).toContain('OPEN + drawn chevron');
+  expect(result).toContain('PASS Avery2m / Bookmarked line / #Room');
   console.log('R12a Demonstrated, Chrome 760px:', result);
 }, 90_000);
 
@@ -1852,8 +1873,13 @@ describe('inline approval decisions in the tray', () => {
 
   it('opens the Squire ceremony directly and leaves the item pending', async () => {
     const url = 'https://trustysquire.ai/vault/pay/pending';
-    serve({ needs: [approvalItem([{ kind: 'external', label: 'Review approval', url }], { kind: 'squire' })] });
+    serve({ needs: [approvalItem([{ kind: 'external', label: 'Approve', url }], { kind: 'squire' })] });
     const tree = await renderTray();
+    // Squire's link is the cell's one primary Button, trailing in the action row.
+    const row = tree.root.findAll((node: any) => node.type === ButtonRow)[0]!;
+    expect(row.props.actions).toEqual([expect.objectContaining({
+      label: 'Approve', variant: 'primary', accessibilityRole: 'button', destination: 'external',
+    })]);
     phoneOperation.mockClear();
     await clickAction(tree);
     expect(openExternal).toHaveBeenCalledWith(url);

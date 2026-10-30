@@ -182,7 +182,7 @@ it('Reproduction CORNER-STATE: the Room list and corner inspection agree that CI
   await turn();
   expect(await state()).toBe('working');
   await end(WORKER, 10);
-  expect(await state()).toBe('working');
+  expect(await state()).toBe('idle');
   await end(WORKER, 40);
   expect(await state()).toBe('idle');
   await turn(REVIEWER);
@@ -366,7 +366,7 @@ it('pending CI past 30 minutes schedules no expiry, including after a new head',
   expect(await state()).toBe('review');
 });
 it.each([WORKER, REVIEWER])(
-  'Reproduction IDLE-1: a standing schedule suppresses alerts without changing Idle (%s)',
+  'Reproduction IDLE-1: a standing schedule shows Waiting and suppresses alerts (%s)',
   async (agent) => {
     await db.query(
       `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
@@ -379,7 +379,7 @@ it.each([WORKER, REVIEWER])(
       [WS, C, agent],
     );
     await runCornerAttention(db);
-    expect(await state()).toBe('idle');
+    expect(await state()).toBe('waiting');
     expect(await commanderFlags()).toHaveLength(0);
   },
 );
@@ -861,3 +861,64 @@ it.each(['queued-review', 'hold-behind-report', 'pending-with-old-summary'])(
     for (let cycle=0;cycle<3;cycle++) await refreshCornerAttention(db,C);
     expect(await commanderFlags()).toHaveLength(0);
   });
+
+it('Reproduction R1: a worker that ends its turn without a report reads idle at once and alerts its commander once', async () => {
+  // free-credits-film: Baby held an open order, said "continuing next", and
+  // ended its turn with no report and no wake. The corner kept saying working.
+  await wake(WORKER, 'r1-order');
+  await turn();
+  await runCornerAttention(db);
+  expect(await state()).toBe('working');
+  await end(WORKER, 0);
+  expect(await state()).toBe('idle');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'idle' });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]?.state,
+  ).toBe('idle');
+  // Inside the post-turn gap a late reply or order can still arrive: no alert yet.
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  await end(WORKER, 40);
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
+  expect(stalls).toHaveLength(1);
+});
+
+it('Reproduction R1: a report filed before the turn ends shows waiting and sends no stall alert', async () => {
+  await turn();
+  await runCornerAttention(db);
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'blocked: The signup needs a deposit.');
+  await end(WORKER, 40);
+  expect(await state()).toBe('waiting');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+});
+
+it('Reproduction R1: a worker that ends its turn with a future schedule reads waiting and sends no stall alert', async () => {
+  await wake(WORKER, 'r1-scheduled-order');
+  await turn();
+  await db.query(
+    `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at,max_runs)
+    VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue the film','{"kind":"interval","everyMinutes":10}',now()+interval '10 minutes',1)`,
+    [WS, C, WORKER],
+  );
+  await runCornerAttention(db);
+  expect(await state()).toBe('working');
+  await end(WORKER, 40);
+  expect(await state()).toBe('waiting');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'waiting' });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]?.state,
+  ).toBe('waiting');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  // Once the schedule is spent, the stall is real again.
+  await db.query("UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE room_id=$1", [C]);
+  expect(await state()).toBe('idle');
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(1);
+});

@@ -102,6 +102,7 @@ import {
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
+import { prepareKvmAccess } from './kvm-device-access.js';
 import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import {
   approvedDeviceGrant,
@@ -1210,6 +1211,8 @@ export class MonolithCornerTurnLoop {
     // protected supervisorRoot above, so it needs its own re-bind.
     const attachScratchRoot = this.options.config.agentHomeRoot ?? tmpDir;
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
+    const kvm = prepareKvmAccess(grantedDevices);
+    if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
     const spawnCommand = wrapAgentCommand({
       bwrapPath: this.options.config.bwrapPath,
       spec: {
@@ -1401,6 +1404,7 @@ export class MonolithCornerTurnLoop {
       squireAvailable: Boolean(squireScope.relay),
       ...this.sessionPromptContext!,
       machineHost: await machineHost(),
+      kvm,
       githubCli: this.cornerGitHubCli,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }
@@ -2681,7 +2685,8 @@ export class MonolithCornerTurnLoop {
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,
         closed: async () => {
-          const stopEmulator = () => stopKeptCornerEmulator(this.options.runtime.supervisorRoot, cornerId)
+          const stopEmulator = () => stopKeptCornerEmulator(
+            this.options.runtime.supervisorRoot, cornerId, `corner close requested; stopped by agent ${this.agent.publicKey}`)
             .catch((error) => console.error(`[body] corner ${cornerId} emulator stop failed:`, error));
           if (this.closePushed) {
             this.closePushed = false;

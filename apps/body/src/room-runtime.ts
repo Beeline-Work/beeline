@@ -18,7 +18,11 @@ import {
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
-import { reapKeptCornerEmulators, stopKeptCornerEmulator } from './corner-emulator.js';
+import {
+  reapKeptCornerEmulators,
+  stopKeptCornerEmulator,
+  type CornerClosedDecision,
+} from './corner-emulator.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -568,6 +572,8 @@ export class RoomRuntimeCoordinator {
   private readonly surfaceHealth = new SurfaceHealth();
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
+  /** Last logged emulator reaper decision per corner, so reconcile does not repeat it. */
+  private readonly emulatorReapDecisions = new Map<string, string>();
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
   private readonly idleCornerSubscriptions = new Map<string, () => void>();
   private readonly pendingCornerCommands = new Set<string>();
@@ -1109,7 +1115,9 @@ export class RoomRuntimeCoordinator {
       this.unwatchCorner(roomId);
       this.surfaceHealth.remove(roomId);
       if (!this.running.has(roomId)) this.monolithCornerParents.delete(roomId);
-      await stopKeptCornerEmulator(this.runtime.supervisorRoot, roomId).catch((error) => {
+      await stopKeptCornerEmulator(
+        this.runtime.supervisorRoot, roomId, `corner archived event; stopped by agent ${this.agent.publicKey}`,
+      ).catch((error) => {
         console.error(`[thin-core] corner ${roomId} emulator stop failed:`, error);
       });
       return;
@@ -1858,18 +1866,36 @@ export class RoomRuntimeCoordinator {
 
   /**
    * Helper start and each reconcile: an emulator whose corner is not open
-   * stays only until a member confirms the corner is archived or gone.
-   * A failed lookup keeps it, so one agent's partial view cannot stop
-   * another agent's live corner.
+   * here stays until the server says the corner is archived. Every runtime
+   * on the host scans the same records, so any refusal (403, 404, 410) or
+   * failed lookup keeps it: one agent's partial view cannot stop another
+   * agent's live corner. The server answers a corner the caller cannot
+   * reach with 403, never with a deletion signal.
    */
   private async reapClosedCornerEmulators(liveCornerIds: ReadonlySet<string>): Promise<void> {
+    const agentId = this.agent.publicKey;
     await reapKeptCornerEmulators(this.runtime.supervisorRoot, liveCornerIds, async (cornerId) => {
+      let decision: CornerClosedDecision;
       try {
         const restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
-        return restore.archived === true;
+        decision = restore.archived === true
+          ? { closed: true, reason: `corner archived; reaped by agent ${agentId}` }
+          : { closed: false, reason: restore.archived === false ? 'corner open' : 'archive state not reported' };
       } catch (error) {
-        return error instanceof DaemonApiError && (error.status === 404 || error.status === 410);
+        decision = {
+          closed: false,
+          reason: error instanceof DaemonApiError
+            ? `lookup refused (${error.status})`
+            : `lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
       }
+      // Reconcile repeats every decision; log only when one changes.
+      if (this.emulatorReapDecisions.get(cornerId) !== decision.reason) {
+        this.emulatorReapDecisions.set(cornerId, decision.reason);
+        console.log(`[thin-core] corner emulator reaper: corner=${cornerId} agent=${agentId} ` +
+          `${decision.closed ? 'stop' : 'keep'}: ${decision.reason}`);
+      }
+      return decision;
     }).catch((error) => {
       console.error('[thin-core] corner emulator reap failed:', error);
     });
@@ -1913,7 +1939,11 @@ export class RoomRuntimeCoordinator {
         // these restore fields. A new server can omit them from the active-only
         // list; cleanup then requires its explicit archive and parent facts.
         if (restore.archived === false) continue;
-        await stopKeptCornerEmulator(this.runtime.supervisorRoot, cornerId);
+        // Only an explicit archive stops an emulator; an old server's
+        // missing field is not proof the corner closed.
+        if (restore.archived === true)
+          await stopKeptCornerEmulator(this.runtime.supervisorRoot, cornerId,
+            `corner archived; stopped by agent ${this.agent.publicKey} during worktree sweep`);
         if (!corner) {
           if (restore.archived !== true || !restore.parentRoomId) continue;
           corner = { cornerId, parentRoomId: restore.parentRoomId };

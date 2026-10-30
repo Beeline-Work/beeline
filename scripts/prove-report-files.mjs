@@ -11,7 +11,7 @@ import { TokenAuth, tokenHash } from '../apps/server/dist/auth.js';
 import { createBeelineServer } from '../apps/server/dist/server.js';
 import { flushDueCommanderWakes } from '../apps/server/dist/commander-wakes.js';
 
-for (const delivery of ['report', 'postRoomMessage']) {
+for (const delivery of ['report', 'postRoomMessage', 'postCornerMessage']) {
   const db = new PgliteDatabase(), storage = new MemoryObjectStorage();
   const human = 'a'.repeat(64), commander = 'b'.repeat(64), worker = 'c'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111';
@@ -81,7 +81,16 @@ for (const delivery of ['report', 'postRoomMessage']) {
       assert.equal(message.attachments.length, 1);
     }
     await claim(batched);
-    await call(delivery, { ...authority(batched), text: 'done: first.txt and second.txt attached', ...(delivery === 'report' ? { status: 'done' } : {}) });
+    if (delivery === 'postCornerMessage') {
+      // post_artifact uploads and queues files before the explicit message.
+      for (const name of ['first.txt', 'second.txt']) {
+        const uploaded = await objects.uploadArtifact(commander, Buffer.from(name), 'text/plain', name);
+        await call('postAgentAttachment', { ...authority(batched), attachment: {
+          url: uploaded.url, name, mimeType: 'text/plain', size: Buffer.byteLength(name),
+        } });
+      }
+    }
+    await call(delivery, { ...authority(batched), ...(delivery === 'postCornerMessage' ? { cornerId: dm } : {}), text: 'done: first.txt and second.txt attached', ...(delivery === 'report' ? { status: 'done' } : {}) });
     const visible = (await phone.readRoom(dm, human)).messages.filter(message => message.attachments?.length);
     assert.equal(visible.length, 1);
     assert.deepEqual(visible[0].attachments.map(file => file.name), ['first.txt', 'second.txt']);
@@ -92,7 +101,7 @@ for (const delivery of ['report', 'postRoomMessage']) {
       assert.equal(response.status, 200);
       assert.equal(await response.text(), file.name);
     }
-    console.log(`FILE-HANDOFF PASS (${delivery}): commander reopens private reports; person sees both file cards and opens both original files through built HTTP service.`);
+    console.log(`Reproduction files-2 / FILE-HANDOFF PASS (${delivery}): commander reopens private reports; person sees both file cards and opens both original files through built HTTP service.`);
   } finally {
     if (server) {
       server.closeAllConnections();

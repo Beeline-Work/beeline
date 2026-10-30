@@ -1198,7 +1198,7 @@ it('Reproduction commander-files: a commander home file reaches the worker as th
       await expect(openCorner('Private-path', { spec: `Read ${named}` }))
         .rejects.toThrow(`the brief names ${path}, which only you can open`);
       await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${named}` }, 'order-private'))
-        .rejects.toThrow(`the order names ${path}, which only you can open`);
+        .rejects.toThrow(`the order names ${path}, which recipients cannot open`);
     }
     // A path that cannot be read is refused by name.
     await expect(openCorner('Missing-file', { spec: 'Read the trace.', attachments: [
@@ -1207,7 +1207,7 @@ it('Reproduction commander-files: a commander home file reaches the worker as th
     expect(await cornerCount()).toBe(before);
     // An order that names the private file is refused by name.
     await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${trace}` }, 'order-named'))
-      .rejects.toThrow(`the order names ${trace}, which only you can open`);
+      .rejects.toThrow(`the order names ${trace}, which recipients cannot open`);
     const opened = JSON.parse(await openCorner('Attached-trace', { spec: `Read "${spaced}" and find the failing step.`,
       attachments: [{ path: spaced, purpose: 'Failing trace', required: true }] }));
     const next = await worker(opened.address);
@@ -1398,7 +1398,7 @@ it('Reproduction R-ID: the read tool downloads bytes from a private report hand-
 });
 
 
-it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits for upload %s before reporting', async (outcome) => {
+it.each(['success', 'failure', 'replacement'])('Reproduction ARTIFACT-REPORT: shipped MCP waits for upload %s before reporting', async (outcome) => {
   const scratch = await mkdtemp(join(tmpdir(), 'artifact-report-proof-'));
   await writeFile(join(scratch, 'turn.json'), JSON.stringify(authority(order)));
   await writeFile(join(scratch, 'evidence.txt'), 'Artifact report evidence');
@@ -1408,6 +1408,7 @@ it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits
   const uploading = new Promise<void>(resolve => { started = resolve; });
   const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
   let reportCalls = 0;
+  let uploadAttempts = 0;
   const bridge = createServer(async (request, response) => {
     try {
       const chunks: Buffer[] = [];
@@ -1416,7 +1417,7 @@ it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits
       let result: unknown;
       if (request.url === '/v1/daemon/artifacts') {
         started(); await held;
-        if (outcome === 'failure') {
+        if (outcome === 'failure' || (outcome === 'replacement' && uploadAttempts++ === 0)) {
           response.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'storage_unavailable' }));
           return;
         }
@@ -1464,6 +1465,18 @@ it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits
       expect(uploaded.isError).toBe(true);
       expect(reported).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('storage_unavailable') }] });
       expect(reportCalls).toBe(0);
+    } else if (outcome === 'replacement') {
+      expect(uploaded.isError).toBe(true);
+      expect(reported.isError).toBe(true);
+      expect(reportCalls).toBe(0);
+      const replacement = await call(3, 'post_artifact', { path: join(scratch, 'evidence.txt') });
+      expect(replacement.isError).not.toBe(true);
+      const retried = await call(4, 'report', { status: 'done', text: 'done: replacement evidence attached' });
+      expect(retried.isError).not.toBe(true);
+      const result = JSON.parse(retried.content[0]!.text);
+      const message = await daemon.execute('getRoomMessage', { ...authority(order), messageId: result.id }, RUBY);
+      expect(message).toMatchObject({ body: 'done: replacement evidence attached', attachments: [expect.objectContaining({ name: 'evidence.txt' })] });
+      console.info('Demonstrated upload-1: failed upload and refused report, successful replacement, delivered report with readable attachment metadata');
     } else {
       expect(uploaded.isError).not.toBe(true);
       expect(reported.isError).not.toBe(true);
@@ -1662,4 +1675,24 @@ it('AGENT-STOP-2: an agent with no command over the running turn is refused and 
     [opened.cornerId, running.turnRequestId])).rows[0]?.status).toBe('working');
   expect((await db.query(`SELECT count(*)::int n FROM agent_commands WHERE room_id=$1 AND action='stop'`,
     [opened.cornerId])).rows[0]?.n).toBe(0);
+});
+
+it('Reproduction files-2: explicit post binds uploaded media before the turn finishes', async () => {
+  const media = randomUUID();
+  await db.query(
+    `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+     VALUES($1,$2,'artifact',$3,'text/plain','evidence.txt',2,$4,'ready',now()+interval '24 hours')`,
+    [media, RUBY, 'artifact/' + media, randomBytes(32).toString('hex')],
+  );
+  await daemon.execute('postAgentAttachment', { ...authority(order), attachment: {
+    url: 'http://test/v1/media/' + media, name: 'evidence.txt', mimeType: 'text/plain', size: 2,
+  } }, RUBY);
+  // Posting elsewhere must not drain files scoped to the private current place.
+  const elsewhere = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: ROOM, text: 'Work started' }, RUBY);
+  expect((await daemon.execute('getRoomMessage', { roomId: ROOM, messageId: elsewhere.id }, WORKER)).attachments).toHaveLength(0);
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: 'evidence.txt attached' }, RUBY);
+  const read = await daemon.execute('getRoomMessage', { roomId: DM, messageId: posted.id }, RUBY);
+  expect(read.attachments).toEqual([expect.objectContaining({ name: 'evidence.txt', url: 'http://test/v1/media/' + media })]);
+  expect((await db.query('SELECT 1 FROM agent_pending_attachments WHERE request_id=$1', [order.turnRequestId])).rowCount).toBe(0);
+  await expect(daemon.execute('getRoomMessage', { roomId: DM, messageId: posted.id }, WORKER)).rejects.toThrow();
 });

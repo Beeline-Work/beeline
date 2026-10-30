@@ -77,3 +77,17 @@ test('verified local IPA identities resolve ASC current and prior published runt
   assert.deepEqual(storeRuntimeTargets({ pins: { android: '43', ios: '36' }, stores })
     .filter(t => t.platform === 'ios').map(t => t.runtimeVersion), ['36', '35', '31']);
 });
+
+test('actual ASC published build order resolves the newest three runtimes without older unknown identities', async () => {
+  const builds = [...JSON.parse(readFileSync(new URL('../apps/mobile/store/native-runtime-builds.json', import.meta.url), 'utf8')),
+    { platform: 'IOS', appBuildVersion: '88', runtimeVersion: '34' }];
+  const numbers = ['98', '88', '81', '79', '28', '8'];
+  const stores = await readStores({ builds, env: {}, appleApi: async () => ({
+    data: numbers.map(id => ({ attributes: { appVersionState: 'READY_FOR_DISTRIBUTION' }, relationships: { build: { data: { id } } } })),
+    included: numbers.map(version => ({ type: 'builds', id: version, attributes: { version } })),
+  }) });
+  assert.equal(stores.ios.status, 'readable');
+  assert.deepEqual(stores.ios.live.map(t => t.buildNumber), ['98', '88', '81']);
+  assert.deepEqual(storeRuntimeTargets({ pins: { android: '43', ios: '36' }, stores })
+    .filter(t => t.platform === 'ios').map(t => t.runtimeVersion), ['36', '34', '31']);
+});

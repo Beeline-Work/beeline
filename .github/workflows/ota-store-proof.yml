@@ -25,6 +25,7 @@ jobs:
           EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
         run: |
+          set -euo pipefail
           node scripts/read-store-runtimes.mjs > "$RUNNER_TEMP/ota-store-status.json"
           node --input-type=module - <<'NODE' | tee "$RUNNER_TEMP/asc-proof.txt"
           import { readFileSync } from 'node:fs';

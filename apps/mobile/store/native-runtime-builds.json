@@ -19,33 +19,9 @@
   },
   {
     "platform": "ios",
-    "buildNumber": "76",
-    "runtimeVersion": "29",
-    "evidence": "Unified production release run 35802330273: source c095ca344f7b68d53375c1393235932ef3d5b806 pins ios@29; native job increments buildNumber 75 to 76"
-  },
-  {
-    "platform": "ios",
     "buildNumber": "81",
     "runtimeVersion": "31",
     "evidence": "Unified production release run 36593389428: source 885f7b90b5eece8e99481d988611415a03f435ba pins ios@31; native job increments buildNumber 80 to 81"
-  },
-  {
-    "platform": "ios",
-    "buildNumber": "90",
-    "runtimeVersion": "35",
-    "evidence": "Unified production release run 38638236337: IPA verified at 2026-10-14T21:51:36Z; App Store build 2c0eee7a-ccb3-43f3-bd13-32b797a8616c VALID"
-  },
-  {
-    "platform": "ios",
-    "buildNumber": "92",
-    "runtimeVersion": "35",
-    "evidence": "Unified production release run 38662034119: IPA verified at 2026-10-15T01:10:04Z; App Store build 16c17a6e-d3b1-47fd-86be-87f3ddb92b29 VALID"
-  },
-  {
-    "platform": "ios",
-    "buildNumber": "95",
-    "runtimeVersion": "35",
-    "evidence": "Unified production release run 38992852990: IPA verified at 2026-10-17T02:34:52Z"
   },
   {
     "platform": "ios",
@@ -61,8 +37,8 @@
   },
   {
     "platform": "ios",
-    "buildNumber": "99",
-    "runtimeVersion": "36",
-    "evidence": "Unified production release run 39154561183: IPA verified at 2026-10-18T19:10:07Z; App Store build 0e6766d8-bce8-405e-9f71-1c00d5d0c7a2 VALID"
+    "buildNumber": "88",
+    "runtimeVersion": "34",
+    "evidence": "Authenticated Expo EAS project 58f1e94e-5ce5-475e-9dde-3eaa9e36699c build b95f431a-f41f-4ba8-88db-e68ea9a86bbb: platform IOS, appBuildVersion 88, runtimeVersion 34 (observed 2026-10-30)"
   }
 ]

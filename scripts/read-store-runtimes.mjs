@@ -39,6 +39,29 @@ async function easBuildInventory() {
   return (await response.json()).data?.app?.byId?.builds ?? [];
 }
 
+function newestBuildFirst(a, b) {
+  const left = a.split('.').map(Number), right = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const difference = (right[i] ?? 0) - (left[i] ?? 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
+
+function publishedWindow(platform, numbers, historicalNumbers, builds) {
+  const ordered = [...new Set([...numbers, ...historicalNumbers])].sort(newestBuildFirst);
+  const records = [], runtimes = new Set();
+  for (const number of ordered) {
+    const target = resolveStoreBuilds(platform, [number], builds)[0];
+    records.push(target);
+    runtimes.add(target.runtimeVersion);
+    // Unknown identities inside this window still fail closed. Older ASC
+    // versions cannot change the newest three distinct published runtimes.
+    if (runtimes.size === 3) break;
+  }
+  return records;
+}
+
 export async function readStores({ builds, env = process.env, fetchImpl = fetch, appleApi } = {}) {
   const stores = {};
   await Promise.all(['android', 'ios'].map(async platform => {
@@ -73,16 +96,11 @@ export async function readStores({ builds, env = process.env, fetchImpl = fetch,
         }
       }
       const observedAt = new Date().toISOString();
-      const live = resolveStoreBuilds(platform, numbers, builds).map(t => ({ ...t, observedLiveAt: observedAt }));
-      const historical = resolveStoreBuilds(platform, historicalNumbers, builds).map(t => ({ ...t, publicationEvidence: 'ASC REPLACED_WITH_NEW_VERSION', observedAt }));
-      const newest = [...live].sort((a, b) => {
-        const left = a.buildNumber.split('.').map(Number), right = b.buildNumber.split('.').map(Number);
-        for (let i = 0; i < Math.max(left.length, right.length); i++) {
-          const difference = (right[i] ?? 0) - (left[i] ?? 0);
-          if (difference) return difference;
-        }
-        return 0;
-      })[0];
+      const resolved = platform === 'ios' ? publishedWindow(platform, numbers, historicalNumbers, builds)
+        : resolveStoreBuilds(platform, numbers, builds);
+      const live = resolved.filter(t => numbers.includes(t.buildNumber)).map(t => ({ ...t, observedLiveAt: observedAt }));
+      const historical = resolved.filter(t => !numbers.includes(t.buildNumber)).map(t => ({ ...t, publicationEvidence: 'ASC REPLACED_WITH_NEW_VERSION', observedAt }));
+      const newest = [...live].sort((a, b) => newestBuildFirst(a.buildNumber, b.buildNumber))[0];
       stores[platform] = { status: 'readable', live, historical, latestRuntimeVersion: newest?.runtimeVersion, buildNumbers: numbers };
     } catch (error) {
       stores[platform] = { status: 'unavailable', reason: error.message,

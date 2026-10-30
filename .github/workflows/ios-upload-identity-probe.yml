@@ -29,11 +29,13 @@ jobs:
             import { appStoreClient } from './scripts/ios-store-build.mjs';
             const api = appStoreClient();
             const show = (label, value) => console.log(label, JSON.stringify(value, null, 1).slice(0, 6000));
-            for (const path of [
-              '/v1/apps/6803948500/buildUploads?limit=5&sort=-uploadedDate&include=buildUploadFiles,build',
-              '/v1/apps/6803948500/buildUploads?limit=5&include=buildUploadFiles',
-              '/v1/apps/6803948500/buildUploads?limit=5',
-            ]) {
-              try { const page = await api(path); show(path, page); break; } catch (error) { console.log(path, 'ERROR', error.message); }
+            let page;
+            try { page = await api('/v1/apps/6803948500/buildUploads?limit=200&sort=-uploadedDate'); console.log('sort=-uploadedDate OK'); }
+            catch (error) { console.log('sort ERROR', error.message); page = await api('/v1/apps/6803948500/buildUploads?limit=200'); }
+            console.log('uploads', page.data.length, 'next', page.links?.next ?? 'none');
+            const rows = page.data.map((u) => ({ id: u.id, ...u.attributes })).sort((a, b) => String(b.uploadedDate).localeCompare(String(a.uploadedDate)));
+            for (const u of rows.slice(0, 6)) {
+              const files = await api('/v1/buildUploads/' + u.id + '/buildUploadFiles');
+              console.log(u.cfBundleShortVersionString, u.cfBundleVersion, u.state?.state, u.uploadedDate, JSON.stringify(files.data.map((f) => f.attributes)).slice(0, 1500));
             }
           "

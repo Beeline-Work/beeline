@@ -5051,7 +5051,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.report:wrapper:39d8f1e03c03e153",
+    "id": "src/daemon-service.ts:DaemonService.report:wrapper:18fab1beeb3bef4c",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "reportToCommander(database, command.room_id, agentId, text, reportCommand, createHash('sha256').update(`report:${command.id}:${command.generation_id}:${reportCommand.id}:${directRecipient ?? \"\"}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask, directRecipient })",
@@ -5101,6 +5101,7 @@
       ".url",
       "FalseKeyword",
       "FirstLiteralToken:0",
+      "NullKeyword",
       "RegularExpressionLiteral:/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i",
       "TrueKeyword",
       "[\"report:\",\":\",\":\",\":\",\":\",\":\",\":\",\"\"]",

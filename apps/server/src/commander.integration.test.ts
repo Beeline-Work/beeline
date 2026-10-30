@@ -240,7 +240,7 @@ it('a configured reviewer can record PASS from its DM without changing the revie
   await expect(daemon.execute('approveCornerMerge', { cornerId: opened.cornerId, headSha }, WORKER))
     .rejects.toThrow('configured reviewer');
 });
-it.each(['@ruby', RUBY, '@opener', '@captain', undefined])('Reproduction R1: a scheduled report uses explicit recipient %s and preserves the default', async (to) => {
+it.each([['@ruby', false], [RUBY, false], ['@opener', false], ['@captain', false], [undefined, false], ['@ruby', true], [RUBY, true]] as const)('Reproduction R1: a scheduled report uses explicit recipient %s with batched orders=%s and preserves the default', async (to, batched) => {
   const opener = '8'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Opener','opener') ON CONFLICT DO NOTHING`, [opener]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [opener, HUMAN]);
@@ -250,9 +250,20 @@ it.each(['@ruby', RUBY, '@opener', '@captain', undefined])('Reproduction R1: a s
   await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, opener]);
   const initial = await worker(opened.cornerId);
   await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
+  if (batched) await db.query('UPDATE agents SET wake_batch_minutes=1 WHERE agent_id=$1', [WORKER]);
   await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Watch the release and report back' }, RUBY);
+  if (batched) {
+    await phone.execute('sendRoomMessage', { roomId: DM, messageId: randomBytes(32).toString('hex'), text: '@opener lead another task' }, HUMAN);
+    const other = (await daemon.execute('getAgentCommands', { roomId: DM }, opener)).commands.find(c => c.reason !== 'report')!;
+    await claim(other);
+    await daemon.execute('order', { ...authority(other), address: opened.cornerId, agent: 'worker', text: 'Another task for another orderer' }, opener);
+  }
   const assigned = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order')!;
   await claim(assigned);
+  if (batched) {
+    expect(assigned.coalescedContext).toBeTruthy();
+    await db.query('UPDATE agents SET wake_batch_minutes=0 WHERE agent_id=$1', [WORKER]);
+  }
   const schedule = await daemon.execute('createAgentSchedule', { ...authority(assigned), title: 'Check release',
     prompt: 'Finish watching the release', cadence: { kind: 'interval', everyMinutes: 1 }, maxRuns: 1 }, WORKER);
   await daemon.execute('postAgentTurnReceipt', { ...authority(assigned), agentId: WORKER, status: 'complete' }, WORKER);
@@ -279,6 +290,8 @@ it.each(['@ruby', RUBY, '@opener', '@captain', undefined])('Reproduction R1: a s
   }
   if (to === '@ruby' || to === RUBY) await expect(daemon.execute('report', { ...authority(wake), to, status: 'done', text: 'done: release finished' }, WORKER))
     .resolves.toMatchObject({ skipped: true });
+  if (batched) expect((await db.query('SELECT report_outcome FROM agent_commands WHERE id=$1', [assigned.id])).rows[0])
+    .toMatchObject({ report_outcome: 'done' });
 
 });
 it('report to answers the latest human command from a later system wake', async () => {

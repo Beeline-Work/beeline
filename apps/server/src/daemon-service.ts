@@ -6273,7 +6273,8 @@ export class DaemonService {
              AND source.system_event IS NULL AND source.presentation='message'))
          ORDER BY directed.created_at DESC,directed.id DESC LIMIT 1`, [command.room_id, agentId, recipient.id],
       )).rows[0];
-      if (selected) reportCommand = selected;
+      // An explicit recipient answers only this order, even if it led a digest.
+      if (selected) reportCommand = { ...selected, coalesced_context: null };
       else directRecipient = recipient.id;
     }
     // An informational continuation has no automatic return obligation. An

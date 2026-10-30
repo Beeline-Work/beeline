@@ -4,7 +4,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatListItem, ChatListView, WorkspaceListView } from '@beeline/buzz-client';
+import { RoomViewHttpError, type ChatListItem, type ChatListView, type WorkspaceListView } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
 const deck = vi.hoisted(() => ({
@@ -15,6 +15,10 @@ const deck = vi.hoisted(() => ({
   renderRows: false,
   chatsReads: 0,
   workspacesResponse: null as WorkspaceListView | null,
+  workspaceFailures: [] as Error[],
+  workspaceReads: 0,
+  useRealWorkspaceRead: false,
+  selectedWorkspace: 'workspace' as string | null,
   chatsResponse: null as unknown,
   reconnects: 0,
   createRepository: vi.fn(
@@ -120,7 +124,7 @@ vi.mock('expo-haptics', () => ({
 }));
 vi.mock('expo-router', () => ({
   router: { push: vi.fn(), replace: vi.fn() },
-  useLocalSearchParams: () => ({ communityId: 'workspace' }),
+  useLocalSearchParams: () => deck.selectedWorkspace ? { communityId: deck.selectedWorkspace } : {},
 }));
 vi.mock('react-native-gesture-handler', () => hostModule('Swipeable'));
 vi.mock('react-native-safe-area-context', () => ({
@@ -146,10 +150,10 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer', secretKey: new Uint8Array(32) })),
 }));
 vi.mock('@/buzz/community-storage', () => ({
-  loadActiveCommunityId: vi.fn(async () => 'workspace'),
+  loadActiveCommunityId: vi.fn(async () => deck.selectedWorkspace),
   saveActiveCommunityId: vi.fn(async () => undefined),
   watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
-    void Promise.resolve('workspace').then(listener);
+    void Promise.resolve(deck.selectedWorkspace).then(listener);
     return () => undefined;
   }),
 }));
@@ -230,9 +234,17 @@ vi.mock('@/sync/transport/live-connection', () => ({
     },
   }),
 }));
-vi.mock('@/sync/transport/room-view-client', () => ({
+vi.mock('@/sync/transport/room-view-client', async () => ({
+  isRoomViewTimeoutError: (await vi.importActual<typeof import('@/sync/transport/room-view-client')>('@/sync/transport/room-view-client')).isRoomViewTimeoutError,
   RoomViewClient: class {
     async workspaces(): Promise<WorkspaceListView> {
+      deck.workspaceReads += 1;
+      if (deck.useRealWorkspaceRead) {
+        const { RoomViewClient } = await vi.importActual<typeof import('@/sync/transport/room-view-client')>('@/sync/transport/room-view-client');
+        return new RoomViewClient({ baseUrl: 'https://relay.test', identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) } }).workspaces();
+      }
+      const failure = deck.workspaceFailures.shift();
+      if (failure) throw failure;
       if (deck.workspacesResponse) return deck.workspacesResponse;
       return {
         workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
@@ -361,6 +373,10 @@ beforeEach(() => {
   vi.mocked(saveActiveCommunityId).mockClear();
   deck.chatsReads = 0;
   deck.workspacesResponse = null;
+  deck.workspaceFailures = [];
+  deck.workspaceReads = 0;
+  deck.useRealWorkspaceRead = false;
+  deck.selectedWorkspace = 'workspace';
   deck.reconnects = 0;
   deck.storedInvite = null;
   vi.mocked(router.replace).mockClear();
@@ -376,6 +392,75 @@ beforeEach(() => {
 afterEach(() => {
   deck.focusEffect = null;
   deck.blur = null;
+});
+
+describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
+  beforeEach(() => { hotSurfaces.values.clear(); });
+  it('opens workspace creation after a transient initial workspace timeout without showing an error', async () => {
+    deck.selectedWorkspace = null;
+    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
+    deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout')];
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await quiet();
+    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+    expect(deck.workspaceReads).toBe(2);
+    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('demonstrates the landing through the real guarded workspace HTTP reader', async () => {
+    const { monolithSession, MonolithRequestTimeoutError } = await import('@/auth/monolith-session');
+    const request = vi.spyOn(monolithSession, 'fetch')
+      .mockRejectedValueOnce(new MonolithRequestTimeoutError())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        workspaces: [], viewer: { pubkey: 'a'.repeat(64), name: 'New user', kind: 'human' },
+        watchFilters: [], truncated: false,
+      }), { status: 200 }));
+    deck.selectedWorkspace = null;
+    deck.useRealWorkspaceRead = true;
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+      await quiet();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls.every(([url]) => url.endsWith('/v1/phone/workspaces'))).toBe(true);
+      expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+      expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
+    } finally {
+      if (renderer) await act(async () => renderer.unmount());
+      request.mockRestore();
+    }
+  });
+
+  it('keeps a persistent startup timeout visible and lets Retry recover', async () => {
+    deck.selectedWorkspace = null;
+    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
+    deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout'), new RoomViewHttpError(0, 'timeout')];
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await quiet();
+    expect(deck.workspaceReads).toBe(2);
+    expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    const retry = renderer.root.findByProps({ action: 'Retry' });
+    expect(retry.props.title).toBe('Couldn’t reach Beeline');
+    await act(async () => retry.props.onPress());
+    await quiet();
+    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+    await act(async () => renderer.unmount());
+  });
+
+  it('does not retry a server refusal as a transient startup timeout', async () => {
+    deck.selectedWorkspace = null;
+    deck.workspaceFailures = [new RoomViewHttpError(403, 'forbidden')];
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await quiet();
+    expect(deck.workspaceReads).toBe(1);
+    expect(renderer.root.findAllByProps({ action: 'Retry' }).length).toBeGreaterThan(0);
+    expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    await act(async () => renderer.unmount());
+  });
 });
 
 describe('Deleted workspace removal', () => {

@@ -63,7 +63,7 @@ import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
-import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { RoomViewClient, isRoomViewTimeoutError } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
 import {
   SurfaceRefreshScheduler,
@@ -436,6 +436,8 @@ export default function BuzzChannels() {
       if (cancelled) return;
       const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
+      let workspaceReadConfirmed = false;
+      let startupTimeoutRetried = false;
 
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces()),
@@ -443,6 +445,7 @@ export default function BuzzChannels() {
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
           deckMissedRef.current.workspaces = false;
+          workspaceReadConfirmed = true;
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -467,7 +470,18 @@ export default function BuzzChannels() {
             }
           }
         },
-        onError: (reason) => setError(appErrorCopy(reason)),
+        onError: (reason) => {
+          // A cold post-auth read can time out on the connection used during
+          // the browser handoff. The transport moves off that connection;
+          // give this initial discovery one bounded recovery read before
+          // asking the person to retry. Never retry refusals or later reads.
+          if (!workspaceReadConfirmed && !startupTimeoutRetried && isRoomViewTimeoutError(reason)) {
+            startupTimeoutRetried = true;
+            workspaceRefresh?.force();
+            return;
+          }
+          setError(appErrorCopy(reason));
+        },
       });
       workspaceScheduler.current = workspaceRefresh;
 

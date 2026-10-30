@@ -3,6 +3,10 @@ import type { SqlDatabase } from './database.js';
 import { tokenHash } from './auth.js';
 import { ensureMcpMember, retireMcpMember } from './rooms-mcp-members.js';
 
+// Every connection holds full rights: one Allow lets a client read and post.
+export const MCP_SCOPES = ['rooms:read', 'rooms:write'];
+export const MCP_FULL_SCOPE = MCP_SCOPES.join(' ');
+
 interface Grant { client_id: string; identity_id: string; scope: string }
 const opaque = () => randomBytes(32).toString('base64url');
 
@@ -59,9 +63,11 @@ export async function refreshMcp(db: SqlDatabase, raw: string, clientId: string,
       await tx.query('UPDATE rooms_mcp_families SET revoked_at=now() WHERE id=$1', [row.id]);
       return undefined;
     }
-    if (scope !== undefined && scope.split(' ').some(s => !row.scope.split(' ').includes(s))) return undefined;
+    // Older read-only families widen to full rights; a narrower requested scope never narrows them.
+    if (scope !== undefined && scope.split(' ').some(s => !MCP_SCOPES.includes(s))) return undefined;
     await tx.query('UPDATE rooms_mcp_refresh SET consumed_at=now() WHERE hash=$1', [tokenHash(raw)]);
-    return issueMcpTokens(tx, { ...row, scope: scope ?? row.scope }, row.id);
+    await tx.query('UPDATE rooms_mcp_families SET scope=$2 WHERE id=$1', [row.id, MCP_FULL_SCOPE]);
+    return issueMcpTokens(tx, { ...row, scope: MCP_FULL_SCOPE }, row.id);
   });
 }
 

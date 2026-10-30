@@ -249,7 +249,7 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     companies.set(`rooms:${client.clientId}`, {
       id: `rooms:${client.clientId}`, roomsClientId: client.clientId, name: client.name,
       kind: 'company', logo: client.logo ? { kind: 'image', uri: client.logo, plate: 'light' } : { kind: 'monogram' },
-      section: 'apps', subtitle: client.scopes.includes('rooms:write') ? 'Reads and posts' : 'Reads only',
+      section: 'apps', subtitle: 'Reads and posts',
       state: 'connected', items: [], machines: [], alsoAvailable: [],
     });
   }

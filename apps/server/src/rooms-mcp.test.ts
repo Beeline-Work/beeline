@@ -75,6 +75,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const verifier = opaque();
     const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', resource: origin + '/mcp',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope, state: 'review-state' });
+    if (!scope) query.delete('scope');
     const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
     expect(start.status).toBe(302);
     const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
@@ -479,7 +480,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const client = await registered.json() as { client_id: string };
     const verifier = opaque();
     const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:9876/callback', response_type: 'code', resource: origin + '/mcp',
-      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state: 'edit-state' });
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read', state: 'edit-state' });
     const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
     const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
     const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
@@ -766,15 +767,48 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }
     expect((await db.query("SELECT 1 FROM messages WHERE room_id=$1 AND text='forbidden'", [PRIVATE])).rowCount).toBe(0);
   });
-  it('enforces read-only consent even on direct tools/call and limits per token', async () => {
-    const { client, token } = await connected('rooms:read');
-    expect((await client.listTools()).tools.map(t => t.name)).toContain('send_message');
-    await expect(client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'no consent' } })).rejects.toThrow();
-    expect((await db.query("SELECT 1 FROM messages WHERE text='no consent'")).rowCount).toBe(0);
+  it('Reproduction R1: grants every tool after one Allow, with no scope or a read-only scope, and limits per token', async () => {
+    for (const scope of ['', 'rooms:read']) {
+      const { client } = await connected(scope);
+      const profile = await client.callTool({ name: 'set_profile', arguments: { name: `Grok ${scope || 'none'}` } });
+      expect(profile.isError).toBeFalsy();
+      const sent = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `full rights ${scope || 'none'}` } });
+      expect(sent.isError).toBeFalsy();
+    }
+    expect((await db.query("SELECT 1 FROM messages WHERE text LIKE 'full rights %'")).rowCount).toBe(2);
+    const { token } = await connected('rooms:read');
     await db.query('UPDATE rooms_mcp_tokens SET calls=60,window_at=now() WHERE hash=$1', [tokenHash(token)]);
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(429);
-    const other = await connected('rooms:read');
-    expect((await other.client.listTools()).tools.length).toBe(9);
+  });
+  it('Reproduction R1: lets a stored read-only connection post and refresh without reconnecting', async () => {
+    const grant = await authorize();
+    const tokens = await (await exchange(grant)).json() as { access_token: string; refresh_token: string };
+    // Seed the pre-fix state: every stored row for this connection holds read only.
+    for (const table of ['rooms_mcp_tokens', 'rooms_mcp_families', 'rooms_mcp_connections']) {
+      await db.query(`UPDATE ${table} SET scope='rooms:read' WHERE client_id=$1`, [grant.clientId]);
+    }
+    const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.member_id;
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+      ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`, [WORKSPACE, ROOM, member]);
+    const call = async (token: string, name: string, args: Record<string, unknown>) => {
+      const client = new Client({ name: 'rooms-review-proof', version: '1.0.0' }); clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+      return client.callTool({ name, arguments: args });
+    };
+    expect((await call(tokens.access_token, 'set_profile', { name: 'Grok Bot' })).isError).toBeFalsy();
+    const refreshed = await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token,
+      client_id: grant.clientId, resource: origin + '/mcp', scope: 'rooms:read rooms:write' });
+    expect(refreshed.status).toBe(200);
+    const next = await refreshed.json() as { access_token: string; refresh_token: string; scope: string };
+    expect(next.scope).toBe('rooms:read rooms:write');
+    expect((await call(next.access_token, 'send_message', { room: ROOM, text: 'posted after refresh' })).isError).toBeFalsy();
+    const narrowed = await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: next.refresh_token,
+      client_id: grant.clientId, resource: origin + '/mcp', scope: 'rooms:read' });
+    expect(narrowed.status).toBe(200);
+    const last = await narrowed.json() as { access_token: string };
+    expect((await call(last.access_token, 'send_message', { room: ROOM, text: 'posted after narrow refresh' })).isError).toBeFalsy();
+    expect((await phone.readWorkbench({ workspaceId: WORKSPACE }, USER)).aiClients)
+      .toContainEqual(expect.objectContaining({ clientId: grant.clientId, scopes: ['rooms:read', 'rooms:write'] }));
   });
   it('rejects expired grants and never accepts an MCP grant as a phone session', async () => {
     const { token } = await connected();

@@ -11,6 +11,7 @@
  * exactly as before.
  */
 import { markLatencyRouteFrame } from './latency-frame-trace';
+import { beginRoomDraw, ensureRoomDraw, finishRoomDraw } from './room-draw-barrier';
 
 /** Build-time opt-in. Expo inlines EXPO_PUBLIC_* at bundle time. */
 const RELEASE_TRACE_ENABLED =
@@ -35,14 +36,14 @@ let listeners: Array<(run: readonly TraceMark[]) => void> = [];
 let pageStartedAt: number | null = null;
 let pageReported = false;
 let pageRoomId: string | undefined;
-let roomReadNetwork: { requestToFirstByteMs: number; serverProcessingMs: number } | undefined;
+let roomReadNetwork: { requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number } | undefined;
 let successfulPagesSinceReport = 0;
 const SUCCESS_SAMPLE_RATE = 8;
 
 /** The successful Room GET's wire timing, kept locally until the existing page observation. */
 export function recordRoomReadNetworkTiming(
   roomId: string,
-  timing: { requestToFirstByteMs: number; serverProcessingMs: number },
+  timing: { requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number },
 ): void {
   if (pageStartedAt !== null && !pageReported && pageRoomId === roomId)
     roomReadNetwork = timing;
@@ -93,6 +94,9 @@ export function roomOpenTraceEnabled(): boolean {
 }
 
 export function markRoomOpen(phase: string, detail?: string): void {
+  if (phase === RUN_START_PHASE) beginRoomDraw();
+  else if (phase === 'route-mount') ensureRoomDraw();
+  else if (phase === 'newest-frame') finishRoomDraw(detail);
   if (phase === 'newest-frame') markLatencyRouteFrame('/beeline/chat/[channelId]');
   // Operational page timing is independent of the optional diagnostic trace.
   // Only the navigation and first painted frame matter; no Room identifier or

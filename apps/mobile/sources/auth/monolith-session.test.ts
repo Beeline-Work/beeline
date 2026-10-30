@@ -31,6 +31,8 @@ import { TokenAuth } from '../../../server/src/auth';
 import { migrate } from '../../../server/src/database';
 import { PgliteDatabase } from '../../../server/src/test-support';
 import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
+import { markRoomOpen } from '@/buzz/room-open-trace';
+import { abandonRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 
 const tokens = (generation: number) => ({
   accessToken: `access-${generation}`,
@@ -42,6 +44,35 @@ const tokens = (generation: number) => ({
 
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
+
+  it('dispatches the opening Room read before draw and optional requests only after its frame', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    const fetcher = vi.fn(async () => Response.json(tokens(1)));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    try {
+      await session.exchangeGitHubTicket('ticket');
+      fetcher.mockClear();
+      markRoomOpen('nav-dispatch', 'room-a');
+      const optional = ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/w',
+        '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/room-a/read'];
+      const requests = optional.map(path => session.fetch(`https://server.example${path}`));
+      await session.fetch('https://server.example/v1/phone/rooms/room-a');
+      expect(fetcher.mock.calls.map(call => call[0])).toEqual(['https://server.example/v1/phone/rooms/room-a']);
+      markRoomOpen('newest-frame', 'newest-row');
+      frames.shift()!(0);
+      await Promise.resolve();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      frames.shift()!(16);
+      await Promise.all(requests);
+      expect(fetcher.mock.calls.map(call => call[0])).toEqual([
+        'https://server.example/v1/phone/rooms/room-a', ...optional.map(path => `https://server.example${path}`),
+      ]);
+    } finally {
+      abandonRoomDraw(roomDrawGeneration());
+      vi.unstubAllGlobals();
+    }
+  });
 
   it.each(['github', 'google'] as const)('preserves anonymous attempt context through %s exchange', async (provider) => {
     const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(tokens(1)));

@@ -7,6 +7,8 @@ import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset
 import { readPushedMonolithRoom } from '@/sync/transport/room-view-client';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
+import { abandonRoomDraw, ensureRoomDraw, openingRoomResponseReady,
+  requireOpeningRoomResponse, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import { reconcileRoomView } from '@/buzz/room-view-presentation';
 
 type PendingRoom = {
@@ -33,6 +35,8 @@ subscribeClientReset(() => {
 export function prefetchPushRoom(responseId: string, roomId: string, messageId?: string): void {
   const config = getBuzzRuntimeConfig();
   if (pending?.responseId === responseId && pending.roomId === roomId) return;
+  ensureRoomDraw();
+  const drawVisit = roomDrawGeneration();
   markRoomOpen('prefetch-start');
   markRoomOpen('prefetch-target', messageId ?? 'unspecified');
   const generation = clientResetGeneration();
@@ -58,6 +62,7 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     const received = Boolean(cached && (!newestId || cached.messages.some((message) => message.id === newestId)));
     markRoomOpen('prefetch-cache', `${received ? 'received' : 'missing'}:${cached?.messages.at(-1)?.id ?? 'empty'}`);
     if (received) return afterPaint.then(read);
+    requireOpeningRoomResponse(drawVisit);
     if (!address) return read();
     // An opening read can finish before the Room's asynchronous session setup.
     // Publish its authorized response now so that setup sees the fresh rows.
@@ -84,6 +89,8 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
       return openCached(pubkey, cached);
     });
   void view.then(() => markRoomOpen('prefetch-end'), () => markRoomOpen('prefetch-error'));
+  void view.then(view => openingRoomResponseReady(view.messages.at(-1)?.id, drawVisit),
+    () => abandonRoomDraw(drawVisit));
   // The route may never mount (for example, if the tap is superseded). Its
   // read must not produce an unhandled rejection in that case.
   void view.catch(() => undefined);

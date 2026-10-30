@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 const reportPage = vi.hoisted(() => vi.fn());
 vi.mock('./room-page-observation', () => ({ reportRoomPageObservation: reportPage }));
+vi.mock('./room-draw-barrier', () => ({ beginRoomDraw() {}, ensureRoomDraw() {}, finishRoomDraw() {} }));
 
 /**
  * The point of this module is that it can be READ on a real phone. These tests

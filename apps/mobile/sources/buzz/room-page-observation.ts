@@ -5,7 +5,7 @@ import { getBuzzRuntimeConfig } from './runtime-config';
 export async function reportRoomPageObservation(
   durationMs: number,
   failed: boolean,
-  network?: { requestToFirstByteMs: number; serverProcessingMs: number },
+  network?: { requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number },
 ): Promise<void> {
   try {
     await monolithSession.fetch(

@@ -1,0 +1,14 @@
+[
+  "apps/mobile/sources/push/",
+  "apps/mobile/sources/app/_layout.tsx",
+  "apps/mobile/sources/app/(app)/beeline/chat/",
+  "apps/mobile/sources/buzz/room-",
+  "apps/mobile/sources/buzz/chat-list",
+  "apps/mobile/sources/sync/",
+  "apps/mobile/sources/auth/monolith-session",
+  "apps/mobile/sources/components/buzz/ConversationComposer",
+  "apps/mobile/sources/buzz/surface-storage",
+  "packages/buzz-client/src/signed-event-outbox",
+  "packages/buzz-client/src/room",
+  "packages/buzz-client/src/sync"
+]

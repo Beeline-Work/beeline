@@ -6,6 +6,7 @@ import type { ParamListBase } from '@react-navigation/native';
 import { roomTransitionWork } from '@/buzz/room-transition-work';
 import { useLocalSearchParams } from 'expo-router';
 import { markRoomOpen } from '@/buzz/room-open-trace';
+import { abandonRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import { RoomOpenTraceOverlay } from '@/components/buzz/RoomOpenTraceOverlay';
 import { BuzzChatSurface } from './_chat-surface';
 import {
@@ -44,6 +45,8 @@ export default function BuzzChat() {
 
   useLayoutEffect(() => {
     markRoomOpen('route-mount', decodedId);
+    const visit = roomDrawGeneration();
+    return () => abandonRoomDraw(visit);
   }, [decodedId]);
 
   const session = useRoomSurfaceSession({

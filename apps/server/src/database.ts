@@ -2624,6 +2624,8 @@ CREATE INDEX IF NOT EXISTS operator_function_events_recent
   ON operator_function_events(created_at DESC);
 ALTER TABLE operator_function_events ADD COLUMN IF NOT EXISTS network_rtt_residual_ms integer
   CHECK (network_rtt_residual_ms >= 0 AND network_rtt_residual_ms <= 15000);
+ALTER TABLE operator_function_events ADD COLUMN IF NOT EXISTS js_response_delay_ms integer
+  CHECK (js_response_delay_ms >= 0 AND js_response_delay_ms <= 600000);
 ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_status_check;
 ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
   CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable'));

@@ -68,7 +68,9 @@ class Cell extends React.PureComponent<{
 
 /**
  * The chat surface's row-renderer inputs, derived from one Room view the way
- * `_chat-surface.tsx` derives them. `stable` selects the fixed wiring.
+ * `_chat-surface.tsx` derives them. `stable` keeps identity, byline and arrival
+ * inputs referentially stable. The cell holds the latest row renderer in a
+ * ref, so a fresh parent function does not repaint resident rows either way.
  */
 function Transcript({
   view,
@@ -167,9 +169,9 @@ describe('final agent message paint', () => {
     expect(painted).toEqual([finalId]);
   });
 
-  it('documents the old wiring, which re-rendered every resident row', () => {
-    const { painted } = rowsPaintedForFinalMessage(false);
-    console.log(`[final-message-paint] old wiring rendered ${painted.length} row(s)`);
-    expect(painted).toHaveLength(21);
+  it('skips resident rows when the parent rebuilds identities and the renderer', () => {
+    const { painted, finalId } = rowsPaintedForFinalMessage(false);
+    console.log(`[final-message-paint] fresh parent wiring rendered ${painted.length} row(s)`);
+    expect(painted).toEqual([finalId]);
   });
 });

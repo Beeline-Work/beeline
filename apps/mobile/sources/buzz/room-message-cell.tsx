@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
+import { parseCornerProposal } from './corner-proposal';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { messageContainsBoundary } from './room-new-message-boundary';
 import { arrivalFlashTiming } from './room-arrival-flash';
@@ -26,7 +27,302 @@ export type RoomMessagePresentation = {
   speakerWorking?: boolean;
   cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
   cornerProposalAction?: 'open' | 'cancel' | null;
+  /** Live card inputs. Only the row that paints from a value receives it. */
+  permissionActionId?: string | null;
+  grantActionId?: string | null;
+  choiceActionId?: string | null;
+  connectorOfferActionId?: string | null;
+  appSignInActionId?: string | null;
+  targetBranchActionId?: string | null;
+  targetBranchNotice?: string | null;
+  targetBranch?: string;
+  canManageWorkspace?: boolean;
+  viewerIsAgent?: boolean;
+  /**
+   * Roster paint for this row. Each value is a primitive so a change to some
+   * other participant does not redraw this row. `renderMessage` reads these
+   * instead of the room-wide maps it closes over.
+   */
+  participantsHydrated?: boolean;
+  personName?: string;
+  personAvatar?: string;
+  personFace?: string;
+  personHandle?: string;
+  agentPubkey?: string;
+  agentName?: string;
+  agentAvatar?: string;
+  agentFace?: string;
+  agentHandle?: string;
+  /** Workspace profile model. The byline prints it as the speaker's role. */
+  agentModel?: string;
+  /** Room membership role for this row's speaker. */
+  speakerRole?: string;
+  /**
+   * `pubkey\\0handle` lines for mentions and command recipients this row
+   * paints. A handle that this text does not use stays out of the string.
+   */
+  mentionHandles?: string;
+  replyAuthorName?: string;
+  replyAuthorHandle?: string;
+  /** Room and corner names this transcript can turn into links. */
+  channelReferenceKey?: string;
+  /**
+   * The Room was archived after this row was cached. Only a row that paints
+   * a proposal or a corner swipe receives it, so other rows stay mounted.
+   */
+  roomArchived?: boolean;
+  /** This row's swipe-to-corner action. Absent when the row never offers one. */
+  cornerSwipeEnabled?: boolean;
+  /** This row's proposal choices accept a tap. Absent when the row is not a proposal. */
+  cornerProposalEnabled?: boolean;
 };
+
+/** Parent state that can change a card's buttons without changing its message. */
+export type LiveCardInputs = {
+  permissionActionId: string | null;
+  grantActionId: string | null;
+  choiceActionId: string | null;
+  connectorOfferActionId: string | null;
+  appSignInActionId: string | null;
+  targetBranchActionId: string | null;
+  targetBranchNotice: { proposalId: string; text: string } | null;
+  targetBranch?: string;
+  canManageWorkspace: boolean;
+  viewerIsAgent: boolean;
+};
+
+/**
+ * Button state for one row. Ordinary rows get nothing, so a loading or
+ * permission change does not repaint them.
+ */
+export function liveCardPresentation(
+  item: ChatDisplayMessage,
+  inputs: LiveCardInputs,
+): RoomMessagePresentation {
+  if (item.writePermission) {
+    return {
+      permissionActionId: inputs.permissionActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+      targetBranch: inputs.targetBranch,
+    };
+  }
+  if (item.grantRequest) {
+    return {
+      grantActionId: inputs.grantActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.choice) {
+    return {
+      choiceActionId: inputs.choiceActionId,
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.connectorOffer) {
+    return {
+      connectorOfferActionId: inputs.connectorOfferActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.appSignIn || item.agentSignIn) {
+    return {
+      ...(item.appSignIn ? { appSignInActionId: inputs.appSignInActionId } : {}),
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.targetBranchProposal) {
+    return {
+      targetBranchActionId: inputs.targetBranchActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+      targetBranch: inputs.targetBranch,
+      targetBranchNotice:
+        inputs.targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
+          ? inputs.targetBranchNotice.text
+          : null,
+    };
+  }
+  return {};
+}
+
+/**
+ * Room-wide gates for the two actions an archived Room must take off a cached
+ * row. The booleans exclude archive; `roomArchived` turns the actions off.
+ */
+export type ArchiveActionInputs = {
+  roomArchived: boolean;
+  /** Phone Room or corner: not a DM, not desktop, and the viewer is a person. */
+  cornerSwipeOffered: boolean;
+  /** A Room where a person can answer a proposal: not a corner or a read-only DM. */
+  cornerProposalOffered: boolean;
+};
+
+/**
+ * Cards and system lines return before the ledger row, so they never paint
+ * these actions. A new card field belongs in this list; prose stays in.
+ */
+function skipsArchiveActions(item: ChatDisplayMessage): boolean {
+  if (item.isArchivedNotice || item.isSystemNotice || item.durableFact) return true;
+  if (item.voiceCall && !item.voiceCall.endedAt) return true;
+  return (
+    item.vaultSave != null ||
+    item.roomUpdate != null ||
+    item.writePermission != null ||
+    item.grantRequest != null ||
+    item.squireApproval != null ||
+    item.computerSession != null ||
+    item.onboarding != null ||
+    item.choice != null ||
+    item.appSignIn != null ||
+    item.agentSignIn != null ||
+    item.connectorOffer != null ||
+    item.notificationLifecycleRun != null ||
+    item.walletTx != null ||
+    item.walletInsufficient != null ||
+    item.walletDelegation != null ||
+    item.targetBranchProposal != null ||
+    item.cornerApp != null ||
+    item.corner != null ||
+    item.githubEvent != null ||
+    item.daemonFact != null
+  );
+}
+
+function isCornerProposalRow(item: ChatDisplayMessage): boolean {
+  if (item.isAgentActivity || item.isAgentDraft || skipsArchiveActions(item)) return false;
+  return parseCornerProposal(item.text) !== null;
+}
+
+/**
+ * Archive state for one row. Ordinary cards get nothing, so archiving the
+ * Room does not repaint them. A proposal or a swipe row receives the archived
+ * flag and the action it paints, both false once the Room is archived.
+ */
+export function archiveActionPresentation(
+  item: ChatDisplayMessage,
+  inputs: ArchiveActionInputs,
+): RoomMessagePresentation {
+  const swipe =
+    inputs.cornerSwipeOffered && !item.isAgentDraft && !skipsArchiveActions(item);
+  const proposal = inputs.cornerProposalOffered && isCornerProposalRow(item);
+  if (!swipe && !proposal) return {};
+  const enabled = !inputs.roomArchived;
+  return {
+    roomArchived: inputs.roomArchived,
+    ...(swipe ? { cornerSwipeEnabled: enabled } : {}),
+    ...(proposal ? { cornerProposalEnabled: enabled } : {}),
+  };
+}
+
+export type RoomRosterPerson = {
+  name?: string;
+  avatar?: string;
+  face?: string;
+  handle?: string;
+};
+
+export type RoomRosterAgent = {
+  displayName?: string;
+  avatar?: string;
+  face?: string;
+  handle?: string;
+};
+
+/** The room-wide maps a transcript row turns into one speaker's paint. */
+export type RoomRosterSources = {
+  participantsHydrated: boolean;
+  personByPubkey: ReadonlyMap<string, RoomRosterPerson>;
+  agentByPubkey: ReadonlyMap<string, RoomRosterAgent>;
+  agentModelByPubkey: ReadonlyMap<string, string>;
+  roleByPubkey: ReadonlyMap<string, string>;
+  participants: readonly { pubkey: string; handle: string }[];
+};
+
+function cardAgentPubkey(item: ChatDisplayMessage): string | undefined {
+  return (
+    item.vaultSave?.agentId ??
+    item.writePermission?.agentPubkey ??
+    item.grantRequest?.agent.pubkey ??
+    item.squireApproval?.agent.pubkey ??
+    item.choice?.agent.pubkey ??
+    item.appSignIn?.agentId ??
+    item.agentSignIn?.agentId ??
+    item.connectorOffer?.agent.pubkey ??
+    item.targetBranchProposal?.agentPubkey
+  );
+}
+
+/** Handles this row's text, mentions, or command recipient actually resolve. */
+function mentionHandleKey(
+  item: ChatDisplayMessage,
+  participants: readonly { pubkey: string; handle: string }[],
+): string {
+  const wanted = new Set(item.mentionPubkeys ?? []);
+  if (item.agentCommand?.recipient.id) wanted.add(item.agentCommand.recipient.id);
+  const text = item.text.toLocaleLowerCase();
+  return participants
+    .filter(
+      (participant) =>
+        wanted.has(participant.pubkey) ||
+        (participant.handle !== '' &&
+          text.includes(`@${participant.handle.toLocaleLowerCase()}`)),
+    )
+    .map((participant) => `${participant.pubkey}\0${participant.handle}`)
+    .sort()
+    .join('\n');
+}
+
+/**
+ * Speaker fields for one row.
+ *
+ * The cell memo compares these primitives. Passing the room-wide maps would
+ * redraw every row when any profile changed; a row redraws only when its own
+ * name, avatar, role, model, mentions, or reply author changed.
+ */
+export function messageRosterPresentation(
+  item: ChatDisplayMessage,
+  roster: RoomRosterSources,
+  referenced?: ChatDisplayMessage,
+): RoomMessagePresentation {
+  const author = item.pubkey;
+  const person = author ? roster.personByPubkey.get(author) : undefined;
+  const agentPubkey =
+    cardAgentPubkey(item) ??
+    (author && roster.agentByPubkey.has(author) ? author : undefined);
+  const agent = agentPubkey ? roster.agentByPubkey.get(agentPubkey) : undefined;
+  const agentModel =
+    (agentPubkey ? roster.agentModelByPubkey.get(agentPubkey) : undefined) ??
+    (author ? roster.agentModelByPubkey.get(author) : undefined);
+  const speakerRole =
+    (author ? roster.roleByPubkey.get(author) : undefined) ??
+    (agentPubkey ? roster.roleByPubkey.get(agentPubkey) : undefined);
+  const replyPerson = referenced?.pubkey
+    ? roster.personByPubkey.get(referenced.pubkey)
+    : undefined;
+  const replyAgent = referenced?.pubkey
+    ? roster.agentByPubkey.get(referenced.pubkey)
+    : undefined;
+  return {
+    participantsHydrated: roster.participantsHydrated,
+    personName: person?.name,
+    personAvatar: person?.avatar,
+    personFace: person?.face,
+    personHandle: person?.handle,
+    agentPubkey,
+    agentName: agent?.displayName,
+    agentAvatar: agent?.avatar,
+    agentFace: agent?.face,
+    agentHandle: agent?.handle,
+    agentModel,
+    speakerRole,
+    mentionHandles: mentionHandleKey(item, roster.participants),
+    replyAuthorName: replyAgent?.displayName ?? replyPerson?.name,
+    replyAuthorHandle: replyAgent?.handle ?? replyPerson?.handle,
+  };
+}
 
 export type RoomMessageRenderContext = RoomMessagePresentation & {
   continued: boolean;
@@ -39,12 +335,14 @@ export type RoomMessageRenderer = (
   context: RoomMessageRenderContext,
 ) => React.ReactNode;
 
+const NO_ARRIVING_CARDS: ReadonlySet<string> = new Set();
+
 export function useRoomMessageRenderItem({
   render,
   continuedIds,
   precedingMessageById,
   messageById,
-  arrivingCardIds = new Set(),
+  arrivingCardIds = NO_ARRIVING_CARDS,
   cardMotionStore,
   firstNewMessageId,
   arrivalFlashMessageId = null,
@@ -66,6 +364,15 @@ export function useRoomMessageRenderItem({
 }) {
   const [fallbackMotionStore] = React.useState(createTranscriptCardMotionStore);
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
+  // The row body closes over Room handlers. A fresh payload recreates that
+  // function even when a cached row's text did not change. Keep the latest
+  // function in a ref so the cell's memo can skip unchanged rows.
+  const renderRef = React.useRef(render);
+  renderRef.current = render;
+  const stableRender = React.useCallback<RoomMessageRenderer>(
+    (item, context) => renderRef.current(item, context),
+    [],
+  );
   return React.useCallback(
     ({ item }: { item: ChatDisplayMessage }) => (
       <TranscriptCardMotionBoundary
@@ -76,7 +383,7 @@ export function useRoomMessageRenderItem({
         <RoomMessageCell
           {...presentationForMessage?.(item)}
           item={item}
-          render={render}
+          render={stableRender}
           startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
           continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
           immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
@@ -95,8 +402,8 @@ export function useRoomMessageRenderItem({
       messageById,
       precedingMessageById,
       presentationForMessage,
-      render,
       resolvedCardMotionStore,
+      stableRender,
       sourceLandingFlashMessageId,
     ],
   );
@@ -118,6 +425,7 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   speakerWorking,
   cornerProposalAnswer,
   cornerProposalAction,
+  ...live
 }: RoomMessagePresentation & {
   item: ChatDisplayMessage;
   render: RoomMessageRenderer;
@@ -135,9 +443,16 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
     >
       {startsNewMessages && <NewMessagesDivider />}
       {render(item, {
-        continued, immediatelyPrecedingMessage, referencedMessage,
-        firstBylineOfDay, untaggedHint, deliveryFailed, speakerWorking,
-        cornerProposalAnswer, cornerProposalAction,
+        continued,
+        immediatelyPrecedingMessage,
+        referencedMessage,
+        firstBylineOfDay,
+        untaggedHint,
+        deliveryFailed,
+        speakerWorking,
+        cornerProposalAnswer,
+        cornerProposalAction,
+        ...live,
       })}
     </ArrivalFlashGround>,
     ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),

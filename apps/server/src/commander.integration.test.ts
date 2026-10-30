@@ -1750,7 +1750,7 @@ it.each(['human', 'order'])('Reproduction R1: silent completion preserves fresh 
   expect((await commands(DM, RUBY)).filter(command => command.reason === 'report')).toEqual([]);
 });
 
-const currentPlaceReminder = 'Posted to your current place. Closing text is kept in turn activity; queued files attach to this post when the turn finishes.';
+const currentPlaceReminder = 'Posted to your current place. Queued files are attached to this post. Closing text is kept in turn activity.';
 it.each(['dm', 'room', 'corner', 'parent-room'] as const)('post receipt identifies the actual current place: %s', async (place) => {
   let command = order;
   let agent = RUBY;

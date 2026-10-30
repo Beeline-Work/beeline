@@ -310,7 +310,7 @@ import {
 } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
-import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
@@ -5656,8 +5656,29 @@ export function BuzzChatSurface({
         speakerWorking: rowSpeakerWorking = false,
         cornerProposalAnswer,
         cornerProposalAction: rowCornerProposalAction,
+        permissionActionId: rowPermissionActionId,
+        grantActionId: rowGrantActionId,
+        choiceActionId: rowChoiceActionId,
+        connectorOfferActionId: rowConnectorOfferActionId,
+        appSignInActionId: rowAppSignInActionId,
+        targetBranchActionId: rowTargetBranchActionId,
+        targetBranchNotice: rowTargetBranchNotice,
+        targetBranch: rowTargetBranch,
+        canManageWorkspace: rowCanManage,
+        viewerIsAgent: rowViewerIsAgent,
       }: RoomMessageRenderContext,
     ) => {
+      // Props win over the closed-over renderer. The cell only re-renders a row
+      // whose live inputs changed, and this paint must use those inputs.
+      const rowViewer = rowViewerIsAgent !== undefined ? rowViewerIsAgent : viewerIsAgent;
+      const rowManage = rowCanManage !== undefined ? rowCanManage : canManageWorkspace;
+      const rowPermission = rowPermissionActionId !== undefined ? rowPermissionActionId : permissionActionId;
+      const rowGrant = rowGrantActionId !== undefined ? rowGrantActionId : grantActionId;
+      const rowChoice = rowChoiceActionId !== undefined ? rowChoiceActionId : choiceActionId;
+      const rowConnector = rowConnectorOfferActionId !== undefined ? rowConnectorOfferActionId : connectorOfferActionId;
+      const rowAppSignIn = rowAppSignInActionId !== undefined ? rowAppSignInActionId : appSignInActionId;
+      const rowBranchAction = rowTargetBranchActionId !== undefined ? rowTargetBranchActionId : targetBranchActionId;
+      const rowBranch = rowTargetBranch !== undefined ? rowTargetBranch : roomRepository?.targetBranch;
       // An agent's order or report is ordinary transcript: the recipient leads
       // the text as an @mention and the row keeps its own author's byline.
       item = agentCommandTranscriptMessage(item, roomParticipants);
@@ -5683,11 +5704,11 @@ export function BuzzChatSurface({
             message={item}
             roomName={roomName}
             agent={agentByPubkey.get(item.writePermission.agentPubkey)}
-            viewerIsAgent={viewerIsAgent}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            viewerCanManage={canManageWorkspace}
-            actionId={permissionActionId}
-            targetBranch={roomRepository?.targetBranch}
+            viewerCanManage={rowManage}
+            actionId={rowPermission}
+            targetBranch={rowBranch}
             onDecision={rowActions.handleWritePermission}
             onOpenCorner={openCorner}
           />
@@ -5699,10 +5720,10 @@ export function BuzzChatSurface({
           <GrantRequestCard
             message={item}
             agent={agentByPubkey.get(item.grantRequest.agent.pubkey)}
-            viewerIsAgent={viewerIsAgent}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            viewerCanManageWorkspace={canManageWorkspace}
-            actionId={grantActionId}
+            viewerCanManageWorkspace={rowManage}
+            actionId={rowGrant}
             onDecision={handleGrantDecision}
             onOpenSource={(roomId, messageId) =>
               router.navigate(messageJumpHref(roomId, messageId, `squire-grant:${item.id}`))
@@ -5736,9 +5757,9 @@ export function BuzzChatSurface({
           <ChoiceCard
             message={item}
             agent={agentByPubkey.get(item.choice.agent.pubkey)}
-            viewerIsAgent={viewerIsAgent}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            actionId={choiceActionId}
+            actionId={rowChoice}
             onAnswer={handleChoiceAnswer}
             onSkip={handleChoiceSkip}
           />
@@ -5755,10 +5776,10 @@ export function BuzzChatSurface({
           <AppSignInCard
             message={item}
             agentName={agentName}
-            canConnect={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
-            busy={appSignInActionId === card.appId}
+            canConnect={!rowViewer && cacheViewerPubkey === card.ownerId}
+            busy={rowAppSignIn === card.appId}
             onConnect={() => {
-              if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
+              if (rowAppSignIn || rowViewer || cacheViewerPubkey !== card.ownerId) return;
               setAppSignInActionId(card.appId);
               void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
                 .then((result) =>
@@ -5787,7 +5808,7 @@ export function BuzzChatSurface({
           <AgentSignInCard
             card={card}
             agentName={agentName}
-            isOwner={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+            isOwner={!rowViewer && cacheViewerPubkey === card.ownerId}
             onSubmit={async (code) => {
               try {
                 await monolithPhoneOperation('completeAgentSignIn', {
@@ -5808,13 +5829,13 @@ export function BuzzChatSurface({
           <ConnectorOfferCard
             message={item}
             agent={agentByPubkey.get(item.connectorOffer.agent.pubkey)}
-            viewerIsAgent={viewerIsAgent}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            viewerCanManage={canManageWorkspace}
-            actionId={connectorOfferActionId}
+            viewerCanManage={rowManage}
+            actionId={rowConnector}
             onAccept={handleAcceptConnectorOffer}
             onDecline={async offerId => {
-              if (connectorOfferActionId) return;
+              if (rowConnector) return;
               setConnectorOfferActionId(offerId);
               try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
               catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
@@ -5846,9 +5867,11 @@ export function BuzzChatSurface({
 
       if (item.targetBranchProposal) {
         const notice =
-          targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
-            ? targetBranchNotice.text
-            : null;
+          rowTargetBranchNotice !== undefined
+            ? rowTargetBranchNotice
+            : targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
+              ? targetBranchNotice.text
+              : null;
         return (
           <TargetBranchProposalCard
             message={item}
@@ -5858,15 +5881,15 @@ export function BuzzChatSurface({
                 ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
                 : undefined
             }
-            currentTargetBranch={roomRepository?.targetBranch}
-            canManageWorkspace={canManageWorkspace}
-            viewerIsAgent={viewerIsAgent}
-            actionId={targetBranchActionId}
+            currentTargetBranch={rowBranch}
+            canManageWorkspace={rowManage}
+            viewerIsAgent={rowViewer}
+            actionId={rowBranchAction}
             notice={notice}
             onConfirm={rowActions.handleConfirmTargetBranch}
             viewerPubkey={cacheViewerPubkey}
             onDeny={async () => {
-              if (targetBranchActionId) return;
+              if (rowBranchAction) return;
               setTargetBranchActionId(item.targetBranchProposal!.proposalId);
               try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
               catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
@@ -6071,7 +6094,36 @@ export function BuzzChatSurface({
     speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
     cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
     cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
-  }), [bylineOpeners, hintMessageIds, failedOutboxIds, speakerWorking, answerByMessageId, cornerProposalAction]);
+    ...liveCardPresentation(item, {
+      permissionActionId,
+      grantActionId,
+      choiceActionId,
+      connectorOfferActionId,
+      appSignInActionId,
+      targetBranchActionId,
+      targetBranchNotice,
+      targetBranch: roomRepository?.targetBranch,
+      canManageWorkspace,
+      viewerIsAgent,
+    }),
+  }), [
+    bylineOpeners,
+    hintMessageIds,
+    failedOutboxIds,
+    speakerWorking,
+    answerByMessageId,
+    cornerProposalAction,
+    permissionActionId,
+    grantActionId,
+    choiceActionId,
+    connectorOfferActionId,
+    appSignInActionId,
+    targetBranchActionId,
+    targetBranchNotice,
+    roomRepository?.targetBranch,
+    canManageWorkspace,
+    viewerIsAgent,
+  ]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
     presentationForMessage,

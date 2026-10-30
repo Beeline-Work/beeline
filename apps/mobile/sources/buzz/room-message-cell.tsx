@@ -26,7 +26,89 @@ export type RoomMessagePresentation = {
   speakerWorking?: boolean;
   cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
   cornerProposalAction?: 'open' | 'cancel' | null;
+  /** Live card inputs. Only the row that paints from a value receives it. */
+  permissionActionId?: string | null;
+  grantActionId?: string | null;
+  choiceActionId?: string | null;
+  connectorOfferActionId?: string | null;
+  appSignInActionId?: string | null;
+  targetBranchActionId?: string | null;
+  targetBranchNotice?: string | null;
+  targetBranch?: string;
+  canManageWorkspace?: boolean;
+  viewerIsAgent?: boolean;
 };
+
+/** Parent state that can change a card's buttons without changing its message. */
+export type LiveCardInputs = {
+  permissionActionId: string | null;
+  grantActionId: string | null;
+  choiceActionId: string | null;
+  connectorOfferActionId: string | null;
+  appSignInActionId: string | null;
+  targetBranchActionId: string | null;
+  targetBranchNotice: { proposalId: string; text: string } | null;
+  targetBranch?: string;
+  canManageWorkspace: boolean;
+  viewerIsAgent: boolean;
+};
+
+/**
+ * Button state for one row. Ordinary rows get nothing, so a loading or
+ * permission change does not repaint them.
+ */
+export function liveCardPresentation(
+  item: ChatDisplayMessage,
+  inputs: LiveCardInputs,
+): RoomMessagePresentation {
+  if (item.writePermission) {
+    return {
+      permissionActionId: inputs.permissionActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+      targetBranch: inputs.targetBranch,
+    };
+  }
+  if (item.grantRequest) {
+    return {
+      grantActionId: inputs.grantActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.choice) {
+    return {
+      choiceActionId: inputs.choiceActionId,
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.connectorOffer) {
+    return {
+      connectorOfferActionId: inputs.connectorOfferActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.appSignIn || item.agentSignIn) {
+    return {
+      ...(item.appSignIn ? { appSignInActionId: inputs.appSignInActionId } : {}),
+      viewerIsAgent: inputs.viewerIsAgent,
+    };
+  }
+  if (item.targetBranchProposal) {
+    return {
+      targetBranchActionId: inputs.targetBranchActionId,
+      canManageWorkspace: inputs.canManageWorkspace,
+      viewerIsAgent: inputs.viewerIsAgent,
+      targetBranch: inputs.targetBranch,
+      targetBranchNotice:
+        inputs.targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
+          ? inputs.targetBranchNotice.text
+          : null,
+    };
+  }
+  return {};
+}
 
 export type RoomMessageRenderContext = RoomMessagePresentation & {
   continued: boolean;
@@ -129,6 +211,7 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   speakerWorking,
   cornerProposalAnswer,
   cornerProposalAction,
+  ...live
 }: RoomMessagePresentation & {
   item: ChatDisplayMessage;
   render: RoomMessageRenderer;
@@ -146,9 +229,16 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
     >
       {startsNewMessages && <NewMessagesDivider />}
       {render(item, {
-        continued, immediatelyPrecedingMessage, referencedMessage,
-        firstBylineOfDay, untaggedHint, deliveryFailed, speakerWorking,
-        cornerProposalAnswer, cornerProposalAction,
+        continued,
+        immediatelyPrecedingMessage,
+        referencedMessage,
+        firstBylineOfDay,
+        untaggedHint,
+        deliveryFailed,
+        speakerWorking,
+        cornerProposalAnswer,
+        cornerProposalAction,
+        ...live,
       })}
     </ArrivalFlashGround>,
     ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),

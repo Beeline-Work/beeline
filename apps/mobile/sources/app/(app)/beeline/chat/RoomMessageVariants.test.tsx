@@ -14,6 +14,7 @@ import {
   conversationIdentityByPubkey,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
+import { liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
 import { beginReplyTarget } from '@/buzz/message-reply';
@@ -186,6 +187,8 @@ vi.mock('@/components/buzz/Ledger', async () => {
     LedgerUntaggedHint: (props: any) => ReactModule.createElement('LedgerUntaggedHint', props),
     LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
     LedgerSteer: (props: any) => ReactModule.createElement('LedgerSteer', props),
+    withLedgerDayCaption: (node: unknown, label: string | null) =>
+      label ? ReactModule.createElement('day-caption-wrap', { label }, node as React.ReactNode) : node,
   };
 });
 
@@ -491,6 +494,159 @@ describe('Room message variant components', () => {
     );
     act(() => allowed.root.findByProps({ testID: 'write-permission-open-corner' }).props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('corner');
+  });
+
+  it('updates approval loading and disabled permission through the row memo', () => {
+    const counts = new Map<string, number>();
+    const kept = message({ id: 'kept', text: 'Cached' });
+    const permission = message({
+      id: 'permission-row',
+      writePermission: {
+        permissionId: 'permission',
+        requestId: 'request',
+        agentPubkey: 'agent',
+        requesterPubkey: 'requester',
+        tool: 'edit_file',
+        repository: 'owner/repo',
+        status: 'pending',
+      },
+    });
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const grant = message({
+      id: 'grant-row',
+      grantRequest: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra' },
+        owner,
+        requester: owner,
+        grants: [{
+          grantId: 'g-1',
+          kind: 'repository',
+          target: 'owner/repo',
+          reason: 'edit the repository',
+          status: 'pending',
+          requestedBy: owner,
+          roomId: '22222222-2222-4222-8222-222222222222',
+          createdAt: 1,
+          auto: false,
+        }],
+      },
+    });
+    const rows = [kept, permission, grant];
+    function Harness({
+      permissionActionId,
+      grantActionId,
+      canManageWorkspace,
+    }: {
+      permissionActionId: string | null;
+      grantActionId: string | null;
+      canManageWorkspace: boolean;
+    }) {
+      const renderItem = useRoomMessageRenderItem({
+        render: (item, context) => {
+          counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+          if (item.writePermission) {
+            return (
+              <WritePermissionCard
+                message={item}
+                viewerIsAgent={context.viewerIsAgent === true}
+                viewerPubkey="admin"
+                viewerCanManage={context.canManageWorkspace === true}
+                actionId={context.permissionActionId ?? null}
+                onDecision={() => undefined}
+                onOpenCorner={() => undefined}
+              />
+            );
+          }
+          if (item.grantRequest) {
+            return (
+              <GrantRequestCard
+                message={item}
+                viewerIsAgent={context.viewerIsAgent === true}
+                viewerPubkey="admin"
+                viewerCanManageWorkspace={context.canManageWorkspace === true}
+                actionId={context.grantActionId ?? null}
+                onDecision={() => undefined}
+              />
+            );
+          }
+          return React.createElement('message-row', { id: item.id, text: item.text });
+        },
+        presentationForMessage: (item) => liveCardPresentation(item, {
+          permissionActionId,
+          grantActionId,
+          choiceActionId: null,
+          connectorOfferActionId: null,
+          appSignInActionId: null,
+          targetBranchActionId: null,
+          targetBranchNotice: null,
+          canManageWorkspace,
+          viewerIsAgent: false,
+        }),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return (
+        <>
+          {rows.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </>
+      );
+    }
+    const shown = render(
+      <Harness permissionActionId={null} grantActionId={null} canManageWorkspace />,
+    );
+    const allow = () => shown.root.findByProps({ testID: 'write-permission-allow' });
+    const always = () => shown.root.findByProps({ testID: 'grant-g-1-always' });
+    expect(allow().props).toMatchObject({ disabled: false, accessibilityState: { busy: false } });
+    expect(allow().props.loading).toBeFalsy();
+    expect(always().props).toMatchObject({ disabled: false, accessibilityState: { busy: false } });
+    expect(always().props.loading).toBeFalsy();
+    expect(counts.get('kept')).toBe(1);
+    expect(conversationSource).toContain('liveCardPresentation');
+    expect(conversationSource).toContain('actionId={rowPermission}');
+    expect(conversationSource).toContain('actionId={rowGrant}');
+    expect(conversationSource).toContain('viewerCanManage={rowManage}');
+
+    act(() => {
+      shown.update(
+        <Harness permissionActionId="permission" grantActionId={null} canManageWorkspace />,
+      );
+    });
+    expect(allow().props).toMatchObject({
+      disabled: true,
+      loading: true,
+      accessibilityState: { busy: true },
+    });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('grant-row')).toBe(1);
+
+    act(() => {
+      shown.update(
+        <Harness permissionActionId="permission" grantActionId="g-1" canManageWorkspace />,
+      );
+    });
+    expect(always().props).toMatchObject({
+      disabled: true,
+      loading: true,
+      accessibilityState: { busy: true },
+    });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('permission-row')).toBe(2);
+
+    act(() => {
+      shown.update(
+        <Harness permissionActionId={null} grantActionId={null} canManageWorkspace={false} />,
+      );
+    });
+    expect(shown.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
+    expect(shown.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+    expect(shown.root.findAllByProps({ testID: 'grant-g-1-always' })).toHaveLength(0);
+    const waiting = JSON.stringify(shown.toJSON());
+    expect(waiting).toContain('waiting for the requester or a workspace admin');
+    expect(waiting).toContain('waiting for a Workspace admin');
+    expect(counts.get('kept')).toBe(1);
   });
 
   it('renders target-branch applied, manager-confirm, and denied states', () => {

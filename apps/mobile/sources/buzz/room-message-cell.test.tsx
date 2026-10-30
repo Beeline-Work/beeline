@@ -3,7 +3,10 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  liveCardPresentation,
   RoomMessageCell,
+  type LiveCardInputs,
+  type RoomMessageRenderContext,
   type RoomMessageRenderer,
   useRoomMessageRenderItem,
 } from './room-message-cell';
@@ -373,6 +376,183 @@ describe('RoomMessageCell', () => {
     const deleted = { ...kept, text: 'This message was deleted', deleted: true };
     show([deleted, edited]);
     expect(counts.get('kept')).toBe(2);
+    expect(renderer.root.findByProps({ id: 'kept' }).props).toMatchObject({
+      text: 'This message was deleted',
+      deleted: true,
+    });
+    act(() => renderer.unmount());
+  });
+
+  it('re-renders approval loading and permission changes without painting an unchanged row', () => {
+    const kept: ChatDisplayMessage = { id: 'kept', text: 'Cached', isUser: false, timestamp: 1 };
+    const approval: ChatDisplayMessage = {
+      id: 'approval',
+      text: 'Allow this edit',
+      isUser: false,
+      timestamp: 2,
+      writePermission: {
+        permissionId: 'permission',
+        requestId: 'request',
+        agentPubkey: 'agent',
+        requesterPubkey: 'requester',
+        tool: 'edit_file',
+        repository: 'owner/repo',
+        status: 'pending',
+      },
+    };
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const grant: ChatDisplayMessage = {
+      id: 'grant',
+      text: 'Grant',
+      isUser: false,
+      timestamp: 3,
+      grantRequest: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra' },
+        owner,
+        requester: owner,
+        grants: [{
+          grantId: 'g-1',
+          kind: 'repository',
+          target: 'owner/repo',
+          reason: 'edit the repository',
+          status: 'pending',
+          requestedBy: owner,
+          roomId: '22222222-2222-4222-8222-222222222222',
+          createdAt: 1,
+          auto: false,
+        }],
+      },
+    };
+    const counts = new Map<string, number>();
+    const paint = (item: ChatDisplayMessage, context: RoomMessageRenderContext) => {
+      counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+      if (item.writePermission) {
+        const busy = context.permissionActionId === item.writePermission.permissionId;
+        if (context.canManageWorkspace !== true || context.viewerIsAgent === true) {
+          return React.createElement('wait', { testID: 'corner-approval-audience-wait', id: item.id });
+        }
+        return React.createElement('button', {
+          testID: 'write-permission-allow',
+          id: item.id,
+          accessibilityState: { disabled: busy, busy },
+        });
+      }
+      if (item.grantRequest) {
+        const grantId = item.grantRequest.grants[0]!.grantId;
+        const busy = context.grantActionId === grantId;
+        if (context.canManageWorkspace !== true) {
+          return React.createElement('wait', { testID: 'grant-waiting', id: item.id });
+        }
+        return React.createElement('button', {
+          testID: `grant-${grantId}-always`,
+          id: item.id,
+          accessibilityState: { disabled: context.grantActionId !== null, busy },
+        });
+      }
+      return React.createElement('message-row', {
+        id: item.id,
+        text: item.text,
+        deleted: item.deleted === true,
+      });
+    };
+    function Harness({
+      rows,
+      permissionActionId,
+      grantActionId,
+      canManageWorkspace,
+    }: {
+      rows: ChatDisplayMessage[];
+      permissionActionId: string | null;
+      grantActionId: string | null;
+      canManageWorkspace: boolean;
+    }) {
+      const inputs: LiveCardInputs = {
+        permissionActionId,
+        grantActionId,
+        choiceActionId: null,
+        connectorOfferActionId: null,
+        appSignInActionId: null,
+        targetBranchActionId: null,
+        targetBranchNotice: null,
+        canManageWorkspace,
+        viewerIsAgent: false,
+      };
+      const renderItem = useRoomMessageRenderItem({
+        render: paint,
+        presentationForMessage: (item) => liveCardPresentation(item, inputs),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return React.createElement(React.Fragment, null,
+        ...rows.map((item) => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    const show = (props: {
+      rows: ChatDisplayMessage[];
+      permissionActionId: string | null;
+      grantActionId: string | null;
+      canManageWorkspace: boolean;
+    }) => {
+      act(() => {
+        const node = React.createElement(Harness, props);
+        if (renderer) renderer.update(node);
+        else renderer = create(node);
+      });
+    };
+    const initial = {
+      rows: [kept, approval, grant],
+      permissionActionId: null,
+      grantActionId: null,
+      canManageWorkspace: true,
+    };
+    show(initial);
+    expect(renderer.root.findByProps({ testID: 'write-permission-allow' }).props.accessibilityState)
+      .toEqual({ disabled: false, busy: false });
+    expect(renderer.root.findByProps({ testID: 'grant-g-1-always' }).props.accessibilityState)
+      .toEqual({ disabled: false, busy: false });
+    expect(counts.get('kept')).toBe(1);
+
+    show({ ...initial, permissionActionId: 'permission' });
+    expect(renderer.root.findByProps({ testID: 'write-permission-allow' }).props.accessibilityState)
+      .toEqual({ disabled: true, busy: true });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('grant')).toBe(1);
+
+    show({ ...initial, permissionActionId: 'permission', grantActionId: 'g-1' });
+    expect(renderer.root.findByProps({ testID: 'grant-g-1-always' }).props.accessibilityState)
+      .toEqual({ disabled: true, busy: true });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('approval')).toBe(2);
+
+    show({ ...initial, permissionActionId: 'permission', grantActionId: 'g-1', canManageWorkspace: false });
+    expect(renderer.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'grant-waiting' })).toBeDefined();
+    expect(counts.get('kept')).toBe(1);
+
+    const edited = { ...kept, text: 'Edited after it arrived' };
+    show({
+      ...initial,
+      rows: [edited, approval, grant],
+      permissionActionId: 'permission',
+      grantActionId: 'g-1',
+      canManageWorkspace: false,
+    });
+    expect(counts.get('kept')).toBe(2);
+    expect(renderer.root.findByProps({ id: 'kept' }).props.text).toBe('Edited after it arrived');
+    expect(counts.get('approval')).toBe(3);
+
+    const deleted = { ...edited, text: 'This message was deleted', deleted: true };
+    show({
+      ...initial,
+      rows: [deleted, approval, grant],
+      permissionActionId: 'permission',
+      grantActionId: 'g-1',
+      canManageWorkspace: false,
+    });
+    expect(counts.get('kept')).toBe(3);
     expect(renderer.root.findByProps({ id: 'kept' }).props).toMatchObject({
       text: 'This message was deleted',
       deleted: true,

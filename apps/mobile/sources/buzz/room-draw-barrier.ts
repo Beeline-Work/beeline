@@ -11,8 +11,11 @@ let drawnNewest: string | undefined;
 let roomId: string | undefined;
 let visibleIds = new Set<string>();
 let releaseScheduled = false;
+let drawDeadline: ReturnType<typeof setTimeout> | undefined;
 
 export function beginRoomDraw(id?: string): void {
+  clearTimeout(drawDeadline);
+  drawDeadline = undefined;
   generation += 1;
   awaitingResponse = false;
   expectedNewest = undefined;
@@ -49,6 +52,8 @@ export function observeVisibleRoomRows(id: string, ids: readonly string[]): void
 export function roomDrawGeneration(): number { return generation; }
 export function abandonRoomDraw(visit: number): void {
   if (visit !== generation) return;
+  clearTimeout(drawDeadline);
+  drawDeadline = undefined;
   const resolve = release;
   pending = undefined;
   release = undefined;
@@ -63,12 +68,32 @@ export function finishRoomDraw(newest?: string, id?: string): void {
   drawnNewest = newest;
   const ready = () => !awaitingResponse && (expectedNewest !== undefined
     ? visibleIds.has(expectedNewest) : drawnNewest === undefined || visibleIds.size > 0);
+  // An inverted list can retain its old visibility indices while native
+  // anchoring waits for a scroll event. Its Room has already drawn, and the
+  // fresh row has reached the frame pump: do not hold observed read marks
+  // indefinitely waiting for a second report with the same visible indices.
+  // This releases requests only; it never invents a new read boundary.
+  const firstFrameReady = () => !awaitingResponse && expectedNewest !== undefined &&
+    drawnNewest === expectedNewest && visibleIds.size > 0;
+  if (!drawDeadline && firstFrameReady()) {
+    const visit = generation;
+    drawDeadline = globalThis.setTimeout(() => {
+      drawDeadline = undefined;
+      if (visit !== generation || !pending || !firstFrameReady()) return;
+      const resolve = release;
+      pending = undefined;
+      release = undefined;
+      resolve?.();
+    }, 500);
+  }
   if (releaseScheduled || !ready()) return;
   releaseScheduled = true;
   const current = generation;
   const finish = () => {
     if (current !== generation || !pending) return;
     if (!ready()) { releaseScheduled = false; return; }
+    clearTimeout(drawDeadline);
+    drawDeadline = undefined;
     const resolve = release;
     pending = undefined;
     release = undefined;

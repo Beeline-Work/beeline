@@ -144,3 +144,23 @@ it('an old Room frame cannot release a newer open; aborted requests stop waiting
   await waiting;
   expect(sent).toHaveBeenCalledOnce();
 });
+
+
+it('bounds optional work after an existing Room frame and a fresh data frame when visibility indices stay unchanged', async () => {
+  vi.useFakeTimers();
+  beginRoomDraw('room');
+  requireOpeningRoomResponse();
+  const sent = vi.fn();
+  const waiting = waitForRoomDraw()!.then(sent);
+  observeVisibleRoomRows('room', ['cached-row']);
+  finishRoomDraw('cached-row', 'room');
+  openingRoomResponseReady('fresh-row');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(sent).not.toHaveBeenCalled();
+  finishRoomDraw('fresh-row', 'room');
+  await vi.advanceTimersByTimeAsync(499);
+  expect(sent).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await waiting;
+  expect(sent).toHaveBeenCalledOnce();
+});

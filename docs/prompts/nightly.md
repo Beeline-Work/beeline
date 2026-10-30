@@ -78,6 +78,11 @@ experiment ran within the last seven days, the controller exits with
 still replayed on any night it is given. If a baseline falls below 90%, the
 nightly audit loop resumes.
 
+The floor counts only a fully scored cohort: every eligible case must have all
+its samples scored on every model. A run with any unscored or format-invalid case
+on a model never reaches the floor, never selects shortening, and never counts
+toward the weekly skip, even if its scored cases all pass.
+
 ## Run
 
 Read the runner before executing it. Use a unique output and exchange directory

@@ -389,11 +389,47 @@ test('D2 switches to weekly shortening only when both models reach 90%', () => {
   assert.equal(floorReached({ small: null, large: 1 }, models), false);
   const day = 24 * 3600_000, now = Date.parse('2026-11-10T08:00:00Z');
   const run = (daysAgo, small, mode = 'none') => ({ status: 'complete', startedAt: new Date(now - daysAgo * day).toISOString(),
-    models: { small: { passRate: small }, large: { passRate: 0.93 } }, experiment: { mode } });
+    models: { small: { passRate: small, overallPassRate: small }, large: { passRate: 0.93, overallPassRate: 0.93 } }, experiment: { mode } });
   assert.match(weeklyShorteningSkip([run(3, 0.91, 'shorten'), run(1, 0.92)], models, now), /weekly shortening not due/);
   assert.equal(weeklyShorteningSkip([run(7, 0.91, 'shorten'), run(1, 0.92)], models, now), undefined);
   assert.equal(weeklyShorteningSkip([run(3, 0.91, 'shorten'), run(1, 0.85)], models, now), undefined);
   assert.equal(weeklyShorteningSkip([{ startedAt: '2020-01-01', passed: 1 }], models, now), undefined);
+  // A partially scored entry has a behavior rate but no overall rate; it never counts as the floor.
+  const partial = (daysAgo, mode) => ({ ...run(daysAgo, 1, mode), models: { small: { passRate: 1, overallPassRate: null }, large: { passRate: 1 } } });
+  assert.equal(weeklyShorteningSkip([partial(1, 'shorten')], models, now), undefined);
+  assert.equal(weeklyShorteningSkip([partial(3, 'shorten'), run(1, 0.92)], models, now), undefined);
+});
+
+test('a partially scored cohort never reaches the floor, selects shortening, or skips later nights', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-partial-floor-'));
+  try {
+    const history = join(dir, 'history.jsonl');
+    // One passing case per model; every other case returns a malformed answer.
+    const request = async body => {
+      const reply = { ...response({ calls: [], text: '72' }), model: body.model };
+      if (!JSON.stringify(body.messages).includes('and what is 9 times 8?')) reply.choices[0].message.content = '{broken';
+      return reply;
+    };
+    const first = await runNightly({ out: join(dir, 'first'), history, request });
+    assert.equal(first.status, 'complete');
+    assert.equal(first.floorReached, false);
+    assert.equal(first.experiment.mode, 'none');
+    assert.equal(first.experiment.outcome, 'skipped: no audit candidate');
+    assert.equal(first.candidate.length, 0);
+    const saved = JSON.parse(readFileSync(history, 'utf8'));
+    assert.equal(saved.floorReached, false);
+    for (const id of DEFAULT_MODELS) {
+      assert.equal(saved.models[id].scoredCases, 1);
+      assert.equal(saved.models[id].passRate, 1);
+      assert.equal(saved.models[id].overallPassRate, null);
+    }
+    assert.match(readFileSync(join(dir, 'first', 'summary.txt'), 'utf8'), /below 90% floor/);
+    // A partial entry recorded in shorten mode by an older runner does not suppress the next night.
+    writeFileSync(history, `${JSON.stringify({ ...saved, floorReached: true, experiment: { mode: 'shorten', outcome: 'no change' } })}\n`);
+    const next = await runNightly({ out: join(dir, 'next'), history, request, now: Date.parse(saved.startedAt) + 3600_000 });
+    assert.notEqual(next.status, 'skipped');
+    assert.equal(next.experiment.mode, 'none');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 function writePatch(dir, path, marker) {

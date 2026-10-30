@@ -185,13 +185,14 @@ export function chooseMode({ patch, rates, models }) {
   return floorReached(rates, models) ? 'shorten' : 'none';
 }
 
-const historyRates = (entry) => Object.fromEntries(Object.entries(entry?.models ?? {}).map(([id, m]) => [id, m.passRate]));
+// Only a fully scored cohort counts toward the floor; partial and legacy entries never do.
+const historyRates = (entry) => Object.fromEntries(Object.entries(entry?.models ?? {}).map(([id, m]) => [id, m.overallPassRate]));
 
 /** Once the floor holds, shortening runs weekly; nights in between spend nothing. */
 export function weeklyShorteningSkip(prior, models, now) {
   const latest = prior.findLast((entry) => entry.status === 'complete' && entry.models);
   if (!floorReached(historyRates(latest), models)) return undefined;
-  const last = prior.findLast((entry) => entry.experiment?.mode === 'shorten');
+  const last = prior.findLast((entry) => entry.experiment?.mode === 'shorten' && floorReached(historyRates(entry), models));
   if (last && now - Date.parse(last.startedAt) < SHORTENING_INTERVAL_MS) return `skipped: weekly shortening not due (last ${last.startedAt.slice(0, 10)})`;
 }
 
@@ -563,8 +564,10 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     for (const model of models) perModel[model].noise = assessExperiment(perModel[model].baseline, perModel[model].baseline, perModel[model].control);
     result.noise = assessExperiment(pool('baseline'), pool('baseline'), pool('control'));
     const rates = Object.fromEntries(models.map((model) => [model, scoreRows(perModel[model].baseline, cases.length).passRate]));
-    result.floorReached = floorReached(rates, models);
-    const mode = chooseMode({ patch, rates, models });
+    // The floor needs every eligible case scored on every model.
+    const fullRates = Object.fromEntries(models.map((model) => [model, scoreRows(perModel[model].baseline, cases.length).overallPassRate]));
+    result.floorReached = floorReached(fullRates, models);
+    const mode = chooseMode({ patch, rates: fullRates, models });
     let block;
     if (mode === 'audit') result.experiment = { mode, outcome: 'running', patch: { paths: patch.paths, sha256: patch.sha256 } };
     else if (mode === 'shorten') {
@@ -595,7 +598,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
         if (mode === 'audit') decision = decideCandidate(pooled, modelExperiments);
         else {
           // Shortening keeps both models at or above the floor.
-          const kept = floorReached(Object.fromEntries(models.map((model) => [model, modelExperiments[model].passRateAfter])), models);
+          const kept = floorReached(Object.fromEntries(models.map((model) => [model, scoreRows(perModel[model].candidate, cases.length).overallPassRate])), models);
           decision = { accepted: pooled.accepted && kept, outcome: pooled.accepted && !kept ? `rejected: below ${100 * PASS_FLOOR}% floor` : pooled.outcome };
         }
         result.experiment = { ...result.experiment, ...pooled, ...decision, perModel: modelExperiments };
@@ -630,7 +633,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     const scoring = scoreRows(perModel[model].baseline, cases.length);
     perModel[model].scoring = scoring;
     perModel[model].classes = Object.fromEntries(ARMS.map(name => [name, classCounts(perModel[model][name])]));
-    return [model, { passed: scoring.passed, scoredCases: scoring.scoredCases, passRate: scoring.passRate,
+    return [model, { passed: scoring.passed, scoredCases: scoring.scoredCases, unscoredCases: scoring.unscoredCases, passRate: scoring.passRate, overallPassRate: scoring.overallPassRate,
       medianTokensPerTurn: medianTokens(perModel[model].baseline), experiment: perModel[model].experiment }];
   }));
   save();

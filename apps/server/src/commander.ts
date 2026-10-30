@@ -316,7 +316,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean } = {},
+  options: { directRecipient?: string; automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean; retryAt?: number }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -324,7 +324,7 @@ export async function reportToCommander(
       400,
     );
   const ask = options.ask === undefined ? undefined : normalizeAgentAsk(options.ask);
-  if (command?.coalesced_context !== null && command?.coalesced_context !== undefined && !options.digestSource) {
+  if (!options.directRecipient && command?.coalesced_context !== null && command?.coalesced_context !== undefined && !options.digestSource) {
     const sources = (await db.query<CommandRow>(
       `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
        AND (id=$3 OR cancellation_reason='coalesced_into:'||$3) ORDER BY inbox_sequence`,
@@ -366,7 +366,10 @@ export async function reportToCommander(
     }
   }
   const strict = Boolean(command) && !options.automatic;
-  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command, options.automatic === true && options.agentOnly === true && agentId === SYSTEM_IDENTITY_ID);
+  const route = await commanderReportAddress(db, roomId, command, options.automatic === true && options.agentOnly === true && agentId === SYSTEM_IDENTITY_ID);
+  const { recipient, returnRoom, parent, origin, incoming } = options.directRecipient
+    ? { ...route, recipient: options.directRecipient, returnRoom: roomId, parent: undefined }
+    : route;
   // Closed work has no outstanding request. Do not move its stale reports to
   // an ancestor Room merely because that Room still exists.
   if (origin && (await db.query(`SELECT 1 FROM rooms corner LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -380,7 +383,7 @@ export async function reportToCommander(
     reportId = createHash('sha256').update(`corner-failure:${origin}:${agentId}:${recipient}:${returnRoom}:${text}:${recovery ?? ''}:${JSON.stringify(command?.review_context?.reviewerConfiguration ?? null)}`).digest('hex');
   }
   const order = command ? await commandOrder(db, command) : undefined;
-  const assignment = order?.agent_id === agentId && (order.private_payload?.kind === 'order' ||
+  const assignment = !options.directRecipient && order?.agent_id === agentId && (order.private_payload?.kind === 'order' ||
     (!order.private_payload && order.source_message_id && (await db.query(
       `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
        WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [order.source_message_id])).rowCount)) ? order : undefined;

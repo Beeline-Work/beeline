@@ -78,7 +78,8 @@ export function summarizeSample(sample) {
     prepaintOptionalCount: prepaint.filter(span =>
       /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test((span.operation ?? '').split('?')[0]) ||
       /^\/v1\/phone\/rooms\/[^/]+\/read$/.test((span.operation ?? '').split('?')[0]) ||
-      span.operation === '/v1/phone/operations/readStarPrompt').length,
+      span.operation === '/v1/phone/operations/readStarPrompt' ||
+      span.operation === '/v1/phone/observations/page-load').length,
     prepaintHttpDepth: serialDepth(prepaint),
     prepaintCompletedRoundTrips: prepaint.filter((span) => span.endMs <= paintMs + clockUncertaintyMs).length,
     writeCount: writes.length, followupReadCount: followupReads.length,

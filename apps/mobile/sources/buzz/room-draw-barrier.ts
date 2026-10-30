@@ -86,5 +86,6 @@ export function isOptionalRoomRequest(input: string): boolean {
   // roster and list enrichment are optional.
   return /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test(path) ||
     /^\/v1\/phone\/rooms\/[^/]+\/read$/.test(path) ||
-    path === '/v1/phone/operations/readStarPrompt';
+    path === '/v1/phone/operations/readStarPrompt' ||
+    path === '/v1/phone/observations/page-load';
 }

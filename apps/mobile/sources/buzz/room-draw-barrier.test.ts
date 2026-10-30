@@ -63,7 +63,7 @@ it('holds all optional requests until after the Room frame and releases together
   beginRoomDraw();
   const sent: string[] = [];
   const paths = ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/workspace',
-    '/v1/phone/workspaces/workspace/chats', '/v1/phone/rooms/room/read'];
+    '/v1/phone/workspaces/workspace/chats', '/v1/phone/rooms/room/read', '/v1/phone/observations/page-load'];
   const requests = paths.map(async path => {
     expect(isOptionalRoomRequest(`https://test${path}`)).toBe(true);
     await waitForRoomDraw();

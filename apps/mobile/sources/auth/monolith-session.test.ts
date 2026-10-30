@@ -55,7 +55,7 @@ describe('monolith phone session', () => {
       fetcher.mockClear();
       markRoomOpen('nav-dispatch', 'room-a');
       const optional = ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/w',
-        '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/room-a/read'];
+        '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/room-a/read', '/v1/phone/observations/page-load'];
       const requests = optional.map(path => session.fetch(`https://server.example${path}`));
       await session.fetch('https://server.example/v1/phone/rooms/room-a');
       await session.fetch('https://server.example/v1/phone/workspaces');

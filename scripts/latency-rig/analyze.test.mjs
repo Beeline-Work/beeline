@@ -14,7 +14,7 @@ test('counts independent network requests at one RTT depth', () => {
 
 test('an optional request before Room draw fails even within the cold request budget', () => {
   for (const operation of ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/w',
-    '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/r/read']) {
+    '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/r/read', '/v1/phone/observations/page-load']) {
     const sample = { kind: 'route', name: '/beeline/chat/[channelId]', variant: 'cold',
       clockDomain: 'host', startMs: 0, paintMs: 100,
       http: [{ operation, startMs: 10, endMs: 110 }] };

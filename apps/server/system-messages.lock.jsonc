@@ -1,3 +1,4 @@
+// Connected AI app agent-tool forwarding approved by lunchboxfortwo, message 7bd35003b7a0f33e5e59d225888502dcf09c83ab391409af02dc798b2866f17d (brief revision 1). Only RoomsMcpAgentTools call sites in rooms-mcp-agent.ts were added; they pass arguments to existing server actions and add no System wording.
 // One-tap YouTube upload reservation and restoration metadata approved by lunchboxfortwo, message 3044ec74214ab08b7beb3d898e065d6d6b6f3e1bc5c15deeef16dbf6a1a57650 (brief revision 3). Only consumeStarterVideoPost and restoreStarterVideoPost snapshots changed; no visible System wording changed.
 // Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays through helper parameters and destructured bindings; no producer source or displayed wording changed.
 // Save to vault card and saved receipt approved by lunchboxfortwo, brief revision 2, message 2df3e0f5a54cd95512707fd11e51f20cc7c399f4bedf1934adf7f9bfdfd4634e; vault producers and their transitive wrappers only.
@@ -43,106 +44,6 @@
 // Unfinished app sign-in cleanup fails the pending chat card; required by the owner-approved brief revision 2 (lunchboxfortwo, message b1dd35c16c366217c06cc07a43f4cd52bfe9abc9530d91be2eef3286ec8df564). Existing wording only, this cleanupUnfinishedAppSignIns wrapper only.
 // Agent stop line approved by lunchboxfortwo, DM message feeafd10: "@commander stopped @worker's running turn", with " · N queued orders dropped" when orders were dropped; agent stop tool producers only.
 [
-  {
-    "id": "src/commander.ts:stopCommandedTurn:systemLine:597a3aeb12b6effb",
-    "file": "apps/server/src/commander.ts",
-    "kind": "systemLine",
-    "template": "systemLine(db, {\n    id: createHash('sha256').update(`agent-stop-line:${command.id}:${running.id}`).digest('hex'),\n    roomId: address, authorId: worker.id, subject: { kind: 'agent', id: agentId, name: agentId }, verb: 'stopped',\n    object: `${systemIdentityMention({ ...worker, kind: 'agent' })}'s running turn`,\n    ...(dropped ? { consequence: `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` } : {}),\n})",
-    "literals": [
-      "\"\"",
-      "\"NFKD\"",
-      "\"_\"",
-      "\"agent\"",
-      "\"order\"",
-      "\"orders\"",
-      "\"stopped\"",
-      "$local()",
-      ".filter",
-      ".filter()",
-      ".handle",
-      ".id",
-      ".name",
-      ".normalize",
-      ".normalize()",
-      ".replace",
-      ".replace()",
-      ".rows",
-      ".toLowerCase",
-      ".toLowerCase()",
-      ".trim",
-      ".trim()",
-      ".worker",
-      "FirstLiteralToken:0",
-      "FirstLiteralToken:1",
-      "RegularExpressionLiteral:/[\\u0300-\\u036f]/g",
-      "RegularExpressionLiteral:/[^a-z0-9_]/g",
-      "RegularExpressionLiteral:/\\s+/g",
-      "RegularExpressionLiteral:/^@/",
-      "[\"\",\" queued \",\" dropped\"]",
-      "[\"\",\"'s running turn\"]",
-      "[\"@\",\"\"]",
-      "binary:===",
-      "binary:??",
-      "binary:||",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/commander.ts:stopCommandedTurn:wrapper:5e0980afdfb39d52",
-    "file": "apps/server/src/commander.ts",
-    "kind": "wrapper",
-    "template": "dropQueuedOrdersForStop(db, running)",
-    "literals": [
-      ".rows",
-      "FirstLiteralToken:0"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:ca119ff7696920dd",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "stopCommandedTurn(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), candidate.agent === undefined ? undefined : String(candidate.agent))",
-    "literals": [
-      "\"\"",
-      "\"'\"",
-      "\"*\"",
-      "\"**\"",
-      "\"\\\"\"",
-      "\"\\\\$&\"",
-      "\"complete\"",
-      "\"iu\"",
-      "\"|\"",
-      "\"‘\"",
-      "\"’\"",
-      "\"“\"",
-      "\"”\"",
-      "$local()",
-      ".address",
-      ".agent",
-      ".database",
-      ".flatMap",
-      ".flatMap()",
-      ".join",
-      ".join()",
-      ".replace",
-      ".replace()",
-      ".text",
-      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
-      "String()",
-      "[\"\",\"\",\"\",\"\\\\s*:\"]",
-      "[\"\",\"\",\"\\\\s*:\",\"\"]",
-      "[\"\",\"\\\\s*:\"]",
-      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
-      "binary:===",
-      "conditional:?:",
-      "end:expression",
-      "quote()"
-    ],
-    "occurrences": 1
-  },
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:8f2382aaa649da4e",
     "file": "apps/server/src/agent-class-retirement.ts",
@@ -1632,6 +1533,63 @@
       "binary:||",
       "conditional:?:",
       "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/commander.ts:stopCommandedTurn:systemLine:597a3aeb12b6effb",
+    "file": "apps/server/src/commander.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    id: createHash('sha256').update(`agent-stop-line:${command.id}:${running.id}`).digest('hex'),\n    roomId: address, authorId: worker.id, subject: { kind: 'agent', id: agentId, name: agentId }, verb: 'stopped',\n    object: `${systemIdentityMention({ ...worker, kind: 'agent' })}'s running turn`,\n    ...(dropped ? { consequence: `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` } : {}),\n})",
+    "literals": [
+      "\"\"",
+      "\"NFKD\"",
+      "\"_\"",
+      "\"agent\"",
+      "\"order\"",
+      "\"orders\"",
+      "\"stopped\"",
+      "$local()",
+      ".filter",
+      ".filter()",
+      ".handle",
+      ".id",
+      ".name",
+      ".normalize",
+      ".normalize()",
+      ".replace",
+      ".replace()",
+      ".rows",
+      ".toLowerCase",
+      ".toLowerCase()",
+      ".trim",
+      ".trim()",
+      ".worker",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:1",
+      "RegularExpressionLiteral:/[\\u0300-\\u036f]/g",
+      "RegularExpressionLiteral:/[^a-z0-9_]/g",
+      "RegularExpressionLiteral:/\\s+/g",
+      "RegularExpressionLiteral:/^@/",
+      "[\"\",\" queued \",\" dropped\"]",
+      "[\"\",\"'s running turn\"]",
+      "[\"@\",\"\"]",
+      "binary:===",
+      "binary:??",
+      "binary:||",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/commander.ts:stopCommandedTurn:wrapper:5e0980afdfb39d52",
+    "file": "apps/server/src/commander.ts",
+    "kind": "wrapper",
+    "template": "dropQueuedOrdersForStop(db, running)",
+    "literals": [
+      ".rows",
+      "FirstLiteralToken:0"
     ],
     "occurrences": 1
   },
@@ -4451,6 +4409,49 @@
       "end:expression",
       "prefix:!",
       "randomBytes()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:ca119ff7696920dd",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "stopCommandedTurn(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), candidate.agent === undefined ? undefined : String(candidate.agent))",
+    "literals": [
+      "\"\"",
+      "\"'\"",
+      "\"*\"",
+      "\"**\"",
+      "\"\\\"\"",
+      "\"\\\\$&\"",
+      "\"complete\"",
+      "\"iu\"",
+      "\"|\"",
+      "\"‘\"",
+      "\"’\"",
+      "\"“\"",
+      "\"”\"",
+      "$local()",
+      ".address",
+      ".agent",
+      ".database",
+      ".flatMap",
+      ".flatMap()",
+      ".join",
+      ".join()",
+      ".replace",
+      ".replace()",
+      ".text",
+      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
+      "String()",
+      "[\"\",\"\",\"\",\"\\\\s*:\"]",
+      "[\"\",\"\",\"\\\\s*:\",\"\"]",
+      "[\"\",\"\\\\s*:\"]",
+      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
+      "binary:===",
+      "conditional:?:",
+      "end:expression",
+      "quote()"
     ],
     "occurrences": 1
   },
@@ -8723,6 +8724,446 @@
     "occurrences": 1
   },
   {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:04d842b6e8e5573d",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('readOperatorSystemDm', { ...context, agentId: member, sendId: args.sendId })",
+    "literals": [
+      ".sendId"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:1d631463a7721d41",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('setCornerHold', { ...context, cornerId: addressArg(args.address), releaseHoldId: args.releaseHoldId })",
+    "literals": [
+      "$local()",
+      ".address",
+      ".releaseHoldId",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:1e2dd197f5807845",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('report', { ...context, status: args.status, text: args.text, ask: args.ask })",
+    "literals": [
+      ".ask",
+      ".status",
+      ".text"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:2119b62e4ff4bf80",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('reviseCornerBrief', { ...context, cornerId, expectedRevision: args.expectedRevision, reviewer: args.reviewer,\n    brief: { ...briefDraft(args.brief), change: args.change } })",
+    "literals": [
+      "\"object\"",
+      "$local()",
+      ".address",
+      ".approval",
+      ".attachments",
+      ".brief",
+      ".change",
+      ".entries",
+      ".entries()",
+      ".expectedRevision",
+      ".filter",
+      ".filter()",
+      ".fromEntries",
+      ".fromEntries()",
+      ".isArray",
+      ".isArray()",
+      ".repositoryWork",
+      ".reviewer",
+      ".spec",
+      ".toLowerCase",
+      ".toLowerCase()",
+      "binary:!==",
+      "binary:&&",
+      "binary:===",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:3346a84cd08d55bd",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('approveCornerMerge', { cornerId: addressArg(args.address), headSha })",
+    "literals": [
+      "\"\"",
+      "\"string\"",
+      "$local()",
+      ".address",
+      ".headSha",
+      ".toLowerCase",
+      ".toLowerCase()",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:4893a13b41c02f86",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('stopAgentTurn', { ...context, address: addressArg(args.address), agent: args.agent })",
+    "literals": [
+      "$local()",
+      ".address",
+      ".agent",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:4f53cda18c2baa0c",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.inTurn(member, target, run)",
+    "literals": [],
+    "occurrences": 19
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:5b7094fbf9439bbc",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('dispatchRoomWorkflow', { ...context, inputs: args.inputs })",
+    "literals": [
+      ".inputs"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:64787380ed541ce9",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text })",
+    "literals": [
+      "$local()",
+      ".address",
+      ".text",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:66a487f9733f29e5",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('findConnectors', { roomId: context.roomId, query: text(args.query) })",
+    "literals": [
+      "\"string\"",
+      "$local()",
+      ".query",
+      ".trim",
+      ".trim()",
+      "binary:&&",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:8a7405ac6ef43e19",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('mergeCorner', { cornerId: addressArg(args.address) })",
+    "literals": [
+      "$local()",
+      ".address",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 4
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:96e5e191f121958c",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('reportFeedback', { ...context, category: args.category, summary: args.summary,\n    detail: args.detail, toolName: args.tool_name, errorExcerpt: args.error_excerpt, promptSectionIds: [] })",
+    "literals": [
+      ".category",
+      ".detail",
+      ".error_excerpt",
+      ".summary",
+      ".tool_name"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:98088b599eadbd85",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.exec(member, op, defined(input))",
+    "literals": [
+      "$local()",
+      ".entries",
+      ".entries()",
+      ".filter",
+      ".filter()",
+      ".fromEntries",
+      ".fromEntries()",
+      "binary:!==",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:9d666de55a9bf4b0",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('order', { ...context, address: addressArg(args.address), text: args.text, agent: args.agent })",
+    "literals": [
+      "$local()",
+      ".address",
+      ".agent",
+      ".text",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:a36926ddce5fae5b",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('reactToRoomMessage', { roomId: addressArg(args.address), messageId: args.messageId, emoji: args.emoji })",
+    "literals": [
+      ".emoji"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:a3c16bdbf8019f8a",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.inTurn(member, addressArg(args.address), (_, context) => exec('report', { ...context, status: args.status, text: args.text, ask: args.ask }), true)",
+    "literals": [
+      "$local()",
+      ".address",
+      ".toLowerCase",
+      ".toLowerCase()",
+      "TrueKeyword"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:c0ee54bfbf983131",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('sendOperatorSystemDm', { ...context, agentId: member, recipients: args.recipients, text: args.text })",
+    "literals": [
+      ".recipients",
+      ".text"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:d9cb0c91fb37d289",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec(args.scope === 'memory' ? 'searchInstitutionalMemory' : 'searchInstitutionalHistory', { ...context, agentId: member, query: args.query, limit: typeof args.limit === 'number' ? Math.floor(args.limit) : undefined })",
+    "literals": [
+      "\"number\"",
+      ".floor",
+      ".floor()",
+      ".limit",
+      ".query",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:e2edf135bd5c8292",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('connect', { ...context, service: text(args.service), reason: text(args.reason), continuation: text(args.continuation),\n    squireAvailable: false, reconnect: args.reconnect === true ? true : undefined, noApi: args.noApi === true ? true : undefined })",
+    "literals": [
+      "\"string\"",
+      "$local()",
+      ".continuation",
+      ".noApi",
+      ".reason",
+      ".reconnect",
+      ".service",
+      ".trim",
+      ".trim()",
+      "FalseKeyword",
+      "TrueKeyword",
+      "binary:&&",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:e9afeb22a4f80177",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('notifyFeedbackFixed', { ...context,\n    itemIds: Array.isArray(args.item_ids) ? args.item_ids : [], title: args.title, prUrl: args.pr_url, notify: args.notify })",
+    "literals": [
+      ".isArray",
+      ".isArray()",
+      ".item_ids",
+      ".notify",
+      ".pr_url",
+      ".title",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:ed84e356643b6920",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('renameCorner', { ...context, cornerId, name: args.name, reviewer: args.reviewer, objective: args.objective,\n    brief: args.brief === undefined ? undefined : briefDraft(args.brief) })",
+    "literals": [
+      "\"object\"",
+      "$local()",
+      ".address",
+      ".approval",
+      ".attachments",
+      ".brief",
+      ".entries",
+      ".entries()",
+      ".filter",
+      ".filter()",
+      ".fromEntries",
+      ".fromEntries()",
+      ".isArray",
+      ".isArray()",
+      ".name",
+      ".objective",
+      ".repositoryWork",
+      ".reviewer",
+      ".spec",
+      ".toLowerCase",
+      ".toLowerCase()",
+      "binary:!==",
+      "binary:&&",
+      "binary:===",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.end:wrapper:b3bcc8a7fc2037e4",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.exec(member, 'postAgentTurnReceipt', { roomId: turn.roomId, agentId: member, requestId: turn.requestId,\n    generationId: turn.generationId, status: 'complete' })",
+    "literals": [
+      "\"complete\"",
+      ".generationId",
+      ".requestId"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.exec:wrapper:4f53cda18c2baa0c",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "$databaseResult",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:9669a462917a1b47",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.end(member, turn, reported)",
+    "literals": [
+      "\"hex\"",
+      "\"no order is waiting for your report at this address; list_mentions names the places that ordered you\"",
+      "$local()",
+      "'90 seconds'",
+      "'claimed'",
+      "'input'",
+      "'mcp_call'",
+      ".$local",
+      ".db",
+      ".id",
+      ".parent_id",
+      ".rows",
+      ".toString",
+      ".toString()",
+      ".transaction",
+      ".transaction()",
+      ".turn_request_id",
+      "FalseKeyword",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:32",
+      "TrueKeyword",
+      "[\"mcp:\",\"\"]",
+      "binary:??",
+      "end:expression",
+      "prefix:!",
+      "randomBytes()",
+      "randomUUID()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.openCorner:wrapper:4bb6a7cae1812aa0",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.inTurn(member, room, async (turn, context) => {\n    const created = await exec('createCorner', { ...context, targetRoomId: room,\n        idempotencyKey: createHash('sha256').update(`open_corner\\0${turn.requestId}`).digest('hex'),\n        name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),\n        objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),\n        implementer, reviewer: args.reviewer, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),\n        ...(repository.resolution === 'repository' ? { repository: repository.key, targetBranch: repository.targetBranch } : {}),\n    }) as {\n        cornerId?: string;\n        watch?: unknown;\n        warnings?: unknown;\n    };\n    return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),\n        ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}), status: 'starting' };\n})",
+    "literals": [
+      "\"room\"",
+      "$local()",
+      ".room",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.postArtifact:wrapper:8a7405ac6ef43e19",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.inTurn(member, at, async (_, context) => {\n    await exec('postAgentAttachment', { ...context, attachment: { url: uploaded.url, name: title, mimeType: uploaded.mimeType, size: bytes.length } });\n    return exec('postRoomMessage', { ...context, text: text(args.text) ?? '' });\n})",
+    "literals": [
+      "$local()",
+      ".address",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.wake:wrapper:8a7405ac6ef43e19",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.inTurn(member, at, async (_, context) => {\n    const roomId = context.roomId;\n    if (args.action === 'list') {\n        const [schedules, subscriptions, watches, events] = await Promise.all([\n            exec('listAgentSchedules', { roomId, selfOnly: true }), exec('listAgentSubscriptions', { roomId }),\n            exec('listAgentWatches', { roomId }), exec('listEventSubscriptions', { roomId })\n        ]);\n        return { ...object(schedules), subscriptions, ...object(watches), events };\n    }\n    if (args.action === 'events')\n        return { room: SUBSCRIBABLE_EVENT_KINDS, repository: REPOSITORY_SUBSCRIPTION_EVENTS,\n            service: await exec('listServiceSubscriptionEvents', { roomId }) };\n    if (args.action === 'replace_events')\n        return exec('setEventSubscriptions', { roomId, kinds: Array.isArray(args.kinds) ? args.kinds : [] });\n    const trigger = args.trigger ?? (args.scheduleId !== undefined ? 'schedule' : undefined);\n    if (trigger === 'schedule') {\n        if (args.action === 'create')\n            return exec('createAgentSchedule', { roomId, prompt: text(args.prompt), cadence: args.cadence, title: args.title,\n                workflowName: text(args.workflowName), maxRuns: args.maxRuns });\n        if (args.action === 'update')\n            return exec('updateAgentSchedule', { roomId, scheduleId: args.scheduleId, selfOnly: true, title: args.title,\n                workflowName: text(args.workflowName), prompt: text(args.prompt), cadence: args.cadence, maxRuns: args.maxRuns });\n        if (args.action === 'delete')\n            return exec('deleteAgentSchedule', { roomId, scheduleId: args.scheduleId, selfOnly: true });\n    }\n    if (trigger === 'event') {\n        if (args.action === 'create')\n            return exec('createAgentSubscription', { ...context, source: args.source, event: args.event, prompt: text(args.prompt),\n                title: args.title, when: args.when, repository: args.repository, channelId: args.channelId, channelName: args.channelName, workflowName: text(args.workflowName) });\n        if (args.action === 'delete')\n            return exec('deleteAgentSubscription', { ...context, subscriptionId: args.subscriptionId });\n    }\n    if (trigger === 'lifecycle') {\n        const cornerId = addressArg(args.corner, 'corner');\n        if (args.action === 'create')\n            return exec('watchCorner', { roomId, cornerId, kinds: ['opened', 'merged'] });\n        if (args.action === 'delete')\n            return exec('watchCorner', { roomId, cornerId, kinds: [] });\n    }\n    throw new McpToolError('unknown wake action/trigger');\n})",
+    "literals": [
+      "$local()",
+      ".address",
+      ".toLowerCase",
+      ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/server.ts:createBeelineServer:wrapper:4f53cda18c2baa0c",
     "file": "apps/server/src/server.ts",
     "kind": "wrapper",
@@ -8874,17 +9315,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/starter-onboarding.ts:restoreStarterVideoPost:message-write:033915c8fc4666bb",
-    "file": "apps/server/src/starter-onboarding.ts",
-    "kind": "message-write",
-    "template": "UPDATE messages card=card - 'youtubeUploadUsed' - 'youtubeUploadAttempt'",
-    "literals": [
-      "'youtubeUploadAttempt'",
-      "'youtubeUploadUsed'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/starter-onboarding.ts:postStarterVideoPreview:message-write:dd671f4491caf130",
     "file": "apps/server/src/starter-onboarding.ts",
     "kind": "message-write",
@@ -9006,6 +9436,17 @@
       ".label",
       ".map",
       ".map()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/starter-onboarding.ts:restoreStarterVideoPost:message-write:033915c8fc4666bb",
+    "file": "apps/server/src/starter-onboarding.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=card - 'youtubeUploadUsed' - 'youtubeUploadAttempt'",
+    "literals": [
+      "'youtubeUploadAttempt'",
+      "'youtubeUploadUsed'"
     ],
     "occurrences": 1
   },

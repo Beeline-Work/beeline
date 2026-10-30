@@ -129,6 +129,7 @@
     "@colbymchenry/codegraph": "^1.6.0",
     "@types/node": "^22.9.0",
     "esbuild": "^0.28.1",
+    "js-tiktoken": "1.0.21",
     "knip": "^5.88.1",
     "prettier": "^3.3.3",
     "turbo": "^2.3.0",

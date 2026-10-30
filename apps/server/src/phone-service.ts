@@ -1,4 +1,4 @@
-import { disconnectMcp } from './rooms-mcp-connections.js';
+import { disconnectMcp, MCP_SCOPES } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { postStarterInviteOffer } from './starter-invite.js';
@@ -9475,15 +9475,13 @@ export class PhoneService {
       )
     ).rows[0];
     const aiClients = (await this.database.query<{
-      client_id: string; name: string; logo: string | null; scope: string; connected_at: Date; last_used_at: Date | null;
-    }>(`SELECT c.client_id,app.name,app.logo,
-      (SELECT string_agg(DISTINCT permission,' ') FROM rooms_mcp_families f,unnest(string_to_array(f.scope,' ')) permission
-       WHERE f.client_id=c.client_id AND f.identity_id=c.identity_id AND f.revoked_at IS NULL) scope,c.connected_at,c.last_used_at FROM rooms_mcp_connections c
+      client_id: string; name: string; logo: string | null; connected_at: Date; last_used_at: Date | null;
+    }>(`SELECT c.client_id,app.name,app.logo,c.connected_at,c.last_used_at FROM rooms_mcp_connections c
       JOIN rooms_mcp_clients app ON app.id=c.client_id WHERE c.identity_id=$1 AND c.revoked_at IS NULL
       AND EXISTS(SELECT 1 FROM rooms_mcp_families f WHERE f.client_id=c.client_id AND f.identity_id=c.identity_id AND f.revoked_at IS NULL)
       ORDER BY c.connected_at DESC LIMIT 100`, [viewerId])).rows;
     const view: Output<'readWorkbench'> = {
-      aiClients: aiClients.map(c => ({ clientId: c.client_id, name: c.name, ...(c.logo ? { logo: c.logo } : {}), scopes: c.scope.split(' '),
+      aiClients: aiClients.map(c => ({ clientId: c.client_id, name: c.name, ...(c.logo ? { logo: c.logo } : {}), scopes: [...MCP_SCOPES],
         connectedAt: seconds(c.connected_at), lastUsedAt: c.last_used_at ? seconds(c.last_used_at) : null })),
       workspaceId: input.workspaceId,
       ...(linkAccount ? { linkAccount } : {}),

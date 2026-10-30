@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
-import { connectMcp, refreshMcp } from './rooms-mcp-connections.js';
+import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
 import { agentHandleFromName } from '@beeline/api-contract/phone';
 
@@ -301,7 +301,7 @@ export class RoomsMcpOAuth {
         const id = opaque(), browser = opaque();
         await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at)
           VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes')`,
-          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), scopes.join(' ')]);
+          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE]);
         response.setHeader('set-cookie', `beeline_mcp=${browser}; Path=/mcp/oauth; HttpOnly; SameSite=Lax; Max-Age=600${this.origin.startsWith('https:') ? '; Secure' : ''}`);
         this.redirect(response, `/mcp/oauth/consent?flow=${id}`); return true;
       }
@@ -348,7 +348,7 @@ export class RoomsMcpOAuth {
           const plate = flow.logo ? `<img class="plate" src="${escape(flow.logo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms">${flow.scope.includes(MCP_READ) ? '<div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div>' : ''}${flow.scope.includes(MCP_WRITE) ? `<div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div>` : ''}</div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
         }
         return true;
       }

@@ -83,6 +83,8 @@ describe('server-owned Connectors company projection', () => {
     const index = projectWorkbenchCompanies(view, origin);
     expect(index.rows.filter(row => row.section === 'apps').map(row => row.name)).toEqual(['Grok Bot', 'Meta Muse', 'Notion']);
     expect(index.rows[0]?.roomsClientId).toBe('grok');
+    // A connection stored before full rights still reads and posts.
+    expect(index.rows.find(r => r.id === 'rooms:muse')).toMatchObject({ subtitle: 'Reads and posts' });
     expect(projectWorkbenchCompanies({ ...view, apps: [] }, origin).hasConnections).toBe(true);
   });
   it('keeps one company for seven keys, and distinct Squire credentials out of the sign-in service', () => {

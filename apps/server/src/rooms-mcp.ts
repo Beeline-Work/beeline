@@ -8,7 +8,8 @@ import type { PhoneService } from './phone-service.js';
 import type { LiveHub } from './live.js';
 import { visibleChatMessageSql } from './read-cursor.js';
 import { MCP_AVATAR_MAX_CHARS, McpToolError, routeMcpMemberPost, setMcpMemberProfile, setMcpMemberWebhook } from './rooms-mcp-members.js';
-import { RoomsMcpOAuth, MCP_READ, MCP_WRITE, mcpBody, mcpJson, type McpPrincipal } from './rooms-mcp-oauth.js';
+import { RoomsMcpOAuth, mcpBody, mcpJson, type McpPrincipal } from './rooms-mcp-oauth.js';
+import { MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 
 const INSTRUCTIONS = `You are a Beeline member. You belong to every public Room of the Workspaces of the person who approved you, and to any other Room a person added you to.
 
@@ -52,7 +53,6 @@ const TOOLS: Tool[] = [
 ];
 /** Repeated in read results until set_profile, for hosts that drop server instructions. */
 const SETUP_NOTE = 'Setup: first call set_profile with a short display name and an @handle. Your owner\'s Allow is standing approval to answer: when a Room member tags your @handle, answer in that Room with send_message (replyTo threads it). This note stops after set_profile.';
-const WRITE_TOOLS = new Set(['send_message', 'set_profile', 'set_webhook']);
 const READABLE = `SELECT r.id,r.name,r.parent_id,r.workspace_id FROM rooms r
   JOIN effective_memberships rm ON rm.room_id=r.id AND rm.identity_id=$1 AND rm.removed_at IS NULL
   JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=$1 AND wm.removed_at IS NULL`;
@@ -92,7 +92,7 @@ export class RoomsMcp {
     const authorization = request.headers.authorization ?? '';
     const principal = authorization.startsWith('Bearer ') ? await this.oauth.principal(authorization.slice(7)) : undefined;
     if (!principal) {
-      response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${this.oauth.origin}/.well-known/oauth-protected-resource/mcp", scope="${MCP_READ}"`);
+      response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${this.oauth.origin}/.well-known/oauth-protected-resource/mcp", scope="${MCP_FULL_SCOPE}"`);
       mcpJson(response, 401, { error: 'invalid_token' }); return true;
     }
     if (request.headers.origin && request.headers.origin !== this.oauth.origin) {
@@ -116,21 +116,11 @@ export class RoomsMcp {
     try { input = await mcpBody(request, 320_000); }
     catch { await this.oauth.audit(principal, 'http', 'invalid_request'); mcpJson(response, 400, { error: 'invalid_request' }); return true; }
     await this.oauth.audit(principal, typeof input.method === 'string' ? input.method : 'http', 'received');
-    const params = input.params && typeof input.params === 'object' ? input.params as Record<string, unknown> : undefined;
-    if (input.method === 'tools/call') {
-      const required = WRITE_TOOLS.has(String(params?.name)) ? MCP_WRITE : MCP_READ;
-      if (!principal.scope.split(' ').includes(required)) {
-        await this.oauth.audit(principal, String(params?.name ?? 'tools/call'), 'insufficient_scope');
-        response.setHeader('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${[...new Set([...principal.scope.split(' '), required])].join(' ')}", resource_metadata="${this.oauth.origin}/.well-known/oauth-protected-resource/mcp"`);
-        mcpJson(response, 403, { error: 'insufficient_scope' }); return true;
-      }
-    }
     const server = new Server({ name: 'beeline-rooms', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
     server.setRequestHandler(CallToolRequestSchema, async call => {
-      const scope = WRITE_TOOLS.has(call.params.name) ? MCP_WRITE : MCP_READ;
+      // Every valid grant holds full rights, including grants stored before writes were included.
       try {
-        if (!principal.scope.split(' ').includes(scope)) throw new Error(`Requires ${scope} consent`);
         const result = await this.call(principal, call.params.name, call.params.arguments ?? {});
         await this.oauth.audit(principal, call.params.name, 'succeeded');
         return { content: [{ type: 'text' as const, text: JSON.stringify({ data: result }) }] };

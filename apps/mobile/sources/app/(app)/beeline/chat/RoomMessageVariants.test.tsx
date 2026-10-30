@@ -1063,6 +1063,51 @@ describe('Room message variant components', () => {
     ).toHaveLength(0);
   });
 
+  it('replaces a cached Unknown label with the hydrated name, avatar, and role', () => {
+    const props = {
+      participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
+      continued: false, participantHandles: [] as [], channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false, onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
+      onRetry: vi.fn(), onDismiss: vi.fn(),
+    };
+    const person = message({ id: 'hydrated-person', pubkey: 'ada' });
+    const renderer = render(<OrdinaryLedgerMessage {...props} message={person} />);
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline.name).not.toBe('Hydrated member');
+    act(() => renderer.update(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={person}
+        personName="Hydrated member"
+        personAvatar="https://cdn.example/ada.png"
+        personFace="fox"
+      />,
+    ));
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
+      name: 'Hydrated member',
+      mark: { avatarUrl: 'https://cdn.example/ada.png', face: 'fox', kind: 'human' },
+    });
+
+    const agent = message({ id: 'hydrated-agent', pubkey: 'agent', isAgentAuthor: true });
+    act(() => renderer.update(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={agent}
+        agent={{
+          pubkey: 'agent',
+          displayName: 'Hydrated member',
+          avatar: 'https://cdn.example/agent.png',
+          face: 'fox',
+        }}
+        agentModel="Opus"
+      />,
+    ));
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
+      name: 'Hydrated member',
+      role: 'Opus',
+      mark: { avatarUrl: 'https://cdn.example/agent.png', face: 'fox', kind: 'agent' },
+    });
+  });
+
   it('keeps a connector app in the model slot and groups continued human messages', () => {
     const props = {
       participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
@@ -2248,9 +2293,8 @@ describe('Room message variant components', () => {
   });
 
   it("labels an agent's step row with the model from its profile, not a per-message stamp", () => {
-    expect(conversationSource).toContain(
-      'agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}',
-    );
+    expect(conversationSource).toContain('agentModel={modelForRow}');
+    expect(conversationSource).toContain('agentModelByPubkey: agentProfileModelByPubkey');
     expect(conversationSource).not.toContain('agentModel={item.agentModel}');
     const stepRow = message({
       id: 'monarch-step',

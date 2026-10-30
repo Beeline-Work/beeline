@@ -104,6 +104,7 @@ import {
   displayRoomMessages,
   mergeDisplayPages,
   roomViewTranscriptMessages,
+  type AgentPresentation,
   type ChatDisplayMessage,
   memberAgent,
   workspaceRailItem,
@@ -310,7 +311,7 @@ import {
 } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
-import { liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
@@ -547,6 +548,39 @@ const HEADER_MARK_SIZE = 28;
  */
 const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> =>
   new Set(agentByPubkey.keys());
+
+/** The agent object this row paints. Presentation fields win over the map. */
+function rosterAgent(
+  pubkey: string | undefined,
+  presentation: Pick<
+    RoomMessagePresentation,
+    'agentPubkey' | 'agentName' | 'agentAvatar' | 'agentFace' | 'agentHandle'
+  >,
+  agents: ReadonlyMap<string, AgentPresentation>,
+): AgentPresentation | undefined {
+  if (!pubkey) return undefined;
+  const fromMap = agents.get(pubkey);
+  if (presentation.agentPubkey !== pubkey) return fromMap;
+  if (
+    presentation.agentName === undefined &&
+    presentation.agentAvatar === undefined &&
+    presentation.agentFace === undefined &&
+    presentation.agentHandle === undefined
+  ) {
+    return fromMap;
+  }
+  const avatar = presentation.agentAvatar ?? fromMap?.avatar;
+  const face = presentation.agentFace ?? fromMap?.face;
+  const handle = presentation.agentHandle ?? fromMap?.handle;
+  return {
+    pubkey,
+    displayName: presentation.agentName ?? fromMap?.displayName ?? '',
+    ...(avatar ? { avatar } : {}),
+    ...(face ? { face } : {}),
+    ...(handle ? { handle } : {}),
+    ...(fromMap?.soulProfile ? { soulProfile: fromMap.soulProfile } : {}),
+  };
+}
 
 function durableFactLine(message: ChatDisplayMessage): string {
   const turn = buildTurnActivity(message.activity ?? []);
@@ -1306,6 +1340,16 @@ export function BuzzChatSurface({
     previous.corners.length === next.corners.length &&
     previous.rooms.every((room, index) => shallowEqualRecord(room, next.rooms[index]!)) &&
     previous.corners.every((corner, index) => shallowEqualRecord(corner, next.corners[index]!)),
+  );
+  const channelReferenceKey = useMemo(
+    () =>
+      [
+        ...channelReferenceIndex.rooms.map((room) => `${room.channelId}\0${room.name}`),
+        ...channelReferenceIndex.corners.map(
+          (corner) => `${corner.channelId}\0${corner.parentChannelId}\0${corner.name}`,
+        ),
+      ].join('\n'),
+    [channelReferenceIndex],
   );
   const desktopWorkPanePrimary: DesktopWorkPanePrimary = isDirectMessage
     ? 'direct-message'
@@ -2069,6 +2113,14 @@ export function BuzzChatSurface({
       ),
     [roomMembers],
   );
+  const speakerRoleByPubkey = useMemo(() => {
+    const roles = new Map<string, string>();
+    for (const member of roomMembers) {
+      const role = normalizedRoomRole(member);
+      if (role) roles.set(member.pubkey, role);
+    }
+    return roles;
+  }, [roomMembers]);
   const mentionableAgents = useMemo(
     () =>
       activeMentionCandidates(
@@ -5666,10 +5718,26 @@ export function BuzzChatSurface({
         targetBranch: rowTargetBranch,
         canManageWorkspace: rowCanManage,
         viewerIsAgent: rowViewerIsAgent,
+        participantsHydrated: rowParticipantsHydrated,
+        personName: rowPersonName,
+        personAvatar: rowPersonAvatar,
+        personFace: rowPersonFace,
+        agentPubkey: rowAgentPubkey,
+        agentName: rowAgentName,
+        agentAvatar: rowAgentAvatar,
+        agentFace: rowAgentFace,
+        agentHandle: rowAgentHandle,
+        agentModel: rowAgentModel,
       }: RoomMessageRenderContext,
     ) => {
       // Props win over the closed-over renderer. The cell only re-renders a row
       // whose live inputs changed, and this paint must use those inputs.
+      // Roster fields that cross the memo boundary: participantsHydrated,
+      // person name/avatar/face/handle, agent pubkey/name/avatar/face/handle,
+      // agent model (byline role), speakerRole (room role), mentionHandles,
+      // reply author name/handle, and channelReferenceKey. The closure still
+      // supplies handlers, layout flags, viewer pubkey, room name, and the
+      // full handle list; mentionHandles is what makes a row read that list again.
       const rowViewer = rowViewerIsAgent !== undefined ? rowViewerIsAgent : viewerIsAgent;
       const rowManage = rowCanManage !== undefined ? rowCanManage : canManageWorkspace;
       const rowPermission = rowPermissionActionId !== undefined ? rowPermissionActionId : permissionActionId;
@@ -5679,13 +5747,31 @@ export function BuzzChatSurface({
       const rowAppSignIn = rowAppSignInActionId !== undefined ? rowAppSignInActionId : appSignInActionId;
       const rowBranchAction = rowTargetBranchActionId !== undefined ? rowTargetBranchActionId : targetBranchActionId;
       const rowBranch = rowTargetBranch !== undefined ? rowTargetBranch : roomRepository?.targetBranch;
+      const rosterFromProps = rowParticipantsHydrated !== undefined;
+      const rowHydrated = rosterFromProps ? rowParticipantsHydrated : participantsHydrated;
+      const profileName = rosterFromProps
+        ? rowPersonName
+        : (item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined);
+      const profileAvatar = rosterFromProps ? rowPersonAvatar : undefined;
+      const profileFace = rosterFromProps ? rowPersonFace : undefined;
+      const modelForRow = rosterFromProps
+        ? rowAgentModel
+        : (item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined);
+      const agentFor = (pubkey: string | undefined) =>
+        rosterAgent(pubkey, {
+          agentPubkey: rowAgentPubkey,
+          agentName: rowAgentName,
+          agentAvatar: rowAgentAvatar,
+          agentFace: rowAgentFace,
+          agentHandle: rowAgentHandle,
+        }, agentByPubkey);
       // An agent's order or report is ordinary transcript: the recipient leads
       // the text as an @mention and the row keeps its own author's byline.
       item = agentCommandTranscriptMessage(item, roomParticipants);
       if (item.vaultSave) {
         return <VaultSaveCard card={item.vaultSave} cardId={item.id} roomId={decodedId}
           stamp={ledgerStamp(item.timestamp)}
-          viewerId={cacheViewerPubkey} agentName={agentByPubkey.get(item.vaultSave.agentId)?.displayName ?? 'Agent'} />;
+          viewerId={cacheViewerPubkey} agentName={agentFor(item.vaultSave.agentId)?.displayName ?? 'Agent'} />;
       }
       if (item.roomUpdate) {
         return (
@@ -5703,7 +5789,7 @@ export function BuzzChatSurface({
           <WritePermissionCard
             message={item}
             roomName={roomName}
-            agent={agentByPubkey.get(item.writePermission.agentPubkey)}
+            agent={agentFor(item.writePermission.agentPubkey)}
             viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
             viewerCanManage={rowManage}
@@ -5719,7 +5805,7 @@ export function BuzzChatSurface({
         return (
           <GrantRequestCard
             message={item}
-            agent={agentByPubkey.get(item.grantRequest.agent.pubkey)}
+            agent={agentFor(item.grantRequest.agent.pubkey)}
             viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
             viewerCanManageWorkspace={rowManage}
@@ -5735,7 +5821,7 @@ export function BuzzChatSurface({
         return (
           <SquireApprovalCard
             message={item}
-            agent={agentByPubkey.get(item.squireApproval.agent.pubkey)}
+            agent={agentFor(item.squireApproval.agent.pubkey)}
             viewerPubkey={cacheViewerPubkey}
             onOpenSource={(roomId, messageId) =>
               router.navigate(messageJumpHref(roomId, messageId, `squire-approval:${item.id}`))
@@ -5756,7 +5842,7 @@ export function BuzzChatSurface({
         return (
           <ChoiceCard
             message={item}
-            agent={agentByPubkey.get(item.choice.agent.pubkey)}
+            agent={agentFor(item.choice.agent.pubkey)}
             viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
             actionId={rowChoice}
@@ -5770,7 +5856,7 @@ export function BuzzChatSurface({
         const card = item.appSignIn;
         const agentName = resolveAgentDisplayIdentity(
           card.agentId,
-          agentByPubkey.get(card.agentId),
+          agentFor(card.agentId),
         ).name;
         return (
           <AppSignInCard
@@ -5802,7 +5888,7 @@ export function BuzzChatSurface({
         const card = item.agentSignIn;
         const agentName = resolveAgentDisplayIdentity(
           card.agentId,
-          agentByPubkey.get(card.agentId),
+          agentFor(card.agentId),
         ).name;
         return (
           <AgentSignInCard
@@ -5828,7 +5914,7 @@ export function BuzzChatSurface({
         return (
           <ConnectorOfferCard
             message={item}
-            agent={agentByPubkey.get(item.connectorOffer.agent.pubkey)}
+            agent={agentFor(item.connectorOffer.agent.pubkey)}
             viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
             viewerCanManage={rowManage}
@@ -5876,11 +5962,7 @@ export function BuzzChatSurface({
           <TargetBranchProposalCard
             message={item}
             roomName={roomName}
-            agent={
-              item.targetBranchProposal.agentPubkey
-                ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
-                : undefined
-            }
+            agent={agentFor(item.targetBranchProposal.agentPubkey)}
             currentTargetBranch={rowBranch}
             canManageWorkspace={rowManage}
             viewerIsAgent={rowViewer}
@@ -5962,8 +6044,8 @@ export function BuzzChatSurface({
         );
       }
 
-      const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
+      const knownAgent = agentFor(item.pubkey);
+      const personName = profileName;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
@@ -5973,12 +6055,14 @@ export function BuzzChatSurface({
           firstBylineOfDay={firstBylineOfDay}
           // The byline shows the agent's model from its profile; an agent
           // with no profile model keeps the plain `AGENT` word.
-          agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}
+          agentModel={modelForRow}
           desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
-          participantsHydrated={participantsHydrated}
+          participantsHydrated={rowHydrated}
           {...(personName ? { personName } : {})}
+          {...(profileAvatar ? { personAvatar: profileAvatar } : {})}
+          {...(profileFace ? { personFace: profileFace } : {})}
           viewerPubkey={cacheViewerPubkey}
           speakerWorking={rowSpeakerWorking}
           continued={attributionContinued}
@@ -6086,7 +6170,8 @@ export function BuzzChatSurface({
     ],
   );
   // Resolve changing transcript-wide indexes before the memo boundary. A new
-  // hint, byline opener or working speaker changes only that row's props.
+  // hint, byline opener, working speaker, or this row's roster paint changes
+  // only that row's props.
   const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
     firstBylineOfDay: bylineOpeners.has(item.id),
     untaggedHint: hintMessageIds.has(item.id),
@@ -6106,6 +6191,19 @@ export function BuzzChatSurface({
       canManageWorkspace,
       viewerIsAgent,
     }),
+    ...messageRosterPresentation(
+      item,
+      {
+        participantsHydrated,
+        personByPubkey: personProfileByPubkey,
+        agentByPubkey,
+        agentModelByPubkey: agentProfileModelByPubkey,
+        roleByPubkey: speakerRoleByPubkey,
+        participants: roomParticipants,
+      },
+      item.replyToId ? visibleMessageById.get(item.replyToId) : undefined,
+    ),
+    channelReferenceKey,
   }), [
     bylineOpeners,
     hintMessageIds,
@@ -6123,6 +6221,14 @@ export function BuzzChatSurface({
     roomRepository?.targetBranch,
     canManageWorkspace,
     viewerIsAgent,
+    participantsHydrated,
+    personProfileByPubkey,
+    agentByPubkey,
+    agentProfileModelByPubkey,
+    speakerRoleByPubkey,
+    roomParticipants,
+    visibleMessageById,
+    channelReferenceKey,
   ]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,

@@ -4,10 +4,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import {
   liveCardPresentation,
+  messageRosterPresentation,
   RoomMessageCell,
   type LiveCardInputs,
   type RoomMessageRenderContext,
   type RoomMessageRenderer,
+  type RoomRosterSources,
   useRoomMessageRenderItem,
 } from './room-message-cell';
 import type { ChatDisplayMessage } from './room-view-presentation';
@@ -556,6 +558,96 @@ describe('RoomMessageCell', () => {
     expect(renderer.root.findByProps({ id: 'kept' }).props).toMatchObject({
       text: 'This message was deleted',
       deleted: true,
+    });
+    act(() => renderer.unmount());
+  });
+
+  it('paints a hydrated name, avatar, and role without redrawing another row', () => {
+    const kept: ChatDisplayMessage = {
+      id: 'kept', text: 'Cached', isUser: false, timestamp: 1, pubkey: 'kept-person',
+    };
+    const speaker: ChatDisplayMessage = {
+      id: 'speaker', text: 'Hello', isUser: false, timestamp: 2, pubkey: 'ada',
+    };
+    const counts = new Map<string, number>();
+    const people = new Map<string, { name?: string; avatar?: string; face?: string }>([
+      ['kept-person', { name: 'Kept', avatar: 'https://cdn.example/kept.png' }],
+    ]);
+    const roster = (extra?: Partial<RoomRosterSources>): RoomRosterSources => ({
+      participantsHydrated: true,
+      personByPubkey: people,
+      agentByPubkey: new Map(),
+      agentModelByPubkey: new Map(),
+      roleByPubkey: new Map([['kept-person', 'member']]),
+      participants: [
+        { pubkey: 'ada', handle: 'ada' },
+        { pubkey: 'kept-person', handle: 'kept' },
+      ],
+      ...extra,
+    });
+    const cached = roster();
+    const hydrated = roster({
+      personByPubkey: new Map([
+        ['kept-person', { name: 'Kept', avatar: 'https://cdn.example/kept.png' }],
+        ['ada', { name: 'Hydrated member', avatar: 'https://cdn.example/ada.png', face: 'fox' }],
+      ]),
+      agentModelByPubkey: new Map([['ada', 'Opus']]),
+      roleByPubkey: new Map([['ada', 'owner'], ['kept-person', 'member']]),
+      participants: [
+        { pubkey: 'ada', handle: 'hydrated' },
+        { pubkey: 'kept-person', handle: 'kept' },
+      ],
+    });
+    expect(messageRosterPresentation(kept, hydrated)).toEqual(messageRosterPresentation(kept, cached));
+
+    function Harness({ sources }: { sources: RoomRosterSources }) {
+      const render: RoomMessageRenderer = (item, context) => {
+        counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+        return React.createElement('message-row', {
+          id: item.id,
+          name: context.personName ?? context.agentName ?? 'Unknown',
+          avatar: context.personAvatar ?? context.agentAvatar ?? '',
+          role: context.speakerRole ?? '',
+          model: context.agentModel ?? '',
+        });
+      };
+      const renderItem = useRoomMessageRenderItem({
+        render,
+        presentationForMessage: (item) => messageRosterPresentation(item, sources),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map([kept, speaker].map((row) => [row.id, row])),
+      });
+      return React.createElement(React.Fragment, null,
+        ...[kept, speaker].map((item) => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    const show = (sources: RoomRosterSources) => {
+      act(() => {
+        const node = React.createElement(Harness, { sources });
+        if (renderer) renderer.update(node);
+        else renderer = create(node);
+      });
+    };
+    show(cached);
+    expect(renderer.root.findByProps({ id: 'speaker' }).props).toMatchObject({
+      name: 'Unknown', avatar: '', role: '', model: '',
+    });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('speaker')).toBe(1);
+
+    show(hydrated);
+    expect(renderer.root.findByProps({ id: 'speaker' }).props).toMatchObject({
+      name: 'Hydrated member',
+      avatar: 'https://cdn.example/ada.png',
+      role: 'owner',
+      model: 'Opus',
+    });
+    expect(counts.get('speaker')).toBe(2);
+    expect(counts.get('kept')).toBe(1);
+    expect(renderer.root.findByProps({ id: 'kept' }).props).toMatchObject({
+      name: 'Kept', avatar: 'https://cdn.example/kept.png', role: 'member',
     });
     act(() => renderer.unmount());
   });

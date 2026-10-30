@@ -37,6 +37,34 @@ export type RoomMessagePresentation = {
   targetBranch?: string;
   canManageWorkspace?: boolean;
   viewerIsAgent?: boolean;
+  /**
+   * Roster paint for this row. Each value is a primitive so a change to some
+   * other participant does not redraw this row. `renderMessage` reads these
+   * instead of the room-wide maps it closes over.
+   */
+  participantsHydrated?: boolean;
+  personName?: string;
+  personAvatar?: string;
+  personFace?: string;
+  personHandle?: string;
+  agentPubkey?: string;
+  agentName?: string;
+  agentAvatar?: string;
+  agentFace?: string;
+  agentHandle?: string;
+  /** Workspace profile model. The byline prints it as the speaker's role. */
+  agentModel?: string;
+  /** Room membership role for this row's speaker. */
+  speakerRole?: string;
+  /**
+   * `pubkey\\0handle` lines for mentions and command recipients this row
+   * paints. A handle that this text does not use stays out of the string.
+   */
+  mentionHandles?: string;
+  replyAuthorName?: string;
+  replyAuthorHandle?: string;
+  /** Room and corner names this transcript can turn into links. */
+  channelReferenceKey?: string;
 };
 
 /** Parent state that can change a card's buttons without changing its message. */
@@ -108,6 +136,113 @@ export function liveCardPresentation(
     };
   }
   return {};
+}
+
+export type RoomRosterPerson = {
+  name?: string;
+  avatar?: string;
+  face?: string;
+  handle?: string;
+};
+
+export type RoomRosterAgent = {
+  displayName?: string;
+  avatar?: string;
+  face?: string;
+  handle?: string;
+};
+
+/** The room-wide maps a transcript row turns into one speaker's paint. */
+export type RoomRosterSources = {
+  participantsHydrated: boolean;
+  personByPubkey: ReadonlyMap<string, RoomRosterPerson>;
+  agentByPubkey: ReadonlyMap<string, RoomRosterAgent>;
+  agentModelByPubkey: ReadonlyMap<string, string>;
+  roleByPubkey: ReadonlyMap<string, string>;
+  participants: readonly { pubkey: string; handle: string }[];
+};
+
+function cardAgentPubkey(item: ChatDisplayMessage): string | undefined {
+  return (
+    item.vaultSave?.agentId ??
+    item.writePermission?.agentPubkey ??
+    item.grantRequest?.agent.pubkey ??
+    item.squireApproval?.agent.pubkey ??
+    item.choice?.agent.pubkey ??
+    item.appSignIn?.agentId ??
+    item.agentSignIn?.agentId ??
+    item.connectorOffer?.agent.pubkey ??
+    item.targetBranchProposal?.agentPubkey
+  );
+}
+
+/** Handles this row's text, mentions, or command recipient actually resolve. */
+function mentionHandleKey(
+  item: ChatDisplayMessage,
+  participants: readonly { pubkey: string; handle: string }[],
+): string {
+  const wanted = new Set(item.mentionPubkeys ?? []);
+  if (item.agentCommand?.recipient.id) wanted.add(item.agentCommand.recipient.id);
+  const text = item.text.toLocaleLowerCase();
+  return participants
+    .filter(
+      (participant) =>
+        wanted.has(participant.pubkey) ||
+        (participant.handle !== '' &&
+          text.includes(`@${participant.handle.toLocaleLowerCase()}`)),
+    )
+    .map((participant) => `${participant.pubkey}\0${participant.handle}`)
+    .sort()
+    .join('\n');
+}
+
+/**
+ * Speaker fields for one row.
+ *
+ * The cell memo compares these primitives. Passing the room-wide maps would
+ * redraw every row when any profile changed; a row redraws only when its own
+ * name, avatar, role, model, mentions, or reply author changed.
+ */
+export function messageRosterPresentation(
+  item: ChatDisplayMessage,
+  roster: RoomRosterSources,
+  referenced?: ChatDisplayMessage,
+): RoomMessagePresentation {
+  const author = item.pubkey;
+  const person = author ? roster.personByPubkey.get(author) : undefined;
+  const agentPubkey =
+    cardAgentPubkey(item) ??
+    (author && roster.agentByPubkey.has(author) ? author : undefined);
+  const agent = agentPubkey ? roster.agentByPubkey.get(agentPubkey) : undefined;
+  const agentModel =
+    (agentPubkey ? roster.agentModelByPubkey.get(agentPubkey) : undefined) ??
+    (author ? roster.agentModelByPubkey.get(author) : undefined);
+  const speakerRole =
+    (author ? roster.roleByPubkey.get(author) : undefined) ??
+    (agentPubkey ? roster.roleByPubkey.get(agentPubkey) : undefined);
+  const replyPerson = referenced?.pubkey
+    ? roster.personByPubkey.get(referenced.pubkey)
+    : undefined;
+  const replyAgent = referenced?.pubkey
+    ? roster.agentByPubkey.get(referenced.pubkey)
+    : undefined;
+  return {
+    participantsHydrated: roster.participantsHydrated,
+    personName: person?.name,
+    personAvatar: person?.avatar,
+    personFace: person?.face,
+    personHandle: person?.handle,
+    agentPubkey,
+    agentName: agent?.displayName,
+    agentAvatar: agent?.avatar,
+    agentFace: agent?.face,
+    agentHandle: agent?.handle,
+    agentModel,
+    speakerRole,
+    mentionHandles: mentionHandleKey(item, roster.participants),
+    replyAuthorName: replyAgent?.displayName ?? replyPerson?.name,
+    replyAuthorHandle: replyAgent?.handle ?? replyPerson?.handle,
+  };
 }
 
 export type RoomMessageRenderContext = RoomMessagePresentation & {

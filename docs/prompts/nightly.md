@@ -305,3 +305,40 @@ For a measurement repair proof, pass `--label "measurement-repair run"`, post
 result and summary in its implementation corner, and do not publish that run as
 a nightly score on the results issue. A partial run remains useful evidence when
 its missing data and cost are explicit; it cannot propose a removal.
+
+## Opt-in deferred-tool comparison
+
+`--tool-mode deferred` runs a separate full-definition baseline versus deferred
+comparison on the same saved cases and three fixed seeds. It does not run audit,
+control or shortening arms, edit prompts, append nightly history, or change the
+scheduled default. It rejects `--candidate-patch`. Pass the authorized `--models`
+and `--cost-cap` explicitly; the ordinary CLI defaults remain unchanged.
+
+The core is `Bash`, `open_corner`, `report`, `read`, `order`, `app_tool`.
+Positive expected calls plus explicit transcript tool results occur respectively
+(17), (13), (10), (8), (5), (4) times at introduction. `request_grant` also has
+(4); the tie goes alphabetically to `app_tool`. Negative assertions and generic
+scenario fallback results are excluded because they do not establish usage.
+`result.json.coreEvidence` records these counts for each run.
+Only tools already available in that case appear in its core or index.
+
+All other tools receive a name and a short purpose line, with full definitions
+available through simulated `find_tools({query})`. Exact names take priority;
+otherwise description keywords select up to five matches. The model must wait
+for the result before making dependent calls. Loaded definitions remain valid
+for that sample only. An unloaded call fails immediately, even if repaired;
+search calls do not satisfy saved behavior rules. The existing evaluator,
+fixed samples, browser exclusions and continuation limit are unchanged.
+
+Results pair cases across arms, list wins/losses/ties and unpaired cases, and
+group deferred-only sample failures by search behavior. A wrong-tool search is
+one that never loaded a noncore tool used by the passing baseline. All other
+searched failures fall into `other`; inspect their transcripts before drawing
+causal conclusions. Input-token median/p90 sum billed prompt tokens across a
+sample's requests; per-request median/p90 and extra requests per sample are also
+reported. Missing provider input accounting is excluded rather than estimated.
+Total tokens and billed cost include incomplete calls. Cases cycle across models
+so a cap-limited result can retain paired evidence for each available model.
+Transport failures in both arms of a model's first case stop that model without
+substitution and keep the run incomplete; this alone does not establish that a
+model is absent from OpenRouter. Inspect the provider catalog separately.

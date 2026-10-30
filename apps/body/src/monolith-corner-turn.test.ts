@@ -35,7 +35,7 @@ import {
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
 } from './warm-node-modules.js';
-import { ANDROID_LEASE_ENV_KEYS, closeCornerEmulatorListeners } from './corner-emulator.js';
+import { ANDROID_LEASE_ENV_KEYS, prepareCornerAdb, closeCornerEmulatorListeners } from './corner-emulator.js';
 
 /** `core.voice` and `core.tagging` from `prompt-assembly.ts`. */
 const VOICE_RULE =
@@ -1808,6 +1808,78 @@ describe('corner close-request delivery', () => {
     expect(receipts.some(([, input]) => (input as { completionKind?: string })?.completionKind === 'no-reply')).toBe(stopReason === 'no-reply');
     expect(execute.mock.calls.some(([name]) => name === 'postRoomMessage')).toBe(false);
     console.info(`Demonstrated TL-corner-terminal: ${stopReason}, two wakes completed, fresh session per wake, no message, complete receipts`);
+  });
+
+  it('emu-1: granted plain adb devices follows emulator-5574 on server 5576 after a same-turn boot', async () => {
+    const fixture = await cornerHarness(vi.fn(async () => ({ members: [] })), 5);
+    type Options = ConstructorParameters<typeof MonolithCornerTurnLoop>[0];
+    const options = (fixture.loop as unknown as { options: Options }).options;
+    let policy!: () => { toolEnv?: Record<string, string> };
+    const loop = new MonolithCornerTurnLoop({ ...options, grantRunner: {
+      register: (_id: string, room: { writePolicy: typeof policy }) => { policy = room.writePolicy; },
+    } as unknown as NonNullable<Options['grantRunner']> });
+    const sdk = join(fixture.root, 'sdk');
+    await mkdir(join(sdk, 'platform-tools'), { recursive: true });
+    await writeFile(join(sdk, 'platform-tools/adb'), '#!/bin/sh\nprintf "List of devices attached\\n"\nif [ "$ANDROID_ADB_SERVER_PORT" = 5576 ]; then printf "emulator-5574\\tdevice\\n"; fi\n', { mode: 0o755 });
+    const env = { ANDROID_HOME: sdk, BEELINE_ANDROID_LEASE_ROOT: join(fixture.root, 'leases'),
+      ANDROID_ADB_SERVER_PORT: '5998', PATH: `${sdk}/platform-tools:${process.env.PATH}` };
+    await prepareCornerAdb(fixture.root, 'corner-id', env);
+    (loop as unknown as { agentEnv: Record<string, string> }).agentEnv = env;
+    // The shell was prepared before boot. Only the kept record knows the new lease.
+    await mkdir(join(env.BEELINE_ANDROID_LEASE_ROOT, 'kept'), { recursive: true });
+    await writeFile(join(env.BEELINE_ANDROID_LEASE_ROOT, 'kept/corner-id.json'), JSON.stringify({
+      version: 1, cornerId: 'corner-id', pid: process.pid, serial: 'emulator-5574', port: 5574, adbServerPort: '5576',
+    }));
+    try {
+      const { stdout } = await execFileAsync('/bin/sh', ['-c', 'adb devices'], {
+        env: { PATH: `${sdk}/platform-tools:${process.env.PATH}`, ...policy().toolEnv },
+      });
+      expect(stdout.trim().split('\n')).toEqual(['List of devices attached', 'emulator-5574\tdevice']);
+    } finally { fixture.abort.abort(); await fixture.scheduler.dispose(); }
+  });
+
+  it.each([false, true])('checkout-1: refuses another agent during foreground/background work (%s)', async (background) => {
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false };
+      return { id: 'write', createdAt: 1 };
+    });
+    const first = await cornerHarness(execute, 5);
+    const second = await cornerHarness(execute, 5);
+    (second.loop as unknown as { options: { worktreePath: string } }).options.worktreePath = first.root;
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>(done => { entered = done; });
+    const gate = new Promise<void>(done => { release = done; });
+    let finishBackground: (() => void) | undefined;
+    vi.spyOn(first.acp, 'hasBackgroundTools', 'get').mockImplementation(() => background && !finishBackground);
+    vi.mocked(first.acp.sessionPrompt).mockImplementation(async (...args) => {
+      await writeFile(join(first.root, 'uncommitted.txt'), 'first agent edits');
+      entered();
+      if (background) {
+        void gate.then(() => {
+          finishBackground = () => undefined;
+          args[6]?.({ id: 'build', title: 'build', status: 'completed' });
+        });
+      } else await gate;
+      return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+    });
+    const running = first.loop.run();
+    try {
+      await ready;
+      if (background) await vi.waitFor(() => expect(
+        (first.loop as unknown as { checkoutBackgroundDone?: () => void }).checkoutBackgroundDone,
+      ).toBeTypeOf('function'));
+      await second.loop.run();
+      expect(second.acp.start).not.toHaveBeenCalled();
+      expect(second.acp.sessionPrompt).not.toHaveBeenCalled();
+      expect(await readFile(join(first.root, 'uncommitted.txt'), 'utf8')).toBe('first agent edits');
+    } finally {
+      release(); await running;
+      first.abort.abort(); second.abort.abort();
+      await first.scheduler.dispose(); await second.scheduler.dispose();
+    }
   });
 
   it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {

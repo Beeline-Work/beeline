@@ -1,3 +1,4 @@
+import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { modelContextWindowTokens } from './model-context-window.js';
 import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
@@ -490,6 +491,7 @@ export class MonolithCornerTurnLoop {
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
+  private checkoutBackgroundDone?: () => void;
 
   /**
    * Called on socket resubscription. A `corner-complete` published while that
@@ -642,7 +644,6 @@ export class MonolithCornerTurnLoop {
         // the same lease variables as the corner shell, or it exits before boot.
         const toolEnv = Object.fromEntries(
           androidLeaseShellBindings(this.agentEnv)
-            .filter((entry) => entry.name !== 'PATH')
             .map((entry) => [entry.name, entry.value]),
         );
         return {
@@ -829,6 +830,8 @@ export class MonolithCornerTurnLoop {
     this.pinnedProviderOverride = undefined;
     this.sessionModel = null;
     if (client) await client.stop();
+    this.checkoutBackgroundDone?.();
+    this.checkoutBackgroundDone = undefined;
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
@@ -1627,6 +1630,35 @@ export class MonolithCornerTurnLoop {
     });
   }
 
+  private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
+    return withCornerCheckoutLock(this.options.worktreePath, async () => {
+      try {
+        return await work();
+      } catch (error) {
+        // A failed turn cannot keep mutating after handing off ownership.
+        await this.discardSession(true);
+        throw error;
+      } finally {
+        // A detached Bash build still owns the checkout after end_turn.
+        // Its pushed completion (or session teardown) releases ownership.
+        const client = this.client;
+        if (client?.hasBackgroundTools) {
+          let finished!: () => void;
+          try {
+            await new Promise<void>(done => {
+              finished = done;
+              this.checkoutBackgroundDone = done;
+              client.once('exit', done);
+            });
+          } finally {
+            client.off('exit', finished);
+            this.checkoutBackgroundDone = undefined;
+          }
+        }
+      }
+    });
+  }
+
   private async prompt(
     requestId: string,
     trigger: string,
@@ -1713,7 +1745,7 @@ export class MonolithCornerTurnLoop {
         async () => {
           trace.noteScheduler('queue', this.options.scheduler.snapshot());
           trace.start('queue-wait');
-          return this.options.scheduler.run(
+          return this.withCheckout(() => this.options.scheduler.run(
             cornerId,
             this.lifecycle(trace),
             async () => {
@@ -2162,6 +2194,7 @@ export class MonolithCornerTurnLoop {
                         publishToolCalls(calls, false, lastNarratedToolCall);
                       },
                       (call) => {
+                        if (!this.client?.hasBackgroundTools) this.checkoutBackgroundDone?.();
                         if (!requestId || !backgroundGeneration || !call.id) return;
                         void api.execute('postBackgroundToolCompletion', {
                           roomId: this.options.cornerId, requestId,
@@ -2466,7 +2499,7 @@ export class MonolithCornerTurnLoop {
               );
             },
             { priority: 'interactive', roomKey: this.options.parentRoomId },
-          );
+          ));
         },
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
         () => {

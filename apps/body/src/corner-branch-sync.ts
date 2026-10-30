@@ -128,6 +128,10 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
   // The remote head is already an ancestor: this worktree is ahead, and its
   // push will fast-forward the branch.
   if (await contains(git, local, remote)) return 'unchanged';
+  // Handoffs may leave another agent's unfinished build inputs here. A failed
+  // merge/rebase must never turn those edits into a destructive realignment.
+  if ((await git(['status', '--porcelain'])).trim())
+    throw new Error('corner branch sync refused: preserve uncommitted work before syncing the remote branch');
   const behind = await contains(git, remote, local);
   try {
     await git(behind ? ['merge', '--ff-only', remote] : ['rebase', remote]);

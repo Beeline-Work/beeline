@@ -596,7 +596,7 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; wake_batch_minutes: number; human_input: boolean; failing_check_wake: boolean }>(
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; wake_batch_minutes: number; human_input: boolean; failing_check_wake: boolean; app_callback_url: string | null }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
@@ -610,7 +610,9 @@ export async function createAgentCommand(
          JOIN rooms corner ON corner.id=fact.corner_id
          WHERE fact.corner_id=r.id
            AND ${cornerImplementerSql('fact', 'corner')}=$2
-           AND $7::text='corner_check'), false) failing_check_wake
+           AND $7::text='corner_check'), false) failing_check_wake,
+       (SELECT COALESCE(app.callback_url,client.callback_url) FROM rooms_mcp_members app
+         LEFT JOIN rooms_mcp_clients client ON client.id=app.client_id WHERE app.member_id=i.id) app_callback_url
      FROM memberships m JOIN rooms r ON r.id=m.room_id
      JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
      WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
@@ -737,6 +739,13 @@ export async function createAgentCommand(
   if (command && reviewContext) {
     await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1', [command.id, JSON.stringify(reviewContext)]);
     command.review_context = reviewContext;
+  }
+  // A connected app has no helper to claim this: its webhook announces the
+  // wake, and list_mentions shows it until the app reports or clears it.
+  const appCallbackUrl = member.rows[0]!.app_callback_url;
+  if (result.rows[0] && (input.action ?? 'input') === 'input' && appCallbackUrl) {
+    await recordMcpMemberWebhook(db, input.agentId, appCallbackUrl, input.roomId, id,
+        `${privatePayload?.kind === 'order' ? 'Order' : 'Wake'} (${input.reason}): ${privatePayload?.text ?? sourceText ?? ''}`.trim());
   }
   return command;
   });

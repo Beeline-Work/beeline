@@ -14,7 +14,16 @@ Temporarily restoring preview-only delivery made this test fail waiting for the 
 
 ## Device proof
 
-Pending the branch capture. Do not treat contract tests as native paint or active-reply timing evidence.
+The unchanged local-attempt.sh completed on be8ddcf8d; see repair-rig/report.md and report.json. Every arrival case recorded (20/20) cache hits and zero pre-draw Room GETs. Counts join cache-read-end markers within each device attempt window and Room GET starts before the native paint timestamp. Push samples include one other prepaint HTTP request; that is not a Room fetch.
+
+| Case | Before cache hits | After cache hits | After pre-draw Room fetches | After p50 |
+| --- | --- | --- | --- | --- |
+| Room list, one new | 0/20 | 20/20 | 0/20 | 332 ms |
+| Room list, five new | 0/20 | 20/20 | 0/20 | 602 ms |
+| Push, one unseen | 0/20 | 20/20 | 0/20 | 443 ms |
+| Push, five unseen | 0/20 | 20/20 | 0/20 | 382 ms |
+
+The before p50 range is (371–573 ms), from the approved nightly baseline. After p50 has not returned to approximately (260 ms); the rig budget verdict fails. Warm p50 is (433 ms), send-text p50 (215 ms). The server shard overlapped the first portion of capture, so these timing figures are not an uncontended comparison. All raw capture remains at /tmp/emberus-rig-repair; the report and host-load summary are committed. Active-reply timing under large offscreen traffic remains unproven. No timing metric or rig method was changed.
 
 ## Server import boundary repair
 

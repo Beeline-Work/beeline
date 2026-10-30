@@ -16,8 +16,6 @@ export type CornerStateFacts = {
   readonly turnRunning: boolean;
   readonly workerQueued?: boolean;
   readonly reviewerActive?: boolean;
-  /** An agent schedule in the corner will still wake it later. */
-  readonly scheduledWait?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
   readonly lifecycle?: CornerLifecycleView;
@@ -92,14 +90,13 @@ export function cornerRunFromLifecycle(input: {
  * Precedence, first match. Workflow stages do not add activity of their own.
  *
  * 1. `archived` — the corner is archived, or its run or lifecycle is landed or closed.
- * 2. `review` — a reviewer turn is active and checks are not failing.
+ * 2. `review` — a reviewer turn is active, regardless of checks.
  * 3. `working` — a worker turn is running. A queued worker is not running.
  * 4. `waiting` — an unresolved blocker, unless checks are pending on the
  *    current head and every blocker is an agent-commander report or a merge
  *    hold. A hold blocks the merge, not the checks or review before it.
  * 5. `review` — pending or not-yet-reported checks, until a final result or push.
- * 6. `waiting` — an agent schedule in the corner will still wake it.
- * 7. `idle` — the fall-through, including failing checks without work or a blocker.
+ * 6. `idle` — the fall-through, including failing checks without work or a blocker.
  *    A turn that just ended is idle at once: `working` needs a live or queued turn.
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
@@ -110,13 +107,12 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const lifecycle = facts.lifecycle;
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
   const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
-  if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
+  if (facts.reviewerActive) return { state: 'review' };
   if (facts.turnRunning) return { state: 'working' };
   const deferredByCi = facts.agentCommanderReport || facts.blocker?.blocker?.kind === 'merge-hold';
   if ((facts.blocker || facts.owed === true) && !(deferredByCi && pendingCi))
     return { state: 'waiting', ...facts.blocker };
   if (pendingCi) return { state: 'review' };
-  if (facts.scheduledWait) return { state: 'waiting' };
   return { state: 'idle' };
 }
 

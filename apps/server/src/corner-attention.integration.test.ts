@@ -366,7 +366,7 @@ it('pending CI past 30 minutes schedules no expiry, including after a new head',
   expect(await state()).toBe('review');
 });
 it.each([WORKER, REVIEWER])(
-  'Reproduction IDLE-1: a standing schedule shows Waiting and suppresses alerts (%s)',
+  'Reproduction IDLE-1: a standing schedule shows Idle and suppresses alerts (%s)',
   async (agent) => {
     await db.query(
       `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
@@ -379,7 +379,7 @@ it.each([WORKER, REVIEWER])(
       [WS, C, agent],
     );
     await runCornerAttention(db);
-    expect(await state()).toBe('waiting');
+    expect(await state()).toBe('idle');
     expect(await commanderFlags()).toHaveLength(0);
   },
 );
@@ -897,7 +897,7 @@ it('Reproduction R1: a report filed before the turn ends shows waiting and sends
   expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
 });
 
-it('Reproduction R1: a worker that ends its turn with a future schedule reads waiting and sends no stall alert', async () => {
+it('Reproduction R1: a worker that ends its turn with a future schedule reads idle and sends no stall alert', async () => {
   await wake(WORKER, 'r1-scheduled-order');
   await turn();
   await db.query(
@@ -908,11 +908,11 @@ it('Reproduction R1: a worker that ends its turn with a future schedule reads wa
   await runCornerAttention(db);
   expect(await state()).toBe('working');
   await end(WORKER, 40);
-  expect(await state()).toBe('waiting');
-  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'waiting' });
+  expect(await state()).toBe('idle');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'idle' });
   expect(
     (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]?.state,
-  ).toBe('waiting');
+  ).toBe('idle');
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
@@ -921,4 +921,20 @@ it('Reproduction R1: a worker that ends its turn with a future schedule reads wa
   expect(await state()).toBe('idle');
   await runCornerAttention(db);
   expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(1);
+});
+
+// Isolated service reads stand in for the production phone and agent surfaces.
+it('Reproduction HEADER-STATE-1: reviewer on failing checks displays review', async () => {
+  await ci('failing');
+  await turn(REVIEWER);
+  expect(await state()).toBe('review');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('review');
+});
+it('Reproduction HEADER-STATE-2: scheduled corner displays idle without an idle alert', async () => {
+  await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at,max_runs,run_count)
+    VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue','{"kind":"interval","everySeconds":86400}',now()+interval '1 day',1,0)`, [WS,C,WORKER]);
+  expect(await state()).toBe('idle');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('idle');
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
 });

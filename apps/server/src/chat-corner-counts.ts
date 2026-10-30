@@ -27,8 +27,6 @@ export type CornerStateRow = {
   last_turn_ended_at?: Date | null;
   ci_started_at?: Date | null;
   reviewer_active?: boolean;
-  /** `cornerScheduledWaitSql`: an agent schedule will still wake the corner. */
-  scheduled_wait?: boolean | null;
   blocking?: boolean;
   waiting_item_id?: string | null;
   waiting_reason?: CornerStateReason | null;
@@ -51,7 +49,6 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
     archived: Boolean(row.archived_at),
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
     reviewerActive: row.reviewer_active,
-    ...(row.scheduled_wait ? { scheduledWait: true } : {}),
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
@@ -113,7 +110,6 @@ export function cornerFactsSql(viewerExpr: string): {
     columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
       activity.worker_active,activity.reviewer_active,
       span.last_turn_ended_at,span.ci_started_at,
-      ${cornerScheduledWaitSql('c')} scheduled_wait,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,

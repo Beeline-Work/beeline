@@ -120,12 +120,12 @@ it('a blocked report with failing checks waits for the commander', () => {
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
   }).state).toBe('waiting');
 });
-it('a running reviewer does not keep a red head in review', () => {
+it('HEADER-STATE-1: a running reviewer keeps a red head in review', () => {
   expect(deriveCornerState({
     ...facts,
     reviewerActive: true,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  }).state).toBe('idle');
+  }).state).toBe('review');
 });
 it.each([
   ['pending', 'review'],

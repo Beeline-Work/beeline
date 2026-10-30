@@ -6,12 +6,12 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  * Invariants for `deriveCornerState`, including precedence when they overlap.
  *
  * 1. `archived` iff the corner, its run, or its lifecycle is landed or closed.
- * 2. `review` iff a reviewer turn is active and checks are not failing, or
+ * 2. `review` iff a reviewer turn is active, or
  *    checks are pending on the current head with no human-owed blocker other
  *    than a merge hold and no worker turn running.
  * 3. `working` is a running worker turn only; a turn that just ended is not
  *    work. It never overrides archived or an explicit wait. A live reviewer
- *    beats worker work while checks are not failing.
+ *    beats worker work regardless of checks.
  * 4. `waiting` is a blocker, except agent-only reports or a lone merge hold
  *    during pending CI.
  * 5. Everything else is `idle`; failing checks alone establish no activity.
@@ -153,14 +153,12 @@ function scan(
                   for (const prPresent of [false, true]) {
                     if (closure === 'merged' && !prPresent) continue;
                     for (const blocker of BLOCKERS) {
-                     for (const scheduledWait of [false, true]) {
                       count += 1;
                       const facts: CornerStateFacts = {
                         archived,
                         turnRunning,
                         workerQueued,
                         reviewerActive,
-                        scheduledWait,
                         ...(run ? { run } : {}),
                         lifecycle: lifecycleFor(shape, prPresent, closure),
                         ...blockerFacts(blocker),
@@ -170,22 +168,18 @@ function scan(
                       const pending = pendingOnHead(facts);
                       const anyBlocker = blocker !== 'none';
                       const deferred = blocker === 'agent' || blocker === 'merge-hold';
-                      const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
-                      const failing = checks === 'failing';
                       let expected: CornerState;
                       if (closed) expected = 'archived';
-                      else if (reviewerActive && !failing) expected = 'review';
+                      else if (reviewerActive) expected = 'review';
                       else if (turnRunning) expected = 'working';
                       else if (anyBlocker && !(pending && deferred)) expected = 'waiting';
                       else if (pending) expected = 'review';
-                      else if (scheduledWait) expected = 'waiting';
                       else expected = 'idle';
                       if (actual !== expected && failures.length < 8) {
                         failures.push(
-                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker} scheduled=${scheduledWait}`,
+                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
                         );
                       }
-                     }
                     }
                   }
                 }

@@ -1541,7 +1541,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/commander.ts:reportToCommander:wrapper:19c6d018e55de907",
+    "id": "src/commander.ts:reportToCommander:wrapper:8f06e32e87089511",
     "file": "apps/server/src/commander.ts",
     "kind": "wrapper",
     "template": "recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,\n    recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] })",
@@ -1552,6 +1552,7 @@
       ".author_id",
       ".automatic",
       ".created_by",
+      ".directRecipient",
       ".exec",
       ".exec()",
       ".fromRoomId",
@@ -1566,6 +1567,7 @@
       "TrueKeyword",
       "binary:&&",
       "binary:===",
+      "conditional:?:",
       "end:expression"
     ],
     "occurrences": 1
@@ -5049,10 +5051,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.report:wrapper:866bd0077c1f0456",
+    "id": "src/daemon-service.ts:DaemonService.report:wrapper:39d8f1e03c03e153",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "reportToCommander(database, command.room_id, agentId, text, command, createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask })",
+    "template": "reportToCommander(database, command.room_id, agentId, text, reportCommand, createHash('sha256').update(`report:${command.id}:${command.generation_id}:${reportCommand.id}:${directRecipient ?? \"\"}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask, directRecipient })",
     "literals": [
       "\"\"",
       "\"/\"",
@@ -5098,9 +5100,10 @@
       ".update()",
       ".url",
       "FalseKeyword",
+      "FirstLiteralToken:0",
       "RegularExpressionLiteral:/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i",
       "TrueKeyword",
-      "[\"report:\",\":\",\":\",\":\",\":\",\"\"]",
+      "[\"report:\",\":\",\":\",\":\",\":\",\":\",\":\",\"\"]",
       "binary:===",
       "binary:??",
       "conditional:?:",

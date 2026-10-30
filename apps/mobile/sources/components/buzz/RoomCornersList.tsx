@@ -1,4 +1,4 @@
-import { ContentTarget, InlineActionRow, InlineRow } from './IndexRow';
+import { InlineActionRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
 import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
@@ -181,7 +181,7 @@ export function RoomCornersList({
   };
 
   const stateWord = (display: ReturnType<typeof cornerDisplayState>) => (
-    <CornerWaitingPulse state={display.status}>
+    <CornerWaitingPulse state={display.word}>
       <Text
         style={[
           styles.state,
@@ -192,7 +192,7 @@ export function RoomCornersList({
               : styles.stateQuiet,
         ]}
       >
-        {display.status}
+        {display.word}
       </Text>
     </CornerWaitingPulse>
   );
@@ -219,8 +219,8 @@ export function RoomCornersList({
     const objective = inspectorCornerObjective(label, item.corner.about);
     const runs = liveRuns?.(item.corner.id) ?? [];
     return (
-      <ContentTarget
-        accessibilityLabel={`${label}. ${display.status}${objective ? `. ${objective}` : ''}`}
+      <Pressable
+        accessibilityLabel={`${label}. ${display.word}${objective ? `. ${objective}` : ''}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
         style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]}
@@ -242,7 +242,7 @@ export function RoomCornersList({
           otherLiveRuns={runs.slice(1)}
           testID={`room-corner-objective-${item.corner.id}`}
         />
-      </ContentTarget>
+      </Pressable>
     );
   };
 
@@ -257,8 +257,8 @@ export function RoomCornersList({
     const closed = cornerClosedStamp(item.closedAt, stampedAt);
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
     return (
-      <InlineRow
-        accessibilityLabel={`${label}. ${display.status}. ${line}`}
+      <Pressable
+        accessibilityLabel={`${label}. ${display.word}. ${line}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
         style={styles.row}
@@ -283,7 +283,7 @@ export function RoomCornersList({
           circle carries its motion for the glance. */}
         {stateWord(display)}
         <StateCircle state={display.visual} tone={display.tone} />
-      </InlineRow>
+      </Pressable>
     );
   };
 

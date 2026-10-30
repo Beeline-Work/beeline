@@ -33,6 +33,7 @@ describe('server-owned corner display state', () => {
   ] as const)('renders %s without deriving a replacement state', (state, tone, glyph) => {
     expect(cornerDisplayState(item(state))).toMatchObject({
       status: state,
+      word: state,
       tone,
       glyph,
       terminal: state === 'archived',

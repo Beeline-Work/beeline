@@ -10,6 +10,7 @@ export type CornerDisplayState = {
   readonly status: CornerState;
   readonly visual: CornerVisualState;
   readonly glyph: string;
+  readonly word: CornerState;
   readonly detail?: string;
   readonly prUrl?: string;
   readonly terminal: boolean;
@@ -72,6 +73,7 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
+    word: state,
     visual,
     glyph: state === 'working' ? '◌' : state === 'review' ? '●' : state === 'waiting' ? 'Ⅱ' : '○',
     ...(detail ? { detail } : {}),

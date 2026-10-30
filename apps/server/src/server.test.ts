@@ -1,5 +1,5 @@
-import { SurfaceRegistry } from '../../mobile/sources/buzz/surface-registry.js';
-import { cacheRoomMessageDelta } from '../../mobile/sources/buzz/cache-room-message-delta.js';
+import { SurfaceRegistry } from '@beeline/buzz-client';
+import { cacheRoomMessageDelta } from '@beeline/buzz-client';
 import { SurfaceResponseCache, isRoomView } from '@beeline/buzz-client';
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';

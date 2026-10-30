@@ -127,3 +127,10 @@ export * from './agent-access-config.js';
 export { RelayPublishError } from './relay-error.js';
 export { BEELINE_SLASH_COMMANDS } from './slash-command.js';
 export { buildReplyCommand } from './reply-command.js';
+
+export { currentSurfaceStamp, nextSurfaceStamp } from './surface-clock.js';
+
+export { SurfaceRegistry } from './surface-registry.js';
+
+export { cacheRoomMessageDelta } from './cache-room-message-delta.js';
+export { reconcileRoomView, reconcileRoomMessageDelta } from './room-view-reconcile.js';

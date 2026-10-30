@@ -15,3 +15,11 @@ Temporarily restoring preview-only delivery made this test fail waiting for the 
 ## Device proof
 
 Pending the branch capture. Do not treat contract tests as native paint or active-reply timing evidence.
+
+## Server import boundary repair
+
+The server contract test previously imported mobile `surface-registry.ts` and `cache-room-message-delta.ts`. The registry reached `surface-clock.ts`; the delta handler reached `room-view-presentation.ts`. These runtime modules used shared contracts only, but Vite resolved their nearest `apps/mobile/tsconfig.json`, which extends `expo/tsconfig.base.json`. The presentation module also had erased type-only references to mobile transport, agent display, corners, and PR lifecycle.
+
+The registry, clock, message cache handler, and Room reconciliation now live in `packages/buzz-client`, with mobile re-exports preserving one implementation and one clock. The server imports that package, never the mobile source tree. Existing server tests that read mobile source text (pairing command and corner status formatter) do not load its tsconfig. The server Vitest transform override is removed.
+
+Root typecheck and the focused mobile cache, reconciliation, identity, and Workspace tests pass (52 tests). The standalone server test passes (85 tests). Device proof remains pending CI, as ordered.

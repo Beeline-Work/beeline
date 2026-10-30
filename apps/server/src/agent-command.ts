@@ -738,6 +738,17 @@ export async function createAgentCommand(
     await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1', [command.id, JSON.stringify(reviewContext)]);
     command.review_context = reviewContext;
   }
+  // A connected app has no helper to claim this: its webhook announces the
+  // wake, and list_mentions shows it until the app reports or clears it.
+  if (result.rows[0] && (input.action ?? 'input') === 'input') {
+    const app = (await db.query<{ callback_url: string | null }>(
+      `SELECT COALESCE(member.callback_url,client.callback_url) callback_url FROM rooms_mcp_members member
+       LEFT JOIN rooms_mcp_clients client ON client.id=member.client_id WHERE member.member_id=$1`,
+      [input.agentId])).rows[0];
+    if (app?.callback_url)
+      await recordMcpMemberWebhook(db, input.agentId, app.callback_url, input.roomId, id,
+        `${privatePayload?.kind === 'order' ? 'Order' : 'Wake'} (${input.reason}): ${privatePayload?.text ?? sourceText ?? ''}`.trim());
+  }
   return command;
   });
 }

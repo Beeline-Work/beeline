@@ -43,6 +43,8 @@
         // The background latency runbook invokes these isolated database proofs by path.
         "scripts/prove-background-waste.mjs",
         "scripts/prove-webhook-burst.mjs",
+        // Reproduction CHECK-DEADLOCK-1 invokes the isolated PostgreSQL HTTP proof by path.
+        "scripts/prove-check-rollup-deadlock.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/prove-corner-startup.mjs",

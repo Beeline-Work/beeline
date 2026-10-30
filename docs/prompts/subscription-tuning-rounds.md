@@ -28,3 +28,18 @@ combined winner. Each must run on every available assigned model.
 Neither choice is a recommendation or a frozen frontier. Compare paired scored
 cohorts and retain raw exclusions. The full baseline and round-zero deferred
 samples remain the original runs; do not rerun them to improve scores.
+
+## Round two candidates
+
+Round-one Luna and Terra completed all tune attempts. Sol is resuming its
+remaining saved samples; no replacement samples are taken. The following
+choices use only observed round-one tune failure groups, not held-out data.
+
+- `r2-full-short`: full loading with forty-word descriptions, changing only
+  description length against full. Both round-one deferred variants increased
+  aggregate input on Luna and Terra; test shortening without discovery overhead.
+- `r2-boundary`: add one terminal-boundary rule to `r1-order`. Repeated
+  call-after-terminal failures occur on Luna and Terra, so test explicit stopping
+  language while retaining the same core and descriptions.
+
+These are candidates, not a frozen frontier or a stopping decision.

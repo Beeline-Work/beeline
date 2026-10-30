@@ -1714,7 +1714,7 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
   const [review]=await commands(B,C);
   await claim(review!);
   await daemon.execute('order',{roomId:C,requestId:review!.turnRequestId,generationId:'g1',
-    address:C,agent:'@hoots',text:'FAIL: helper-forwarded literal arrays bypass the wording lock. Fix the returned parameter tracking.'},B);
+    address:C,agent:'@hoots',text:'FAIL: the sample endpoint accepts an invalid request. Add the required validation.'},B);
   await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,generationId:'g1',status,...(status==='complete'?{completionKind:'no-reply' as const}:{reason:'unreported_order: runtime failed after delivery',reasonKind:'hiccup' as const})},B);
   const repairs=(await commands(A,C)).filter(c=>c.reason==='order');
   expect(repairs.length).toBeGreaterThan(0);

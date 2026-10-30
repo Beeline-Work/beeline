@@ -183,7 +183,7 @@ try {
   for (const [index, verdict] of [
     'failed: FAIL: required evidence is missing.',
     'blocked: required checks are missing.',
-    'FAIL: helper-forwarded arrays bypass the wording lock. Fix the parameter tracking.',
+    'FAIL: the sample endpoint accepts an invalid request. Add the required validation.',
   ].entries()) {
     const currentHead = String(index + 1).repeat(40);
     await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [corner]);

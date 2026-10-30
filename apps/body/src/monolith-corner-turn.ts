@@ -2685,7 +2685,8 @@ export class MonolithCornerTurnLoop {
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,
         closed: async () => {
-          const stopEmulator = () => stopKeptCornerEmulator(this.options.runtime.supervisorRoot, cornerId)
+          const stopEmulator = () => stopKeptCornerEmulator(
+            this.options.runtime.supervisorRoot, cornerId, `corner close requested; stopped by agent ${this.agent.publicKey}`)
             .catch((error) => console.error(`[body] corner ${cornerId} emulator stop failed:`, error));
           if (this.closePushed) {
             this.closePushed = false;

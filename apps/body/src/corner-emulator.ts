@@ -22,7 +22,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createServer, createConnection, type Server } from 'node:net';
-import { chmod, mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { delimiter, dirname, resolve } from 'node:path';
 import {
@@ -309,13 +309,81 @@ function disconnectAdb(record: KeptCornerEmulator): void {
   }
 }
 
-async function releaseRecord(record: KeptCornerEmulator): Promise<void> {
+/** Bytes of `emulator.log` kept per stop, and stop logs kept per lease root. */
+const RETAINED_LOG_BYTES = 256 * 1024;
+const RETAINED_LOG_COUNT = 20;
+
+/** Where stopped emulators' logs survive, outside the deleted instance directory. */
+export function stoppedEmulatorLogDir(leaseRoot: string): string {
+  return resolve(leaseRoot, 'stopped');
+}
+
+async function logTail(path: string): Promise<string> {
+  const handle = await open(path, 'r').catch(() => undefined);
+  if (!handle) return '';
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, RETAINED_LOG_BYTES);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    return buffer.toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Keep the stop reason and the log tail before the instance directory goes,
+ * so the corner can still read why its emulator died. Oldest files beyond
+ * the retention count are removed.
+ */
+async function retainStopLog(record: KeptCornerEmulator, reason: string, wasRunning: boolean): Promise<void> {
+  const dir = stoppedEmulatorLogDir(record.leaseRoot);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const stoppedAt = new Date().toISOString();
+  const header = `${stoppedAt} corner=${record.cornerId} serial=${record.serial} pid=${record.pid}` +
+    ` running=${wasRunning} reason=${reason.replace(/\s+/g, ' ')}\n`;
+  const tail = await logTail(resolve(record.instanceRoot, 'emulator.log'));
+  const name = `${record.cornerId}-${stoppedAt.replace(/[:.]/g, '-')}-${record.pid}.log`;
+  await writeFile(resolve(dir, name), `${header}--- emulator.log tail ---\n${tail}`, { mode: 0o600 });
+  const logs = (await readdir(dir).catch(() => [] as string[])).filter((file) => file.endsWith('.log'));
+  const stamped = await Promise.all(logs.map(async (file) => ({
+    file,
+    mtimeMs: (await stat(resolve(dir, file)).catch(() => undefined))?.mtimeMs ?? 0,
+  })));
+  stamped.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  await Promise.all(stamped.slice(RETAINED_LOG_COUNT).map(({ file }) =>
+    rm(resolve(dir, file), { force: true })));
+}
+
+/** Releases in progress here, so the killed child's exit does not log a second stop. */
+const releasing = new Set<string>();
+
+async function releaseRecord(record: KeptCornerEmulator, reason: string): Promise<void> {
+  const key = `${record.instanceRoot}:${record.pid}`;
+  if (releasing.has(key)) return;
+  releasing.add(key);
+  try {
+    await releaseRecordOnce(record, reason);
+  } finally {
+    releasing.delete(key);
+  }
+}
+
+async function releaseRecordOnce(record: KeptCornerEmulator, reason: string): Promise<void> {
   const current = await readRecord(record.leaseRoot, record.cornerId);
   if (current && current.pid !== record.pid) return;
-  if (await sameProcess(record.pid, record.startedAt)) await killProcessGroup(record.pid);
+  // An earlier release already removed both; the child's later exit is not a second stop.
+  if (!current && !existsSync(record.instanceRoot)) return;
+  const running = await sameProcess(record.pid, record.startedAt);
+  if (running) await killProcessGroup(record.pid);
   disconnectAdb(record);
   if ((await readFile(record.markerPath, 'utf8').catch(() => '')) === record.ownership)
     await rm(record.markerPath, { force: true });
+  await retainStopLog(record, reason, running).catch((error) => {
+    console.error(`[body] corner ${record.cornerId} emulator log could not be kept:`, error);
+  });
+  console.log(`[body] corner ${record.cornerId} emulator ${record.serial} released: ${reason}`);
   await rm(record.instanceRoot, { recursive: true, force: true });
   const latest = await readRecord(record.leaseRoot, record.cornerId);
   if (!latest || latest.pid === record.pid)
@@ -429,7 +497,7 @@ export async function keepCornerEmulator(
       removeLegacyAdbAlias(existing, bound.ANDROID_HOME!);
       return { ok: true, serial: existing.serial, port: existing.port, alreadyRunning: true };
     }
-    if (existing) await releaseRecord(existing);
+    if (existing) await releaseRecord(existing, 'process was gone at the next start; its exit was not observed');
     const started = await spawnLeasedEmulator(args, bound, { detached: true, leaseAdbServer: true });
     if ('exitCode' in started)
       return { ok: false, exitCode: started.exitCode, error: 'emulator did not start' };
@@ -444,10 +512,12 @@ export async function keepCornerEmulator(
     await writeRecord(record);
     started.child.once('error', () => undefined);
     let bootPending = true;
-    started.child.once('exit', () => {
+    let exitReason: string | undefined;
+    started.child.once('exit', (code, signal) => {
+      exitReason = `emulator exited (code ${code ?? 'none'}, signal ${signal ?? 'none'})`;
       // The boot attempt owns cleanup until it has consumed the diagnostic.
       if (bootPending) return;
-      void releaseRecord(record).catch((error) => {
+      void releaseRecord(record, exitReason).catch((error) => {
         console.error(`[body] corner ${cornerId} emulator cleanup failed:`, error);
       });
     });
@@ -456,7 +526,7 @@ export async function keepCornerEmulator(
     if (!booted) {
       // Read before cleanup removes the instance directory and its log.
       const diagnostic = await readFile(resolve(record.instanceRoot, 'emulator.log'), 'utf8').catch(() => '');
-      await releaseRecord(record);
+      await releaseRecord(record, `boot failed: ${exitReason ?? `Android did not finish booting within ${BOOT_TIMEOUT_MS / 1000}s`}`);
       return { ok: false, exitCode: 1, error: `emulator ${record.serial} exited before Android finished booting${diagnostic ? `\n${diagnostic.slice(-8192).trim()}` : ''}` };
     }
     bootPending = false;
@@ -464,12 +534,16 @@ export async function keepCornerEmulator(
   });
 }
 
-/** Stop the corner's emulator and release its port, if a record exists. */
-export async function stopKeptCornerEmulator(supervisorRoot: string, cornerId: string): Promise<boolean> {
+/** Stop the corner's emulator and release its port, if a record exists. `reason` is kept with its log. */
+export async function stopKeptCornerEmulator(
+  supervisorRoot: string,
+  cornerId: string,
+  reason: string,
+): Promise<boolean> {
   if (!CORNER_ID.test(cornerId)) return false;
   const records = await findKeptRecords(supervisorRoot, cornerId);
   if (!records.length) return false;
-  await Promise.all(records.map((record) => releaseRecord(record)));
+  await Promise.all(records.map((record) => releaseRecord(record, reason)));
   return true;
 }
 
@@ -496,6 +570,12 @@ async function findKeptRecords(supervisorRoot: string, cornerId?: string): Promi
   return records;
 }
 
+/** Whether a kept emulator's corner is closed, and why, for the stop log. */
+export interface CornerClosedDecision {
+  closed: boolean;
+  reason: string;
+}
+
 /**
  * On helper start, stop emulators whose corners are confirmed closed.
  * `confirmClosed` must be false when the lookup fails or the caller is not
@@ -504,19 +584,19 @@ async function findKeptRecords(supervisorRoot: string, cornerId?: string): Promi
 export async function reapKeptCornerEmulators(
   supervisorRoot: string,
   liveCornerIds: ReadonlySet<string>,
-  confirmClosed: (cornerId: string) => Promise<boolean>,
+  confirmClosed: (cornerId: string) => Promise<CornerClosedDecision>,
 ): Promise<string[]> {
   const stopped: string[] = [];
   for (const record of await findKeptRecords(supervisorRoot)) {
     if (liveCornerIds.has(record.cornerId)) continue;
-    let closed = false;
+    let decision: CornerClosedDecision;
     try {
-      closed = await confirmClosed(record.cornerId);
-    } catch {
-      closed = false;
+      decision = await confirmClosed(record.cornerId);
+    } catch (error) {
+      decision = { closed: false, reason: `lookup failed: ${error instanceof Error ? error.message : String(error)}` };
     }
-    if (!closed) continue;
-    await releaseRecord(record);
+    if (!decision.closed) continue;
+    await releaseRecord(record, decision.reason);
     stopped.push(record.cornerId);
   }
   return stopped;

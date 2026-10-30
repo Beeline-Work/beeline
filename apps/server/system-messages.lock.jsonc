@@ -1,3 +1,4 @@
+// Connected app post/order wake-chain fix approved by lunchboxfortwo, message bd07c8db4f5da927d128b4624dbb17d1fe419210d001c0154fb0ea1c239fc4d3. Only the RoomsMcpAgentTools.inTurn wrapper changed: a lookup timeout and wake depth fields; no System wording changed.
 // Connected AI app agent-tool forwarding approved by lunchboxfortwo, message 7bd35003b7a0f33e5e59d225888502dcf09c83ab391409af02dc798b2866f17d (brief revision 1). Only RoomsMcpAgentTools call sites in rooms-mcp-agent.ts were added; they pass arguments to existing server actions and add no System wording.
 // One-tap YouTube upload reservation and restoration metadata approved by lunchboxfortwo, message 3044ec74214ab08b7beb3d898e065d6d6b6f3e1bc5c15deeef16dbf6a1a57650 (brief revision 3). Only consumeStarterVideoPost and restoreStarterVideoPost snapshots changed; no visible System wording changed.
 // Wording-neutral refactor repair approved by lunchboxfortwo, message 4af577f0eac95b5666a7126f3719aa14c3305e11c6cf2f22b29ad4ea79b0809e, corner brief revision 2. Regenerated after excluding type syntax, query predicates and provider transport, while retaining callbacks selecting literal phrase arrays through helper parameters and destructured bindings; no producer source or displayed wording changed.
@@ -9088,7 +9089,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:9669a462917a1b47",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:eed1d31dcc15ca82",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
     "template": "this.end(member, turn, reported)",
@@ -9096,14 +9097,21 @@
       "\"hex\"",
       "\"no order is waiting for your report at this address; list_mentions names the places that ordered you\"",
       "$local()",
+      "'2s'",
       "'90 seconds'",
       "'claimed'",
       "'input'",
       "'mcp_call'",
       ".$local",
+      ".agent_depth",
+      ".command",
       ".db",
       ".id",
+      ".min",
+      ".min()",
       ".parent_id",
+      ".root_command_id",
+      ".root_source_message_id",
       ".rows",
       ".toString",
       ".toString()",
@@ -9112,10 +9120,15 @@
       ".turn_request_id",
       "FalseKeyword",
       "FirstLiteralToken:0",
+      "FirstLiteralToken:1",
+      "FirstLiteralToken:3",
       "FirstLiteralToken:32",
+      "NullKeyword",
       "TrueKeyword",
       "[\"mcp:\",\"\"]",
+      "binary:+",
       "binary:??",
+      "conditional:?:",
       "end:expression",
       "prefix:!",
       "randomBytes()",

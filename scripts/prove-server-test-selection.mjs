@@ -17,7 +17,7 @@ try {
   mkdirSync(join(server, 'scripts'));
   symlinkSync(resolve(repository, 'node_modules'), join(fixture, 'node_modules'), 'dir');
   writeFileSync(join(fixture, 'package.json'), '{"type":"module"}');
-  for (const file of ['scripts/select-ci-tests.mjs', 'scripts/function-coverage-provider.mjs', 'vitest.function-coverage.config.ts']) {
+  for (const file of ['scripts/select-ci-tests.mjs', 'scripts/function-coverage-provider.mjs', 'scripts/observe-source-reads.mjs', 'vitest.function-coverage.config.ts']) {
     copyFileSync(join(repository, 'apps/server', file), join(server, file));
   }
   writeFileSync(join(server, 'src/service.ts'), source);
@@ -26,7 +26,9 @@ try {
       `import { it, expect } from 'vitest';\nimport { ${name} } from './service.js';\nit('${name}', () => expect(${name}()).toBe(${expected}));\n`);
   }
   writeFileSync(join(server, 'src/guard.test.ts'),
-    "import { it, expect } from 'vitest';\nimport { readFileSync } from 'node:fs';\nit('source guard', () => expect(readFileSync('src/service.ts','utf8')).not.toContain('return 99'));\n");
+    "import { it, expect } from 'vitest';\nimport { sourceText } from './guard-helper.js';\nit('source guard', () => expect(sourceText()).not.toContain('return 99'));\n");
+  writeFileSync(join(server, 'src/guard-helper.ts'),
+    "import { readFileSync as load } from 'node:fs';\nexport function sourceText() { return load('src/service.ts','utf8'); }\n");
   run('git', ['init', '-q']);
   run('git', ['add', '.']);
   run('git', ['-c', 'user.name=Selection proof', '-c', 'user.email=proof@example.invalid', 'commit', '-qm', 'Fixture baseline']);

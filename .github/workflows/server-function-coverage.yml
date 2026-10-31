@@ -7,17 +7,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: server-function-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   full-suite:
     name: Full server coverage ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
     env:
       BEELINE_FUNCTION_COVERAGE_DIR: ${{ github.workspace }}/coverage/function-packets
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace

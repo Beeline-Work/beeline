@@ -1,31 +1,39 @@
 # Server test selection
 
-PR server shards use TypeScript function locations captured by Vitest's pinned V8 coverage provider. A complete, successful full run on main publishes `server-function-coverage-<commit>`; PRs restore only the map for their exact base commit from that trusted workflow. Main, merge-group, manual and release execution keep full suites. Existing module-level job filters remain unchanged.
+PR server shards use TypeScript function locations captured by Vitest's pinned V8 provider. A complete, successful full run on main publishes `server-function-coverage-<commit>`; PRs restore only the map for their exact base from that trusted workflow. Main, merge-group, manual and release execution keep full suites. Existing module-level job filters remain unchanged. A newer main push supersedes an unfinished map collection for the older head.
 
-The map records which test files executed each function. Selection intersects changed old lines with those function ranges, then balances the selected files across the existing runners. Integration batches use the same selection. An empty shard exits after reporting its selection instead of accidentally asking Vitest to run every test.
+Selection intersects changed old lines with observed function ranges, then balances selected files across the existing runners. Integration batches use the same selection. Empty shards report their decision without accidentally invoking Vitest without filters. Changed tests and new unmapped tests run themselves; a missing entry for a test already present at the base invalidates the map. Source fingerprints are checked in one git batch.
 
-Always-run tests include every test with no covered server function, and every test whose local import graph contains file reads, subprocess execution or browser automation. This is deliberately broader than source-reading guards: a helper can hide an external dependency from coverage. `system-messages-lock.test.ts` is included. The separately gated PostgreSQL, corpus and latency checks retain their current execution.
+The map's always-run list includes unlinked tests, direct source readers, compiler/source scanners, and tests observed reading repository source through helpers or launching subprocesses. `system-messages-lock.test.ts` is also mandatory independently of the generated list. A worker hook records only a boolean for source reads and process execution; it records no filenames or contents. Executed browser/process call sites are retained too. Ordinary image reads do not turn an entire application import graph into source-reading guards.
 
-The full collector executes known always-run tests without V8 instrumentation and records explicit always-run packets after they pass. Their function attribution cannot prune them, so profiling them adds cost without improving selection. This also avoids instrumenting the source scanner's TypeScript parser.
+Known always-run tests execute without V8 instrumentation and produce explicit packets after passing. Other tests run with source-read observation and coverage; a helper that reads source becomes always-run even when the test has no direct filesystem import. This avoids profiling the source scanner's TypeScript parser. Full-map workers are bounded to one at a time per runner with a limited JS heap. Dedicated PostgreSQL, corpus and latency gates retain their established behavior.
 
-Missing, incomplete, malformed or stale maps run the full suite. So do test edits, setup/config/dependency changes, code outside the measured server sources, top-level changes, new functions and changes without a covered function owner. Insertions examine both adjacent old lines. Maps are short-lived build outputs, never committed snapshots, and are published only after every full-run shard succeeds.
+Missing, incomplete, malformed or stale maps run the full suite. So do setup/config/dependency/shared-package changes, code outside measured server sources, top-level changes, new functions and changes without a covered owner. Insertions examine both adjacent old lines. Markdown changes retain the guards. Maps are build outputs, not committed snapshots, and publish only after every full-run shard succeeds.
 
 ## Verification
 
-`node --test scripts/server-test-selection.test.mjs` exercises fallback and guard retention.
+`node --test scripts/server-test-selection.test.mjs` checks function ownership, guard retention, changed/new tests, insertions, map validity and fallbacks.
 
-`node scripts/prove-server-test-selection.mjs` exercises the actual collector, map merger, PR CLI and Vitest in a disposable git repository. It captures two independent functions and a source-reading guard; changes one function; verifies selection catches both a runtime failure and a source-guard failure while omitting the unrelated test; fixes the change; and verifies the selected tests pass. A stale map then restores the full suite. Proof identifier: `SERVER-SELECTION-1` (not a defect report).
+`node scripts/prove-server-test-selection.mjs` exercises the actual collector, map merger, PR CLI and Vitest in an isolated repository. It captures two independent functions plus a guard that reads source through a helper. A change selects its function owner and the guard, omits the unrelated test, and exposes both introduced failures. Fixing the function passes the selected tests. A stale map then restores the full suite. Proof identifier: `SERVER-SELECTION-1` (not a defect report).
 
-The measurement brief references a report and replay bundle that are not present in this checkout or at its supplied recovery path. Its summary establishes historical source-guard misses on PRs (3125, 3095, 3087, 3081, 3070, 3052, 3050). The regression retains that guard for all of them. This regression is not a substitute for replaying the original measured histories, per-function coverage and critical-path timing data. Historical zero-miss and median/p90 savings acceptance remains pending that replay; no savings are claimed from the smaller functional proof.
+The real source scanner passed all (140) tests. The collector also passed real runtime/server projection tests and an uninstrumented source-reading test.
 
-`node scripts/replay-server-test-selection.mjs` reconstructs the last fifty merged server PRs at measurement commit `c642ee02`. Without the missing coverage index, this verifies the production full-suite fallback for all fifty PRs and retains all seven recorded guards. Median and p90 savings in both test time and PR wall time are consequently zero: no work is removed. This fallback-only result does not establish the preliminary measurement's optimized-selection benefit or recall. Supply a coverage-index path as its first argument to exercise map validity against those historical bases.
+## Measured-history replay
 
-## Conservative choices
+Run `node scripts/replay-measured-server-selection.mjs BUNDLE OUTPUT_DIRECTORY MEASUREMENT_CHECKOUT`. The script keeps the delivered bundle read-only, reuses its `prepare-prs.py`, `selection.mjs` and `compare-selection.py`, and writes generated data only to the supplied output directory. Use an ignored directory such as `coverage/measured-final`; do not commit the data.
 
-- A map must match the exact PR base, rather than guessing whether an older function identifier is still valid.
-- Unknown and partially mapped hunks run everything, rather than omitting their unowned lines.
-- Shared package changes, including api-contract, run everything.
-- Local transitive file reads are always-run even when coverage also links those tests to runtime functions.
-- Only the ordinary and isolated suite runners and integration batches are pruned. Dedicated service and performance gates retain their established behavior.
+The indexed replay reproduced the original results exactly at measurement commit `c642ee02`. Its fifty-PR cohort contains no confirmed-real events from the failure ledger. The replay therefore adds the three verified-fix PRs (3115, 2908, 2709), covering all (8) confirmed-real file/job events. All are retained with zero misses. The seven observed source-guard PRs (3125, 3095, 3087, 3081, 3070, 3052, 3050) are retained too. Those seven are observed guard failures, not seven independently confirmed product defects.
 
-These choices favor failure detection over the preliminary measurement's projected savings. They may substantially reduce savings, especially while main advances faster than complete maps can be published.
+The measurement map is a current-main projection, not historical execution coverage. It is stale for every historical PR base. The deployed freshness policy therefore falls back on all (53) replayed PRs. Median and nearest-rank p90 potential savings are (0%) in both serialized test work and PR wall time. The observed successful-run cohort contains (72) runs with median/p90 wall times of (1389.5/1778 seconds). Keeping every job and the longest shard removes no critical-path work. New artifact-restore overhead is not measured, so these are zero potential savings, not a claim of measured unchanged latency.
+
+The preliminary (70.5%) median work projection must not be reported as deployed-policy savings. A usable exact-base map enables selection, as the end-to-end proof demonstrates; deployment benefit depends on fresh maps being available. This replay establishes conservative historical recall and reports the resulting zero savings, rather than waiving freshness to manufacture an improvement.
+
+## Choices
+
+- Exact-base maps from successful main runs only.
+- Unknown or partially mapped hunks run everything.
+- Shared packages, including api-contract, invalidate selection.
+- Test edits select those tests; setup changes invalidate selection.
+- Source reads through helpers are observed without replacing filesystem exports with test mocks.
+- Ordinary/isolated suite runners and integration batches are pruned; dedicated service gates keep their established execution.
+- No tests removed, release edits, nightly tuning or per-PR latency gate.

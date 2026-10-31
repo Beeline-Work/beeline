@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { selectTests, changedRanges, readsOutsideCoverage } from '../apps/server/scripts/select-ci-tests.mjs';
+import { selectTests, changedRanges, readsOutsideCoverage, executedExternalReads } from '../apps/server/scripts/select-ci-tests.mjs';
 import { collectionGroups } from '../apps/server/scripts/collect-ci-coverage.mjs';
 
 const prefix = 'apps/server/src/';
@@ -33,12 +33,21 @@ test('missing, stale, incomplete and source-mismatched maps all run the full sui
 
 test('setup, dependencies, test edits, renamed files and new top-level code fail closed', () => {
   for (const changed of ['package-lock.json', 'packages/api-contract/src/daemon.ts',
-    'apps/server/vitest.config.ts', `${prefix}test-support.ts`, tests[0], `${prefix}new.ts`]) {
+    'apps/server/vitest.config.ts', `${prefix}test-support.ts`, `${prefix}new.ts`]) {
     assert.equal(choose({ changes: [{ file: changed, ranges: [[1, 1]] }] }).mode, 'full', changed);
   }
   for (const ranges of [[[1, 2]], [[19, 31]], [[21, 22]], []]) {
     assert.equal(choose({ changes: [{ file, ranges }] }).mode, 'full');
   }
+});
+
+test('changed tests and new unmapped regression files run without invalidating a complete base map', () => {
+  const added = `${prefix}new.test.ts`;
+  const selection = choose({ tests: [...tests, added], baseTests: tests,
+    changes: [{ file, ranges: [[15, 15]] }, { file: added, ranges: [[1, 3]] }, { file: 'docs/behavior.md', ranges: [[1, 2]] }] });
+  assert.equal(selection.mode, 'selected');
+  assert.deepEqual(selection.tests, [tests[0], tests[2], tests[3], added].sort());
+  assert.ok(choose({ changes: [{ file: tests[1], ranges: [[1, 2]] }] }).tests.includes(tests[1]));
 });
 
 test('insertions check both adjacent old lines and multi-line hunks cannot hide unowned code', () => {
@@ -52,6 +61,7 @@ test('every recorded guard miss is retained even when no runtime function change
   for (const pr of [3125, 3095, 3087, 3081, 3070, 3052, 3050]) {
     assert.ok(choose({ changes: [] }).tests.includes(tests[2]), `PR ${pr}`);
   }
+  assert.ok(choose({ index: { ...index, alwaysRun: [] }, changes: [] }).tests.includes(tests[2]));
 });
 
 test('source reads hidden behind local helpers and subprocess/browser tests remain always-run', () => {
@@ -62,6 +72,7 @@ test('source reads hidden behind local helpers and subprocess/browser tests rema
   assert.equal(readsOutsideCoverage('/test.ts', file => sources[file]), true);
   assert.equal(readsOutsideCoverage('/test.ts', () => "import { spawn } from 'node:child_process';"), true);
   assert.equal(readsOutsideCoverage('/test.ts', () => "import { chromium } from 'playwright';"), true);
+  assert.equal(readsOutsideCoverage('/test.ts', () => 'const offsets = [1, 2]; const refs = offsets;'), false);
 });
 
 test('collection runs the real source scanner without profiling and instruments only prunable tests', () => {
@@ -77,4 +88,12 @@ test('collection runs the real source scanner without profiling and instruments 
     if (previous === undefined) delete process.env.BEELINE_FUNCTION_COVERAGE_DIR;
     else process.env.BEELINE_FUNCTION_COVERAGE_DIR = previous;
   }
+});
+
+test('executed subprocess work is retained without treating an unrelated regular-expression exec as external work', () => {
+  const source = "import {execFileSync as launch} from 'node:child_process';\nexport function child() { return launch('node'); }\nexport function ordinary() { return 1; }";
+  assert.equal(executedExternalReads(source, [{ start: 3, end: 3 }]), false);
+  assert.equal(executedExternalReads(source, [{ start: 2, end: 2 }]), true);
+  assert.equal(executedExternalReads('const match = /word/.exec(text);', [{ start: 1, end: 1 }]), false);
+  assert.equal(readsOutsideCoverage('/test.ts', () => "import {run} from './app.js';", new Set(), false), false);
 });

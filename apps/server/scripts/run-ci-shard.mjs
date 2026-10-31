@@ -48,7 +48,7 @@ if (!process.argv.includes('--list')) {
       else if (group.marker) recordAlwaysRun(group.files);
     }
   }
-  run(selected.files, 2, exclusions);
+  run(selected.files, process.env.BEELINE_FUNCTION_COVERAGE_DIR ? 1 : 2, exclusions);
   for (const file of isolatedFiles) {
     run([file], 1);
   }

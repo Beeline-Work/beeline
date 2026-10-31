@@ -9,7 +9,7 @@ const server = fileURLToPath(new URL('../', import.meta.url));
 
 export function collectionGroups(files) {
   if (!process.env.BEELINE_FUNCTION_COVERAGE_DIR) return [{ files, args: [], marker: false }];
-  const external = files.filter(file => readsOutsideCoverage(resolve(server, file), path => readFileSync(path, 'utf8')));
+  const external = files.filter(file => readsOutsideCoverage(resolve(server, file), path => readFileSync(path, 'utf8'), new Set(), false));
   return [
     { files: external, args: [], marker: true },
     { files: files.filter(file => !external.includes(file)), args: ['--config', 'vitest.function-coverage.config.ts'], marker: false },

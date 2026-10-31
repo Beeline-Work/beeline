@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRollout, promptParts } from './prompt-codex-telemetry.mjs';
+import { countTokens, parseRollout, promptParts } from './prompt-codex-telemetry.mjs';
 
 const prompt = 'Replay\n## System prompt\nRules\n## Turn\n\n````text\nA case\n````\n\n';
 const context = { prompt, variant: { mode: 'full' }, tools: [{ name: 'read' }] };
@@ -84,4 +84,21 @@ test('deferred first-call proof requires the complete purpose index and no expos
     { name: 'exec', description: '### `mcp__replay__read`\nFull replay schema' },
   ] }] });
   assert.notEqual(parseRollout(serialize([embedded, message('user', indexed), modern('one', 100)]), { ...context, prompt: indexed }).initialExposure, 'purpose-index-only');
+});
+
+ test('Codex-added axes follow each response and catalog replacement without charging replay declarations twice', () => {
+  const native = { name: 'exec', description: 'Built-in\n### `mcp__replay__read`\nReplay schema' };
+  const replacement = { name: 'exec', description: 'Smaller built-in' };
+  const catalog = tool => row('response_item', { type: 'additional_tools', tools: [{ name: 'functions', tools: [tool] }] });
+  const result = parseRollout(serialize([
+    message('developer', 'Codex base'), message('user', prompt), catalog(native), modern('one', 100),
+    message('developer', '<environment_context>Updated'), catalog(replacement), modern('two', 200),
+  ]), context);
+  const [a, b] = result.calls;
+  assert.equal(a.codexInstructionTokens, countTokens('Codex base'));
+  assert.equal(b.codexInstructionTokens, a.codexInstructionTokens + countTokens('<environment_context>Updated'));
+  assert.equal(a.codexToolTokens + a.beelineDefinitionTokens, countTokens(JSON.stringify(native)));
+  assert.equal(b.codexToolTokens, countTokens(JSON.stringify(replacement)));
+  assert.equal(b.beelineDefinitionTokens, 0);
+  for (const call of result.calls) assert.equal(call.codexAddedTokensPerCall, call.codexInstructionTokens + call.codexToolTokens);
 });

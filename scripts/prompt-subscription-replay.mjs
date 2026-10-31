@@ -146,6 +146,8 @@ export function summarize(rows, variant) {
     medianInputTokens: median(inputs), p90InputTokens: p90(inputs), inputAccountingSamples: inputs.length,
     medianBeelineOwnedTokensPerCall: median(owned), p90BeelineOwnedTokensPerCall: p90(owned),
     medianBeelineFirstCallTokens: median(first), p90BeelineFirstCallTokens: p90(first),
+    medianCodexAddedTokensPerCall: median(calls.map(c => c.codexAddedTokensPerCall).filter(Number.isFinite)),
+    p90CodexAddedTokensPerCall: p90(calls.map(c => c.codexAddedTokensPerCall).filter(Number.isFinite)),
     medianCodexInputTokensPerCall: median(provider), p90CodexInputTokensPerCall: p90(provider),
     sumCodexInputTokensAcrossCases: inputs.length ? inputs.reduce((n, v) => n + v, 0) : null,
     medianModelRequestsPerCase: median(rows.map(r => r.modelRequests).filter(Number.isFinite)),

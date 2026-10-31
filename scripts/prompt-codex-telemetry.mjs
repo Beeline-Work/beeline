@@ -97,12 +97,13 @@ export function parseRollout(text, { prompt, variant, tools = [] }) {
   const modern = rows.some(r => r.type === 'token_usage_record');
   const calls = [], blocks = [], builtins = [], seen = new Set();
   let firstResponse = false, returned = 0, inlineDefinitions = 0, initialInlineDefinitions = 0;
+  let codexInstructionTokens = 0, codexToolTokens = 0;
   for (const row of rows) {
     const item = row.payload ?? {};
     if (row.type === 'response_item' && item.type === 'additional_tools') {
       // An additional_tools item replaces a catalog/namespace, rather than
       // appending another historical copy of its model-visible schemas.
-      let nextInline = 0;
+      let nextInline = 0, nextCodex = 0;
       for (const namespace of item.tools ?? []) {
         for (const tool of namespace.tools ?? [namespace]) {
           const name = namespace.tools ? `${namespace.name}.${tool.name}` : tool.name;
@@ -114,18 +115,27 @@ export function parseRollout(text, { prompt, variant, tools = [] }) {
           const nestedDeclarations = headings.map((match, i) => ({ name: match[1],
             tokens: countTokens(description.slice(match.index, headings[i + 1]?.index)),
             note: 'Included in the enclosing definition; do not add twice' }));
-          if (!replay) nextInline += nestedDeclarations.filter(t => t.name.startsWith('mcp__replay__')).reduce((n, t) => n + t.tokens, 0);
+          if (!replay) {
+            const nestedReplayTokens = nestedDeclarations.filter(t => t.name.startsWith('mcp__replay__')).reduce((n, t) => n + t.tokens, 0);
+            nextInline += nestedReplayTokens;
+            nextCodex += tokens - nestedReplayTokens;
+          }
           if (!firstResponse) {
             builtins.push({ name, tokens, owner: replay ? 'beeline' : 'codex', nestedDeclarations });
           }
         }
       }
       inlineDefinitions = nextInline;
+      codexToolTokens = nextCodex;
       if (!firstResponse) initialInlineDefinitions = nextInline;
     }
-    if (row.type === 'response_item' && item.type === 'message' && ['developer', 'user'].includes(item.role) && !firstResponse)
-      for (const content of item.content ?? []) if (typeof content.text === 'string')
-        blocks.push({ label: blockLabel(content.text, base, prompt), role: item.role, tokens: countTokens(content.text), chars: content.text.length });
+    if (row.type === 'response_item' && item.type === 'message' && ['system', 'developer', 'user'].includes(item.role))
+      for (const content of item.content ?? []) if (typeof content.text === 'string') {
+        const label = blockLabel(content.text, base, prompt);
+        const tokens = countTokens(content.text);
+        if (label !== 'beelineReplayPrompt') codexInstructionTokens += tokens;
+        if (!firstResponse) blocks.push({ label, role: item.role, tokens, chars: content.text.length });
+      }
     if (row.type === 'response_item' && ['custom_tool_call_output', 'function_call_output'].includes(item.type)) {
       const output = typeof item.output === 'string' ? [item.output] : (item.output ?? []).map(c => c.text ?? '');
       for (const text of output) returned += returnedDefinitions(text, names);
@@ -141,11 +151,12 @@ export function parseRollout(text, { prompt, variant, tools = [] }) {
       cachedInputTokens: record.usage.cached_input_tokens ?? 0, outputTokens: record.usage.output_tokens ?? null,
       beelineSystemTokens: parts.systemTokens, beelineDefinitionTokens: parts.renderedDefinitionTokens + parts.indexTokens + inlineDefinitions + returned,
       beelineOwnedTokensPerCall: parts.systemTokens + parts.renderedDefinitionTokens + parts.indexTokens + inlineDefinitions + returned,
-      caseConversationTokens: parts.conversationTokens });
+      caseConversationTokens: parts.conversationTokens,
+      codexInstructionTokens, codexToolTokens, codexAddedTokensPerCall: codexInstructionTokens + codexToolTokens });
   }
   return { status: calls.length ? 'complete' : 'missing', threadId: meta?.id ?? null, cliVersion: meta?.cli_version,
     tokenizer: 'js-tiktoken@1.0.21/o200k_base',
-    accountingNote: 'Structural token counts of Beeline instructions/index, exposed replay schemas and retrieved definition objects retained in history. Provider totals use its own usage records; framing/tokenization differs. Skill results and other case history are outside this axis. Actual Codex exposure is retained, not assumed eager.',
+    accountingNote: 'Structural token counts of Beeline instructions/index, exposed replay schemas and retrieved definition objects retained in history. Provider totals use its own usage records; framing/tokenization differs. Codex-added counts separately tokenize retained non-replay instruction blocks and native tool definitions per response, excluding nested replay declarations. Catalog updates replace the previous catalog. Provider totals are not subtracted to infer ownership. Skill results and other case history are outside these structural axes. Actual Codex exposure is retained, not assumed eager.',
     initialExposure: parts.renderedDefinitionTokens ? 'explicit-replay-definitions' : initialInlineDefinitions ? 'inline-replay-definitions' :
       parts.components.purposeIndexToolNames.includes('find_tools') && tools.every(t => parts.components.purposeIndexToolNames.includes(t.name))
         ? 'purpose-index-only' : 'codex-deferred-replay-definitions',

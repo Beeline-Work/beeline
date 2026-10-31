@@ -153,7 +153,7 @@ it('keeps async job ownership when a later prompt sees progress before finishing
   expect(later).not.toHaveBeenCalled();
 });
 
-it('terminal guards discard background wakes only for the terminated session', async () => {
+it('BG-TERMINAL: terminal guards preserve originating background completion wakes', async () => {
   const { client, wire, update } = harness();
   const original = vi.fn(), terminated = vi.fn(), sibling = vi.fn();
   vi.spyOn(client, 'sessionCancel').mockImplementation(() => undefined);
@@ -181,8 +181,8 @@ it('terminal guards discard background wakes only for the terminated session', a
   wire.handleMessage({ method: 'session/update', params: { sessionId: 'session', update: {
     sessionUpdate: 'async_task_state_update', asyncTaskId: 'new-job', state: 'completed',
   } } });
-  expect(original).not.toHaveBeenCalled();
-  expect(terminated).not.toHaveBeenCalled();
+  expect(original).toHaveBeenCalledOnce();
+  expect(terminated).toHaveBeenCalledOnce();
   update('sibling', 'sibling-job', 'completed');
   expect(sibling).toHaveBeenCalledOnce();
   expect(client.hasBackgroundTools).toBe(false);

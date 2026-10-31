@@ -1,6 +1,7 @@
+import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 import { resetOpenRouterKeyThrottle } from './openrouter-key-usage.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -502,6 +503,8 @@ describe('corner merge instructions', () => {
     vi.spyOn(loop as unknown as { syncBranch(): Promise<void> }, 'syncBranch').mockResolvedValue(
       undefined,
     );
+    // Checkout isolation is exercised separately with a real remote.
+    (loop as unknown as { reviewerCheckout: boolean }).reviewerCheckout = true;
     let promptRun = 0;
     let moveHeadOnPrompt = false;
     let newestHead = '';
@@ -676,6 +679,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
     const turn = (loop as unknown as {
       prompt(requestId: string, trigger: string, attachments?: [], requestedById?: string, restates?: string[]): Promise<void>;
     }).prompt.bind(loop);
+    (loop as unknown as { reviewerCheckout: boolean }).reviewerCheckout = true;
     await turn('green-wake', `GitHub passed a check on ${head}`);
 
     const session = sessionNew.mock.calls[0]?.[0]?.systemPrompt ?? '';
@@ -700,6 +704,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
     expect(prompts[0]).toContain('call approve_merge with the reviewed head SHA as a tool argument');
     expect(prompts).toHaveLength(1);
     for (const text of prompts) expect(text).not.toContain(CORNER_DELIVERY_NUDGE);
+    (loop as unknown as { reviewerCheckout: boolean }).reviewerCheckout = true;
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   }, 30_000);
 });
@@ -1822,6 +1827,211 @@ describe('corner close-request delivery', () => {
     console.info(`Demonstrated TL-corner-terminal: ${stopReason}, two wakes completed, fresh session per wake, no message, complete receipts`);
   });
 
+  it.each(['no-reply', 'repeated-tool-call', 'free-agent-time-limit', 'failure', 'backstop'])(
+    'BG-END: %s retains the old runtime until its completion wakes the agent', async reason => {
+      const execute = vi.fn(async (name: string) => {
+        if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+        if (name === 'getWorkspaceRoster') return { members: [] };
+        if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+        if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false };
+        return { id: 'write', createdAt: 1 };
+      });
+      const fixture = await cornerHarness(execute, 5);
+      let background = true;
+      let complete: (() => void) | undefined;
+      vi.spyOn(fixture.acp, 'hasBackgroundTools', 'get').mockImplementation(() => background);
+      const job = spawn('bash', ['-c', 'read -r gate; printf completed'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const jobDone = new Promise<string>(resolve => {
+        let output = '';
+        job.stdout.on('data', chunk => { output += chunk; });
+        job.once('close', () => resolve(output));
+      });
+      const stop = vi.spyOn(fixture.acp, 'stop').mockImplementation(async () => { job.kill(); });
+      vi.mocked(fixture.acp.sessionPrompt).mockImplementation(async (...args) => {
+        complete = () => args[6]?.({ id: 'bash-job', title: 'Bash build', status: 'completed' });
+        if (reason === 'failure') throw new Error(reason);
+        if (reason === 'backstop') throw new AcpTurnBackstopError(TURN_BACKSTOP_MS, 'plan');
+        return { stopReason: reason, updates: [], agentText: '', toolCalls: [] };
+      });
+      const internal = fixture.loop as unknown as {
+        client?: AcpClient; retiredClients: Map<AcpClient, { done: Promise<void> }>;
+      };
+      const running = fixture.loop.run();
+      try {
+        await vi.waitFor(() => expect(stop.mock.calls.length > 0 || internal.retiredClients?.size === 1).toBe(true));
+        expect(stop).not.toHaveBeenCalled();
+        expect(internal.client).toBeUndefined();
+        job.stdin.end('finish\n');
+        expect(await jobDone).toBe('completed');
+        background = false;
+        complete!();
+        await running;
+        expect(stop).toHaveBeenCalledOnce();
+        expect(execute.mock.calls.some(([name]) => name === 'postBackgroundToolCompletion')).toBe(true);
+      } finally {
+        job.kill();
+        background = false;
+        fixture.acp.emit('session/update', {});
+        fixture.abort.abort();
+        await fixture.scheduler.dispose();
+      }
+    });
+
+  it('BG-REPLACE: replacing a session preserves its old runtime and starts a fresh session', async () => {
+    const fixture = await cornerHarness(vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false };
+      return {};
+    }), 5);
+    const old = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    let background = true;
+    vi.spyOn(old, 'hasBackgroundTools', 'get').mockImplementation(() => background);
+    const stop = vi.spyOn(old, 'stop').mockResolvedValue(undefined);
+    const internal = fixture.loop as unknown as {
+      client?: AcpClient; sessionId?: string;
+      activate(): Promise<string>; discardSession(): Promise<void>;
+      retiredClients: Map<AcpClient, { done: Promise<void> }>;
+    };
+    internal.client = old;
+    await internal.activate();
+    expect(internal.client).toBe(fixture.acp);
+    expect(stop).not.toHaveBeenCalled();
+    const retired = internal.retiredClients.get(old)!.done;
+    background = false;
+    old.emit('session/update', {});
+    await retired;
+    expect(stop).toHaveBeenCalledOnce();
+    await internal.discardSession();
+    fixture.abort.abort();
+    await fixture.scheduler.dispose();
+  });
+
+  it('BG-BRIEF: a repository-work brief revision replaces the conversation without killing its Bash job', async () => {
+    const old = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    let background = true;
+    vi.spyOn(old, 'hasBackgroundTools', 'get').mockImplementation(() => background);
+    const job = spawn('bash', ['-c', 'read -r gate; printf completed'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const jobDone = new Promise<string>(resolve => {
+      let output = '';
+      job.stdout.on('data', chunk => { output += chunk; });
+      job.once('close', () => resolve(output));
+    });
+    const stop = vi.spyOn(old, 'stop').mockImplementation(async () => { job.kill(); });
+    let internal: { client?: AcpClient; repositoryWork: boolean;
+      retiredClients: Map<AcpClient, { done: Promise<void> }> };
+    const fixture = await cornerHarness(vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false,
+        brief: { id: 'corner-id', revision: 2, repositoryWork: true,
+          spec: 'Revised repository assignment', attachments: [] } };
+      if (name === 'getRoomConversation') {
+        // Seed the prior conversation's live runtime as revision 2 arrives.
+        internal.client = old;
+        internal.repositoryWork = false;
+        return { items: [], cursor: 'latest' };
+      }
+      return { id: 'write', createdAt: 1 };
+    }), 5);
+    internal = fixture.loop as unknown as typeof internal;
+    const running = fixture.loop.run();
+    try {
+      await vi.waitFor(() => expect(stop.mock.calls.length > 0 || internal.retiredClients?.has(old)).toBe(true));
+      expect(stop).not.toHaveBeenCalled();
+      expect(internal.client).toBe(fixture.acp);
+      job.stdin.end('finish\n');
+      expect(await jobDone).toBe('completed');
+      background = false;
+      old.emit('session/update', {});
+      await running;
+      expect(stop).toHaveBeenCalledOnce();
+    } finally {
+      job.kill();
+      background = false;
+      old.emit('session/update', {});
+      fixture.abort.abort();
+      await fixture.scheduler.dispose();
+    }
+  });
+
+  it('BG-CAP: an abandoned retired session is stopped after two hours', async () => {
+    const fixture = await cornerHarness(vi.fn(async () => ({})), 5);
+    const internal = fixture.loop as unknown as {
+      client?: AcpClient; discardSession(): Promise<void>;
+      retiredClients: Map<AcpClient, { done: Promise<void> }>;
+    };
+    internal.client = fixture.acp;
+    vi.spyOn(fixture.acp, 'hasBackgroundTools', 'get').mockReturnValue(true);
+    const stop = vi.spyOn(fixture.acp, 'stop').mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    try {
+      await internal.discardSession();
+      await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 - 1);
+      expect(stop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stop).toHaveBeenCalledOnce();
+      expect(internal.retiredClients.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      fixture.abort.abort();
+      await fixture.scheduler.dispose();
+    }
+  });
+
+  it('BG-CLOSE: closing the corner stops a retained runtime immediately', async () => {
+    const fixture = await cornerHarness(vi.fn(async () => ({})), 5);
+    const internal = fixture.loop as unknown as {
+      client?: AcpClient; discardSession(): Promise<void>;
+      retiredClients: Map<AcpClient, { done: Promise<void> }>;
+    };
+    internal.client = fixture.acp;
+    vi.spyOn(fixture.acp, 'hasBackgroundTools', 'get').mockReturnValue(true);
+    const stop = vi.spyOn(fixture.acp, 'stop').mockResolvedValue(undefined);
+    await internal.discardSession();
+    const retired = internal.retiredClients.get(fixture.acp)!.done;
+    expect(stop).not.toHaveBeenCalled();
+    fixture.loop.requestClose();
+    await retired;
+    expect(stop).toHaveBeenCalledOnce();
+    fixture.abort.abort();
+    await fixture.scheduler.dispose();
+  });
+
+  it('CHECKOUT-REVIEW: reviewer gets a private copy while the implementation checkout is held', async () => {
+    const fixture = await cornerHarness(vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { isReviewer: true };
+      if (name === 'getRoomGitHubToken') return { token: 'fixture-token' };
+      return {};
+    }), 5);
+    const root = fixture.root;
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Test']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+    await writeFile(join(root, 'review.txt'), 'published head');
+    await execFileAsync('git', ['-C', root, 'add', 'review.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'head']);
+    await execFileAsync('git', ['-C', root, 'branch', '-M', 'feature/widget']);
+    await execFileAsync('git', ['-C', root, 'remote', 'add', 'origin', root]);
+    const head = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim();
+    const internal = fixture.loop as unknown as {
+      options: { worktreePath: string; config: BodyConfig; repository: { featureBranch: string } };
+      withCheckout(work: () => Promise<void>): Promise<void>; syncBranch(): Promise<void>;
+    };
+    internal.options.config.agentHomeRoot = join(root, 'agent-home');
+    internal.options.repository.featureBranch = 'feature/widget';
+    await withCornerCheckoutLock(root, async () => {
+      await writeFile(join(root, 'review.txt'), 'uncommitted implementer work');
+      await internal.withCheckout(async () => {
+        await internal.syncBranch();
+        expect(internal.options.worktreePath).not.toBe(root);
+        expect(await readFile(join(internal.options.worktreePath, 'review.txt'), 'utf8')).toBe('published head');
+        expect((await execFileAsync('git', ['-C', internal.options.worktreePath, 'rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
+      });
+    });
+    fixture.abort.abort();
+    await fixture.scheduler.dispose();
+  });
+
   it('emu-1: granted plain adb devices follows emulator-5574 on server 5576 after a same-turn boot', async () => {
     const fixture = await cornerHarness(vi.fn(async () => ({ members: [] })), 5);
     type Options = ConstructorParameters<typeof MonolithCornerTurnLoop>[0];
@@ -1850,7 +2060,7 @@ describe('corner close-request delivery', () => {
     } finally { fixture.abort.abort(); await fixture.scheduler.dispose(); }
   });
 
-  it.each([false, true])('checkout-1: refuses another agent during foreground/background work (%s)', async (background) => {
+  it.each([false, true])('checkout-1: queues another agent during foreground/background work (%s)', async (background) => {
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
       if (name === 'getWorkspaceRoster') return { members: [] };
@@ -1883,10 +2093,14 @@ describe('corner close-request delivery', () => {
       if (background) await vi.waitFor(() => expect(
         (first.loop as unknown as { checkoutBackgroundDone?: () => void }).checkoutBackgroundDone,
       ).toBeTypeOf('function'));
-      await second.loop.run();
+      const waiting = second.loop.run();
+      await new Promise(resolve => setTimeout(resolve, 50));
       expect(second.acp.start).not.toHaveBeenCalled();
       expect(second.acp.sessionPrompt).not.toHaveBeenCalled();
       expect(await readFile(join(first.root, 'uncommitted.txt'), 'utf8')).toBe('first agent edits');
+      release();
+      await waiting;
+      expect(second.acp.sessionPrompt).toHaveBeenCalled();
     } finally {
       release(); await running;
       first.abort.abort(); second.abort.abort();

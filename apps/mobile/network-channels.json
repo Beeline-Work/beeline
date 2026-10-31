@@ -1,0 +1,488 @@
+{
+  "about": "Every place the phone app opens a network connection, or names a host, besides the main live socket. scripts/check-phone-network-channels.mjs fails CI on any call site or host not listed here, and on any entry that is new or larger than on the base branch. The socket migration shrinks this list to the exceptions and links.",
+  "entries": [
+    {
+      "file": "apps/mobile/sources/sync/transport/live-connection.ts",
+      "kind": "websocket",
+      "count": 1,
+      "fate": "main-socket",
+      "why": "The one phone connection: the main live WebSocket to /v1/phone/live."
+    },
+    {
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "monolithFetch, the raw HTTP behind MonolithSession.fetch and its hedged backup origin. Only the sign-in and refresh calls below survive the migration."
+    },
+    {
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "import:@tauri-apps/plugin-http",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Desktop-shell HTTP behind monolithFetch; goes with it."
+    },
+    {
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "origin:beeline-server.fly.dev",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "The hedged backup origin, a second HTTP connection added in #2272. Removed by the socket migration."
+    },
+    {
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "origin:server.usebeeline.app",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Primary origin key of the hedged backup-origin map; the map goes with monolithFetch."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/client-error-report.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Client error report POST; queued in the outbox while offline."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/room-page-observation.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Page-load timing observation POST."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "fetch",
+      "count": 2,
+      "fate": "moves-to-socket",
+      "why": "expo/fetch handed to MonolithSession for voice requests; goes with them."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "import:expo/fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "expo/fetch for voice requests; goes with them."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Voice call join, leave, current and state requests (native)."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Voice call join, leave, current and state requests (web)."
+    },
+    {
+      "file": "apps/mobile/sources/components/buzz/VaultSaveCard.tsx",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Vault save request from the save card."
+    },
+    {
+      "file": "apps/mobile/sources/sync/transport/monolith-operation.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Every /v1/phone/operations/<name> read and write, including message sends. Becomes a request/reply frame on the live socket."
+    },
+    {
+      "file": "apps/mobile/sources/sync/transport/room-fetch.native.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Room-open GET helper used by monolithFetch; goes with the Room reads."
+    },
+    {
+      "file": "apps/mobile/sources/sync/transport/room-fetch.native.ts",
+      "kind": "xhr",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Room-open GET kept in memory through XMLHttpRequest; goes with the Room reads."
+    },
+    {
+      "file": "apps/mobile/sources/sync/transport/room-fetch.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Web twin of the Room-open GET helper; goes with the Room reads."
+    },
+    {
+      "file": "apps/mobile/sources/sync/transport/room-view-client.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "Room, history, workspace, chat-list and read-mark REST reads. Become request/reply frames on the live socket."
+    },
+    {
+      "file": "apps/mobile/modules/voice-background-audio/android/src/main/java/app/usebeeline/voicebackgroundaudio/VoiceStopRequests.kt",
+      "kind": "native-http",
+      "count": 1,
+      "fate": "exception",
+      "why": "Native \"Leave call\" from the call notification; must work while JavaScript is suspended."
+    },
+    {
+      "file": "apps/mobile/modules/voice-background-audio/ios/VoiceBackgroundAudioModule.swift",
+      "kind": "native-http",
+      "count": 1,
+      "fate": "exception",
+      "why": "Native \"Leave call\" from the call notification; must work while JavaScript is suspended."
+    },
+    {
+      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
+      "kind": "ota-update",
+      "count": 2,
+      "fate": "exception",
+      "why": "Manual OTA update check and download (Expo Updates)."
+    },
+    {
+      "file": "apps/mobile/sources/app/_layout.tsx",
+      "kind": "import:posthog-react-native",
+      "count": 1,
+      "fate": "exception",
+      "why": "PostHog provider for the analytics client."
+    },
+    {
+      "file": "apps/mobile/sources/auth/github-auth-session.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "GitHub sign-in; runs before an authenticated socket exists."
+    },
+    {
+      "file": "apps/mobile/sources/auth/github-auth-session.ts",
+      "kind": "fetch-impl",
+      "count": 3,
+      "fate": "exception",
+      "why": "GitHub sign-in reachability check, completion and cancel; before an authenticated socket exists."
+    },
+    {
+      "file": "apps/mobile/sources/auth/github-auth-session.ts",
+      "kind": "import:@tauri-apps/plugin-http",
+      "count": 1,
+      "fate": "exception",
+      "why": "Desktop-shell HTTP for GitHub sign-in."
+    },
+    {
+      "file": "apps/mobile/sources/auth/google-auth-session.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Google sign-in; runs before an authenticated socket exists."
+    },
+    {
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "fetch-impl",
+      "count": 7,
+      "fate": "exception",
+      "why": "Sign-in exchanges, Google link, GitHub reconnect, review exchange, logout and token refresh run before an authenticated socket can open; the general dispatch call goes with monolithFetch."
+    },
+    {
+      "file": "apps/mobile/sources/auth/signin-funnel.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Anonymous sign-in funnel events, sent before sign-in."
+    },
+    {
+      "file": "apps/mobile/sources/auth/signin-funnel.ts",
+      "kind": "import:@tauri-apps/plugin-http",
+      "count": 1,
+      "fate": "exception",
+      "why": "Desktop-shell HTTP for sign-in funnel events."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/artifact-link.ts",
+      "kind": "session-fetch",
+      "count": 4,
+      "fate": "exception",
+      "why": "Attachment bytes and media links from /v1/media. File downloads stay on HTTP; the small /link and /play lookups can move later."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/runtime-config.ts",
+      "kind": "origin:server.usebeeline.app",
+      "count": 2,
+      "fate": "exception",
+      "why": "The Beeline server origin: host of the main live socket, and of HTTP until the migration."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/sentry.ts",
+      "kind": "import:@sentry/react-native",
+      "count": 1,
+      "fate": "exception",
+      "why": "Crash reports to Sentry."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/speech-transcription.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Voice-note audio upload for transcription. Large file bodies stay on HTTP."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/store-update.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Public minimum-version check. Must work when the socket protocol is too new for this build."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/use-voice-call.ts",
+      "kind": "import:livekit-client",
+      "count": 1,
+      "fate": "exception",
+      "why": "Voice call room events from LiveKit."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "import:@livekit/react-native",
+      "count": 1,
+      "fate": "exception",
+      "why": "Native WebRTC globals and audio session for LiveKit voice calls."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "import:livekit-client",
+      "count": 1,
+      "fate": "exception",
+      "why": "Voice call audio over WebRTC to LiveKit. Real-time media cannot ride the socket."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.ts",
+      "kind": "import:livekit-client",
+      "count": 1,
+      "fate": "exception",
+      "why": "Voice call audio over WebRTC to LiveKit (web)."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/web-chunk-recovery.web.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Web build only: refetches its own page after a failed code-chunk load."
+    },
+    {
+      "file": "apps/mobile/sources/components/buzz/AppMark.tsx",
+      "kind": "origin:www.google.com",
+      "count": 1,
+      "fate": "exception",
+      "why": "Service icons load from Google's favicon service as images. Could be served by Beeline instead."
+    },
+    {
+      "file": "apps/mobile/sources/components/buzz/VoicePreviewPlayer.native.tsx",
+      "kind": "import:react-native-webview",
+      "count": 1,
+      "fate": "exception",
+      "why": "WebView audio element that plays a voice preview URL."
+    },
+    {
+      "file": "apps/mobile/sources/components/buzz/sandbox-webview.ts",
+      "kind": "import:react-native-webview",
+      "count": 1,
+      "fate": "exception",
+      "why": "Sandboxed WebView for artifacts, PDFs and shared browser sessions; the page loads its own content."
+    },
+    {
+      "file": "apps/mobile/sources/hooks/useUpdates.ts",
+      "kind": "ota-update",
+      "count": 2,
+      "fate": "exception",
+      "why": "Launch and foreground OTA update check and download (Expo Updates)."
+    },
+    {
+      "file": "apps/mobile/sources/push/buzz-push-registration.ts",
+      "kind": "push-token",
+      "count": 2,
+      "fate": "exception",
+      "why": "OS push token from FCM or APNs; push is what takes over when the socket closes in the background."
+    },
+    {
+      "file": "apps/mobile/sources/sync/transport/monolith-rig-transport.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Media upload to /v1/phone/media. Large file bodies stay on HTTP."
+    },
+    {
+      "file": "apps/mobile/sources/track/tracking.ts",
+      "kind": "import:posthog-react-native",
+      "count": 1,
+      "fate": "exception",
+      "why": "Product analytics to PostHog."
+    },
+    {
+      "file": "apps/mobile/sources/track/tracking.ts",
+      "kind": "origin:us.i.posthog.com",
+      "count": 1,
+      "fate": "exception",
+      "why": "PostHog analytics host."
+    },
+    {
+      "file": "apps/mobile/sources/utils/consoleLogging.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Developer log mirror; only when EXPO_PUBLIC_LOG_SERVER_URL is set in a dev build."
+    },
+    {
+      "file": "apps/mobile/sources/utils/readFileBytes.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Reads local blob: and data: URIs. No network."
+    },
+    {
+      "file": "apps/mobile/sources/utils/readFileBytes.web.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Reads local blob: and data: URIs on web. No network."
+    },
+    {
+      "file": "apps/mobile/sources/app/(app)/beeline/community.tsx",
+      "kind": "origin:usebeeline.app",
+      "count": 1,
+      "fate": "link",
+      "why": "Placeholder text for an invite link."
+    },
+    {
+      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
+      "kind": "origin:github.com",
+      "count": 1,
+      "fate": "link",
+      "why": "GitHub page opened in the browser."
+    },
+    {
+      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
+      "kind": "origin:usebeeline.app",
+      "count": 2,
+      "fate": "link",
+      "why": "Privacy and terms pages opened in the browser."
+    },
+    {
+      "file": "apps/mobile/sources/app/(app)/beeline/settings/workbench/service.tsx",
+      "kind": "origin:trustysquire.ai",
+      "count": 1,
+      "fate": "link",
+      "why": "Trusty Squire vault page opened in the browser."
+    },
+    {
+      "file": "apps/mobile/sources/auth/google-auth-session.ts",
+      "kind": "origin:accounts.google.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Expected issuer compared against a Google sign-in proof."
+    },
+    {
+      "file": "apps/mobile/sources/auth/signin-funnel.ts",
+      "kind": "origin:beeline-server.fly.dev",
+      "count": 1,
+      "fate": "link",
+      "why": "Compared against the configured server to label funnel events as production; drop with the backup origin."
+    },
+    {
+      "file": "apps/mobile/sources/auth/signin-funnel.ts",
+      "kind": "origin:server.usebeeline.app",
+      "count": 1,
+      "fate": "link",
+      "why": "Compared against the configured server to label funnel events as production."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/artifact-pdf.ts",
+      "kind": "origin:artifact.usebeeline.app",
+      "count": 1,
+      "fate": "link",
+      "why": "Base URL that gives the sandboxed PDF page a non-opaque origin; nothing is fetched from it."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/beeline-glyph.ts",
+      "kind": "origin:www.w3.org",
+      "count": 1,
+      "fate": "link",
+      "why": "SVG namespace string."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/pr-lifecycle.ts",
+      "kind": "origin:github.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Pull request link shown in the app."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/runtime-config.ts",
+      "kind": "origin:usebeeline.app",
+      "count": 2,
+      "fate": "link",
+      "why": "Legacy relay URL setting; the phone opens nothing to it."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/store-update.ts",
+      "kind": "origin:apps.apple.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Store listing opened for an update."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/store-update.ts",
+      "kind": "origin:play.google.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Store listing opened for an update."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-update.ts",
+      "kind": "origin:apps.apple.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Store listing opened for an update."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/wallet-source.mock.ts",
+      "kind": "origin:basescan.org",
+      "count": 3,
+      "fate": "link",
+      "why": "Explorer links in mock wallet data."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/workbench-source.mock.ts",
+      "kind": "origin:accounts.google.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Sign-in URL in mock Workbench data."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/workbench-source.mock.ts",
+      "kind": "origin:example.test",
+      "count": 1,
+      "fate": "link",
+      "why": "Example URL in mock Workbench data."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/workbench-source.mock.ts",
+      "kind": "origin:login.example-squire.test",
+      "count": 1,
+      "fate": "link",
+      "why": "Sign-in URL in mock Workbench data."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/workbench-source.mock.ts",
+      "kind": "origin:login.link.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Sign-in URL in mock Workbench data."
+    },
+    {
+      "file": "apps/mobile/sources/components/buzz/RoomRepositorySubtitle.tsx",
+      "kind": "origin:github.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Repository link shown in the app."
+    }
+  ]
+}

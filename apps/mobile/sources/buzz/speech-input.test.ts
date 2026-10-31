@@ -707,6 +707,83 @@ describe('useSpeechInput', () => {
       expect(speech().state).toBe('idle');
     });
 
+    it.each(['android', 'ios'])('DS1 finalizes closed audio before native end on %s', async (os) => {
+      vi.useFakeTimers();
+      platformState.OS = os;
+      try {
+        upload.finish.mockResolvedValue('Whisper final.');
+        const { renderer, onResult, speech } = renderHook();
+        await dictate(speech);
+        let result: Promise<boolean | null>;
+        await act(async () => {
+          result = speech().stop();
+          fireEvent('audioend', { uri: 'file:///closed.wav' });
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(upload.add).toHaveBeenCalledWith('file:///closed.wav');
+        expect(upload.finish).toHaveBeenCalledTimes(1);
+        expect(onResult).toHaveBeenCalledExactlyOnceWith('Whisper final.');
+        expect(await result!).toBe(true);
+        await act(async () => {
+          fireEvent('end');
+          fireEvent('result', { results: [{ transcript: 'late native final' }], isFinal: true });
+          await vi.advanceTimersByTimeAsync(SPEECH_FINALIZATION_TIMEOUT_MS);
+        });
+        expect(onResult).toHaveBeenCalledTimes(1);
+        act(() => renderer.unmount());
+      } finally {
+        platformState.OS = 'android';
+      }
+    });
+
+    it.each(['android', 'ios'])('DS1 keeps late native finals and waits for the recording URI on %s', async (os) => {
+      platformState.OS = os;
+      try {
+        let finish!: (value: string | null) => void;
+        upload.finish.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+        const { renderer, onResult, speech } = renderHook();
+        await dictate(speech);
+        let stopped: Promise<boolean | null>;
+        await act(async () => {
+          fireEvent('audiostart');
+          stopped = speech().stop();
+          fireEvent('end');
+        });
+        expect(upload.finish).not.toHaveBeenCalled();
+        await act(async () => {
+          fireEvent('audioend', { uri: 'file:///late-uri.wav' });
+          fireEvent('end');
+          fireEvent('result', { results: [{ transcript: 'to open a corner completely' }], isFinal: true });
+        });
+        expect(upload.finish).toHaveBeenCalledTimes(1);
+        expect(onResult).not.toHaveBeenCalled();
+        await act(async () => { finish(null); await stopped!; });
+        expect(onResult).toHaveBeenCalledExactlyOnceWith('ask jelly bean to open a corner completely');
+        act(() => renderer.unmount());
+      } finally {
+        platformState.OS = 'android';
+      }
+    });
+
+    it('DS1 never commits a late Whisper reply after microphone permission is lost', async () => {
+      let finish!: (value: string | null) => void;
+      upload.finish.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      const { renderer, onResult, speech } = renderHook();
+      await dictate(speech);
+      await act(async () => {
+        void speech().stop();
+        fireEvent('audioend', { uri: 'file:///closed.wav' });
+        fireEvent('end');
+        fireEvent('error', { error: 'not-allowed' });
+      });
+      const calls = onResult.mock.calls.length;
+      await act(async () => { finish('Late Whisper reply.'); });
+      expect(onResult).toHaveBeenCalledTimes(calls);
+      expect(onResult).not.toHaveBeenCalledWith('Late Whisper reply.');
+      expect(speech().state).toBe('permission-denied');
+      act(() => renderer.unmount());
+    });
+
     it('commits the on-device text when server transcription fails', async () => {
       upload.finish.mockResolvedValue(null);
       const { onResult, speech } = renderHook();

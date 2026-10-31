@@ -3,7 +3,7 @@ import { createDictationTiming, markDictatedMessageAccepted, trackDictatedMessag
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 it('logs only stages and elapsed times; acceptance is correlated once without logging event IDs', () => {
-  const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const log = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
   const timing = createDictationTiming();
   timing.mark('send_tapped');

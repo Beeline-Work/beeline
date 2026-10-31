@@ -9,7 +9,9 @@ export function createDictationTiming(): DictationTiming {
   const start = performance.now();
   return {
     mark(stage) {
-      console.info('[dictation-timing]', JSON.stringify({
+      // Production disables info output; this content-free trace must remain
+      // readable from a phone's native log for the before/after check.
+      console.warn('[dictation-timing]', JSON.stringify({
         take, stage, elapsedMs: Math.round(performance.now() - start),
       }));
     },

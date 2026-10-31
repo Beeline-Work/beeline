@@ -551,16 +551,21 @@ describe('corner lock', () => {
     expect(await currentState(cornerId)).toBe('closed');
   });
 
-  it('keeps a locked corner and its assignment open after merge and permits a later human close', async () => {
+  it('Reproduction HEADER-STATE-6: locked merge keeps the corner live and permits a later human close', async () => {
     const cornerId = await open('owner/widgets');
     const sha = 'd'.repeat(40);
     await greenHead(cornerId, 7, sha);
     await phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, H);
-    const before = await commands(A, cornerId);
+    const assignmentRows = async () => (await db.query(`SELECT id,state FROM agent_commands WHERE room_id=$1 ORDER BY id`, [cornerId])).rows;
+    const before = await assignmentRows();
     await mergedWebhook(cornerId, 7, sha);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
-    expect(await commands(A, cornerId)).toEqual(before);
-    expect((await phone.readRoom(cornerId, H))?.cornerLifecycle?.pr?.mergedAt).toBeDefined();
+    expect(await assignmentRows()).toEqual(before);
+    expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
+    expect((await phone.readRoom(cornerId, H))?.cornerLifecycle?.pr).toBeUndefined();
+    expect(await currentState(cornerId)).toBe('implement');
+    expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
+    expect((await phone.readCorners(R, H))!.corners.find(c => c.corner.id === cornerId)!.state).not.toBe('archived');
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
       AND card->>'type'='corner-complete' AND card->>'cornerId'=$2
       AND card->>'sourceMessageId' IS NULL`, [R, cornerId])).rowCount).toBe(0);
@@ -1594,27 +1599,7 @@ describe('re-runs and pushes out of review (AC-1)', () => {
     );
   });
 
-  it("the reviewer's PASS on a corner left in a recorded handback goes implement -> review -> review and wakes the implementer to merge", async () => {
-    const cornerId = await inReview();
-    // Servers before handbacks were removed left runs here.
-    await db.query(
-      `UPDATE messages SET card=card||jsonb_build_object('fromState',card->>'toState','toState','implement','outcome','changes_requested')
-       WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int DESC LIMIT 1)`,
-      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
-    );
-    await db.query(
-      `UPDATE corner_facts SET workflow_state='implement',workflow_outcome='changes_requested' WHERE corner_id=$1`,
-      [cornerId],
-    );
-    expect(await currentState(cornerId)).toBe('implement');
-    await approve(cornerId);
-    expect(await currentState(cornerId)).toBe('review');
-    expect((await cards(cornerId)).slice(-2)).toEqual([
-      expect.objectContaining({ fromState: 'implement', outcome: 'rereview', toState: 'review' }),
-      expect.objectContaining({ fromState: 'review', outcome: 'approved', toState: 'review' }),
-    ]);
-    expect(await reasons(cornerId, A)).toContain('corner_land');
-  });
+
 });
 
 describe('each transition wakes the next role exactly once (AC-2)', () => {

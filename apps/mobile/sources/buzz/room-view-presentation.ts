@@ -2,7 +2,6 @@ import type {
   Agent,
   AttachmentReference,
   ChatListWorkspace,
-  CornerListItem,
   RoomView,
   RoomViewAgentTurn,
   RoomViewIdentity,
@@ -10,14 +9,12 @@ import type {
   RoomViewMessage,
 } from '@beeline/buzz-client';
 import {
-  cornerShortTitle,
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   type SystemEvent,
 } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { DisplayableAgent } from '@/buzz/agent-display';
-import type { CornerSummary } from '@/buzz/corners';
 import type { CornerState } from '@beeline/api-contract/phone';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
@@ -652,23 +649,6 @@ export function mergeDisplayPages(
       (left.orderAtMs ?? left.timestamp * 1_000) - (right.orderAtMs ?? right.timestamp * 1_000) ||
       left.id.localeCompare(right.id),
   );
-}
-
-export function cornerSummaries(corners: readonly CornerListItem[]): CornerSummary[] {
-  return corners.map((item) => {
-    const stateAt = item.stateAt ?? item.corner.updatedAt;
-    return {
-      id: item.corner.id,
-      // Every consumer of a corner summary — the Room row's fact line, the
-      // corner deck, the header — reads the SHORT title (C89).
-      name: cornerShortTitle(undefined, item.corner.name, item.corner.id),
-      state: item.state,
-      ...(item.reason ? { reason: item.reason } : {}),
-      ...(stateAt === undefined ? {} : { stateAt }),
-      openerPubkey: item.agent?.pubkey ?? '',
-      ...(item.agent ? { agentPubkey: item.agent.pubkey } : {}),
-    } as CornerSummary;
-  });
 }
 
 export function workspaceRailItem(workspace: ChatListWorkspace) {

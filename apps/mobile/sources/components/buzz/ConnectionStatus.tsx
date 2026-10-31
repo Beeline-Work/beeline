@@ -1,4 +1,5 @@
-import { reconnectNow, useConnectionState } from '@/sync/transport/live-connection';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { useSyncExternalStore } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Button } from './Button';
@@ -7,7 +8,12 @@ import { PixelLoader } from './MonoHull';
 
 /** One socket status line shared by the Room deck and every open Room. */
 export function ConnectionStatus() {
-  const state = useConnectionState();
+  const connection = sharedLiveConnection();
+  const state = useSyncExternalStore(
+    (listener) => connection.subscribeConnectionStatus(listener),
+    () => connection.connectionStatus(),
+    () => 'disconnected',
+  );
   if (state === 'connected') return null;
   if (state === 'connecting') {
     return <InlineRow accessibilityLiveRegion="polite" style={styles.line} testID="connection-status-connecting">
@@ -20,7 +26,7 @@ export function ConnectionStatus() {
       <Text style={styles.copy}>Beeline isn't connected</Text>
       <Text style={styles.saved}>Showing saved messages</Text>
     </View>
-    <Button label="Reconnect" size="inline" variant="quiet" onPress={reconnectNow} testID="connection-status-reconnect" />
+    <Button label="Reconnect" size="inline" variant="quiet" onPress={() => connection.reconnectNow()} testID="connection-status-reconnect" />
   </InlineRow>;
 }
 

@@ -111,6 +111,7 @@ export class LiveConnection {
   private readonly workspaceCursors = new Map<string, RoomCursor>();
   private readonly traceOwners = new Map<string, Registration>();
   private readonly connectedListeners = new Set<() => void>();
+  private readonly disconnectedListeners = new Set<() => void>();
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -271,6 +272,12 @@ export class LiveConnection {
   subscribeConnected(listener: () => void): () => void {
     this.connectedListeners.add(listener);
     return () => this.connectedListeners.delete(listener);
+  }
+
+  /** Observe transport loss without owning the socket's recovery policy. */
+  subscribeDisconnected(listener: () => void): () => void {
+    this.disconnectedListeners.add(listener);
+    return () => this.disconnectedListeners.delete(listener);
   }
 
   /**
@@ -499,6 +506,7 @@ export class LiveConnection {
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     noteCornerSocketDropped();
+    for (const listener of this.disconnectedListeners) listener();
     // Keep the last painted overlays and Room cursors across a transport
     // reconnect. A resumed server lane only replays what changed.
     this.traceOwners.clear();

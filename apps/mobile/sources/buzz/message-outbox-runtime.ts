@@ -34,8 +34,9 @@ export function startMessageOutbox(): Promise<void> {
     // Named integration hook for the shared connection's connected state.
     const onOutboxConnected = () => { void owner.connectionChanged(true); };
     const unconnected = connection.subscribeConnected(onOutboxConnected);
+    const undisconnected = connection.subscribeDisconnected(() => { void owner.connectionChanged(false); });
     let unhold: (() => void) | undefined;
-    stop = () => { unwatch(); unconnected(); unhold?.(); };
+    stop = () => { unwatch(); unconnected(); undisconnected(); unhold?.(); };
     // Hold the app's connection even when no Room is mounted.
     unhold = await connection.register([], () => undefined);
     if (generation !== clientResetGeneration()) { unhold(); return; }

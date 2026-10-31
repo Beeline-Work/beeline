@@ -904,6 +904,28 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('notifies observed disconnects and stops after unsubscribe', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const disconnected = vi.fn();
+    const unsubscribe = connection.subscribeDisconnected(disconnected);
+    await connection.register([], () => undefined);
+    sockets[0]!.open();
+    expect(disconnected).not.toHaveBeenCalled();
+    sockets[0]!.drop();
+    expect(disconnected).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[1]!.open();
+    connection.reconnect();
+    expect(disconnected).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[2]!.open();
+    unsubscribe();
+    sockets[2]!.drop();
+    expect(disconnected).toHaveBeenCalledTimes(2);
+    connection.dispose();
+  });
+
   it('keeps an open socket after the foreground sync echo', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();

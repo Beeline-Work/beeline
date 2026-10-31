@@ -32,6 +32,12 @@ This proof validates delivery and rendered text/controls with test hosts. Physic
 
 ## CI integration coverage
 
+### R2 observed disconnect regression
+
+The reviewer reproduced a transient send failure while socket diagnostics still reported open, followed by socket loss with no further sends. The runtime regression reproduced the wrong result: `Sending` remained after 120,001 ms. The runtime now subscribes to a notification from the socket's existing transport-loss handler; recovery and connection-state decisions are unchanged. The same regression passes: `Sending` at 119,999 ms, `Not sent yet · no connection` at 120,001 ms, and one successful replay of the same client message ID on reconnect. A further connected event sends nothing. The socket regression also verifies loss notifications and unsubscribe cleanup. The approved R2 component stand-in remains the proof target because no real device is available here.
+
 The Room and layout import paths keep native send transports lazy. Mutation storage lives in `message-outbox-storage.ts`, apart from response caching; the app layout starts its runtime, and Room sessions only select/observe their records. The existing offline, silent-socket, notification-landing, read-mark, and composer-status fixtures follow that interface. Shared-control and error-surface inventories retain the same exceptions with fingerprints for the approved refusal presentation.
 
 After integration with main, all failing CI files pass locally: the targeted unit/render/guard run passes (124 tests), and the real-route notification browser suite passes (18 tests). Mobile typecheck, UI component policy, and the phone network-channel guard also pass; the network allowlist is unchanged.
+
+Repair validation: full mobile suite completed (650 files passed, one file failed, nine skipped; 5,674 tests passed, three failed, 105 skipped). The three failures are unchanged `mobileOtaRelease.test.ts` fixtures for missing EAS builds, EAS listing failure, and APK download failure: the host has `/usr/bin/adb`, which the canary resolves before the fixtures' fake SDK, so they stop at emulator-not-attached instead. The test and canary script match main; no release files were changed. Focused runtime/socket regressions pass (50 tests), Bone R2 rendering passes, mobile typecheck and the network guard pass.

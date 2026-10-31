@@ -20,6 +20,9 @@ const deck = vi.hoisted(() => ({
   useRealWorkspaceRead: false,
   selectedWorkspace: 'workspace' as string | null,
   chatsResponse: null as unknown,
+  chatsFailures: [] as Error[],
+  relayFailures: [] as Error[],
+  readGate: null as Promise<void> | null,
   reconnects: 0,
   createRepository: vi.fn(
     async (_input: { installationId: number; name: string; private?: boolean }) => ({
@@ -196,6 +199,8 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async ensureClient() {
+      const failure = deck.relayFailures.shift();
+      if (failure) throw failure;
       return {
         surfaceSubscribe: async (
           filters: readonly { readonly '#h'?: readonly string[] }[],
@@ -239,6 +244,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
   RoomViewClient: class {
     async workspaces(): Promise<WorkspaceListView> {
       deck.workspaceReads += 1;
+      await deck.readGate;
       if (deck.useRealWorkspaceRead) {
         const { RoomViewClient } = await vi.importActual<typeof import('@/sync/transport/room-view-client')>('@/sync/transport/room-view-client');
         return new RoomViewClient({ baseUrl: 'https://relay.test', identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) } }).workspaces();
@@ -255,6 +261,9 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
     }
     async chats(): Promise<ChatListView> {
       deck.chatsReads += 1;
+      await deck.readGate;
+      const failure = deck.chatsFailures.shift();
+      if (failure) throw failure;
       return deck.chatsResponse as ChatListView;
     }
   },
@@ -372,6 +381,9 @@ beforeEach(() => {
   deck.renderRows = false;
   vi.mocked(saveActiveCommunityId).mockClear();
   deck.chatsReads = 0;
+  deck.chatsFailures = [];
+  deck.relayFailures = [];
+  deck.readGate = null;
   deck.workspacesResponse = null;
   deck.workspaceFailures = [];
   deck.workspaceReads = 0;
@@ -459,6 +471,57 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     expect(deck.workspaceReads).toBe(1);
     expect(renderer.root.findAllByProps({ action: 'Retry' }).length).toBeGreaterThan(0);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    await act(async () => renderer.unmount());
+  });
+});
+
+describe('Room list Retry (Reproduction R1)', () => {
+  const retryRow = (renderer: ReactTestRenderer) => renderer.root.findAllByProps({ action: 'Retry' })
+    .find((node: { props: { onPress?: unknown } }) => typeof node.props.onPress === 'function');
+  const listRefreshing = (renderer: ReactTestRenderer) => renderer.root.find(
+    (node: { type: unknown; props: { testID?: string } }) =>
+      node.type === 'SectionList' && node.props.testID === 'room-list').props.refreshing;
+
+  it('shows Retry pending and clears the row when any read answers', async () => {
+    const renderer = await mountDeck();
+    const unreachable = new RoomViewHttpError(0, 'timeout');
+    deck.chatsFailures = [unreachable, unreachable];
+    await act(async () => roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'resync' } }));
+    await quiet();
+    const retry = retryRow(renderer);
+    expect(retry?.props.title).toBe('Couldn’t reach Beeline');
+    const workspaceReads = deck.workspaceReads;
+    let answer!: () => void;
+    deck.readGate = new Promise((resolve) => { answer = resolve; });
+    await act(async () => retry!.props.onPress());
+    await quiet();
+    expect(listRefreshing(renderer)).toBe(true);
+    expect(retryRow(renderer)?.props.disabled).toBe(true);
+    await act(async () => answer());
+    await quiet();
+    // The list read failed again, but the workspace read answered.
+    expect(deck.workspaceReads).toBe(workspaceReads + 1);
+    expect(deck.chatsFailures).toHaveLength(0);
+    expect(retryRow(renderer)).toBeUndefined();
+    expect(listRefreshing(renderer)).toBe(false);
+    await act(async () => renderer.unmount());
+  });
+
+  it('restarts a load that failed before its readers started', async () => {
+    deck.relayFailures = [new RoomViewHttpError(0, 'timeout')];
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await quiet();
+    expect(deck.workspaceReads).toBe(0);
+    deck.chatsFailures = [new RoomViewHttpError(0, 'timeout')];
+    await act(async () => roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'resync' } }));
+    await quiet();
+    const retry = retryRow(renderer);
+    expect(retry?.props.title).toBe('Couldn’t reach Beeline');
+    await act(async () => retry!.props.onPress());
+    await quiet();
+    expect(deck.workspaceReads).toBe(1);
+    expect(retryRow(renderer)).toBeUndefined();
     await act(async () => renderer.unmount());
   });
 });

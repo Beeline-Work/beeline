@@ -13,6 +13,8 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
+const evictIdleHttpConnections = vi.hoisted(() => vi.fn());
+vi.mock('./http-connection-pool', () => ({ evictIdleHttpConnections }));
 vi.mock('@/sync/transport/room-fetch', () => ({
   fetchOpeningRoom: vi.fn((...args: Parameters<typeof fetch>) => globalThis.fetch(...args)),
 }));
@@ -845,6 +847,71 @@ describe('monolith phone session', () => {
       });
       expect(response.status).toBe(200);
       expect(seen.slice(-2)).toEqual([`${PRIMARY}/v1/phone/rooms/r`, `${ALTERNATE}/v1/phone/rooms/r`]);
+    });
+
+    it('closes idle pooled connections when a request goes unanswered', async () => {
+      const { session } = deadPrimary();
+      await session.exchangeGitHubTicket('ticket');
+      evictIdleHttpConnections.mockClear();
+      vi.useFakeTimers();
+      try {
+        const read = session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+          idempotent: true,
+        });
+        await vi.advanceTimersByTimeAsync(MONOLITH_STALL_PROBE_MS);
+        await read;
+        expect(evictIdleHttpConnections).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    /** One origin whose connection fails outright `failures` times, then answers. */
+    function failingOrigin(failures: number) {
+      const seen: string[] = [];
+      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/v1/auth/github/exchange'))
+          return new Response(JSON.stringify(tokens(1)), { status: 200 });
+        seen.push(url);
+        if (seen.length <= failures) throw new TypeError('Network request failed');
+        return new Response('{"messageId":"m"}', { status: 200 });
+      });
+      return { session: new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [PRIMARY]), seen };
+    }
+
+    it('repeats a keyed write once on a fresh connection when its connection failed outright', async () => {
+      const { session, seen } = failingOrigin(1);
+      await session.exchangeGitHubTicket('ticket');
+      const response = await session.fetch(`${PRIMARY}/v1/phone/operations/sendRoomMessage`, { method: 'POST' }, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        idempotent: true,
+      });
+      expect(response.status).toBe(200);
+      expect(seen).toEqual([
+        `${PRIMARY}/v1/phone/operations/sendRoomMessage`,
+        `${PRIMARY}/v1/phone/operations/sendRoomMessage`,
+      ]);
+    });
+
+    it('reports a second outright failure instead of trying again', async () => {
+      const { session, seen } = failingOrigin(5);
+      await session.exchangeGitHubTicket('ticket');
+      await expect(session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        idempotent: true,
+      })).rejects.toBeInstanceOf(TypeError);
+      expect(seen).toHaveLength(2);
+    });
+
+    it('never repeats a write that is not keyed after an outright failure', async () => {
+      const { session, seen } = failingOrigin(1);
+      await session.exchangeGitHubTicket('ticket');
+      await expect(session.fetch(`${PRIMARY}/v1/phone/operations/updateRoom`, { method: 'POST' }, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+      })).rejects.toBeInstanceOf(TypeError);
+      expect(seen).toHaveLength(1);
     });
   });
 });

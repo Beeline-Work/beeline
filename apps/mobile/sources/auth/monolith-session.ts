@@ -12,6 +12,7 @@ import { markRoomOpen } from '@/buzz/room-open-trace';
 import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
 import { beginNetworkResponseTiming, type NetworkResponseTiming } from './network-response-timing';
 import { isOptionalRoomRequest, waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import { evictIdleHttpConnections } from './http-connection-pool';
 
 // Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
 loadXPixel(readWebXAttribution());
@@ -63,8 +64,10 @@ export const MONOLITH_STALL_PROBE_MS = 4_000;
  * not cover. React Native's Android HTTP client (OkHttp, configured with no
  * read timeout) keeps a pooled HTTP/2 connection that went silently dead (a
  * NAT mapping lost while the phone slept, a network change) and multiplexes
- * every later request onto it; aborting a request never evicts it. A request
- * to a host the pooled connection's certificate cannot serve must open a new
+ * every later request onto it; aborting a request never evicts it. Binaries
+ * with the AndroidHttpPool module ping pooled connections and close a dead
+ * one within seconds; until then, and on older binaries, a request to a host
+ * the pooled connection's certificate cannot serve must open a new
  * connection, so the alternate origin is the one path guaranteed fresh.
  */
 const ALTERNATE_MONOLITH_ORIGINS: Readonly<Record<string, string>> = {
@@ -159,6 +162,8 @@ export class MonolithSession {
   private markStalled(index: number): void {
     this.origins[index]!.stalledAt = Date.now();
     if (index === this.currentOrigin) this.currentOrigin = this.freshestOther(index);
+    // The unanswered request was aborted; close its connection once it is idle.
+    evictIdleHttpConnections();
   }
 
   /** The other origin that stalled longest ago (or never); `index` when there is none. */
@@ -419,7 +424,8 @@ export class MonolithSession {
    * `idempotent` marks a request the server answers the same however often
    * it arrives (a read, or a write keyed by its own id). With a deadline, one
    * still unanswered after {@link MONOLITH_STALL_PROBE_MS} is repeated on the
-   * alternate origin's fresh connection. Any request that reaches its
+   * alternate origin's fresh connection, and one that fails outright is
+   * repeated at once on a fresh connection. Any request that reaches its
    * deadline moves every later request off its origin.
    */
   async fetch(
@@ -454,7 +460,6 @@ export class MonolithSession {
     if (
       !options.idempotent ||
       options.timeoutMs === undefined ||
-      this.origins.length < 2 ||
       !input.startsWith(this.baseUrl)
     )
       return this.attempt(input, first, init, options.timeoutMs);
@@ -475,7 +480,10 @@ export class MonolithSession {
     }
   }
 
-  /** The request on its origin, then again on the alternate if the first is still silent. */
+  /**
+   * The request on its origin, then again on the alternate if the first is
+   * still silent, or at once on a fresh connection if it failed outright.
+   */
   private hedged(
     input: string,
     first: number,
@@ -513,14 +521,18 @@ export class MonolithSession {
           (error: unknown) => {
             entry.failed = true;
             if (settled) return;
-            // The first attempt failed outright: try the other path at once.
-            if (attempts.length === 1 && !init.signal?.aborted) {
-              const other = this.freshestOther(index);
-              if (other !== index) {
-                if (probe) clearTimeout(probe);
-                launch(other, Math.max(1, timeoutMs - (Date.now() - startedAt)));
-                return;
-              }
+            // Every attempt so far failed outright, so its connection is
+            // gone: try the other path at once, or this one on a fresh
+            // connection. Each origin gets one more attempt at most.
+            if (
+              attempts.every((attempt) => attempt.failed) &&
+              attempts.length <= this.origins.length &&
+              !(error instanceof MonolithRequestTimeoutError) &&
+              !init.signal?.aborted
+            ) {
+              if (probe) clearTimeout(probe);
+              launch(this.freshestOther(index), Math.max(1, timeoutMs - (Date.now() - startedAt)));
+              return;
             }
             if (attempts.every((attempt) => attempt.failed)) {
               finish();

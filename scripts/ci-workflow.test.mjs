@@ -5,14 +5,38 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
-test('server critical-path jobs use GitHub-hosted runners', () => {
-  const critical = ['changes', 'shared-package-tests', 'server-suite-shard', 'server-claim-latency', 'server-suite'];
+test('preparation, verdicts and the timing-sensitive PostgreSQL budget stay hosted', () => {
+  const critical = ['changes', 'shared-package-tests', 'server-claim-latency', 'server-suite', 'server-integration', 'body-suite'];
   for (const name of critical) {
     assert.equal(jobs[name]['runs-on'], 'ubuntu-latest');
   }
   for (const [name, job] of Object.entries(jobs)) {
     assert.ok(!JSON.stringify(job['runs-on']).includes('beeline-ci-shard'), name);
   }
+});
+
+test('PR heavy jobs use both hosted and isolated CI-only Linux pools', () => {
+  const pool = ['self-hosted', 'Linux', 'X64', 'beeline-ci'];
+  const shard = jobs['server-suite-shard'];
+  assert.deepEqual(shard.strategy.matrix.include.map(({ shard, runner }) => ({ shard, runner: JSON.parse(runner) })), [
+    { shard: 1, runner: 'ubuntu-latest' },
+    { shard: 2, runner: pool },
+    { shard: 3, runner: 'ubuntu-latest' },
+    { shard: 4, runner: pool },
+  ]);
+  for (const name of ['server-suite-shard', 'typecheck', 'mobile-suite']) {
+    const runner = jobs[name]['runs-on'];
+    assert.match(runner, /github.event_name == 'pull_request'/);
+    assert.match(runner, /github.event_name == 'merge_group'/);
+    assert.match(runner, /\|\| '"ubuntu-latest"'/, `${name} dispatch must remain hosted`);
+    assert.ok(!runner.includes('beeline-prod-host'));
+    assert.ok(!runner.includes('beeline-android'));
+  }
+  for (const name of ['typecheck', 'mobile-suite']) {
+    assert.ok(jobs[name]['runs-on'].includes(JSON.stringify(pool)));
+  }
+  const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
+  assert.match(mobile.run, /--maxWorkers=2 --minWorkers=2/);
 });
 
 test('required contexts survive server runner consolidation', () => {

@@ -60,6 +60,26 @@ test('a new WebSocket( outside the transport module fails the check', () => {
   assert.match(result.stderr, /new phone network call site \(websocket\) at apps\/mobile\/sources\/sync\/second-socket\.ts:1/);
 });
 
+test('a socket or fetch reached through a qualified global fails the check', () => {
+  const root = copyOfRepo('qualified-globals');
+  write(root, 'apps/mobile/sources/sync/review-side-channel.ts', [
+    'export const sideChannel = (url: string) => new globalThis.WebSocket(url);',
+    'export const viaWindow = (url: string) => new window.WebSocket(url);',
+    'export const viaSelf = (url: string) => new self?.WebSocket(url);',
+    'const Socket = global.WebSocket;',
+    "export const quoted = (url: string) => new globalThis['WebSocket'](url);",
+    "export const quotedFetch = (url: string) => window['fetch'](url);",
+    'export const optionalFetch = (url: string) => globalThis?.fetch(url);',
+    'export const kind: typeof globalThis.WebSocket = Socket;',
+    '',
+  ].join('\n'));
+  const result = runCheck(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /new phone network call site \(websocket\) at (?:\S+review-side-channel\.ts:\d+, ){4}\S+review-side-channel\.ts:5\./);
+  assert.match(result.stderr, /new phone network call site \(fetch\) at \S+review-side-channel\.ts:6, \S+review-side-channel\.ts:7\./);
+  assert.doesNotMatch(result.stderr, /review-side-channel\.ts:8/);
+});
+
 test('a second socket in the transport module fails the check', () => {
   const root = copyOfRepo('second-main-socket');
   const file = path.join(root, TRANSPORT_FILE);

@@ -35,12 +35,15 @@ export const NETWORK_LIBRARIES = [
   '@tauri-apps/plugin-http',
 ];
 
+// `globalThis.`, `window?.` and the like: the same global reached by a qualified name.
+const GLOBAL = String.raw`(?:globalThis|window|self|global)\s*\??\.\s*`;
 const CALL_KINDS = [
   // Calls and values (`const send = fetch`); not types, definitions or object keys.
-  ['fetch', /(?<![\w$.]|typeof\s+|(?:async|function)\s+)(?:(?:globalThis|window|self|global)\s*\.\s*)?fetch(?![\w$]|\s*\??:(?!:)|\s*<)/g],
+  ['fetch', new RegExp(String.raw`(?<![\w$.]|typeof\s+|(?:async|function)\s+)(?:${GLOBAL})?fetch(?![\w$]|\s*\??:(?!:)|\s*<)`, 'g')],
   ['fetch-impl', /\bfetchImpl\s*\(/g],
   ['session-fetch', /\bmonolithSession\s*\.\s*fetch\s*\(/g],
-  ['websocket', /\bnew\s+WebSocket\b/g],
+  // `new WebSocket(`, `new globalThis.WebSocket(`, or the qualified constructor read as a value.
+  ['websocket', new RegExp(String.raw`\bnew\s+(?:${GLOBAL})?WebSocket\b|(?<![\w$.]|typeof\s+)${GLOBAL}WebSocket\b`, 'g')],
   ['xhr', /\bXMLHttpRequest\b/g],
   ['event-source', /\bEventSource\b/g],
   ['beacon', /\bsendBeacon\b/g],
@@ -48,6 +51,12 @@ const CALL_KINDS = [
   ['ota-update', /\b(?:checkForUpdateAsync|fetchUpdateAsync)\s*\(/g],
   ['push-token', /\bget(?:Device|Expo)PushTokenAsync\s*\(/g],
 ];
+// `globalThis['WebSocket']`: the same globals by a quoted name, found before strings are blanked.
+const QUOTED_GLOBALS = { fetch: 'fetch', WebSocket: 'websocket', XMLHttpRequest: 'xhr', EventSource: 'event-source' };
+const QUOTED_GLOBAL = new RegExp(
+  String.raw`(?<![\w$.])(?:globalThis|window|self|global)\s*(?:\?\.)?\s*\[\s*(['"\`])(${Object.keys(QUOTED_GLOBALS).join('|')})\1\s*\]`,
+  'g',
+);
 const NATIVE_KINDS = [
   ['native-http', /\b(?:openConnection|newCall|newWebSocket|dataTask|uploadTask|downloadTask|webSocketTask)\s*\(/g],
 ];
@@ -148,6 +157,8 @@ export function scanSource(file, text) {
   // A type-only import loads nothing at run time.
   const code = stripSource(text, { blankStrings: false })
     .replace(/^\s*import\s+type\b[^;]*;/gm, (statement) => statement.replace(/[^\n]/g, ' '));
+  for (const match of code.matchAll(QUOTED_GLOBAL))
+    hits.push({ kind: QUOTED_GLOBALS[match[2]], line: lineAt(code, match.index) });
   // A new host is a new channel even through an existing call (the hedged backup origin was one).
   for (const match of code.matchAll(/['"`](?:https?|wss?):\/\/([a-zA-Z0-9.-]+)/g))
     hits.push({ kind: `origin:${match[1].toLowerCase()}`, line: lineAt(code, match.index) });

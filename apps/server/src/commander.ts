@@ -337,7 +337,7 @@ export async function reportToCommander(
       // messages retain their own return route even when their source was folded.
       if (order.private_payload?.kind !== 'order' && !(order.source_message_id &&
         (await db.query('SELECT 1 FROM messages WHERE id=$1 AND system_event IS NULL', [order.source_message_id])).rowCount)) continue;
-      const route = await commanderReportAddress(db, roomId, source);
+      const route = await commanderReportAddress(db, roomId, source, false, /^(blocked|needs-decision|failed):/.test(text));
       if (route.recipient && route.returnRoom) {
         const key = `${route.returnRoom}:${route.recipient}`;
         const target = routes.get(key) ?? { source, urls: new Set<string>() };
@@ -366,7 +366,7 @@ export async function reportToCommander(
     }
   }
   const strict = Boolean(command) && !options.automatic;
-  const route = await commanderReportAddress(db, roomId, command, options.automatic === true && options.agentOnly === true && agentId === SYSTEM_IDENTITY_ID);
+  const route = await commanderReportAddress(db, roomId, command, options.automatic === true && options.agentOnly === true && agentId === SYSTEM_IDENTITY_ID, /^(blocked|needs-decision|failed):/.test(text));
   const { recipient, returnRoom, parent, origin, incoming } = options.directRecipient
     ? { ...route, recipient: options.directRecipient, returnRoom: roomId, parent: undefined }
     : route;
@@ -585,7 +585,7 @@ export async function refuseTagPastCommander(
 }
 
 /** The recorded return route shared by lifecycle reports and commander approvals. */
-export async function commanderReportAddress(db: SqlDatabase, roomId: string, command?: CommandRow, openingRoute = false) {
+export async function commanderReportAddress(db: SqlDatabase, roomId: string, command?: CommandRow, openingRoute = false, escalateRepair = false) {
   // Idle attention belongs to the opening commander, regardless of later peer orders.
   if (openingRoute) command = undefined;
   if (!command && !openingRoute)
@@ -614,6 +614,24 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
     )
   ).rows[0]?.id;
   if (command) command = await commandOrder(db, command);
+  // Repair completion returns to the reviewer. Decisions and failures belong
+  // to the implementer's latest non-review assignment, including folded orders.
+  if (escalateRepair && command &&
+      (incoming?.review_context?.purpose === 'repair' || command.review_context?.purpose === 'repair') &&
+      (await db.query(`SELECT 1 FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+        WHERE corner.id=$1 AND ${cornerImplementerSql('fact', 'corner')}=$2`,
+      [roomId, command.agent_id])).rowCount) {
+    command = (await db.query<CommandRow>(
+      `SELECT ordered.* FROM agent_commands ordered
+       LEFT JOIN messages source ON source.id=ordered.source_message_id
+       LEFT JOIN identities author ON author.id=source.author_id
+       WHERE ordered.room_id=$1 AND ordered.agent_id=$2
+         AND COALESCE(ordered.review_context->>'purpose','')<>'repair'
+         AND (ordered.private_payload->>'kind'='order'
+           OR (ordered.private_payload IS NULL AND author.kind='human' AND source.system_event IS NULL))
+       ORDER BY ordered.created_at DESC,ordered.inbox_sequence DESC LIMIT 1`,
+      [roomId, command.agent_id])).rows[0];
+  }
   let recipient: string | undefined;
   let returnRoom: string | undefined;
   let parent = command;

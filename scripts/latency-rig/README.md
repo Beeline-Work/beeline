@@ -142,20 +142,30 @@ attribute concurrent actions.
 ## Calibration and limits
 
 The release Room GET now returns its server processing time in `Server-Timing`.
-The phone measures the winning request's start and response-header arrival
-with its monotonic clock. After the Room paints, the **existing** page-load
+The phone uses the winning request's native resource entry for request start,
+response-header arrival and response completion, and separately records when
+JavaScript handles the response. Older binaries without resource timing omit
+the wire measurement; a delayed JavaScript callback is never a substitute for
+native arrival. After the Room paints, the **existing** page-load
 observation carries those two durations; it adds no network call. The server
 stores `request-to-first-byte minus server processing` as
 `operator_function_events.network_rtt_residual_ms`. This captures network,
 Fly edge and connection setup in one upper-bound residual, without trying to
 synchronize phone and server clocks. It does not capture radio packet RTT.
+`js_response_delay_ms` stores JavaScript handling minus native body completion,
+separating bridge/JS queue delay from both the network and body transfer. It is
+an arrival-to-handling delay, not a CPU-utilization measurement. Both values
+ride the same sampled page observation. Rows without a JS response delay can
+come from legacy clients that measured header handling in JavaScript; exclude
+those rows when deriving native wire timing.
 Once that release has real traffic, export at least 20 content-free values
 read-only and run `derive-rtt.mjs` on one JSON object per line:
 
 ```sql
-SELECT network_rtt_residual_ms
+SELECT network_rtt_residual_ms, js_response_delay_ms
 FROM operator_function_events
 WHERE function_name='page_load' AND network_rtt_residual_ms IS NOT NULL
+  AND js_response_delay_ms IS NOT NULL
   AND created_at >= now()-interval '1 day'
 ORDER BY id DESC LIMIT 1000;
 ```
@@ -175,11 +185,15 @@ to fill unmeasured routes with static estimates.
 
 Run `node scripts/latency-rig/check-routes.mjs` and
 `node --test scripts/latency-rig/*.test.mjs` to validate route coverage and the
-deterministic budget evaluator. The rig has no GitHub Actions workflow.
+deterministic budget evaluator. Device capture runs on squire.
 Nightly timing uses the squire emulator and parent-Room schedule documented below. A full launch report still requires all route and
 interaction marks; the
 nightly subset does not establish that broader budget. Missing required subset
 cases fail closed.
+
+Room request contracts also reject any star-prompt, Workspace, read-mark or
+Room-list request starting before the native draw mark, even when the overall
+request-count budget would allow it.
 
 ## Room opens with newly arrived messages
 
@@ -341,7 +355,7 @@ at a live Gradle installation's writable cache.
 
 `local-attempt.sh` builds a local release/Hermes APK, starts `run-local.sh` on
 loopback ports 18880/18881 by default, seeds the disposable PostgreSQL fixture, signs in
-through the local review link after backend readiness, captures the six fixed
+through the local review link after backend readiness, captures the ten fixed
 cases, joins HTTP/SQL spans, and writes report JSON/Markdown. It owns and stops
 its fixture server and a uniquely named disposable PostgreSQL database, removed
 on exit. Each attempt clears the fixture app on the explicitly owned emulator,
@@ -355,11 +369,13 @@ and verify that each listener is the child started by this attempt. The nightly 
 - Room list and push, with one and five unseen messages (four cases).
 - Existing warm Room open with no unseen messages.
 - Existing send-text interaction, ending at its optimistic row's native frame.
+- Reaction, corner open, conversation-tab switch and composer open, using the
+  native completion contracts below.
 
 Each case has 20 samples. Cold opening is recorded separately and never gates
 this subset. Host load and free memory are sampled every ten seconds into
 `capture/host-load.json`, including failed captures. Typical nightly work is a
-release build plus 120 samples; it does not run every application route.
+release build plus 200 samples; it does not run every application route.
 
 From the detached main checkout, with `rig_state` set to the private state path:
 
@@ -412,3 +428,138 @@ parent Room, owned by Speedy:
 > last pass; save the post receipt. Report skipped setup too. Never use a GitHub
 > runner, webhook or new token. Preserve all samples and clean up only this
 > wake's emulator/server. On pass, remain silent.
+
+### Durable history and cumulative drift
+
+`nightly-run.sh` assigns a unique directory/run ID and freezes the Eastern night
+before capture starts. Each comparison appends its verdict to
+`$rig_state/history.jsonl`, including missing captures and the provisional
+first-attempt failure. `final: false` means the single rerun is still required;
+a pass or the second attempt is final. A repeated `(runId, attempt)` is an
+immutable replay: it returns the recorded verdict without adding another entry
+or using changed capture inputs. Use a new run ID for a genuinely new run.
+Direct CLI callers may supply `--run-id`, `--night YYYY-MM-DD`, or
+`--started-at <ISO timestamp>`; the default identity is the absolute output path.
+Keep the same identity and Eastern date for both attempts. The CLI retains the
+first recorded date for that identity even when a rerun crosses midnight.
+
+The state-directory `nightly.lock` excludes concurrent comparator writers. After
+a killed writer, verify no comparison is running before removing a stale lock.
+Journal writes are flushed before advancing the baseline. The next invocation
+repairs `last-pass.json` from the latest journaled final pass if a process stopped
+between those writes. Malformed history fails closed rather than discarding it.
+
+`first-pass.json` never advances. On migration it preserves the existing
+`last-pass.json` as the earliest available passing baseline; older passing nights
+cannot be reconstructed. With no pass yet, the first actual pass establishes it.
+Failures and skips never establish or replace a baseline.
+
+In addition to the unchanged strict budgets and last-pass 20% check, every case
+compares p95 with the original passing baseline and the median of up to seven
+prior passing Eastern nights. Cases match by kind, name and variant. Current,
+future, provisional and failing nights are excluded; multiple passes on one date
+count as one recent night (the last passing final verdict for that date). More
+than 10% slowdown against either reference fails and follows the existing single
+rerun/alert policy. Exactly 10% passes this drift check. Available history is used
+from the first prior pass; each verdict prints the count out of seven and says
+`unavailable` when a reference does not exist. No missing measurement is zero.
+
+### Publishing measured Loops trends
+
+The dashboard README `/api/loops` contract supports arbitrary named chart series;
+no renderer change is needed. `nightly-insights.mjs` adds one chart per measured
+case with `case:<kind>/<name>/<variant>:p50` and `:p95` series (ms), keeping the
+existing `actions`, `actions_max`, `pages`, `pages_max`, fixes and unrelated loops.
+It replaces a point on the same Eastern date instead of duplicating it. Complete,
+calibrated, current-head measurements are charted even when timing/request/drift
+checks fail. Skipped/incomplete/stale/uncalibrated captures add no points. The
+latency note and dated log describe the final result and capture limits.
+
+After **every final verdict**, the scheduled agent publishes through the owner's
+approved first-party `github / beeline-insights-loop` connection. Credentials stay
+in the connection, never in the rig, repository or capture environment:
+
+1. Read the current GitHub contents response for
+   `Beeline-Work/beeline-insights`, `main`, `loops/loops.json` and save its
+   `{sha, content}` as `contents.json` outside the repository. Use the Beeline
+   App for any linked-repository write; never switch to personal credentials
+   following an App denial.
+2. Prepare the optimistic update:
+
+   ```sh
+   node scripts/latency-rig/nightly-insights.mjs \
+     --contents "$run_dir/contents.json" --verdict "$run_dir/nightly.json" \
+     --out "$run_dir/insights-put.json"
+   ```
+
+3. Send that JSON body with an authenticated PUT to the same contents endpoint
+   through the approved first-party connection. Its `sha` is mandatory. On HTTP
+   409, read the latest contents, regenerate the body, and retry (at most three
+   writes); never resend a stale body or replace unrelated concurrent edits.
+   `publishInsights(transport, verdict)` implements this protocol for a sealed
+   transport; the CLI only prepares the request and has no network credentials.
+4. Save the successful publication receipt with the run; a publication failure
+   must be reported and retried from fresh contents, including on a passing night.
+   This does not change the measurement verdict or baseline. Publish only final
+   nightly output, never its provisional attempt. An exact retry of a run is
+   safe; do not replay older independent runs over a newer result for that date.
+
+The schedule must use `nightly-run.sh` (or the equivalent identity/date arguments)
+and perform this publication step after its final comparison, including FAIL or
+skipped capture. Existing alert deduplication still applies independently.
+
+Deterministic checks (no emulator or production credentials):
+
+```sh
+node --test scripts/latency-rig/nightly-*.test.mjs
+node scripts/latency-rig/prove-nightly-drift.mjs
+```
+
+`fixtures/night-2026-10-30-report.json` is the complete local-only attempt-2 report
+from inherited run `night-2026-10-30-EG85he`, main
+`e20fb93ade55d09b4a75f6c309e7c3c170b16119`. It proves failed measurements reach
+history and publication without establishing a passing baseline. The synthetic
+100 → 105 → 110.25 ms fixture proves cumulative drift despite small nightly steps.
+
+## Timed tap actions
+
+The nightly capture also includes `react-message`, `open-corner`, `switch-tabs`,
+and `open-composer`. Each reports p50 and p95, with a strict **p50 <150 ms**
+target. Existing six cases retain their existing targets and request rules.
+The nightly comparator and its existing p95 budget/regression rules remain unchanged;
+a p50 tap pass alone does not establish a passing nightly baseline.
+All four start at the native Activity's touch-up dispatch, before React handles
+that tap, and end at the first frame commit after the first draw containing
+the result. The probe requests that frame, so a static result such as an empty
+tab still completes; this adds at most one frame to the sample. Highlight, selection, navigation commit and JavaScript callbacks
+alone cannot finish these samples.
+
+| Case | Setup and measured tap | Visible completion | Expected requests |
+|---|---|---|---|
+| `react-message` | Open the fixture Room; insert a unique short message with one 👍 from the fixture agent; tap its existing reaction chip. | Unique message visible above the composer and chip reads `👍, 2 reactions`. The fixture viewer's optimistic reaction has appeared. | One reaction write, no completed prepaint round trip, no follow-up GET. |
+| `open-corner` | Open the parent Room's corners list; insert unique text in a visible seeded corner, then tap that corner row. Opening the list is setup. | Unique corner message visible above its composer in the destination native Screen; the corner title/list preview cannot satisfy it. | At most one prepaint covering read; no prepaint housekeeping. Normal postpaint page/read telemetry is outside this request budget. |
+| `switch-tabs` | Open the conversation list on All, with no pinned fixture conversations; tap Pinned. | Target tab's `No pinned conversations yet.` content is visible; selected tab styling is insufficient. | No requests. |
+| `open-composer` | Open the Room with the keyboard dismissed; tap Message. | The visible Message EditText has focus and native IME insets report the keyboard visible. Focus alone is insufficient. | No requests. |
+
+Reaction fixture messages are removed after capture so prior chips cannot
+complete later samples. Corner messages use a fresh unique token per attempt.
+The fixture database and emulator remain local and disposable. A missing action
+fails setup; an absent completion produces a censored timeout, never a successful
+sample. Keyboard animation and navigation rendering are included in the duration.
+The native Screen boundary uses a type check so release obfuscation cannot
+disable completion. These are frame-submission measurements, not physical scanout timings.
+
+For a single smoke sample of each new case, build/install the fixture APK and sign
+into its local server, select Latency Rig 200, then run:
+
+```sh
+LATENCY_RIG_SMOKE=1 LATENCY_RIG_ENTRY=timed-taps \
+  node scripts/latency-rig/capture-arrivals.mjs .beeline-proof/timed-taps
+```
+
+Use an individual action name as the entry filter to isolate it. Supply the leased
+`LATENCY_RIG_DEVICE` and loopback `LATENCY_RIG_DATABASE_URL` as for arrival
+capture. `LATENCY_RIG_SMOKE=1` permits one sample (the ordinary minimum stays
+20); it never relaxes nightly analysis coverage and cannot establish a passing
+nightly verdict. With no entry filter smoke mode captures the arrival cases too;
+use the explicit entry filter for these bounded proofs.

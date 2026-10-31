@@ -128,6 +128,38 @@ describe('ReadCursorAdvancer', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it('keeps the original deadline when post-draw metadata repeats the same visible boundary', () => {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[2]!]);
+    for (let report = 0; report < 3; report += 1) {
+      vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS / 4);
+      advancer.observe(TRANSCRIPT, [TRANSCRIPT[2]!]);
+    }
+    expect(publish).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS / 4);
+    expect(publish).toHaveBeenCalledExactlyOnceWith('c');
+  });
+
+  it('retains the observed boundary while the Room client initializes, then retries once ready', () => {
+    const publish = vi.fn();
+    let ready = false;
+    const advancer = new ReadCursorAdvancer(publish, undefined, () => ready);
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[2]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(publish).not.toHaveBeenCalled();
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[2]!]);
+    ready = true;
+    advancer.retry();
+    expect(publish).toHaveBeenCalledExactlyOnceWith('c');
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[3]!]);
+    vi.advanceTimersByTime(100);
+    advancer.retry();
+    expect(publish).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS - 100);
+    expect(publish).toHaveBeenLastCalledWith('d');
+  });
+
   it('coalesces a scroll into one write, at the row the reader stopped on', () => {
     const published: string[] = [];
     const advancer = new ReadCursorAdvancer((id) => published.push(id));

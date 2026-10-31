@@ -1087,6 +1087,15 @@ export default function BuzzMembers({
         onSave={() => void saveAgentSoul()}
         onCancel={() => setEditingAgentSoul(false)}
         soul={selectedAgent ? agentSoulCopy(selectedAgent) : ''}
+        saveWake={async (url, key) => {
+          if (!selectedAgent) return;
+          const receipt = await monolithPhoneOperation('updateAgentWake', {
+            workspaceId: selectedAgent.workspaceId,
+            agentId: selectedAgent.agent.identity.pubkey,
+            url, ...(key ? { key } : {}),
+          });
+          applyAgentReceipt(receipt);
+        }}
         voiceApi={
           identity && relayUrl && workspaceId
             ? {

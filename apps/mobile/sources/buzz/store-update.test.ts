@@ -1,8 +1,26 @@
 import { expect, it, vi } from 'vitest';
-import { fetchStoreUpdate, requiredStoreUpdate } from './store-update';
+import { fetchStoreUpdate, hourlyStoreUpdateCheck, requiredStoreUpdate } from './store-update';
 
 const minimum = { minVersion: '0.2.24', reason: 'This version can no longer sign in.' };
 const policy = { android: minimum, ios: { ...minimum, minVersion: '0.3.0' } };
+
+it('shares foreground checks until an hour after the last request starts', async () => {
+  vi.useFakeTimers();
+  try {
+    const request = vi.fn().mockResolvedValue(minimum);
+    const foreground = hourlyStoreUpdateCheck(request);
+    const first = foreground();
+    expect(foreground()).toBe(first);
+    await vi.advanceTimersByTimeAsync(3_599_999);
+    expect(await foreground()).toEqual(minimum);
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await foreground()).toEqual(minimum);
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it('compares native versions below, equal and above numerically for each platform', () => {
   expect(requiredStoreUpdate('android', '0.2.22', policy)).toEqual(minimum);

@@ -40,7 +40,8 @@ export function nativeArrivalMoment(output, name) {
   if (mark.profiled) throw new Error('Profiled samples cannot establish a latency verdict');
   if (mark.probe !== 'native-frame-commit-v1' || mark.case !== name || !Number.isFinite(mark.startMs) || !Number.isFinite(mark.paintMs) || mark.paintMs < mark.startMs)
     throw new Error('Invalid native visibility timestamps');
-  return { kind: name === 'send-text' ? 'tap' : 'route', name: name === 'send-text' ? 'send-text' : '/beeline/chat/[channelId]', variant: name === 'send-text' ? 'warm' : name,
+  const tap = ['send-text', 'react-message', 'open-corner', 'switch-tabs', 'open-composer'].includes(name);
+  return { kind: tap ? 'tap' : 'route', name: tap ? name : '/beeline/chat/[channelId]', variant: tap ? 'warm' : name,
     startMs: mark.startMs, paintMs: mark.paintMs };
 }
 

@@ -16,7 +16,8 @@
 # - uploads use --clobber, so re-running a release_result step over assets
 #   that already exist with identical bytes is idempotent.
 #
-# Sourced by .github/workflows/unified-release.yml's release_result job.
+# Sourced by .github/workflows/unified-release.yml (initialize reserves the
+# draft identity; release_result publishes it).
 # The rollback trap and manifest-commit-point semantics of that job are
 # unchanged: these wrappers fail (nonzero) only when every attempt failed,
 # exactly like the bare calls they replace.
@@ -189,61 +190,4 @@ ghr_delete_asset() {
     ghr_sleep_backoff "$attempt"
     attempt=$((attempt + 1))
   done
-}
-
-# ghr_requested_version_guard <version> <release-sha>
-# Sourced by the initialize job, not release_result. release_result treats an
-# existing release as a retry of this identity and only uploads assets onto it,
-# so a manually requested version that collides with an unrelated old release
-# would silently keep that release's tag, title and notes. Fails when a release
-# with that tag exists and its tag resolves to a commit other than
-# <release-sha>; tagless drafts use their immutable targetCommitish instead.
-# A retry at <release-sha> and a version with no
-# release pass. A lookup that fails for any reason other than "release not
-# found" (auth, rate limit, transient API error) is retried and then fails
-# closed, so an unconfirmed absence never skips the check.
-ghr_requested_version_guard() {
-  local version="$1"
-  local sha="$2"
-  local tag_sha lookup_err tag_err tag_err_file draft_target is_draft target attempt=1
-  while ! lookup_err=$(gh release view "$version" --json tagName 2>&1 >/dev/null); do
-    case "$lookup_err" in
-      *"release not found"*) return 0 ;;
-    esac
-    if [ "$attempt" -ge "$GHR_MAX_ATTEMPTS" ]; then
-      echo "::error::could not confirm whether requested version $version already has a GitHub release after $GHR_MAX_ATTEMPTS attempts: $lookup_err" >&2
-      return 1
-    fi
-    ghr_sleep_backoff "$attempt"
-    attempt=$((attempt + 1))
-  done
-  # Published tags remain authoritative, including tags on drafts. Only a
-  # confirmed missing commit permits fallback; auth/transient errors fail closed.
-  tag_err_file=$(mktemp) || return 1
-  if tag_sha=$(ghr_api "repos/$GITHUB_REPOSITORY/commits/$version" --jq .sha 2>"$tag_err_file"); then
-    cat "$tag_err_file" >&2
-    rm -f "$tag_err_file"
-  else
-    tag_err=$(cat "$tag_err_file")
-    rm -f "$tag_err_file"
-    if [[ "$tag_err" == *"No commit found for SHA"* ]]; then
-      draft_target=$(gh release view "$version" --json isDraft,targetCommitish --jq '[.isDraft, .targetCommitish] | @tsv') || return 1
-      IFS=$'\t' read -r is_draft target <<< "$draft_target"
-      # A moving branch cannot prove the code this draft was created for.
-      if [ "$is_draft" = true ] && [[ "$target" =~ ^[0-9a-fA-F]{40}$ ]]; then
-        if [ "$target" = "$sha" ]; then
-          return 0
-        fi
-        echo "::error::draft $version targets SHA $target, not the release SHA $sha. To recover, rerun $target as recovery with release_version=$version and release_sha=$target, or delete the draft only if nothing shipped from it." >&2
-        return 1
-      fi
-    fi
-    echo "$tag_err" >&2
-    echo "::error::requested version $version already has a GitHub release, but its tag commit could not be resolved (draft recovery requires an immutable target SHA)" >&2
-    return 1
-  fi
-  if [ "$tag_sha" != "$sha" ]; then
-    echo "::error::requested version $version already has a GitHub release whose tag points at $tag_sha, not the release SHA $sha. Delete that release and its tag, or request a different version." >&2
-    return 1
-  fi
 }

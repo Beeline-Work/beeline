@@ -51,16 +51,17 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
     PLAY_DRY_RUN_VERSION_CODE: '28',
   });
 
-  assert.equal(calls.length, 5);
-  assert.match(calls[2], /apks\/28\/deobfuscationFiles\/proguard/);
+  assert.equal(calls.length, 6);
+  assert.match(calls[3], /apks\/28\/deobfuscationFiles\/proguard/);
   assert.equal(fs.readFileSync(path.join(dir, "28/mapping.txt"), "utf8"), fs.readFileSync(aab, "utf8"));
   assert.doesNotMatch(calls.join("\n"), /SENTRY/);
   assert.equal(calls[0], `POST ${API}/edits -H Content-Length: 0`);
+  assert.equal(calls[1], `GET ${API}/edits/dry-run-edit/tracks`);
   assert.equal(
-    calls[1],
+    calls[2],
     `POST ${UPLOAD}/edits/dry-run-edit/bundles?uploadType=media -H Content-Type: application/octet-stream --data-binary @${aab}`,
   );
-  const [, trackBody] = calls[3].match(/^PUT .*\/tracks\/internal -H Content-Type: application\/json --data (.*)$/s);
+  const [, trackBody] = calls[4].match(/^PUT .*\/tracks\/internal -H Content-Type: application\/json --data (.*)$/s);
   assert.deepEqual(JSON.parse(trackBody), {
     track: 'internal',
     releases: [
@@ -73,7 +74,7 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
     ],
   });
   assert.equal(
-    calls[4],
+    calls[5],
     `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   );
   assert.match(stdout, /release notes from: .*default\.txt/);
@@ -93,8 +94,8 @@ test('play-publish.sh prefers the per-versionCode changelog and refuses a missin
   const env = { AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: dir, TRACK: 'beta', RELEASE_NAME: '0.2.19', RELEASE_STATUS: 'completed', CHANGELOG_DIR: changelogs };
 
   const { calls } = run('play-publish.sh', { ...env, PLAY_DRY_RUN_VERSION_CODE: '31' });
-  assert.match(calls[3], /"text": "exact notes for 31"/);
-  assert.match(calls[3], /"status": "completed"/);
+  assert.match(calls[4], /"text": "exact notes for 31"/);
+  assert.match(calls[4], /"status": "completed"/);
 
   const missing = run('play-publish.sh', { ...env, AAB_PATH: path.join(dir, 'nope.aab') }, { expectStatus: 1 });
   assert.equal(missing.calls.length, 0);
@@ -347,8 +348,8 @@ test('play-publish.sh still uploads the bundle when the listing is skipped', (t)
     CHANGELOG_DIR: changelogs,
     PLAY_DRY_RUN_VERSION_CODE: '4',
   });
-  assert.equal(published.calls.length, 5);
-  assert.match(published.calls[1], /\/bundles\?uploadType=media/);
+  assert.equal(published.calls.length, 6);
+  assert.match(published.calls[2], /\/bundles\?uploadType=media/);
 
   const locale = writeListing(dir);
   const remote = path.join(dir, 'remote.json');
@@ -603,4 +604,91 @@ test('release retains the mapping artifact under the uploaded version code', () 
   assert.match(workflow, /BUNDLE-METADATA\/com.android.tools.build.obfuscation\/proguard.map/);
   assert.match(workflow, /name: android-mapping-\$\{\{ steps.play-upload.outputs.version_code \}\}/);
   assert.match(workflow, /android-mappings\/\$\{\{ steps.play-upload.outputs.version_code \}\}\/mapping.txt\n\s+if-no-files-found: error\n\s+retention-days: 90/);
+});
+
+// A fake Play that keeps edits, uploads and committed tracks across script
+// runs, so a release can be shipped, interrupted elsewhere, and rerun.
+function installStatefulPlay(dir) {
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  const state = path.join(dir, 'play-state.json');
+  fs.writeFileSync(state, JSON.stringify({ nextEdit: 1, nextCode: 40, uploads: 0, edits: {}, tracks: {} }));
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const method = args[args.indexOf('-X') + 1];
+const url = args.find((arg) => arg.startsWith('https://'));
+const data = args.includes('--data') ? args[args.indexOf('--data') + 1] : '';
+const s = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+let body = {};
+let m;
+if (method === 'POST' && /\\/edits$/.test(url)) { body = { id: String(s.nextEdit++) }; s.edits[body.id] = {}; }
+else if (method === 'GET' && (m = /\\/edits\\/(\\w+)\\/tracks$/.exec(url))) {
+  body = { tracks: Object.entries(s.tracks).map(([track, releases]) => ({ track, releases })) };
+} else if (method === 'POST' && (m = /\\/edits\\/(\\w+)\\/bundles/.exec(url))) { s.uploads += 1; body = { versionCode: s.nextCode++ }; }
+else if (method === 'PUT' && (m = /\\/edits\\/(\\w+)\\/tracks\\/(\\w+)$/.exec(url))) { s.edits[m[1]][m[2]] = JSON.parse(data).releases; }
+else if (method === 'POST' && (m = /\\/edits\\/(\\w+):commit/.exec(url))) { Object.assign(s.tracks, s.edits[m[1]]); delete s.edits[m[1]]; }
+else if (method === 'DELETE' && (m = /\\/edits\\/(\\w+)$/.exec(url))) { delete s.edits[m[1]]; }
+fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(s));
+process.stdout.write(JSON.stringify(body) + '\\n200');
+`);
+  fs.chmodSync(path.join(bin, 'curl'), 0o755);
+  return { bin, read: () => JSON.parse(fs.readFileSync(state, 'utf8')) };
+}
+
+test('Reproduction STORE-RERUN: a shipped Play release is not uploaded again when the release reruns', (t) => {
+  const dir = tempDir(t);
+  const play = installStatefulPlay(dir);
+  const aab = path.join(dir, 'app.aab');
+  fs.writeFileSync(aab, 'bundle');
+  const env = {
+    PATH: `${play.bin}:${process.env.PATH}`, PACKAGE_NAME: PACKAGE, ACCESS_TOKEN: 'test-token',
+    AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: path.join(dir, 'mappings'), TRACK: 'internal',
+    RELEASE_NAME: '0.2.30 (v0.1.123@abcdef123456)', RELEASE_STATUS: 'completed', PLAY_LISTING_BASELINE: '',
+    PUBLISH_LISTING: 'true', CHANGELOG_DIR: path.join(dir, 'none'),
+  };
+  const publish = (extra = {}) => {
+    const output = path.join(dir, `output-${Math.random()}`);
+    fs.writeFileSync(output, '');
+    const result = spawnSync('bash', [path.join(REPO, 'scripts/play-publish.sh')], {
+      cwd: REPO, encoding: 'utf8', env: { ...env, GITHUB_OUTPUT: output, ...extra },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    return { ...result, outputs: fs.readFileSync(output, 'utf8') };
+  };
+
+  // Attempt 1 uploads and commits; an unrelated job then fails the run.
+  const first = publish();
+  assert.match(first.stdout, /versionCode 40 is on the internal track/);
+  assert.equal(play.read().uploads, 1);
+
+  // The rerun finds the release by name, uploads nothing and reports the code.
+  const rerun = publish();
+  assert.match(rerun.stdout, /already shipped as versionCode 40; nothing uploaded/);
+  assert.match(rerun.outputs, /already_shipped=true\nversion_code=40/);
+  assert.equal(play.read().uploads, 1);
+  assert.deepEqual(play.read().edits, {});
+
+  // A different release still uploads its own bundle.
+  publish({ RELEASE_NAME: '0.2.30 (v0.1.124@0123456789ab)' });
+  assert.equal(play.read().uploads, 2);
+});
+
+test('an upload whose edit never committed is uploaded again on rerun (nothing shipped)', (t) => {
+  const dir = tempDir(t);
+  const play = installStatefulPlay(dir);
+  const aab = path.join(dir, 'app.aab');
+  fs.writeFileSync(aab, 'bundle');
+  const output = path.join(dir, 'output');
+  const env = {
+    PATH: `${play.bin}:${process.env.PATH}`, PACKAGE_NAME: PACKAGE, ACCESS_TOKEN: 'test-token', GITHUB_OUTPUT: output,
+    AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: path.join(dir, 'mappings'), TRACK: 'internal',
+    RELEASE_NAME: '0.2.30 (v0.1.123@abcdef123456)', RELEASE_STATUS: 'completed', PUBLISH_LISTING: 'true',
+    PLAY_DEFER_COMMIT: '1', CHANGELOG_DIR: path.join(dir, 'none'),
+  };
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const result = spawnSync('bash', [path.join(REPO, 'scripts/play-publish.sh')], { cwd: REPO, encoding: 'utf8', env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(play.read().uploads, attempt);
+  }
 });

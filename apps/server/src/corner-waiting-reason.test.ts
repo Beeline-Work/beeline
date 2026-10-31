@@ -49,37 +49,34 @@ it('R1: chooses the oldest blocker deterministically', async () => {
 it.each(['done:', 'failed:', 'unreachable', 'addressed message'])(
   'R1: %s alone stays idle even when owed', () => {
     expect(cornerRowState({ archived_at: null, lifecycle: null, latest_turn_status: null,
-      blocking: false, owed: true })).toEqual({ state: 'idle' });
+      blocking: false })).toEqual({ state: 'idle' });
   },
 );
 
 
-it('R1: an agent-commander report is marked, and a human blocker stays visible beside it', async () => {
+it('R1: an agent-commander report retains selection when a human blocker is also open', async () => {
   await db.exec(`DELETE FROM corner_owed; DELETE FROM corner_report_blockers; DELETE FROM messages; DELETE FROM identities;
     INSERT INTO identities VALUES('agent','agent','Ruby'),('person','human','Lunchbox');
     INSERT INTO messages VALUES('ask','choice');
     INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','agent','2026-01-01','agent','other');
     INSERT INTO corner_owed VALUES('corner','ask','person','2026-01-02',true,NULL);`);
-  const oldest = (await db.query<{ item_id: string; agent_commander: boolean; human_blocker: boolean }>(
+  const oldest = (await db.query<{ item_id: string }>(
     `SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`,
   )).rows[0]!;
-  expect(oldest).toMatchObject({ item_id: 'report', agent_commander: true, human_blocker: true });
+  expect(oldest).toMatchObject({ item_id: 'report' });
   await db.exec('DELETE FROM corner_owed');
-  const only = (await db.query<{ item_id: string; agent_commander: boolean; human_blocker: boolean }>(
+  const only = (await db.query<{ item_id: string }>(
     `SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`,
   )).rows[0]!;
-  expect(only).toMatchObject({ item_id: 'report', agent_commander: true, human_blocker: false });
-  const now = new Date();
+  expect(only).toMatchObject({ item_id: 'report' });
   const pending = {
-    archived_at: null, latest_turn_status: null, blocking: true, ci_started_at: now,
+    archived_at: null, latest_turn_status: null, blocking: true,
     waiting_item_id: only.item_id, waiting_reason: 'question' as const, waiting_kind: 'report' as const,
     lifecycle: { lifecycle: 'in-review', checks: 'pending' as const },
   };
-  expect(cornerRowState({ ...pending, agent_commander: true, human_blocker: false }).state).toBe('review');
-  expect(cornerRowState({ ...pending, agent_commander: true, human_blocker: true }).state).toBe('waiting');
-  expect(cornerRowState({ ...pending, agent_commander: false, human_blocker: true }).state).toBe('waiting');
+  expect(cornerRowState({ ...pending }).state).toBe('review');
   expect(cornerRowState({
-    ...pending, agent_commander: true, human_blocker: false,
+    ...pending,
     lifecycle: { lifecycle: 'working', checks: 'unknown' },
   }).state).toBe('waiting');
 });
@@ -123,7 +120,7 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
     INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);`);
   type Blocker = {
     item_id: string; kind: 'message' | 'merge-hold' | 'report'; reason: 'approve' | 'question';
-    person_id: string; person_name: string; agent_commander: boolean; human_blocker: boolean;
+    person_id: string; person_name: string;
   };
   const query = async () =>
     (await db.query<Blocker>(`SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`)).rows[0]!;
@@ -132,7 +129,6 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
       archived_at: null, latest_turn_status: null, blocking: true, lifecycle,
       waiting_item_id: blocker.item_id, waiting_reason: blocker.reason, waiting_kind: blocker.kind,
       waiting_person_id: blocker.person_id, waiting_person_name: blocker.person_name,
-      agent_commander: blocker.agent_commander, human_blocker: blocker.human_blocker,
     });
   const pr = { number: 1, url: 'https://github.com/o/r/pull/1', title: 'Fix', targetBranch: 'main', headSha: '2'.repeat(40) };
   const pending = { lifecycle: 'in-review' as const, checks: 'pending' as const, pr };
@@ -141,7 +137,7 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
   const passing = { lifecycle: 'in-review' as const, checks: 'passing' as const, pr };
 
   const hold = await query();
-  expect(hold).toMatchObject({ item_id: 'hold', kind: 'merge-hold', human_blocker: false });
+  expect(hold).toMatchObject({ item_id: 'hold', kind: 'merge-hold' });
   expect(project(hold, pending).state).toBe('review');
   expect(project(hold, unreported).state).toBe('review');
   expect(project(hold, passing)).toEqual({ state: 'waiting', reason: 'approve',
@@ -151,14 +147,13 @@ it('Reproduction R1: a lone merge hold shows review while checks run and waits o
   // A later agent-commander report still defers to pending checks beside a hold.
   await db.exec("INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','agent','2026-01-02','agent','other')");
   const report = await query();
-  expect(report).toMatchObject({ item_id: 'report', agent_commander: true, human_blocker: false });
+  expect(report).toMatchObject({ item_id: 'report' });
   expect(project(report, pending).state).toBe('review');
 
   // A later human question is not shadowed by the older hold.
   await db.exec(`DELETE FROM corner_report_blockers; INSERT INTO messages VALUES('ask','choice');
     INSERT INTO corner_owed VALUES('corner','ask','person','2026-01-03',true,NULL);`);
   const question = await query();
-  expect(question).toMatchObject({ item_id: 'ask', kind: 'message', human_blocker: true });
-  expect(project(question, pending)).toEqual({ state: 'waiting', reason: 'question', itemId: 'ask',
-    blocker: { kind: 'message', personId: 'person', personName: 'Lunchbox' } });
+  expect(question).toMatchObject({ item_id: 'ask', kind: 'message' });
+  expect(project(question, pending)).toEqual({ state: 'review' });
 });

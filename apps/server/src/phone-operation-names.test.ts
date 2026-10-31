@@ -118,6 +118,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   skipChoice: true,
   unpairConnector: true,
   unregisterPushDevice: true,
+  updateAgentWake: true,
   updateAgentAccessPolicy: true,
   updateAgentModelSelection: true,
   updateAgentSoul: true,

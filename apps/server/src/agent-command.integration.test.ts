@@ -2551,3 +2551,39 @@ it.each([
   await expect(daemon.execute('postAgentActivity', { ...input,
     activity: [{ ...activity[0]!, output: 'different output' }] }, A)).rejects.toThrow('conflicts');
 });
+
+it('stuck-turn-1: a completion receipt closes a working turn even when its command already completed', async () => {
+  await send('@hoots complete the work', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command!.id]);
+  await daemon.execute('postAgentTurnReceipt', {roomId:C, requestId:command!.turnRequestId,
+    generationId:'g1',status:'complete'}, A);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+    [C,command!.turnRequestId,A])).rows).toEqual([{status:'complete'}]);
+});
+
+it('Reproduction stuck-turn-1: superseded review output completes its command and closes its turn together', async () => {
+  const corner = '44444444-4444-4444-8444-444444444444';
+  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'stuck-turn-proof')`, [corner,W,R]);
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"working"}')`, [corner,A]);
+  await send('@hoots review this head', corner);
+  const [command] = await commands(A, corner);
+  await claim(command!);
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`,
+    [command!.id, JSON.stringify({cornerId:corner,headSha:'obsolete',pullRequest:1})]);
+  const state = async () => (await phone.readCorners(R,H))!.corners.find(row => row.corner.id===corner)!.state;
+  expect(await state()).toBe('working');
+  await result(command!, '@hoots Review output for the old head');
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows)
+    .toEqual([{state:'complete'}]);
+  expect((await db.query(`SELECT status,failure_reason FROM agent_turns
+    WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`, [corner,command!.turnRequestId,A])).rows)
+    .toEqual([{status:'failed',failure_reason:'the review command was superseded'}]);
+  expect(await state()).not.toBe('working');
+  await daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
+    generationId:'g1',status:'complete'}, A);
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+    [corner,command!.turnRequestId,A])).rows).toEqual([{status:'failed'}]);
+  console.log('Demonstrated stuck-turn-1: superseded review end → command complete, turn failed, phone corner no longer working; receipt replay preserves failure');
+});

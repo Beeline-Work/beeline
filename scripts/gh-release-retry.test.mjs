@@ -328,56 +328,6 @@ test('ghr_api: fails only after every attempt is spent', (t) => {
   assert.equal(calls().filter((line) => line.startsWith('api repos/')).length, 5);
 });
 
-test('ghr_requested_version_guard: fails when the existing release tag points at another commit', (t) => {
-  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
-    releaseExists: true, tagSha: 'b'.repeat(40),
-  });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, new RegExp(`::error::requested version v0\\.1\\.0 .*${'b'.repeat(40)}.*${'a'.repeat(40)}`));
-  assert.ok(calls().includes('api repos/o/r/commits/v0.1.0 --jq .sha'));
-});
-
-test('ghr_requested_version_guard: passes a retry whose release tag is already at the release SHA', (t) => {
-  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
-    releaseExists: true, tagSha: 'a'.repeat(40),
-  });
-  assert.equal(result.status, 0, result.stderr);
-});
-
-test('ghr_requested_version_guard: passes a version with no existing release', (t) => {
-  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', { tagSha: 'b'.repeat(40) });
-  assert.equal(result.status, 0, result.stderr);
-  assert.ok(!calls().some((line) => line.startsWith('api ')));
-});
-
-test('ghr_requested_version_guard: fails closed when the release lookup keeps failing', (t) => {
-  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
-    viewFailures: 99, tagSha: 'b'.repeat(40),
-  });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /::error::could not confirm whether requested version v0\.1\.0 already has a GitHub release/);
-  assert.equal(calls().filter((line) => line.startsWith('release view v0.1.0')).length, 5);
-});
-
-test('ghr_requested_version_guard: retries a transient lookup failure before checking the tag', (t) => {
-  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
-    viewFailures: 2, releaseExists: true, tagSha: 'b'.repeat(40),
-  });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, new RegExp(`::error::requested version v0\\.1\\.0 .*${'b'.repeat(40)}`));
-});
-
-test('initialize guards only a requested version against an existing release at another commit', () => {
-  const step = WORKFLOW.match(/- name: Assign identity and produce the inspectable release plan[\s\S]*?release_id="/)?.[0];
-  assert.ok(step, 'identity step found in unified-release.yml');
-  assert.match(step, /GH_TOKEN: \$\{\{ github\.token \}\}/);
-  assert.match(step, /\. scripts\/gh-release-retry\.sh/);
-  const requested = step.match(/if \[ -n "\$REQUESTED_VERSION" \]; then([\s\S]*?)\n\s*else/)?.[1];
-  assert.ok(requested, 'requested-version branch found');
-  assert.match(requested, /ghr_requested_version_guard "\$release_version" "\$\(git rev-parse --verify "\$release_sha\^\{commit\}"\)"/);
-  assert.equal(step.match(/ghr_requested_version_guard/g).length, 1, 'auto-computed and plan-only versions are not guarded');
-});
-
 test('release_result routes every release-mutating gh call through the retry wrappers', () => {
   const job = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
   assert.ok(job, 'release_result job found in unified-release.yml');
@@ -394,60 +344,6 @@ test('release_result routes every release-mutating gh call through the retry wra
   assert.match(job, /ghr_delete_asset "\$RELEASE_VERSION" 'Beeline-latest\.json' \|\| true/);
 });
 
-test('the release record draft is created at record time, reused by a recovery, and guarded for pinned versions', () => {
-  const initialize = WORKFLOW.match(/^  initialize:[\s\S]*?^  [a-z][\w-]*:/m)?.[0];
-  assert.ok(initialize);
-  // No pre-ship draft: planning only guards a pinned recovery version.
-  assert.doesNotMatch(initialize, /ghr_create/);
-  assert.match(initialize, /ghr_requested_version_guard "\$release_version"/);
-  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
-  const create = releaseResult.indexOf('ghr_create "$RELEASE_VERSION"');
-  assert.ok(create > 0);
-  assert.match(releaseResult, /if ! gh release view "\$RELEASE_VERSION" >\/dev\/null 2>&1; then\n\s*ghr_create "\$RELEASE_VERSION"[^\n]*--draft/);
-  assert.ok(create < releaseResult.indexOf('ghr_upload_verified "$RELEASE_VERSION" "$manifest"'));
-});
-
-for (const same of [true, false]) {
-  test(`Reproduction tagless-draft: ${same ? 'reuse same SHA' : 'reject different SHA with recovery'}`, (t) => {
-    const target = (same ? 'a' : 'b').repeat(40);
-    const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
-      releaseExists: true, draftExists: true, tagless: true, target,
-    });
-    if (same) assert.equal(result.status, 0, result.stderr);
-    else {
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /draft v0\.1\.64/);
-      assert.ok(result.stderr.includes(target));
-      assert.match(result.stderr, /rerun.*recovery/);
-      assert.match(result.stderr, /delete.*only if nothing shipped/);
-    }
-    assert.ok(!calls().some((line) => /^release (create|edit|upload|delete)/.test(line)));
-  });
-}
-
-for (const fixture of [
-  { name: 'published release with missing tag', target: 'a'.repeat(40) },
-  { name: 'draft with a moving branch target', draftExists: true, target: 'main' },
-  { name: 'draft with an empty target', draftExists: true },
-  { name: 'draft during an API outage', draftExists: true, target: 'a'.repeat(40), apiFailures: 99 },
-]) {
-  test(`ghr_requested_version_guard: fails closed for ${fixture.name}`, (t) => {
-    const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
-      releaseExists: true, tagless: true, ...fixture,
-    });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /tag commit could not be resolved/);
-  });
-}
-
-test('ghr_requested_version_guard: existing draft tag wins over its target', (t) => {
-  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
-    releaseExists: true, draftExists: true, target: 'a'.repeat(40), tagSha: 'b'.repeat(40),
-  });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /whose tag points at b{40}/);
-});
-
 for (const exists of [true, false]) {
   test(`release record ${exists ? 'reuses the existing draft' : 'creates a draft'} before publishing`, (t) => {
     const snippet = WORKFLOW.match(/(if ! gh release view "\$RELEASE_VERSION" >\/dev\/null 2>&1; then[\s\S]*?\n\s*fi)\n/)?.[1];
@@ -461,60 +357,14 @@ for (const exists of [true, false]) {
   });
 }
 
-test('ghr_requested_version_guard: transient commit lookup errors do not contaminate the SHA', (t) => {
-  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
-    releaseExists: true, tagSha: 'a'.repeat(40), apiFailures: 2,
-  });
-  assert.equal(result.status, 0, result.stderr);
-});
-
-// Execute the routine allocation shell from initialize with a fake GitHub API,
-// then pass its version into the real planner. No deploy or real API is used.
-const routineAllocation = WORKFLOW.match(/(# Every existing record reserves its version[\s\S]*?release_version=\$\(node scripts\/unified-release\.mjs "\$\{version_args\[@\]\}"\))/)?.[1]
-  ?.replace(/^              /gm, '')
-  .replace('node scripts/unified-release.mjs', `node '${join(REPO, 'scripts/unified-release.mjs')}'`);
-
-for (const fixture of [
-  { name: 'terminated v0.1.71 draft after successful v0.1.70', reserved: ['v0.1.71'], expected: 'v0.1.72' },
-  { name: 'multiple reserved drafts and published records', reserved: ['v0.1.71', 'v0.1.72', 'v0.1.73'], expected: 'v0.1.74' },
-  { name: 'no abandoned draft', reserved: [], expected: 'v0.1.71' },
-  { name: 'repeat successful HEAD remains a no-op', reserved: ['v0.1.70', 'v0.1.71'], sameSource: true, expected: 'v0.1.70' },
-  { name: 'first release skips a reserved draft', reserved: ['v0.0.1'], noPrevious: true, expected: 'v0.0.2' },
-]) {
-  test(`routine initialize: ${fixture.name}`, (t) => {
-    assert.ok(routineAllocation, 'routine workflow allocation found');
-    const oldSha = 'b'.repeat(40);
-    const { result, calls } = runHelper(t, `
-      export RUNNER_TEMP="$PWD"
-      export GHR_FAKE_RESERVED='${fixture.reserved.join('\n')}'
-      release_sha="$SHA"
-      previous="$PWD/previous.json"
-      node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({version:"v0.1.70",sourceSha:process.argv[2]}))' "$previous" '${fixture.sameSource ? 'a'.repeat(40) : oldSha}'
-      ${fixture.noPrevious ? 'rm "$previous"' : ''}
-      # Failed components may already have shipped. Its immutable draft stays
-      # reserved even though the identity can never be retried.
-      printf '%s' '{"version":"v0.1.71","sourceSha":"${oldSha}","terminated":true}' > terminated-attempt.json
-      ${routineAllocation}
-      echo "allocated=$release_version"
-      ${fixture.sameSource ? '' : `node '${join(REPO, 'scripts/unified-release.mjs')}' plan --version "$release_version" --sha "$release_sha" --selection all --state "$PWD/new-state.json" --summary "$PWD/plan.json"`}
-      test -f terminated-attempt.json
-    `);
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, new RegExp(`allocated=${fixture.expected.replaceAll('.', '\\.')}(?:\\n|$)`));
-    assert.ok(calls().includes("api repos/o/r/releases --paginate --jq .[].tag_name"));
-    assert.ok(!calls().some((line) => /^release (create|edit|upload|delete)/.test(line)), 'allocation preserves every existing record and asset');
-  });
-}
-
-test('routine initialize fails closed when reserved versions cannot be read', (t) => {
-  assert.ok(routineAllocation);
-  const { result, calls } = runHelper(t, `
-    export RUNNER_TEMP="$PWD"
-    previous="$PWD/missing.json"
-    release_sha="$SHA"
-    ${routineAllocation}
-  `, { apiFailures: 99 });
-  assert.notEqual(result.status, 0);
-  assert.equal(calls().length, 5);
-  assert.match(result.stderr, /giving up/);
+test('initialize reserves this identity as a draft once; release_result reuses it', () => {
+  const initialize = WORKFLOW.match(/^  initialize:[\s\S]*?^  [a-z][\w-]*:/m)?.[0];
+  assert.ok(initialize);
+  assert.match(initialize, /\. scripts\/gh-release-retry\.sh/);
+  assert.match(initialize, /if \[ "\$has_release" != true \]; then\n\s*# Reserve[\s\S]*?ghr_create "\$version" --target "\$release_sha" --title "\$version" --notes 'Release in progress\.' --draft/);
+  assert.doesNotMatch(initialize, /ghr_requested_version_guard/);
+  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
+  const create = releaseResult.indexOf('ghr_create "$RELEASE_VERSION"');
+  assert.ok(create > 0);
+  assert.ok(create < releaseResult.indexOf('ghr_upload_verified "$RELEASE_VERSION" "$manifest"'));
 });

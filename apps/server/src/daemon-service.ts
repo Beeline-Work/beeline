@@ -682,7 +682,10 @@ export class DaemonService {
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       let appToolExecution: DaemonService['deferredAppTool'];
       const output = await this.database.transaction(async (db) => {
-        if (name === 'createCorner' || name === 'reviseCornerBrief')
+        // Failed receipts may reassign the reviewer. Take the lifecycle lock
+        // before the silence lock and turn writes, matching lifecycle dispatch.
+        if (name === 'createCorner' || name === 'reviseCornerBrief' ||
+            (isCorner && name === 'postAgentTurnReceipt' && candidate.status === 'failed'))
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && ['failed', 'complete'].includes(String(candidate.status))) {
@@ -775,6 +778,11 @@ export class DaemonService {
               );
         if (['postRoomMessage', 'postCornerMessage', 'order', 'report'].includes(name) && command.review_context?.purpose !== 'repair' && await supersededReview(db, command)) {
           await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [command.id]);
+          await db.query(`UPDATE agent_turns SET status='failed',
+            failure_reason='the review command was superseded',created_at=now()
+            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
+              AND generation_id IS NOT DISTINCT FROM $4`,
+            [scopedRoom, authenticatedAgentId, requestId, command.generation_id]);
           return { ...this.writeResult(), id: command.id, skipped: true } as Output<Name>;
         }
         // Helpers cannot impose an order outcome on an informational wake.
@@ -816,7 +824,10 @@ export class DaemonService {
           ));
         // A lost receipt response may be replayed after the fallback consumed
         // this generation. Never replace its stored failed outcome with success.
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete' &&
+          !(await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+            AND status='working' AND generation_id IS NOT DISTINCT FROM $4`,
+            [scopedRoom, authenticatedAgentId, requestId, command.generation_id])).rowCount) {
           await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
           return this.writeResult() as Output<Name>;
         }
@@ -2254,10 +2265,12 @@ export class DaemonService {
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
       } catch (error) {
-        // Activity has only transactional writes and buffered live events.
+        // Activity and failed receipts have transactional writes and buffered live events.
         // Retry the owning transaction, including authorization, after rollback;
         // a nested transaction cannot recover an aborted PostgreSQL transaction.
-        if (name !== 'postAgentActivity' || this.commandTransaction || attempt >= 2 ||
+        const retryableWrite = name === 'postAgentActivity' ||
+          (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
+        if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
           !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
           throw error;
         await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));

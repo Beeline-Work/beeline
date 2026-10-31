@@ -35,8 +35,10 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 
 import { resetClientState } from '@/sync/client-reset';
 import { prefetchPushRoom, takePrefetchedPushRoom } from './push-room-prefetch';
+import { abandonRoomDraw, finishRoomDraw, observeVisibleRoomRows, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 
 beforeEach(() => {
+  abandonRoomDraw(roomDrawGeneration());
   fixture.viewer = 'viewer-a';
   fixture.monolithUrl = 'https://server.test';
   fixture.reads = [];
@@ -85,8 +87,13 @@ describe('received versus missing pushed rows', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(fixture.reads).toEqual([]);
-    // The session consumes this only after its cached frame has committed.
-    await takePrefetchedPushRoom('received', 'room-a');
+    const pending = takePrefetchedPushRoom('received', 'room-a');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fixture.reads).toEqual([]);
+    finishRoomDraw('target', 'room-a');
+    observeVisibleRoomRows('room-a', ['target']);
+    await pending;
     expect(fixture.reads).toEqual(['room-a']);
   });
   it('starts a missing-target read at the tap without waiting for the session', async () => {

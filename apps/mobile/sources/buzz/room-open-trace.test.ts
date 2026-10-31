@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 const reportPage = vi.hoisted(() => vi.fn());
 vi.mock('./room-page-observation', () => ({ reportRoomPageObservation: reportPage }));
+vi.mock('./room-draw-barrier', () => ({ beginRoomDraw() {}, ensureRoomDraw() {}, finishRoomDraw() {} }));
 
 /**
  * The point of this module is that it can be READ on a real phone. These tests
@@ -90,7 +91,10 @@ describe('room open trace', () => {
     mod.markRoomOpen('nav-dispatch', 'room-a');
     mod.recordRoomReadNetworkTiming('room-b', { requestToFirstByteMs: 80, serverProcessingMs: 10 });
     mod.recordRoomReadNetworkTiming('room-a', { requestToFirstByteMs: 95, serverProcessingMs: 14 });
-    mod.markRoomOpen('newest-frame');
+    mod.markRoomOpen('newest-frame', 'other-row', 'room-b');
+    await Promise.resolve();
+    expect(reportPage).not.toHaveBeenCalled();
+    mod.markRoomOpen('newest-frame', 'row-a', 'room-a');
     await vi.waitFor(() => expect(reportPage).toHaveBeenCalledTimes(1));
     expect(reportPage).toHaveBeenCalledWith(expect.any(Number), false,
       { requestToFirstByteMs: 95, serverProcessingMs: 14 });
@@ -109,6 +113,21 @@ describe('room open trace', () => {
     expect(last.map((row) => row.phase)).toEqual(['nav-dispatch', 'room-read-start']);
     expect(last[0]?.ms).toBe(0);
     expect(last[1]?.ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('moves an unfinished page observation to the newly focused Room', async () => {
+    const { mod, restore } = await withEnv(undefined, false);
+    for (let i = 0; i < 7; i++) {
+      mod.markRoomOpen('nav-dispatch', 'previous');
+      mod.markRoomOpen('newest-frame');
+    }
+    mod.markRoomOpen('route-mount', 'room-a');
+    mod.markRoomOpen('route-mount', 'room-b');
+    mod.recordRoomReadNetworkTiming('room-b', { requestToFirstByteMs: 95, serverProcessingMs: 14 });
+    mod.markRoomOpen('newest-frame', 'row-b', 'room-b');
+    await vi.waitFor(() => expect(reportPage).toHaveBeenCalledWith(expect.any(Number), false,
+      { requestToFirstByteMs: 95, serverProcessingMs: 14 }));
+    restore();
   });
 
   it('starts a fresh run when a new Room open begins', async () => {

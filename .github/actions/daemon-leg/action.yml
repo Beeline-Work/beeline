@@ -23,37 +23,20 @@ inputs:
   darwin_x64_bundle_dir:
     description: Downloaded native darwin-x64 artifact directory
     default: ''
-  reuse_run_id:
-    description: >-
-      Workflow run holding a complete merged daemon artifact for this exact
-      release identity, decided once by unified-release's initialize job. On
-      build, set means reuse those bytes and skip the merge while empty means
-      build every platform; on promote, it is the run the artifact is read back
-      from, because a retry that already recorded `built` never re-uploads it
-      into the current run. This leg never re-asks.
-    default: ''
 
 runs:
   using: composite
   steps:
     # ---- build -------------------------------------------------------------
-    - name: Reuse the exact daemon artifact
-      if: inputs.phase == 'build' && inputs.reuse_run_id != ''
-      uses: actions/download-artifact@v4
-      with:
-        name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: ${{ runner.temp }}/daemon-release
-        run-id: ${{ inputs.reuse_run_id }}
-        github-token: ${{ github.token }}
     - name: Build and verify the exact daemon bundle
-      if: inputs.phase == 'build' && inputs.reuse_run_id == ''
+      if: inputs.phase == 'build'
       shell: bash
       run: npm run bundle:beeline -- --platform linux-x64
       env:
         BEELINE_BUNDLE_COMMIT: ${{ inputs.release_sha }}
         BEELINE_BUNDLE_VERSION: ${{ inputs.release_version }}
     - name: Collect daemon artifact
-      if: inputs.phase == 'build' && inputs.reuse_run_id == ''
+      if: inputs.phase == 'build'
       shell: bash
       run: |
         arm64_dir="${{ inputs.darwin_arm64_bundle_dir }}"
@@ -73,27 +56,12 @@ runs:
         if [ -f "$x64_dir/mac-helper-inputs.json" ]; then
           cp "$x64_dir/mac-helper-inputs.json" "$RUNNER_TEMP/daemon-release/mac-helper-inputs-darwin-x64.json"
         fi
-    - if: inputs.phase == 'build'
-      uses: actions/upload-artifact@v4
-      with:
-        name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: ${{ runner.temp }}/daemon-release/
-        if-no-files-found: error
-        retention-days: 7
-
     # ---- promote -----------------------------------------------------------
-    - if: inputs.phase == 'promote'
-      uses: actions/download-artifact@v4
-      with:
-        name: daemon-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: bundle/all-platforms
-        run-id: ${{ inputs.reuse_run_id || github.run_id }}
-        github-token: ${{ github.token }}
     - name: Publish the daemon artifact to durable Pages hosting
       if: inputs.phase == 'promote'
       uses: ./.github/actions/pages-leg
       with:
-        bundle_dir: bundle/all-platforms
+        bundle_dir: ${{ runner.temp }}/daemon-release
         release_sha: ${{ inputs.release_sha }}
         release_version: ${{ inputs.release_version }}
         manifest_url: ${{ inputs.pages_manifest_url }}

@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { validateArrivalCases } from './room-arrivals.mjs';
 import { MAX_CLOCK_UNCERTAINTY_MS } from './device-clock.mjs';
 
+const TIMED_TAPS = Object.freeze(['react-message', 'open-corner', 'switch-tabs', 'open-composer']);
+
 export const BUDGET_MS = Object.freeze({ route: 450, tap: 150 });
 
 function finite(value, label) {
@@ -75,9 +77,15 @@ export function summarizeSample(sample) {
     paintMs: paintMs - startMs,
     canonicalMs: sample.canonicalMs === undefined ? null : finite(sample.canonicalMs, 'canonicalMs') - startMs,
     prepaintHttpCount: prepaint.length,
+    prepaintOptionalCount: prepaint.filter(span =>
+      /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test((span.operation ?? '').split('?')[0]) ||
+      /^\/v1\/phone\/rooms\/[^/]+\/read$/.test((span.operation ?? '').split('?')[0]) ||
+      span.operation === '/v1/phone/operations/readStarPrompt' ||
+      span.operation === '/v1/phone/observations/page-load').length,
     prepaintHttpDepth: serialDepth(prepaint),
     prepaintCompletedRoundTrips: prepaint.filter((span) => span.endMs <= paintMs + clockUncertaintyMs).length,
     writeCount: writes.length, followupReadCount: followupReads.length,
+    prepaintWriteCount: prepaint.filter(span => span.method && !['GET', 'HEAD', 'OPTIONS'].includes(span.method)).length,
     httpCount: http.length,
     httpRequestBytes: http.reduce((sum, span) => sum + (span.requestBytes ?? 0), 0),
     httpResponseBytes: http.reduce((sum, span) => sum + (span.responseBytes ?? 0), 0),
@@ -109,7 +117,9 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
     const first = items[0];
     const budget = first.kind === 'route' ? routeBudget.get(first.name) : undefined;
     const arrival = arrivalCases.find((item) => first.kind === 'route' && first.name === '/beeline/chat/[channelId]' && first.variant === item.name);
-    const maxRequests = arrival ? 1 : first.kind === 'route'
+    const tapContract = first.kind === 'tap' && TIMED_TAPS.includes(first.name);
+    const writesExpected = first.name === 'react-message' ? 1 : 0;
+    const maxRequests = tapContract ? (first.name === 'open-corner' ? 1 : writesExpected) : arrival ? 1 : first.kind === 'route'
       ? (first.variant === 'warm' ? 0 : budget?.coldHttpMax ?? 1) : 1;
     const maxDepth = arrival ? 1 : first.kind === 'route'
       ? (first.variant === 'warm' ? 0 : budget?.coldDepthMax ?? 1) : 1;
@@ -124,6 +134,7 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       clockCalibrated: items.every((item) => item.clockCalibrated),
       maxClockUncertaintyMs: maxObserved('clockUncertaintyMs'),
       maxPrepaintHttpCount: maxObserved('prepaintHttpCount'),
+      maxPrepaintOptionalCount: maxObserved('prepaintOptionalCount'),
       maxPrepaintHttpDepth: maxObserved('prepaintHttpDepth'),
       maxPrepaintCompletedRoundTrips: maxObserved('prepaintCompletedRoundTrips'),
       maxWrites: maxObserved('writeCount'), maxFollowupReads: maxObserved('followupReadCount'),
@@ -132,11 +143,13 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       maxWsBytes: maxObserved('wsBytes'),
       maxSqlStatements: maxObserved('sqlStatements'), maxSqlDepth: maxObserved('sqlDepth'),
       maxSqlPoolWaitMs: maxObserved('sqlPoolWaitMs'),
-      budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], maxRequests, maxDepth,
-      timingPass: !items.some((item) => item.timedOut) && p95 < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
+      budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], timingPercentile: tapContract ? 'p50' : 'p95', maxRequests, maxDepth,
+      timingPass: !items.some((item) => item.timedOut) && (tapContract ? percentile(items.map(item => item.paintMs), .5) : p95) < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
       requestPass: items.every((item) => item.clockCalibrated) && maxObserved('prepaintHttpCount') <= maxRequests &&
+        (!['/beeline/chat/[channelId]', 'open-corner'].includes(first.name) || maxObserved('prepaintOptionalCount') === 0) &&
         maxObserved('prepaintHttpDepth') <= maxDepth &&
-        (first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&
+        (tapContract ? (first.name === 'open-corner' && maxObserved('prepaintWriteCount') === 0) || (first.name !== 'open-corner' && items.every(item => item.writeCount === writesExpected &&
+          item.followupReadCount === 0 && item.prepaintCompletedRoundTrips === 0)) : first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&
           item.followupReadCount === 0 && item.prepaintCompletedRoundTrips === 0)),
     };
   }).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name) || a.variant.localeCompare(b.variant));
@@ -181,7 +194,7 @@ export function markdown(report, metadata = {}) {
     '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|',
   ];
   for (const row of report.rows) lines.push(
-    `| ${row.kind} | ${row.name} | ${row.variant} | ${row.samples} | ${ms(row.p50Ms)} | ${ms(row.p95Ms)} | ${ms(row.p99Ms)} | <${row.budgetMs} ms | ${row.maxPrepaintHttpCount}/${row.maxPrepaintHttpDepth} (≤${row.maxRequests}/≤${row.maxDepth}) | ${row.maxWsFrames}/${row.maxWsMessages} | ${row.maxHttpBytes + row.maxWsBytes} | ${row.maxSqlStatements}/${row.maxSqlDepth}/${row.maxSqlPoolWaitMs} ms | ${row.timingPass && row.requestPass ? 'PASS' : 'FAIL'} |`,
+    `| ${row.kind} | ${row.name} | ${row.variant} | ${row.samples} | ${ms(row.p50Ms)} | ${ms(row.p95Ms)} | ${ms(row.p99Ms)} | <${row.budgetMs} ms ${row.timingPercentile ?? 'p95'} | ${row.maxPrepaintHttpCount}/${row.maxPrepaintHttpDepth} (≤${row.maxRequests}/≤${row.maxDepth}) | ${row.maxWsFrames}/${row.maxWsMessages} | ${row.maxHttpBytes + row.maxWsBytes} | ${row.maxSqlStatements}/${row.maxSqlDepth}/${row.maxSqlPoolWaitMs} ms | ${row.timingPass && row.requestPass ? 'PASS' : 'FAIL'} |`,
   );
   const censored = report.rows.filter((row) => row.timedOutSamples > 0);
   if (censored.length) lines.push('',
@@ -189,8 +202,11 @@ export function markdown(report, metadata = {}) {
     `Timed-out samples: ${censored.map((row) => `${row.variant}: ${row.timedOutSamples}/${row.samples}`).join(', ')}`);
   for (const route of report.missingRouteVariants)
     lines.push(`| route | ${route.path} | ${route.variant} | 0 | — | — | — | <450 ms | ${route.variant === 'cold' ? `≤${route.coldHttpMax}/≤${route.coldDepthMax}` : '0/0'} | — | — | — | UNMEASURED |`);
-  for (const name of report.missingInteractions)
-    lines.push(`| tap | ${name} | — | 0 | — | — | — | <150 ms | 1 write, 0 follow-up GET | — | — | — | UNMEASURED |`);
+  for (const name of report.missingInteractions) {
+    const requests = name === 'open-corner' ? '≤1 prepaint covering read'
+      : ['switch-tabs', 'open-composer'].includes(name) ? '0 requests' : '1 write, 0 follow-up GET';
+    lines.push(`| tap | ${name} | — | 0 | — | — | — | <150 ms ${TIMED_TAPS.includes(name) ? 'p50' : 'p95'} | ${requests} | — | — | — | UNMEASURED |`);
+  }
   if (report.missingRouteVariants.length) lines.push('',
     `Unmeasured route variants: ${report.missingRouteVariants.map((item) => `${item.path} (${item.variant})`).join(', ')}`);
   if (report.missingInteractions.length) lines.push('',
@@ -223,11 +239,11 @@ async function main() {
     const room = routes.find((route) => route.path === '/beeline/chat/[channelId]');
     if (!room) throw new Error('Nightly requires the existing Room route budget');
     routes = [{ ...room, variants: ['warm'] }];
-    interactions = ['send-text'];
+    interactions = ['send-text', ...TIMED_TAPS];
     samples = samples.filter((sample) =>
       (sample.kind === 'route' && sample.name === room.path &&
         (sample.variant === 'warm' || arrivalCases.some((item) => item.name === sample.variant))) ||
-      (sample.kind === 'tap' && sample.name === 'send-text'));
+      (sample.kind === 'tap' && interactions.includes(sample.name)));
   }
   const report = summarize(samples, routes, interactions, arrivalCases, args.includes('--nightly') ? 20 : 1);
   const output = markdown(report, {

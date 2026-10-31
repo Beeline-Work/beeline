@@ -1032,6 +1032,8 @@ export type AgentComposerCommand = {
 };
 
 export type AgentDetailView = {
+  /** Owner-only AI-client wake configuration. The bearer key is never returned. */
+  readonly wake?: { readonly url: string | null; readonly keySet: boolean };
   readonly usage?: AgentUsage;
   readonly harness?: string;
   /** Agent configuration commit order, for deduping a live echo of a write receipt. */

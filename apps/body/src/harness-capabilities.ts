@@ -151,11 +151,10 @@ export function enforcesPermissionBoundary(agentCommand: string | undefined): bo
  *    `_meta.systemPrompt`, which `AcpClient.sessionNew` sends for exactly this
  *    case (`harnessReadsMetaSystemPrompt`) — so its sessions DO carry the
  *    Beeline prompt.
- *  - `codex-acp` and `pi-acp` have no reference to `systemPrompt` anywhere in
- *    their distributions: both silently drop the entire Beeline session prompt
- *    (persona, read-only steer, attachment directive). This was the confirmed
- *    break behind agents still introducing themselves with the default
- *    identity while a soul overlay was published for them.
+ *  - Legacy `codex-acp` and `pi-acp` drop the session prompt. Codex adapters
+ *    that advertise structured systemPrompt now retain it; AcpClient gates
+ *    CodexPromptDelivery on the measured adapter version and capability. This
+ *    static fallback stays false so older and unknown adapters receive rules.
  *  - everything else (grok, buzz-agent, custom commands) is unverified.
  *
  * Callers use a `false` answer to ALSO deliver per-turn content that every

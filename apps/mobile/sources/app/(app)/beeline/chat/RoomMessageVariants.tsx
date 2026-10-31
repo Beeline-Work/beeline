@@ -1052,6 +1052,9 @@ export interface OrdinaryLedgerMessageProps {
   agentModel?: string;
   participantsHydrated: boolean;
   personName?: string;
+  /** Current person portrait from the roster. Wins over a cached author snapshot. */
+  personAvatar?: string;
+  personFace?: string;
   viewerPubkey: string;
   /**
    * The speaker is WORKING right now — its own fresh working receipt
@@ -1198,6 +1201,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   agentModel,
   participantsHydrated,
   personName,
+  personAvatar,
+  personFace,
   viewerPubkey,
   speakerWorking,
   continued,
@@ -1237,8 +1242,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   // A loaded roster entry is the current identity. Historical rows may still
   // carry the face or generated avatar that was current when they were cached,
   // including artwork the agent has since removed.
-  const speakerFace = agent ? agent.face : indexedAuthor?.face;
-  const speakerAvatar = agent ? agent.avatar : indexedAuthor?.avatar;
+  const speakerFace = agent ? agent.face : (personFace ?? indexedAuthor?.face);
+  const speakerAvatar = agent ? agent.avatar : (personAvatar ?? indexedAuthor?.avatar);
   const currentAgent =
     indexedAuthor?.kind === 'agent'
       ? {

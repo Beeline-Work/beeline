@@ -12,6 +12,19 @@ test('counts independent network requests at one RTT depth', () => {
   assert.equal(serialDepth([]), 0);
 });
 
+test('an optional request before Room draw fails even within the cold request budget', () => {
+  for (const operation of ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/w',
+    '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/r/read', '/v1/phone/observations/page-load']) {
+    const sample = { kind: 'route', name: '/beeline/chat/[channelId]', variant: 'cold',
+      clockDomain: 'host', startMs: 0, paintMs: 100,
+      http: [{ operation, startMs: 10, endMs: 110 }] };
+    const routes = [{ path: sample.name, variants: ['cold'], coldHttpMax: 1, coldDepthMax: 1 }];
+    assert.equal(summarize([sample], routes).requestPass, false, operation);
+    sample.http[0].startMs = 101;
+    assert.equal(summarize([sample], routes).requestPass, true, operation);
+  }
+});
+
 test('nearest rank p95 exposes one slow sample in twenty', () => {
   assert.equal(percentile([...Array(19).fill(10), 100], .95), 10);
   assert.equal(percentile([...Array(18).fill(10), 99, 100], .95), 99);
@@ -94,4 +107,64 @@ test('push verdict names measured endpoints and absent native-response phase', (
   assert.equal(report.pushMeasurement.nativeResponsePhase, 'absent');
   assert.match(markdown(report), /Activity entry to target text native frame commit; native-response phase absent/);
   assert.match(markdown(report), /foreground JS in-app notice are unmeasured/);
+});
+
+for (const name of ['react-message', 'open-corner', 'switch-tabs', 'open-composer']) {
+  test(`${name} reports both percentiles and gates p50 strictly below 150 ms`, () => {
+    const samples = [100, 149, 400].map(duration => ({ kind: 'tap', name, variant: 'warm',
+      clockDomain: 'host', startMs: 1000, paintMs: 1000 + duration,
+      http: name === 'react-message' ? [{method: 'POST', startMs: 1001, endMs: 1500}] : [] }));
+    const report = summarize(samples, [], [name]);
+    assert.equal(report.rows[0].p50Ms, 149);
+    assert.equal(report.rows[0].p95Ms, 400);
+    assert.equal(report.rows[0].budgetMs, 150);
+    assert.equal(report.timingPass, true);
+    assert.equal(report.requestPass, true);
+    samples[1].paintMs = 1150;
+    assert.equal(summarize(samples).timingPass, false);
+    samples[1].timedOut = true;
+    samples[1].paintMs = 1100;
+    assert.equal(summarize(samples).timingPass, false);
+  });
+}
+test('local navigation/composer actions reject writes while corner permits a covering read', () => {
+  const base = { kind: 'tap', variant: 'warm', clockDomain: 'host', startMs: 1000, paintMs: 1100 };
+  const read = { method: 'GET', startMs: 1001, endMs: 1050 };
+  assert.equal(summarize([{...base, name: 'open-corner', http: [read]}]).requestPass, true);
+  for (const name of ['switch-tabs', 'open-composer']) {
+    assert.equal(summarize([{...base, name, http: [read]}]).requestPass, false);
+    assert.equal(summarize([{...base, name, http: [{...read, method: 'POST'}]}]).requestPass, false);
+  }
+});
+
+test('nightly CLI requires and retains all four new timed taps', async () => {
+  const { mkdtemp, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const dir = await mkdtemp(join(tmpdir(), 'timed-taps-'));
+  try {
+    const samples = ['react-message', 'open-corner', 'switch-tabs', 'open-composer'].flatMap(name =>
+      Array.from({length: 20}, () => ({ kind: 'tap', name, variant: 'warm',
+        clockDomain: 'host', startMs: 1000, paintMs: 1100,
+        http: name === 'react-message' ? [{ method: 'POST', startMs: 1001, endMs: 1200 }] : [] })));
+    const input = join(dir, 'samples.ndjson');
+    const output = join(dir, 'report.json');
+    await writeFile(input, samples.map(s => JSON.stringify(s)).join('\n'));
+    execFileSync(process.execPath, ['scripts/latency-rig/analyze.mjs', '--input', input,
+      '--routes', 'scripts/latency-rig/routes.json', '--room-cases', 'scripts/latency-rig/room-arrival-cases.json',
+      '--nightly', '--json-out', output], {stdio: 'pipe'});
+    const report = JSON.parse(await readFile(output, 'utf8'));
+    assert.deepEqual(report.rows.map(row => row.name).sort(), ['open-composer', 'open-corner', 'react-message', 'switch-tabs']);
+    assert.deepEqual(report.missingInteractions, ['send-text']);
+    assert.equal(report.complete, false);
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('corner open uses the existing Room prepaint contract and permits postpaint housekeeping', () => {
+  const base = { kind: 'tap', name: 'open-corner', variant: 'warm', clockDomain: 'host', startMs: 1000, paintMs: 1100 };
+  const housekeeping = { method: 'POST', operation: '/v1/phone/rooms/r/read', startMs: 1101, endMs: 1200 };
+  assert.equal(summarize([{...base, http: [housekeeping]}]).requestPass, true);
+  housekeeping.startMs = 1001;
+  assert.equal(summarize([{...base, http: [housekeeping]}]).requestPass, false);
 });

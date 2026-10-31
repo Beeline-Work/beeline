@@ -54,8 +54,9 @@ test('CLI retains the last pass on skipped runs, advances only on pass, and reco
     const original = JSON.stringify(report(100, old));
     await writeFile(base, original);
     await writeFile(range, JSON.stringify([{ sha: head, subject: 'new (#12)' }, { sha: old, subject: 'base (#11)' }]));
+    let invocation = 0;
     const run = (...extra) => spawnSync(process.execPath, [fileURLToPath(new URL('./nightly-local.mjs', import.meta.url)),
-      '--baseline', base, '--current', current, '--commits', range, '--head', head, '--out', output, ...extra], { encoding: 'utf8' });
+      '--run-id', `test-${++invocation}`, '--baseline', base, '--current', current, '--commits', range, '--head', head, '--out', output, ...extra], { encoding: 'utf8' });
     assert.equal(run().status, 2);
     assert.equal(run('--rerun', 'missing.json').status, 1);
     assert.equal(await readFile(base, 'utf8'), original);

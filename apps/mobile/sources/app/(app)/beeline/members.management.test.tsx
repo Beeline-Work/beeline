@@ -140,6 +140,10 @@ const client = vi.hoisted(() => ({
 const phoneOperation = vi.hoisted(() =>
   vi.fn(async (name: string, input: any): Promise<any> => {
     if (['addWorkspaceMember', 'removeWorkspaceMember'].includes(name)) return;
+    if (name === 'updateAgentWake') {
+      state.agent = { ...state.agent, wake: { url: input.url || null, keySet: Boolean(input.key) } };
+      return state.agent;
+    }
     if (name === 'updateAgentAccessPolicy') {
       state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
       return state.agent;
@@ -593,6 +597,37 @@ beforeEach(() => {
   client.resolveDirectMessage.mockReset().mockResolvedValue({ channelId: 'dm-room' });
   modal.confirm.mockResolvedValue(true);
   modal.prompt.mockResolvedValue(null);
+});
+
+it('saves a wake link and key through the owner profile, clears the draft and can clear setup', async () => {
+  state.agent.wake = { url: null, keySet: false };
+  const renderer = await render();
+  await openAgentProfile(renderer);
+  const wakeRow = () => renderer.root.findAll((node: any) => node.props.title === 'Wake link' && node.props.actionControl)[0];
+  await act(async () => wakeRow().props.actionControl.onPress());
+  const field = (label: string) => renderer.root.findAll((node: any) => node.props.accessibilityLabel === label && node.props.onChangeText)[0];
+  await act(async () => {
+    field('Wake link').props.onChangeText('https://hooks.example/wake');
+    field('Wake key').props.onChangeText('private-wake-key');
+  });
+  expect(field('Wake key').props.secureTextEntry).toBe(true);
+  const actions = () => renderer.root.findAll((node: any) => Array.isArray(node.props.actions) && node.props.actions.some((a: any) => a.label === 'Save'))[0];
+  await act(async () => { await actions().props.actions.find((a: any) => a.label === 'Save').onPress(); });
+  expect(phoneOperation).toHaveBeenCalledWith('updateAgentWake', {
+    workspaceId: WORKSPACE, agentId: AGENT, url: 'https://hooks.example/wake', key: 'private-wake-key',
+  });
+  expect(wakeRow().props.descriptionDetail).toBe('Wake key: set');
+  await act(async () => wakeRow().props.actionControl.onPress());
+  expect(field('Wake key').props.value).toBe('');
+  const clear = renderer.root.findAll((node: any) => node.props.label === 'Clear wake link' && node.props.onPress)[0];
+  await act(async () => { await clear.props.onPress(); });
+  expect(phoneOperation).toHaveBeenLastCalledWith('updateAgentWake', { workspaceId: WORKSPACE, agentId: AGENT, url: '' });
+  expect(wakeRow().props.descriptionDetail).toBe('Wake key: not set');
+});
+it('does not expose wake setup when the server omits owner-only wake configuration', async () => {
+  const renderer = await render();
+  await openAgentProfile(renderer);
+  expect(renderer.root.findAll((node: any) => node.props.title === 'Wake link')).toHaveLength(0);
 });
 
 function sheet(renderer: ReactTestRenderer) {

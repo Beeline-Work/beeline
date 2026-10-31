@@ -2829,6 +2829,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const input = await body(request);
     const duration = input.durationMs;
     const network = input.network;
+    const jsResponseDelay = network && typeof network === 'object'
+      ? (network as { jsResponseDelayMs?: unknown }).jsResponseDelayMs : undefined;
     const validNetwork = network === undefined || (
       network !== null && typeof network === 'object' &&
       Number.isFinite((network as { requestToFirstByteMs?: unknown }).requestToFirstByteMs) &&
@@ -2844,7 +2846,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       (duration as number) < 0 ||
       (duration as number) > 600_000 ||
       typeof input.failed !== 'boolean' ||
-      !validNetwork
+      !validNetwork || (jsResponseDelay !== undefined &&
+        (typeof jsResponseDelay !== 'number' || !Number.isFinite(jsResponseDelay) ||
+          jsResponseDelay < 0 || jsResponseDelay > 600_000))
     ) {
       json(response, 400, { error: 'invalid_observation' });
       return;
@@ -2857,6 +2861,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       network === undefined ? undefined :
         Math.round((network as { requestToFirstByteMs: number }).requestToFirstByteMs -
           (network as { serverProcessingMs: number }).serverProcessingMs),
+      jsResponseDelay as number | undefined,
     );
     response.writeHead(204, { 'cache-control': 'private, no-store' });
     response.end();

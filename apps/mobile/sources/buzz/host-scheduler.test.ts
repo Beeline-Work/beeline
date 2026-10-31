@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cancelScheduledAnimationFrame, scheduleAnimationFrame } from './host-scheduler';
+import { cancelScheduledAnimationFrame, scheduleAnimationFrame, yieldToNextPaint } from './host-scheduler';
 
 function installThrowingHostMethod(
   name: 'requestAnimationFrame' | 'cancelAnimationFrame',
@@ -47,5 +47,23 @@ describe('host-scheduler', () => {
     cancelScheduledAnimationFrame(11);
     expect(receivers).toEqual([globalThis]);
     expect(cancelled).toEqual([11]);
+  });
+
+  it('resumes after the frame callbacks return, so the paint is not blocked by the continuation', async () => {
+    const queued: FrameRequestCallback[] = [];
+    installThrowingHostMethod('requestAnimationFrame', function (callback: unknown) {
+      queued.push(callback as FrameRequestCallback);
+      return queued.length;
+    });
+    let resolved = false;
+    const pending = yieldToNextPaint().then(() => {
+      resolved = true;
+    });
+    queued.shift()!(0);
+    queued.shift()!(0);
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    await pending;
+    expect(resolved).toBe(true);
   });
 });

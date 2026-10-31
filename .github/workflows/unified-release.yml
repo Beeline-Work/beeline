@@ -1,13 +1,24 @@
-# The one production release button. It plans from the last successful release,
-# runs only affected components, and carries every other immutable artifact into
-# one new release record. A merge to main never releases.
+# The one production release button. It plans from the newest published
+# GitHub Release, runs only affected components, and carries every other
+# component into one new release record. A merge to main never releases.
+#
+# MEMORY: the permanent GitHub Release is the pipeline's only memory. Each
+# published release carries one `release.json` (component commits, server
+# image, phone OTA branch, desktop updater counter, store builds). No Actions
+# artifact, cache or run lookup carries state between jobs or runs; jobs talk
+# through job outputs, and scripts/release-artifact-allowlist.mjs fails CI if a
+# release workflow uploads or downloads anything but build outputs.
+#
+# RERUNS: a rerun of the same commit reuses its draft identity, and each leg
+# asks its own system what already shipped (Fly Machine images, the EAS release
+# branch and channel pointers, the Pages manifest, npm, the GitHub Release).
 #
 # RELEASE POLICY (consent gates):
-# - The default release is OTA-ONLY. Mobile OTA promotion never requires the
-#   emulator device proof or a store submission.
+# - The default release is OTA-ONLY. The OTA goes to every runtime live in the
+#   stores today. A runtime-pin change never fails a release and never adds a
+#   store submission; the new runtime waits for a store release.
 # - Store publishing (store_track != none) happens ONLY on the operator's
-#   explicit dispatch choice. A runtime-pin change is the one case the planner
-#   still treats as store-necessary (a new runtime needs a new store binary).
+#   explicit dispatch choice.
 # - The emulator device proof (run_release_proof=true) is opt-in: it never runs
 #   by default. An OTA promoted without it is recorded as UNPROVEN in the
 #   release record.
@@ -54,7 +65,7 @@ on:
         default: false
         required: false
       allow_pin_restore:
-        description: Consent only - assert a runtime-pin change is a RESTORE to pins whose store binaries already exist, shipping OTA-only without a store submission
+        description: No longer needed - a runtime-pin change never blocks an OTA-only release; kept so older dispatchers still validate
         type: boolean
         default: false
         required: false
@@ -88,28 +99,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      release_sha: ${{ steps.plan.outputs.release_sha }}
-      release_version: ${{ steps.plan.outputs.release_version }}
-      release_id: ${{ steps.plan.outputs.release_id }}
+      release_sha: ${{ steps.identity.outputs.release_sha }}
+      release_version: ${{ steps.identity.outputs.version }}
+      release_id: ${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.release_sha }}
       trigger_epoch: ${{ steps.clock.outputs.trigger_epoch }}
+      release_state: ${{ steps.plan.outputs.release_state }}
+      ota_memory: ${{ steps.plan.outputs.ota_memory }}
+      previous_record: ${{ steps.plan.outputs.previous_record }}
+      no_op: ${{ steps.plan.outputs.no_op }}
       run_server: ${{ steps.plan.outputs.run_server }}
       run_helper: ${{ steps.plan.outputs.run_helper }}
       run_mobile_ota: ${{ steps.plan.outputs.run_mobile_ota }}
       run_mobile_native: ${{ steps.plan.outputs.run_mobile_native }}
       run_desktop: ${{ steps.plan.outputs.run_desktop }}
       run_website: ${{ steps.plan.outputs.run_website }}
-      helper_reuse_run_id: ${{ steps.helper_reuse.outputs.run_id }}
-      previous_mac_run_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.run_id || '' }}
-      previous_mac_release_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.release_id || '' }}
-      stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
-      stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
-      stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
       native_android: ${{ steps.plan.outputs.native_android }}
       native_ios: ${{ steps.plan.outputs.native_ios }}
       native_app_version: ${{ steps.native_version.outputs.version }}
+      release_marker: ${{ steps.store_shipped.outputs.release_marker }}
+      android_shipped: ${{ steps.store_shipped.outputs.android_shipped }}
+      android_version_code: ${{ steps.store_shipped.outputs.android_version_code }}
+      ios_shipped: ${{ steps.store_shipped.outputs.ios_shipped }}
+      ios_build_number: ${{ steps.store_shipped.outputs.ios_build_number }}
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
-      previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
-      next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
       desktop_version: ${{ steps.plan.outputs.desktop_version }}
     steps:
       - uses: actions/checkout@v4
@@ -140,101 +152,54 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
             });
             core.setOutput('trigger_epoch', String(Math.floor(Date.parse(run.data.created_at) / 1000)));
-      - name: Locate the last successful release index
-        id: previous
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-              owner: context.repo.owner, repo: context.repo.repo,
-              name: 'unified-release-index', per_page: 100,
-            });
-            for (const artifact of artifacts
-              .filter((candidate) => !candidate.expired && candidate.workflow_run?.id)
-              .sort((a, b) => b.created_at.localeCompare(a.created_at))) {
-              const run = await github.rest.actions.getWorkflowRun({
-                owner: context.repo.owner, repo: context.repo.repo,
-                run_id: artifact.workflow_run.id,
-              });
-              if (run.data.conclusion === 'success') {
-                core.setOutput('run_id', String(run.data.id));
-                break;
-              }
-            }
-      - name: Download the last successful release index
-        if: steps.previous.outputs.run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: unified-release-index
-          path: ${{ runner.temp }}/previous
-          run-id: ${{ steps.previous.outputs.run_id }}
-          github-token: ${{ github.token }}
-      - name: Locate this identity's latest attempt state
-        if: inputs.release_sha != '' && inputs.release_version != ''
-        id: retry_state
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ inputs.release_version }}-${{ inputs.release_sha }}
-        with:
-          script: |
-            const name = `unified-release-state-${process.env.RELEASE_ID}`;
-            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-            });
-            const artifact = artifacts
-              .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
-              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-            if (artifact) core.setOutput('run_id', String(artifact.workflow_run.id));
-      - name: Download this identity's attempt state
-        if: steps.retry_state.outputs.run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: unified-release-state-${{ inputs.release_version }}-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/retry
-          run-id: ${{ steps.retry_state.outputs.run_id }}
-          github-token: ${{ github.token }}
-      - name: Assign identity and produce the inspectable release plan
-        id: plan
+      # GitHub Releases are the only memory: the newest published release's
+      # release.json is the previous release, and a draft at this commit is an
+      # earlier attempt of this same identity, reused so its legs can see what
+      # already shipped. Drafts at other commits never block a dispatch.
+      - name: Read the previous release and assign this release's identity
+        id: identity
         env:
           REQUESTED_SHA: ${{ inputs.release_sha || '' }}
           REQUESTED_VERSION: ${{ inputs.release_version || '' }}
-          SELECTION: ${{ inputs.selection || 'auto' }}
-          STORE_TRACK: ${{ inputs.store_track || 'none' }}
-          ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           . scripts/gh-release-retry.sh
-          previous="$RUNNER_TEMP/previous/release-attempt.json"
-          [ -f "$previous" ] || previous="$RUNNER_TEMP/previous/unified-release.json"
-          retry="$RUNNER_TEMP/retry/release-attempt.json"
-          release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
-          test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
+          release_sha=$(git rev-parse --verify "${REQUESTED_SHA:-$GITHUB_SHA}^{commit}")
           git merge-base --is-ancestor "$release_sha" origin/main || {
             echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
           }
-          if [ -n "$REQUESTED_VERSION" ]; then
-            release_version="$REQUESTED_VERSION"
-            # Never silently reuse an unrelated old release with this tag.
-            ghr_requested_version_guard "$release_version" "$(git rev-parse --verify "$release_sha^{commit}")"
-          else
-            # Every existing record reserves its version, including a draft
-            # left by a failed or partially shipped attempt. Keep those
-            # records/assets intact; routine dispatch always gets a fresh
-            # identity. Explicit recovery above retains its strict guard.
-            ghr_api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/reserved-release-versions.txt"
-            version_args=(release-version --sha "$release_sha" --reserved-versions "$RUNNER_TEMP/reserved-release-versions.txt")
-            if [ -f "$previous" ]; then version_args+=(--previous "$previous"); fi
-            release_version=$(node scripts/unified-release.mjs "${version_args[@]}")
+          node scripts/release-record.mjs identity --sha "$release_sha" --requested "$REQUESTED_VERSION" \
+            --previous "$RUNNER_TEMP/previous/release.json" > "$RUNNER_TEMP/identity.txt"
+          cat "$RUNNER_TEMP/identity.txt"
+          version=$(sed -n 's/^version=//p' "$RUNNER_TEMP/identity.txt")
+          has_release=$(sed -n 's/^has_release=//p' "$RUNNER_TEMP/identity.txt")
+          if [ "$has_release" != true ]; then
+            # Reserve the identity at once, so a failed attempt's version is
+            # never handed to a different commit.
+            ghr_create "$version" --target "$release_sha" --title "$version" --notes 'Release in progress.' --draft
           fi
-          release_id="${release_version}-${release_sha}"
+          {
+            echo "release_sha=$release_sha"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+      - name: Produce the inspectable release plan
+        id: plan
+        env:
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+          SELECTION: ${{ inputs.selection || 'auto' }}
+          STORE_TRACK: ${{ inputs.store_track || 'none' }}
+        run: |
+          set -euo pipefail
+          previous="$RUNNER_TEMP/previous/release.json"
           if [ -f "$previous" ]; then
             node scripts/unified-release.mjs component-paths \
-              --previous "$previous" --sha "$release_sha" \
+              --previous "$previous" --sha "$RELEASE_SHA" \
               --output "$RUNNER_TEMP/release-component-paths.json" \
               --paths-output "$RUNNER_TEMP/release-paths.txt"
           else
-            git ls-tree -r --name-only "$release_sha" > "$RUNNER_TEMP/release-paths.txt"
+            git ls-tree -r --name-only "$RELEASE_SHA" > "$RUNNER_TEMP/release-paths.txt"
             node - "$RUNNER_TEMP/release-paths.txt" "$RUNNER_TEMP/release-component-paths.json" <<'NODE'
           const fs = require('node:fs');
           const [pathsPath, outputPath] = process.argv.slice(2);
@@ -243,120 +208,71 @@ jobs:
           fs.writeFileSync(outputPath, `${JSON.stringify(Object.fromEntries(components.map((component) => [component, paths])), null, 2)}\n`);
           NODE
           fi
-          args=(plan --version "$release_version" --sha "$release_sha"
+          args=(plan --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
             --paths "$RUNNER_TEMP/release-paths.txt" --component-paths "$RUNNER_TEMP/release-component-paths.json"
-            --selection "$SELECTION"
-            --store-track "$STORE_TRACK" --allow-pin-restore "${ALLOW_PIN_RESTORE:-false}" --state "$RUNNER_TEMP/unified-release.json"
-            --summary "$RUNNER_TEMP/release-plan.json")
+            --selection "$SELECTION" --store-track "$STORE_TRACK"
+            --state "$RUNNER_TEMP/unified-release.json" --summary "$RUNNER_TEMP/release-plan.json"
+            --outputs "$GITHUB_OUTPUT")
           if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
-          if [ -f "$retry" ]; then args+=(--retry "$retry"); fi
           node scripts/unified-release.mjs "${args[@]}"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
-          {
-            echo "release_sha=$release_sha"
-            echo "release_version=$release_version"
-            echo "release_id=$release_id"
-            node -e 'const p=require(process.argv[1]).plan;console.log("runtime_pin_changed="+(p.runtimePinChanged??false)+"\nprevious_runtime_version="+JSON.stringify(p.previousRuntimeVersion??"")+"\nnext_runtime_version="+JSON.stringify(p.nextRuntimeVersion??""))' "$RUNNER_TEMP/unified-release.json"
-            node -e 'console.log("desktop_version="+require(process.argv[1]).components.desktop.desktopVersion)' "$RUNNER_TEMP/unified-release.json"
-            node -e 'const p=require(process.argv[1]).plan;for(const platform of ["android","ios"])console.log("native_"+platform+"="+(p.nativePlatforms??["android","ios"]).includes(platform))' "$RUNNER_TEMP/unified-release.json"
-            for component in server helper mobile-ota mobile-native desktop website; do
-              output="run_${component//-/_}"
-              value=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.retry[process.argv[2]]))' "$RUNNER_TEMP/release-plan.json" "$component")
-              echo "$output=$value"
-              stage=$(node -e 'const p=require(process.argv[1]);process.stdout.write(p.components[process.argv[2]].state)' "$RUNNER_TEMP/unified-release.json" "$component")
-              echo "stage_${component//-/_}=$stage"
-            done
-          } >> "$GITHUB_OUTPUT"
+      # A rerun of this release asks the stores what it already shipped. The
+      # Play release name, the iOS upload's file name and the TestFlight "What
+      # to Test" text carry the release marker, so a shipped platform skips its
+      # build and upload.
+      - name: Mint a Play token to read this release's store builds
+        id: play_read
+        if: >-
+          steps.plan.outputs.run_mobile_native == 'true' && steps.plan.outputs.native_android == 'true' &&
+          inputs.store_track != '' && inputs.store_track != 'none'
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/play-token.mjs
+      - name: Find this release's store builds
+        id: store_shipped
+        if: steps.plan.outputs.run_mobile_native == 'true'
+        env:
+          STORE_TRACK: ${{ inputs.store_track }}
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+          NATIVE_ANDROID: ${{ steps.plan.outputs.native_android }}
+          NATIVE_IOS: ${{ steps.plan.outputs.native_ios }}
+          ACCESS_TOKEN: ${{ steps.play_read.outputs.access_token }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          marker="$RELEASE_VERSION@${RELEASE_SHA:0:12}"
+          echo "release_marker=$marker" >> "$GITHUB_OUTPUT"
+          # Without a store track nothing is uploaded, so nothing can have shipped.
+          if [ -z "$STORE_TRACK" ] || [ "$STORE_TRACK" = none ]; then exit 0; fi
+          args=(find --marker "$marker" --outputs "$GITHUB_OUTPUT")
+          if [ "$NATIVE_ANDROID" = true ]; then args+=(--android); fi
+          if [ "$NATIVE_IOS" = true ]; then args+=(--ios); fi
+          node scripts/store-shipped.mjs "${args[@]}"
       - name: Resolve the shared native store version before building
         id: native_version
         if: steps.plan.outputs.run_mobile_native == 'true'
         env:
           STORE_TRACK: ${{ inputs.store_track }}
-          RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+          SHIPPED_VERSION: ${{ steps.store_shipped.outputs.shipped_version }}
           EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
           EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
           EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
         run: |
           set -euo pipefail
           git show "$RELEASE_SHA:apps/mobile/package.json" > "$RUNNER_TEMP/mobile-package.json"
-          if [ "$STORE_TRACK" = production ]; then
+          if [ -n "$SHIPPED_VERSION" ]; then
+            # A platform already shipped this release: the other one must match it.
+            version="$SHIPPED_VERSION"
+          elif [ "$STORE_TRACK" = production ]; then
             version=$(node scripts/ios-store-build.mjs resolve-version "$RUNNER_TEMP/mobile-package.json")
           else
             version=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/mobile-package.json")
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: unified-release-plan-${{ steps.plan.outputs.release_id }}
-          path: |
-            ${{ runner.temp }}/unified-release.json
-            ${{ runner.temp }}/release-plan.json
-            ${{ runner.temp }}/release-paths.txt
-            ${{ runner.temp }}/release-component-paths.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Find a reusable daemon artifact for this exact release SHA
-        # The ONE reuse decision, and the one place the run holding this
-        # identity's merged bytes is named. A recovery of an already-attempted
-        # release identity still has the earlier attempt's complete, merged
-        # three-platform daemon artifact, so helper_macos (which only exists to
-        # feed that merge) is skipped and the helper leg runs on the reused
-        # bytes; daemon-leg consumes this run id rather than asking again, so
-        # there is one notion of "already built". A fresh identity has no
-        # artifact under this name, so the Mac bundles build. Every failure — a
-        # list error, rate limit, a blip, an expired artifact — resolves to no
-        # run id, which helper_macos reads as "rebuild", so this lookup can
-        # never be what loses a release.
-        if: steps.plan.outputs.run_helper == 'true'
-        id: helper_reuse
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const name = `daemon-artifact-${{ steps.plan.outputs.release_version }}-${{ steps.plan.outputs.release_sha }}`;
-            try {
-              const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-                owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-              });
-              const artifact = artifacts
-                .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
-                .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-              if (artifact) core.setOutput('run_id', String(artifact.workflow_run.id));
-            } catch (error) {
-              core.info(`Daemon artifact lookup failed, building every platform: ${error.message}`);
-            }
-      - name: Find the last successful release's Mac bundles
-        id: previous_mac
-        continue-on-error: true
-        if: steps.plan.outputs.run_helper == 'true' && steps.helper_reuse.outputs.run_id == ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              const fs = require('fs');
-              const path = require('path');
-              const previous = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'previous', 'release-attempt.json')));
-              const helper = previous.components?.helper;
-              if (previous.state !== 'delivered' || !/^v\d+\.\d+\.\d+$/.test(helper?.version ?? '') ||
-                  !/^[0-9a-f]{40}$/.test(helper?.sourceSha ?? '')) return;
-              const releaseId = `${helper.version}-${helper.sourceSha}`;
-              const name = `daemon-artifact-${releaseId}`;
-              const all = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-                owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-              });
-              const candidates = all.filter(a => a.name === name && !a.expired && a.workflow_run?.id);
-              const successful = [];
-              for (const artifact of candidates) {
-                const run = await github.rest.actions.getWorkflowRun({
-                  owner: context.repo.owner, repo: context.repo.repo, run_id: artifact.workflow_run.id,
-                });
-                if (run.data.conclusion === 'success') successful.push(artifact);
-              }
-              if (successful.length !== 1) return;
-              core.setOutput('run_id', String(successful[0].workflow_run.id));
-              core.setOutput('release_id', releaseId);
-            } catch (error) {
-              core.info(`Previous Mac bundle lookup unavailable; building: ${error.message}`);
-            }
 
   server:
     needs: initialize
@@ -366,6 +282,9 @@ jobs:
     concurrency:
       group: deploy-beeline-server
       cancel-in-progress: false
+    outputs:
+      image_ref: ${{ steps.leg.outputs.image_ref }}
+      previous_image_ref: ${{ steps.leg.outputs.previous_image_ref }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -374,6 +293,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: flyctl docker git curl
       - name: Log in to GHCR for the pinned server base image
         uses: docker/login-action@v3
         with:
@@ -391,6 +313,7 @@ jobs:
           npm run build -w @beeline/auth
           npm run build -w @beeline/server
       - uses: ./.github/actions/server-leg
+        id: leg
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           # Unset = the Welcome Workspace is left alone. The release owner arms
@@ -403,26 +326,18 @@ jobs:
         with:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-      - name: Preserve server image rollback ledger
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: server-image-ledger-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/server-release/server-image-ledger.json
-          if-no-files-found: warn
-          retention-days: 90
 
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
-    # Reuse is the only reason to skip this build, so it is the only thing that
-    # does. A helper that still owes merged bytes and holds no usable reuse run
-    # id rebuilds them here.
-    if: needs.initialize.outputs.run_helper == 'true' && needs.initialize.outputs.helper_reuse_run_id == ''
+    if: needs.initialize.outputs.run_helper == 'true'
     runs-on: ${{ matrix.runs_on }}
-    # A matching verified payload or cached agent binaries avoid the cold cargo
-    # build. Every failed lookup, download or verification falls through to it.
+    # An unchanged Mac bundle is carried from the published helper channel;
+    # every failed lookup, download or verification falls through to the cold
+    # build.
     timeout-minutes: 35
+    outputs:
+      shipped: ${{ steps.shipped.outputs.shipped }}
     strategy:
       fail-fast: false
       matrix:
@@ -443,39 +358,59 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Pages is the helper's system of record: a rerun whose release already
+      # serves there builds nothing.
+      - name: Ask Pages whether this helper already shipped
+        id: shipped
+        env:
+          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          shipped=false
+          if manifest=$(curl -fsSL --max-time 15 "$MANIFEST_URL"); then
+            shipped=$(printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(String(m.version===process.env.RELEASE_VERSION&&m.sourceCommit===process.env.RELEASE_SHA))})' || echo false)
+          fi
+          echo "shipped=$shipped" | tee -a "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.shipped.outputs.shipped != 'true'
       - run: bash scripts/npm-ci-timed.sh
+        if: steps.shipped.outputs.shipped != 'true'
       - name: Require the native build architecture
+        if: steps.shipped.outputs.shipped != 'true'
         run: test "$(uname -m)" = "${{ matrix.machine_arch }}"
-      - name: Download the previous Mac bundle when available
+      - name: Download the published helper channel
         id: previous_bundle
-        if: needs.initialize.outputs.previous_mac_run_id != ''
+        if: steps.shipped.outputs.shipped != 'true'
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/github-script@v7
+        env:
+          CHANNEL_DIR: ${{ runner.temp }}/previous-mac-bundle
         with:
-          name: daemon-artifact-${{ needs.initialize.outputs.previous_mac_release_id }}
-          path: ${{ runner.temp }}/previous-mac-bundle
-          run-id: ${{ needs.initialize.outputs.previous_mac_run_id }}
-          github-token: ${{ github.token }}
+          script: |
+            const { downloadPagesChannel } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-channel.mjs`);
+            await downloadPagesChannel({ github, repo: context.repo, directory: process.env.CHANNEL_DIR });
       - name: Carry the verified Mac payload into this release
         id: carry_bundle
-        if: steps.previous_bundle.outcome == 'success'
+        if: steps.shipped.outputs.shipped != 'true' && steps.previous_bundle.outcome == 'success'
         continue-on-error: true
         run: npm run bundle:beeline -- --platform "${{ matrix.platform }}" --carry-forward "$RUNNER_TEMP/previous-mac-bundle"
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
       - uses: ./.github/actions/buzz-agent-cache
-        if: steps.carry_bundle.outcome != 'success'
+        if: steps.shipped.outputs.shipped != 'true' && steps.carry_bundle.outcome != 'success'
         with:
           platform: ${{ matrix.platform }}
       - name: Build and install-verify the native helper
-        if: steps.carry_bundle.outcome != 'success'
+        if: steps.shipped.outputs.shipped != 'true' && steps.carry_bundle.outcome != 'success'
         run: npm run bundle:beeline -- --platform "${{ matrix.platform }}"
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
+      # Build output handed to the helper job in this same run.
       - uses: actions/upload-artifact@v4
+        if: steps.shipped.outputs.shipped != 'true'
         with:
           name: daemon-${{ matrix.platform }}-${{ needs.initialize.outputs.release_id }}
           path: |
@@ -486,15 +421,13 @@ jobs:
             web/dl/beeline-bootstrap.mjs
             web/dl/beeline-bootstrap.mjs.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   helper:
     needs: [initialize, helper_macos]
-    # This leg runs when it holds bytes: freshly rebuilt Mac bundles or a
-    # reused merged artifact. A failed Mac build reads in helper_macos.
     if: >-
       !cancelled() && needs.initialize.outputs.run_helper == 'true' &&
-      (needs.helper_macos.result == 'success' || needs.initialize.outputs.helper_reuse_run_id != '')
+      needs.helper_macos.result == 'success'
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 20
     permissions:
@@ -515,34 +448,34 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: git curl tar
       - uses: dtolnay/rust-toolchain@stable
-        if: needs.initialize.outputs.helper_reuse_run_id == ''
+        if: needs.helper_macos.outputs.shipped != 'true'
       - run: bash scripts/npm-ci-timed.sh
       - uses: ./.github/actions/buzz-agent-cache
-        if: needs.initialize.outputs.helper_reuse_run_id == ''
+        if: needs.helper_macos.outputs.shipped != 'true'
         with:
           platform: linux-x64
-      # The Mac bundles exist in this run only when helper_macos built them, so
-      # they alone gate their own downloads and the merge inputs; daemon-leg's
-      # emptiness check then still names missing Mac inputs.
       - uses: actions/download-artifact@v4
-        if: needs.helper_macos.result == 'success'
+        if: needs.helper_macos.outputs.shipped != 'true'
         with:
           name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-arm64
       - uses: actions/download-artifact@v4
-        if: needs.helper_macos.result == 'success'
+        if: needs.helper_macos.outputs.shipped != 'true'
         with:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64
       - uses: ./.github/actions/daemon-leg
+        if: needs.helper_macos.outputs.shipped != 'true'
         with:
           phase: build
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
-          darwin_arm64_bundle_dir: ${{ needs.helper_macos.result == 'success' && format('{0}/daemon-darwin-arm64', runner.temp) || '' }}
-          darwin_x64_bundle_dir: ${{ needs.helper_macos.result == 'success' && format('{0}/daemon-darwin-x64', runner.temp) || '' }}
+          darwin_arm64_bundle_dir: ${{ format('{0}/daemon-darwin-arm64', runner.temp) }}
+          darwin_x64_bundle_dir: ${{ format('{0}/daemon-darwin-x64', runner.temp) }}
       # The Pages update proof and the CLI package both build from these.
       - name: Build the helper CLI packages
         run: |
@@ -553,11 +486,11 @@ jobs:
           npm run build -w @beeline/body
           npm run build -w usebeeline
       - uses: ./.github/actions/daemon-leg
+        if: needs.helper_macos.outputs.shipped != 'true'
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
           pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - name: Publish the exact helper CLI package
         run: |
@@ -629,13 +562,13 @@ jobs:
       # that older run and cannot be downloaded here. The binary under proof
       # therefore follows whether the native job actually ran and succeeded.
       - name: Download the native AAB under proof
-        if: needs.mobile_native_android.result == 'success'
+        if: needs.mobile_native_android.outputs.built == 'true'
         uses: actions/download-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/proof-binary
       - name: Build the sideload APK under proof (no native build in this run)
-        if: needs.mobile_native_android.result != 'success'
+        if: needs.mobile_native_android.outputs.built != 'true'
         working-directory: apps/mobile
         env:
           ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
@@ -664,7 +597,7 @@ jobs:
           BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
         run: |
           set -euo pipefail
-          if [ "${{ needs.mobile_native_android.result }}" = 'success' ]; then
+          if [ "${{ needs.mobile_native_android.outputs.built }}" = 'true' ]; then
             node apps/mobile/scripts/release-proof.mjs --aab "$RUNNER_TEMP/proof-binary/beeline.aab"
           else
             node apps/mobile/scripts/release-proof.mjs --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
@@ -681,132 +614,95 @@ jobs:
           retention-days: 90
 
 
-  # A recovery whose earlier attempt started production promotion only
-  # recovers that exact promotion (retry_attempt 2); a promotion never started
-  # publishes its exact beta candidate as a first attempt would.
-  # An unchanged runtime pin needs no store binary as its rollback anchor, so
-  # the OTA starts as soon as the plan exists. mobile_ota_after_native below
-  # covers a changed pin or a requested device proof.
+  # The OTA never waits for a store binary: production moves by channel
+  # pointer, so rollback needs no embedded anchor. It waits only for an
+  # explicitly requested device proof (mobile_ota_after_proof below).
   mobile_ota:
     needs: initialize
     if: >-
-      needs.initialize.outputs.run_mobile_ota == 'true' &&
-      needs.initialize.outputs.runtime_pin_changed != 'true' && inputs.run_release_proof != true
+      needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true
     runs-on: [self-hosted, beeline-prod-host]
     env:
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
       EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
       EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
       EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
-      GH_TOKEN: ${{ github.token }}
-    # Export once per platform; store-live coverage shares those exports.
+    # Export once per platform; every live runtime shares those exports.
     timeout-minutes: 18
     outputs:
-      completed_at: ${{ steps.promote.outputs.completed_at }}
-      promote_started: ${{ steps.promote_started.outputs.started }}
+      completed_at: ${{ steps.ota.outputs.completed_at }}
+      ota_branch: ${{ steps.ota.outputs.ota_branch }}
+      ota_targets: ${{ steps.ota.outputs.ota_targets }}
+      store_runtime: ${{ steps.ota.outputs.store_runtime }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: git
       - uses: ./.github/actions/eas-cli
       - uses: ./.github/actions/mobile-ota-leg
+        id: ota
         with:
-          phase: build
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
-      # Set before production changes, so a job that fails mid-promotion still
-      # reports it to release_result.
-      - name: Record that production promotion started
-        id: promote_started
-        run: echo 'started=true' >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/mobile-ota-leg
-        id: promote
-        with:
-          phase: promote
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
-          expo_token: ${{ secrets.EXPO_TOKEN }}
-          owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
-          receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
-          receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+          ota_memory: ${{ needs.initialize.outputs.ota_memory }}
 
-  mobile_ota_after_native:
-    needs: [initialize, mobile_native_android, mobile_native_ios, release_proof]
+  mobile_ota_after_proof:
+    needs: [initialize, release_proof]
     if: >-
       always() && needs.initialize.result == 'success' &&
-      needs.initialize.outputs.run_mobile_ota == 'true' &&
-      (needs.initialize.outputs.runtime_pin_changed == 'true' || inputs.run_release_proof == true) &&
-      (needs.initialize.outputs.runtime_pin_changed != 'true' ||
-      needs.initialize.outputs.stage_mobile_native == 'checked' ||
-      (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
-      (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success'))
+      needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
     runs-on: [self-hosted, beeline-prod-host]
     env:
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
       EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
       EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
       EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
-      GH_TOKEN: ${{ github.token }}
     timeout-minutes: 18
     outputs:
-      completed_at: ${{ steps.promote.outputs.completed_at }}
-      promote_started: ${{ steps.promote_started.outputs.started }}
+      completed_at: ${{ steps.ota.outputs.completed_at }}
+      ota_branch: ${{ steps.ota.outputs.ota_branch }}
+      ota_targets: ${{ steps.ota.outputs.ota_targets }}
+      store_runtime: ${{ steps.ota.outputs.store_runtime }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
-      - uses: ./.github/actions/eas-cli
-      - uses: ./.github/actions/mobile-ota-leg
-        with:
-          phase: build
-          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
-          expo_token: ${{ secrets.EXPO_TOKEN }}
-          # A platform whose store binary was built in this run may treat that
-          # binary's embedded update as the rollback anchor for its new runtime.
-          embedded_anchor_platforms: ${{ format('{0}{1}', needs.mobile_native_android.result == 'success' && 'android,' || '', needs.mobile_native_ios.result == 'success' && 'ios' || '') }}
-      - name: Record that production promotion started
-        id: promote_started
-        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
-        run: echo 'started=true' >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/mobile-ota-leg
-        id: promote
-        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
-        with:
-          phase: promote
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
-          expo_token: ${{ secrets.EXPO_TOKEN }}
-          owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
-          receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
-          receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+      # Nothing is published unless the requested proof passed.
       - name: Refuse promotion unless the release proof succeeded
-        if: inputs.run_release_proof == true && needs.release_proof.result != 'success'
+        if: needs.release_proof.result != 'success'
         run: |
           echo "The emulator release proof did not succeed (result: ${{ needs.release_proof.result }})." >&2
           echo 'A proof that did not run is not a proof: OTA promotion is blocked.' >&2
           echo 'If the proof ran and failed, see the release-proof-<id> artifact for screenshots and logs.' >&2
           echo 'The proof was explicitly requested for this release, so promotion stays blocked.' >&2
           exit 1
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: git
+      - uses: ./.github/actions/eas-cli
+      - uses: ./.github/actions/mobile-ota-leg
+        id: ota
+        with:
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+          ota_memory: ${{ needs.initialize.outputs.ota_memory }}
 
   desktop_installers:
     needs: initialize
@@ -876,6 +772,9 @@ jobs:
     # to the production host on its own when Chad is offline.
     runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
+    outputs:
+      version_code: ${{ steps.play-upload.outputs.version_code || needs.initialize.outputs.android_version_code }}
+      built: ${{ steps.android_build.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -885,6 +784,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: git java unzip sha256sum
       - uses: ./.github/actions/eas-cli
       - name: Require native release credentials
         env:
@@ -898,7 +800,12 @@ jobs:
         run: |
           node scripts/check-release-version.cjs
           node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+      - name: Report an Android build this release already shipped
+        if: needs.initialize.outputs.android_shipped == 'true'
+        run: echo "::notice::Android versionCode ${{ needs.initialize.outputs.android_version_code }} already shipped for ${{ needs.initialize.outputs.release_marker }}; no build or upload"
       - name: Build immutable Android store binary locally
+        id: android_build
+        if: needs.initialize.outputs.android_shipped != 'true'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -931,13 +838,13 @@ jobs:
         env:
           NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
         run: echo "version=$NATIVE_APP_VERSION" >> "$GITHUB_OUTPUT"
-      - name: Preserve Android build evidence
+      - name: Hand the AAB to the release proof in this run
+        if: steps.android_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
-          # The AAB rides along so the release-proof lane can install the exact
-          # store binary (bundletool re-signs it with the sideload key) instead
-          # of rebuilding an APK from source.
+          # The release-proof lane installs the exact store binary (bundletool
+          # re-signs it with the sideload key) instead of rebuilding an APK.
           path: |
             ${{ runner.temp }}/android-build.json
             ${{ runner.temp }}/beeline.aab
@@ -952,7 +859,7 @@ jobs:
         run: node scripts/play-token.mjs
       - name: Upload Android to the selected Play track
         id: play-upload
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && steps.android_build.outcome == 'success'
         env:
           MAPPING_ARCHIVE_DIR: ${{ runner.temp }}/android-mappings
           MAPPING_PATH: ${{ runner.temp }}/mapping.txt
@@ -969,9 +876,11 @@ jobs:
         run: |
           set -euo pipefail
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
-          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
+          # The release marker in the name lets a rerun find this build on Play.
+          AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }} (${{ needs.initialize.outputs.release_marker }})" \
+            RELEASE_STATUS=completed bash scripts/play-publish.sh
       - name: Enforce the Play listing lock before committing the build
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && steps.play-upload.outputs.edit_id != ''
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline
@@ -1001,20 +910,8 @@ jobs:
           if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
             echo "::warning::Could not compare the Play listing; listing was not uploaded"
           fi
-      - name: Record uploaded Android runtime identity
-        if: steps.play-upload.outputs.version_code != ''
-        env:
-          STORE_BUILD_NUMBER: ${{ steps.play-upload.outputs.version_code }}
-        run: node scripts/write-store-runtime.mjs android "$STORE_BUILD_NUMBER" "$RUNNER_TEMP/store-runtime.json"
-      - name: Preserve Android runtime identity
-        if: steps.play-upload.outputs.version_code != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: store-runtime-android-${{ steps.play-upload.outputs.version_code }}
-          path: ${{ runner.temp }}/store-runtime.json
-          retention-days: 90
       - name: Retain R8 mapping by Play version code
-        if: always() && steps.play-upload.outputs.version_code != ''
+        if: always() && steps.play-upload.outputs.version_code != '' && steps.play-upload.outputs.already_shipped != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-mapping-${{ steps.play-upload.outputs.version_code }}
@@ -1034,6 +931,8 @@ jobs:
       needs.initialize.outputs.native_ios == 'true'
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90
+    outputs:
+      build_number: ${{ steps.ios_identity.outputs.build_number }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1084,7 +983,15 @@ jobs:
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+      - name: Reuse the iOS build this release already shipped
+        if: needs.initialize.outputs.ios_shipped == 'true'
+        run: |
+          set -euo pipefail
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
+          node scripts/store-shipped.mjs ios-evidence --marker "${{ needs.initialize.outputs.release_marker }}" --output "$RUNNER_TEMP/ios-build.json"
       - name: Build immutable iOS store binary locally
+        if: needs.initialize.outputs.ios_shipped != 'true'
         working-directory: apps/mobile
         run: |
           set -euo pipefail
@@ -1094,11 +1001,19 @@ jobs:
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           bash ../../scripts/npm-ci-timed.sh
-          "$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
-          test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
-          python3 ../../scripts/ios-build-evidence.py "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-build.json"
+          # The IPA's file name carries the release marker. altool sends it with
+          # the upload, so a rerun finds an accepted upload even if this job dies
+          # before verify marks the build.
+          ipa="$RUNNER_TEMP/$(node ../../scripts/store-shipped.mjs ios-file-name --marker "${{ needs.initialize.outputs.release_marker }}")"
+          echo "IOS_IPA=$ipa" >> "$GITHUB_ENV"
+          "$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output "$ipa"
+          test -s "$ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
+          python3 ../../scripts/ios-build-evidence.py "$ipa" "$RUNNER_TEMP/ios-build.json"
+          # verify writes this marker into the build's What to Test text.
+          node -e 'const fs=require("node:fs");const p=process.argv[1];fs.writeFileSync(p,JSON.stringify({...JSON.parse(fs.readFileSync(p,"utf8")),releaseMarker:process.argv[2]})+"\n")' \
+            "$RUNNER_TEMP/ios-build.json" "${{ needs.initialize.outputs.release_marker }}"
       - name: Submit iOS build to TestFlight for a selected store track
-        if: inputs.store_track != 'none'
+        if: inputs.store_track != 'none' && needs.initialize.outputs.ios_shipped != 'true'
         working-directory: apps/mobile
         run: |
           set -euo pipefail
@@ -1115,7 +1030,7 @@ jobs:
           # same API key; it finds the .p8 under ./private_keys of its working directory.
           mkdir -p "$RUNNER_TEMP/private_keys"
           cp "$EXPO_ASC_API_KEY_PATH" "$RUNNER_TEMP/private_keys/AuthKey_${EXPO_ASC_KEY_ID}.p8"
-          (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$RUNNER_TEMP/beeline-ios.ipa" \
+          (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$IOS_IPA" \
             --apiKey "$EXPO_ASC_KEY_ID" --apiIssuer "$EXPO_ASC_ISSUER_ID" --output-format json) | tee "$RUNNER_TEMP/ios-upload.json"
           # altool success only confirms transport. Processing can still fail
           # (90683 rejected build 87 after a successful upload). Require the
@@ -1128,30 +1043,20 @@ jobs:
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
-      - name: Record uploaded iOS runtime identity
+      - name: Report the uploaded iOS build number to the release record
+        id: ios_identity
+        if: inputs.store_track != 'none'
         run: |
-          build_number=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).buildNumber' "$RUNNER_TEMP/ios-build.json")
-          node scripts/write-store-runtime.mjs ios "$build_number" "$RUNNER_TEMP/store-runtime.json"
-      - name: Preserve iOS runtime identity
-        uses: actions/upload-artifact@v4
-        with:
-          name: store-runtime-ios-${{ github.run_id }}
-          path: ${{ runner.temp }}/store-runtime.json
-          retention-days: 90
-      - name: Preserve iOS build evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-native-ios-build-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/ios-build.json
-          if-no-files-found: error
-          retention-days: 1
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
+          echo "build_number=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).buildNumber' "$RUNNER_TEMP/ios-build.json")" >> "$GITHUB_OUTPUT"
       - name: Remove iOS credentials and build output
         if: always()
         # Also the local EAS build tree (under $TMPDIR, ~4 GB per attempt) and Xcode
         # DerivedData: a cancelled attempt leaves both behind, and five of them filled
         # the Mac runner's disk (run 34860249069: pod install "No space left on device").
         run: |
-          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-upload.json"
+          rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.EXPO_ASC_KEY_ID }}.p8" "$RUNNER_TEMP"/beeline-*.ipa "$RUNNER_TEMP/ios-upload.json"
           rm -rf "$RUNNER_TEMP/private_keys" "${TMPDIR:-/tmp}/eas-build-local-nodejs" ~/Library/Developer/Xcode/DerivedData
           df -h / | tail -1
       - name: Restore the runner user keychains
@@ -1165,11 +1070,11 @@ jobs:
     # !cancelled(), not always(): a run superseded by cancel-in-progress must not
     # classify itself as a failed attempt.
     if: "!cancelled() && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_native, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof]
+    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: write
+      actions: read
       contents: write
       issues: write
     outputs:
@@ -1183,28 +1088,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
-        with:
-          name: unified-release-plan-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/release
       - name: Record each component job's result and classify the attempt
         id: result
         env:
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           NEEDS: ${{ toJSON(needs) }}
+          RELEASE_STATE: ${{ needs.initialize.outputs.release_state }}
+          PREVIOUS_RECORD: ${{ needs.initialize.outputs.previous_record }}
+          NO_OP: ${{ needs.initialize.outputs.no_op }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_ID: ${{ needs.initialize.outputs.release_id }}
         run: |
           set -euo pipefail
-          state="$RUNNER_TEMP/release/unified-release.json"
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/previous"
+          state="$RUNNER_TEMP/release/release.json"
+          printf '%s' "$RELEASE_STATE" > "$state"
           printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+          if [ -n "${PREVIOUS_RECORD:-}" ]; then printf '%s' "$PREVIOUS_RECORD" > "$RUNNER_TEMP/previous/release.json"; fi
           node scripts/unified-release.mjs job-checkpoints --needs "$RUNNER_TEMP/needs.json" \
             --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --release-id "$RELEASE_ID" \
             --output "$RUNNER_TEMP/checkpoints.json"
-          node scripts/unified-release.mjs apply-checkpoints --state "$state" --checkpoints "$RUNNER_TEMP/checkpoints.json" --summary "$RUNNER_TEMP/retry-plan.json"
-          incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
-          no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
+          node scripts/unified-release.mjs apply-checkpoints --state "$state" --checkpoints "$RUNNER_TEMP/checkpoints.json" --summary "$RUNNER_TEMP/run-plan.json"
+          facts=(apply-facts --state "$state" --needs "$RUNNER_TEMP/needs.json" --pins apps/mobile/native-fingerprint.json)
+          if [ -f "$RUNNER_TEMP/previous/release.json" ]; then facts+=(--previous "$RUNNER_TEMP/previous/release.json"); fi
+          node scripts/unified-release.mjs "${facts[@]}"
+          incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.run).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/run-plan.json")
           now=$(date +%s)
           # A release that shipped every selected component is a success,
           # however long it took. Elapsed times are reported, never judged.
@@ -1233,7 +1142,7 @@ jobs:
               echo "outcome=success"
               echo "failure_class="
               echo "incomplete="
-              echo "no_op=$no_op"
+              echo "no_op=$NO_OP"
               echo "slow=$slow"
             } >> "$GITHUB_OUTPUT"
           fi
@@ -1242,14 +1151,7 @@ jobs:
             echo "whole_run_elapsed_seconds=$whole_run_elapsed"
             echo "soft_limit_seconds=$soft_limit_seconds"
           } >> "$GITHUB_OUTPUT"
-          cp "$state" "$RUNNER_TEMP/release-attempt.json"
-      - name: Publish immutable attempt state for manual recovery of this identity
-        if: steps.result.outputs.no_op != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: unified-release-state-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/release-attempt.json
-          retention-days: 90
+      # Installers built by this run's desktop job (same-run build output).
       - name: Download newly built stable desktop installers
         if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
         uses: actions/download-artifact@v4
@@ -1257,61 +1159,19 @@ jobs:
           pattern: beeline-desktop-release-${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}-*
           path: ${{ runner.temp }}/desktop-release
           merge-multiple: true
-      # A desktop-carrying retry (desktop built+checked by an earlier attempt of
-      # this identity, run_desktop=false) must fetch THIS release's installers
-      # from the original attempt's artifacts — not from the previous release.
-      # Runs 34879012393/34879066960 (v0.0.100-82f1cfb1) failed here: the
-      # release-record step read components.desktop.version (= v0.0.100, the
-      # release being created) as the previous version and `gh release download`
-      # answered `release not found`.
-      - name: Locate the desktop installers built by the original attempt
-        id: desktop_retry_artifacts
-        if: >-
-          steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' &&
-          needs.initialize.outputs.run_desktop != 'true' && needs.initialize.outputs.stage_desktop == 'checked'
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}
-        with:
-          script: |
-            const prefix = `beeline-desktop-release-${process.env.RELEASE_ID}`;
-            const candidates = [];
-            for (const label of ['macos-universal', 'linux-x86_64', 'windows-x86_64']) {
-              const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-                owner: context.repo.owner, repo: context.repo.repo, name: `${prefix}-${label}`, per_page: 100,
-              });
-              candidates.push(...artifacts.filter((candidate) => !candidate.expired && candidate.workflow_run?.id));
-            }
-            candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
-            if (candidates.length === 0) core.setFailed(`no ${prefix}-* artifacts remain; the original attempt's desktop installers expired — re-run the desktop leg for this identity`);
-            else core.setOutput('run_id', String(candidates[0].workflow_run.id));
-      - name: Download the desktop installers built by the original attempt
-        if: >-
-          steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true' &&
-          needs.initialize.outputs.run_desktop != 'true' &&
-          needs.initialize.outputs.stage_desktop == 'checked' &&
-          steps.desktop_retry_artifacts.outputs.run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          pattern: beeline-desktop-release-${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}-*
-          path: ${{ runner.temp }}/desktop-release
-          merge-multiple: true
-          run-id: ${{ steps.desktop_retry_artifacts.outputs.run_id }}
-          github-token: ${{ github.token }}
       - name: Preserve the previous updater manifest for publication rollback
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
-          STAGE_DESKTOP: ${{ needs.initialize.outputs.stage_desktop }}
         run: |
-          state="$RUNNER_TEMP/release-attempt.json"
+          state="$RUNNER_TEMP/release/release.json"
           # The last known-good desktop manifest is the one carried by the
           # release this one supersedes — unless desktop is carried forward,
           # in which case only the release that last BUILT desktop
           # (components.desktop.version) is guaranteed to have it.
-          if [ "$RUN_DESKTOP" = true ] || [ "$STAGE_DESKTOP" = checked ]; then
+          if [ "$RUN_DESKTOP" = true ]; then
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).supersedes?.version ?? "")' "$state")
           else
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
@@ -1321,9 +1181,7 @@ jobs:
             gh release download "$previous_version" --pattern 'Beeline-latest.json' --dir "$RUNNER_TEMP/desktop-rollback"
           fi
       - name: Build the signed desktop update manifest
-        if: >-
-          steps.result.outputs.outcome == 'success' &&
-          (needs.initialize.outputs.run_desktop == 'true' || needs.initialize.outputs.stage_desktop == 'checked')
+        if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
         env:
           DESKTOP_VERSION: ${{ needs.initialize.outputs.desktop_version }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
@@ -1335,30 +1193,38 @@ jobs:
             --tag "$RELEASE_VERSION" \
             --repository "$GITHUB_REPOSITORY" \
             --output "$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
-      - name: Create the one GitHub release record and preserve stable desktop downloads
+      - name: Finalize the release record
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        env:
+          RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
+        run: |
+          state="$RUNNER_TEMP/release/release.json"
+          args=(--state "$state" --outcome success)
+          if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
+            args+=(--unproven "mobile OTA promoted without a device proof; proof is opt-in and was not requested")
+          fi
+          node scripts/unified-release.mjs finalize "${args[@]}"
+          node -e 'const fs=require("node:fs");const p=process.argv[1];const r=JSON.parse(fs.readFileSync(p,"utf8"));r.runId=Number(process.env.GITHUB_RUN_ID);fs.writeFileSync(p,JSON.stringify(r,null,2)+"\n")' "$state"
+      - name: Publish the one GitHub release record with its release.json and stable desktop downloads
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
-          STAGE_DESKTOP: ${{ needs.initialize.outputs.stage_desktop }}
           RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
         run: |
           set -euo pipefail
           # Every release-mutating gh call below goes through bounded-retry,
           # asset-verified wrappers (run 35268976983: a transient GitHub-side
           # HTTP 500 on `gh release upload` failed an otherwise finished
-          # release). They fail only when every attempt fails, so the
-          # manifest-commit-point/rollback-trap semantics are unchanged.
+          # release).
           . scripts/gh-release-retry.sh
-          state="$RUNNER_TEMP/release-attempt.json"
+          state="$RUNNER_TEMP/release/release.json"
           mkdir -p "$RUNNER_TEMP/desktop-release"
-          # Only a CARRIED desktop downloads the previous release's installers.
-          # A desktop already checked by an earlier attempt of this identity
-          # carries components.desktop.version = THIS release, and its
-          # installers were fetched from the original attempt's artifacts above.
-          if [ "$RUN_DESKTOP" != true ] && [ "$STAGE_DESKTOP" != checked ]; then
+          # A carried desktop re-attaches the installers of the release that
+          # built them; every release therefore holds the current installers.
+          if [ "$RUN_DESKTOP" != true ]; then
             previous_version=$(node -e 'process.stdout.write(require(process.argv[1]).components.desktop.version)' "$state")
             gh release download "$previous_version" --pattern 'Beeline-*' --dir "$RUNNER_TEMP/desktop-release"
             if [ ! -f "$RUNNER_TEMP/desktop-rollback/Beeline-latest.json" ] && [ -f "$RUNNER_TEMP/desktop-release/Beeline-latest.json" ]; then
@@ -1373,7 +1239,7 @@ jobs:
           if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
             echo '- Promoted without a device proof: proof is opt-in and was not requested for this release (release recorded UNPROVEN).' >> "$notes"
           fi
-          if [ "$RUN_DESKTOP" = true ] || [ "$STAGE_DESKTOP" = checked ]; then
+          if [ "$RUN_DESKTOP" = true ]; then
             manifest="$RUNNER_TEMP/desktop-manifest/Beeline-latest.json"
           else
             manifest="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
@@ -1381,14 +1247,16 @@ jobs:
           test -f "$manifest" || { echo 'desktop updater manifest is missing' >&2; exit 1; }
           mapfile -t assets < <(find "$RUNNER_TEMP/desktop-release" -maxdepth 1 -type f -name 'Beeline-*' ! -name 'Beeline-latest.json' | sort)
           previous="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
-          # A recovery reuses the draft its earlier attempt created and first
-          # restores the last known-good manifest; the new manifest remains the
-          # final commit point.
+          # initialize reserved this identity as a draft; create it only if
+          # that draft is gone.
           if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
             ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes 'Release in progress.' --draft
           fi
           [ ! -f "$previous" ] || ghr_upload_verified "$RELEASE_VERSION" "$previous"
           [ "${#assets[@]}" -eq 0 ] || ghr_upload_verified "$RELEASE_VERSION" "${assets[@]}"
+          # The memory the next release and every rollback read. Written
+          # before publication, so a published release always carries it.
+          ghr_upload_verified "$RELEASE_VERSION" "$state"
           rollback_manifest() {
             if [ -f "$previous" ]; then
               ghr_upload_verified "$RELEASE_VERSION" "$previous#Beeline-latest.json" || true
@@ -1419,6 +1287,17 @@ jobs:
           [ "$verified" = true ] || { echo 'desktop updater manifest did not converge' >&2; exit 1; }
           manifest_committed=true
           trap - EXIT
+      - name: Remove drafts this release supersedes
+        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          for draft in $(node scripts/release-record.mjs stale-drafts --version "$RELEASE_VERSION"); do
+            echo "Deleting abandoned draft $draft"
+            gh release delete "$draft" --yes || true
+          done
       - name: Set explicitly requested store minimums after successful delivery
         if: steps.result.outputs.outcome == 'success' && inputs.mobile_store_minimum != ''
         env:
@@ -1439,24 +1318,6 @@ jobs:
           --sha "$RELEASE_SHA"
           --repository "$GITHUB_REPOSITORY"
           --output "$RUNNER_TEMP/release-notification.json"
-      - name: Finalize successful delivery after every selected promotion and record
-        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
-        env:
-          RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
-        run: |
-          args=(--state "$RUNNER_TEMP/release-attempt.json" --outcome success)
-          if [ "$RELEASE_PROOF_UNPROVEN" = true ]; then
-            args+=(--unproven "mobile OTA promoted without a device proof; proof is opt-in and was not requested")
-          fi
-          node scripts/unified-release.mjs finalize "${args[@]}"
-      - name: Publish the one successful release index
-        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: unified-release-index
-          path: ${{ runner.temp }}/release-attempt.json
-          overwrite: true
-          retention-days: 90
       - name: Surface release outcome and duration
         env:
           OUTCOME: ${{ steps.result.outputs.outcome }}
@@ -1476,15 +1337,18 @@ jobs:
           NOTIFICATION_STATE: ${{ (steps.result.outputs.no_op == 'true' && 'not-needed') || steps.notification.outputs.state || (steps.notification.outcome == 'failure' && 'warning') || 'not-attempted' }}
           NOTIFICATION_DETAIL: ${{ (steps.result.outputs.no_op == 'true' && 'no component inputs changed') || steps.notification.outputs.detail || (steps.notification.outcome == 'failure' && 'notification step failed unexpectedly') || 'release result was not successful' }}
         run: |
-          node - "$RUNNER_TEMP/release-attempt.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+          node - "$RUNNER_TEMP/release/release.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
           const fs = require('node:fs');
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
-          console.log(`- Duration: ${release.delivery.durationSeconds}s`);
+          if (release.delivery.durationSeconds !== undefined) console.log(`- Duration: ${release.delivery.durationSeconds}s`);
           console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s`);
           if (process.env.SLOW === 'true') console.log(`- Slow: whole run reached ${process.env.WHOLE_RUN_ELAPSED_SECONDS}s (soft limit ${process.env.SOFT_LIMIT_SECONDS}s); release record still published.`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
+          const ota = release.components['mobile-ota'];
+          if (ota?.otaBranch) console.log(`- Phone OTA: production -> ${ota.otaBranch} (${(ota.otaTargets ?? []).join(', ') || 'targets carried'}); rollback -> ${ota.previousOtaBranch ?? 'none recorded'}`);
+          if (release.components.server?.imageRef) console.log(`- Server: ${release.components.server.imageRef}; rollback -> ${release.components.server.previousImageRef ?? 'none recorded'}`);
           const signingSecrets = [
             'MACOS_APPLE_CERTIFICATE',
             'MACOS_APPLE_CERTIFICATE_PASSWORD',
@@ -1500,8 +1364,48 @@ jobs:
           console.log(`- Notification: ${process.env.NOTIFICATION_STATE} (${process.env.NOTIFICATION_DETAIL})`);
           if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);
           NODE
-      - name: Fail the attempt after preserving its classified record
+      - name: Fail the attempt after reporting it
         if: steps.result.outputs.outcome != 'success'
         run: |
           echo "Release failed (${{ steps.result.outputs.failure_class }}): ${{ steps.result.outputs.incomplete }}" >&2
+          echo 'Rerun the release: the same commit resumes its draft identity and every leg skips what already shipped.' >&2
           exit 1
+
+  # Delivery bookkeeping (merges delivered, OTA runtimes, owner phone receipt,
+  # job timings) goes to the Loops/insights data store. Nothing in the release
+  # reads it back, and continue-on-error keeps any failure here out of the
+  # release result.
+  bookkeeping:
+    needs: [initialize, mobile_ota, mobile_ota_after_proof, release_result]
+    if: "!cancelled() && needs.initialize.result == 'success'"
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Write release bookkeeping to the insights data store
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          PREVIOUS_RECORD: ${{ needs.initialize.outputs.previous_record }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
+          GH_TOKEN: ${{ github.token }}
+          INSIGHTS_TOKEN: ${{ secrets.BEELINE_INSIGHTS_TOKEN }}
+          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+        run: |
+          printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+          printf '%s' "$PREVIOUS_RECORD" > "$RUNNER_TEMP/previous-release.json"
+          NEEDS_FILE="$RUNNER_TEMP/needs.json" PREVIOUS_RECORD_FILE="$RUNNER_TEMP/previous-release.json" \
+            node scripts/release-bookkeeping.mjs

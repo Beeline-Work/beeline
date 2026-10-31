@@ -3,6 +3,13 @@
 # once, and canaries the exact release SHA across the two Fly Machines. The
 # caller checks out the release SHA, installs the migration CLI, and owns
 # runner, timeout, and concurrency.
+#
+# Fly is the only memory: a rerun whose Machines already all run this release's
+# image does nothing, and a fleet left split by an interrupted release is
+# finished on the new image instead of refused. Each updated Machine records
+# the image it replaced in its Fly metadata. The image and the image it
+# replaced leave through step outputs; the release record keeps the previous
+# published release's image as the rollback target.
 name: Server release leg
 description: Build the exact server image once and deploy it to Fly.io behind a canary
 
@@ -12,19 +19,59 @@ inputs:
   release_version:
     required: true
 
+outputs:
+  image_ref:
+    description: The image every Machine runs after this leg
+    value: ${{ steps.fleet.outputs.image_ref }}
+  previous_image_ref:
+    description: The image the fleet ran before this leg (on a rerun, read from the Machines' metadata; empty if unknown)
+    value: ${{ steps.fleet.outputs.previous_image_ref }}
+
 runs:
   using: composite
   steps:
     - name: Verify Fly.io deployment authority
       shell: bash
       run: flyctl auth whoami
-    - name: Build the exact Fly image and capture the two-Machine rollback plan
+    - name: Ask Fly whether this release already runs
+      id: fleet
       shell: bash
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
         mkdir -p "$RUNNER_TEMP/server-release"
         flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/machines-before.json"
+        image_ref="registry.fly.io/beeline-server:${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
+        node - "$RUNNER_TEMP/server-release/machines-before.json" "$image_ref" >> "$GITHUB_OUTPUT" <<'NODE'
+        const [file, image] = process.argv.slice(2);
+        const machines = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
+        const tag = (ref) => String(ref ?? '').replace(/@sha256:[0-9a-f]+$/, '');
+        const images = machines.map((m) => tag(m.config?.image ?? m.imageRef));
+        for (const [i, m] of machines.entries()) console.error(`${m.id}: ${images[i]}`);
+        const live = images.length > 0 && images.every((ref) => ref === image);
+        const others = [...new Set(images.filter((ref) => ref !== image))];
+        // A Machine this release already updated names, in its Fly metadata,
+        // the image it replaced; a rerun reads it there.
+        const replaced = [...new Set(machines.filter((m, i) => images[i] === image)
+          .map((m) => tag(m.config?.metadata?.beeline_replaced_image)).filter((ref) => ref && ref !== image))];
+        console.log(`image_ref=${image}`);
+        console.log(`shipped=${live}`);
+        // Only an unsplit fleet names one previous image.
+        const previous = others.length === 1 ? others : others.length === 0 ? replaced : [];
+        console.log(`previous_image_ref=${previous.length === 1 ? previous[0] : ''}`);
+        NODE
+      env:
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        RELEASE_VERSION: ${{ inputs.release_version }}
+    - name: This release already runs on every Machine
+      if: steps.fleet.outputs.shipped == 'true'
+      shell: bash
+      run: echo "Every beeline-server Machine already runs ${{ steps.fleet.outputs.image_ref }}; nothing to deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+    - name: Build the exact Fly image and capture the two-Machine rollback plan
+      if: steps.fleet.outputs.shipped != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
         image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
         image_ref="registry.fly.io/beeline-server:$image_label"
         build_started=$SECONDS
@@ -40,16 +87,13 @@ runs:
         node scripts/unified-release.mjs server-deploy-plan \
           --machines "$RUNNER_TEMP/server-release/machines-before.json" \
           --image "$image_ref" --output "$RUNNER_TEMP/server-release/server-deploy-plan.json"
-        node scripts/unified-release.mjs server-ledger \
-          --plan "$RUNNER_TEMP/server-release/server-deploy-plan.json" \
-          --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
-          --output "$RUNNER_TEMP/server-release/server-image-ledger.json"
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
 
     - name: Run schema migrations and backfills once before Machine updates
       id: migrate
+      if: steps.fleet.outputs.shipped != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -82,11 +126,11 @@ runs:
         npm run migrate -w @beeline/server
 
     - name: Canary one Machine for ninety seconds, then update its peer
+      if: steps.fleet.outputs.shipped != 'true'
       shell: bash
       run: |
         set -euo pipefail
         plan="$RUNNER_TEMP/server-release/server-deploy-plan.json"
-        ledger="$RUNNER_TEMP/server-release/server-image-ledger.json"
         read_plan() { node -e 'const p=require(process.argv[1]);process.stdout.write(String(p[process.argv[2]]))' "$plan" "$1"; }
         canary="$(read_plan canaryMachineId)"
         second="$(read_plan secondMachineId)"
@@ -99,13 +143,19 @@ runs:
 
         # One retry covers a transient Fly API failure.
         retry_flyctl_update() {
-          local machine="$1" image="$2" desc="$3"
-          if flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1; then
+          local machine="$1" image="$2" desc="$3" replaced="${4:-}"
+          local metadata=()
+          # A forward update records the image it replaces on the Machine, so a
+          # rerun that finds this release live still knows what came before.
+          if [ -n "$replaced" ] && [ "${replaced%@sha256:*}" != "${image%@sha256:*}" ]; then
+            metadata=(--metadata "beeline_replaced_image=${replaced%@sha256:*}")
+          fi
+          if flyctl machine update "$machine" --app beeline-server --image "$image" "${metadata[@]}" --wait-timeout 300 --yes 2>&1; then
             return 0
           fi
           echo "retry_flyctl_update($desc): first attempt failed, retrying in 10s" >&2
           sleep 10
-          flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1
+          flyctl machine update "$machine" --app beeline-server --image "$image" "${metadata[@]}" --wait-timeout 300 --yes 2>&1
         }
 
         # Report whether every Fly Machine runs its expected image.
@@ -141,8 +191,6 @@ runs:
             else
               echo "CRITICAL: rollback left the fleet on unexpected images; run server-rollback.yml" >&2
             fi
-            node scripts/unified-release.mjs server-ledger --plan "$plan" \
-              --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state rolled-back --output "$ledger"
           fi
           exit "$status"
         }
@@ -192,7 +240,7 @@ runs:
           echo "::warning::Server fleet is split ($previous_ref, $second_previous_ref); converging both Machines on $image_ref"
         fi
         canary_updated=1
-        retry_flyctl_update "$canary" "$image_ref" "canary"
+        retry_flyctl_update "$canary" "$image_ref" "canary" "$previous_ref"
         wait_for_machine_ready "$canary"
 
         if [ -n "${SERVER_CANARY_REVIEW_SECRET:-}" ]; then
@@ -283,12 +331,10 @@ runs:
 
         node scripts/unified-release.mjs server-canary-promotion --samples "$canary_samples"
         second_update_attempted=1
-        retry_flyctl_update "$second" "$image_ref" "second"
+        retry_flyctl_update "$second" "$image_ref" "second" "$second_previous_ref"
         wait_for_machine_ready "$second"
         fleet_updated=1
         trap - ERR
-        node scripts/unified-release.mjs server-ledger --plan "$plan" \
-          --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state deployed --output "$ledger"
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}

@@ -104,6 +104,7 @@ import {
   displayRoomMessages,
   mergeDisplayPages,
   roomViewTranscriptMessages,
+  type AgentPresentation,
   type ChatDisplayMessage,
   memberAgent,
   workspaceRailItem,
@@ -118,7 +119,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
-import { cancelScheduledAnimationFrame, scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { cancelScheduledAnimationFrame, scheduleAnimationFrame, yieldToNextPaint } from '@/buzz/host-scheduler';
 import {
   activeChannelAtCursor,
   channelSuggestionCandidates,
@@ -310,7 +311,7 @@ import {
 } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
-import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import { archiveActionPresentation, liveCardPresentation, messageRosterPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
@@ -547,6 +548,39 @@ const HEADER_MARK_SIZE = 28;
  */
 const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> =>
   new Set(agentByPubkey.keys());
+
+/** The agent object this row paints. Presentation fields win over the map. */
+function rosterAgent(
+  pubkey: string | undefined,
+  presentation: Pick<
+    RoomMessagePresentation,
+    'agentPubkey' | 'agentName' | 'agentAvatar' | 'agentFace' | 'agentHandle'
+  >,
+  agents: ReadonlyMap<string, AgentPresentation>,
+): AgentPresentation | undefined {
+  if (!pubkey) return undefined;
+  const fromMap = agents.get(pubkey);
+  if (presentation.agentPubkey !== pubkey) return fromMap;
+  if (
+    presentation.agentName === undefined &&
+    presentation.agentAvatar === undefined &&
+    presentation.agentFace === undefined &&
+    presentation.agentHandle === undefined
+  ) {
+    return fromMap;
+  }
+  const avatar = presentation.agentAvatar ?? fromMap?.avatar;
+  const face = presentation.agentFace ?? fromMap?.face;
+  const handle = presentation.agentHandle ?? fromMap?.handle;
+  return {
+    pubkey,
+    displayName: presentation.agentName ?? fromMap?.displayName ?? '',
+    ...(avatar ? { avatar } : {}),
+    ...(face ? { face } : {}),
+    ...(handle ? { handle } : {}),
+    ...(fromMap?.soulProfile ? { soulProfile: fromMap.soulProfile } : {}),
+  };
+}
 
 function durableFactLine(message: ChatDisplayMessage): string {
   const turn = buildTurnActivity(message.activity ?? []);
@@ -1306,6 +1340,16 @@ export function BuzzChatSurface({
     previous.corners.length === next.corners.length &&
     previous.rooms.every((room, index) => shallowEqualRecord(room, next.rooms[index]!)) &&
     previous.corners.every((corner, index) => shallowEqualRecord(corner, next.corners[index]!)),
+  );
+  const channelReferenceKey = useMemo(
+    () =>
+      [
+        ...channelReferenceIndex.rooms.map((room) => `${room.channelId}\0${room.name}`),
+        ...channelReferenceIndex.corners.map(
+          (corner) => `${corner.channelId}\0${corner.parentChannelId}\0${corner.name}`,
+        ),
+      ].join('\n'),
+    [channelReferenceIndex],
   );
   const desktopWorkPanePrimary: DesktopWorkPanePrimary = isDirectMessage
     ? 'direct-message'
@@ -2069,6 +2113,14 @@ export function BuzzChatSurface({
       ),
     [roomMembers],
   );
+  const speakerRoleByPubkey = useMemo(() => {
+    const roles = new Map<string, string>();
+    for (const member of roomMembers) {
+      const role = normalizedRoomRole(member);
+      if (role) roles.set(member.pubkey, role);
+    }
+    return roles;
+  }, [roomMembers]);
   const mentionableAgents = useMemo(
     () =>
       activeMentionCandidates(
@@ -4058,6 +4110,10 @@ export function BuzzChatSurface({
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
         }]);
         landAtOwnSend(provisionalId);
+        // Signing, the outbox write and the send request wait until this row
+        // has a frame. They used to occupy the JS thread first, so the row
+        // painted after the request had already left.
+        await yieldToNextPaint();
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       let preparedTransport: BuzzRigTransport | undefined;
@@ -5652,15 +5708,75 @@ export function BuzzChatSurface({
         speakerWorking: rowSpeakerWorking = false,
         cornerProposalAnswer,
         cornerProposalAction: rowCornerProposalAction,
+        roomArchived: rowRoomArchived,
+        cornerSwipeEnabled: rowCornerSwipeEnabled,
+        cornerProposalEnabled: rowCornerProposalEnabled,
+        permissionActionId: rowPermissionActionId,
+        grantActionId: rowGrantActionId,
+        choiceActionId: rowChoiceActionId,
+        connectorOfferActionId: rowConnectorOfferActionId,
+        appSignInActionId: rowAppSignInActionId,
+        targetBranchActionId: rowTargetBranchActionId,
+        targetBranchNotice: rowTargetBranchNotice,
+        targetBranch: rowTargetBranch,
+        canManageWorkspace: rowCanManage,
+        viewerIsAgent: rowViewerIsAgent,
+        participantsHydrated: rowParticipantsHydrated,
+        personName: rowPersonName,
+        personAvatar: rowPersonAvatar,
+        personFace: rowPersonFace,
+        agentPubkey: rowAgentPubkey,
+        agentName: rowAgentName,
+        agentAvatar: rowAgentAvatar,
+        agentFace: rowAgentFace,
+        agentHandle: rowAgentHandle,
+        agentModel: rowAgentModel,
       }: RoomMessageRenderContext,
     ) => {
+      // Props win over the closed-over renderer. The cell only re-renders a row
+      // whose live inputs changed, and this paint must use those inputs.
+      // Roster fields that cross the memo boundary: participantsHydrated,
+      // person name/avatar/face/handle, agent pubkey/name/avatar/face/handle,
+      // agent model (byline role), speakerRole (room role), mentionHandles,
+      // reply author name/handle, and channelReferenceKey. Archive fields:
+      // roomArchived, cornerSwipeEnabled, and cornerProposalEnabled. The
+      // closure still supplies handlers, layout flags, viewer pubkey, room
+      // name, and the full handle list; mentionHandles is what makes a row
+      // read that list again.
+      const rowViewer = rowViewerIsAgent !== undefined ? rowViewerIsAgent : viewerIsAgent;
+      const rowManage = rowCanManage !== undefined ? rowCanManage : canManageWorkspace;
+      const rowPermission = rowPermissionActionId !== undefined ? rowPermissionActionId : permissionActionId;
+      const rowGrant = rowGrantActionId !== undefined ? rowGrantActionId : grantActionId;
+      const rowChoice = rowChoiceActionId !== undefined ? rowChoiceActionId : choiceActionId;
+      const rowConnector = rowConnectorOfferActionId !== undefined ? rowConnectorOfferActionId : connectorOfferActionId;
+      const rowAppSignIn = rowAppSignInActionId !== undefined ? rowAppSignInActionId : appSignInActionId;
+      const rowBranchAction = rowTargetBranchActionId !== undefined ? rowTargetBranchActionId : targetBranchActionId;
+      const rowBranch = rowTargetBranch !== undefined ? rowTargetBranch : roomRepository?.targetBranch;
+      const rosterFromProps = rowParticipantsHydrated !== undefined;
+      const rowHydrated = rosterFromProps ? rowParticipantsHydrated : participantsHydrated;
+      const profileName = rosterFromProps
+        ? rowPersonName
+        : (item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined);
+      const profileAvatar = rosterFromProps ? rowPersonAvatar : undefined;
+      const profileFace = rosterFromProps ? rowPersonFace : undefined;
+      const modelForRow = rosterFromProps
+        ? rowAgentModel
+        : (item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined);
+      const agentFor = (pubkey: string | undefined) =>
+        rosterAgent(pubkey, {
+          agentPubkey: rowAgentPubkey,
+          agentName: rowAgentName,
+          agentAvatar: rowAgentAvatar,
+          agentFace: rowAgentFace,
+          agentHandle: rowAgentHandle,
+        }, agentByPubkey);
       // An agent's order or report is ordinary transcript: the recipient leads
       // the text as an @mention and the row keeps its own author's byline.
       item = agentCommandTranscriptMessage(item, roomParticipants);
       if (item.vaultSave) {
         return <VaultSaveCard card={item.vaultSave} cardId={item.id} roomId={decodedId}
           stamp={ledgerStamp(item.timestamp)}
-          viewerId={cacheViewerPubkey} agentName={agentByPubkey.get(item.vaultSave.agentId)?.displayName ?? 'Agent'} />;
+          viewerId={cacheViewerPubkey} agentName={agentFor(item.vaultSave.agentId)?.displayName ?? 'Agent'} />;
       }
       if (item.roomUpdate) {
         return (
@@ -5678,12 +5794,12 @@ export function BuzzChatSurface({
           <WritePermissionCard
             message={item}
             roomName={roomName}
-            agent={agentByPubkey.get(item.writePermission.agentPubkey)}
-            viewerIsAgent={viewerIsAgent}
+            agent={agentFor(item.writePermission.agentPubkey)}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            viewerCanManage={canManageWorkspace}
-            actionId={permissionActionId}
-            targetBranch={roomRepository?.targetBranch}
+            viewerCanManage={rowManage}
+            actionId={rowPermission}
+            targetBranch={rowBranch}
             onDecision={rowActions.handleWritePermission}
             onOpenCorner={openCorner}
           />
@@ -5694,11 +5810,11 @@ export function BuzzChatSurface({
         return (
           <GrantRequestCard
             message={item}
-            agent={agentByPubkey.get(item.grantRequest.agent.pubkey)}
-            viewerIsAgent={viewerIsAgent}
+            agent={agentFor(item.grantRequest.agent.pubkey)}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            viewerCanManageWorkspace={canManageWorkspace}
-            actionId={grantActionId}
+            viewerCanManageWorkspace={rowManage}
+            actionId={rowGrant}
             onDecision={handleGrantDecision}
             onOpenSource={(roomId, messageId) =>
               router.navigate(messageJumpHref(roomId, messageId, `squire-grant:${item.id}`))
@@ -5710,7 +5826,7 @@ export function BuzzChatSurface({
         return (
           <SquireApprovalCard
             message={item}
-            agent={agentByPubkey.get(item.squireApproval.agent.pubkey)}
+            agent={agentFor(item.squireApproval.agent.pubkey)}
             viewerPubkey={cacheViewerPubkey}
             onOpenSource={(roomId, messageId) =>
               router.navigate(messageJumpHref(roomId, messageId, `squire-approval:${item.id}`))
@@ -5731,10 +5847,10 @@ export function BuzzChatSurface({
         return (
           <ChoiceCard
             message={item}
-            agent={agentByPubkey.get(item.choice.agent.pubkey)}
-            viewerIsAgent={viewerIsAgent}
+            agent={agentFor(item.choice.agent.pubkey)}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            actionId={choiceActionId}
+            actionId={rowChoice}
             onAnswer={handleChoiceAnswer}
             onSkip={handleChoiceSkip}
           />
@@ -5745,16 +5861,16 @@ export function BuzzChatSurface({
         const card = item.appSignIn;
         const agentName = resolveAgentDisplayIdentity(
           card.agentId,
-          agentByPubkey.get(card.agentId),
+          agentFor(card.agentId),
         ).name;
         return (
           <AppSignInCard
             message={item}
             agentName={agentName}
-            canConnect={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
-            busy={appSignInActionId === card.appId}
+            canConnect={!rowViewer && cacheViewerPubkey === card.ownerId}
+            busy={rowAppSignIn === card.appId}
             onConnect={() => {
-              if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
+              if (rowAppSignIn || rowViewer || cacheViewerPubkey !== card.ownerId) return;
               setAppSignInActionId(card.appId);
               void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
                 .then((result) =>
@@ -5777,13 +5893,13 @@ export function BuzzChatSurface({
         const card = item.agentSignIn;
         const agentName = resolveAgentDisplayIdentity(
           card.agentId,
-          agentByPubkey.get(card.agentId),
+          agentFor(card.agentId),
         ).name;
         return (
           <AgentSignInCard
             card={card}
             agentName={agentName}
-            isOwner={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+            isOwner={!rowViewer && cacheViewerPubkey === card.ownerId}
             onSubmit={async (code) => {
               try {
                 await monolithPhoneOperation('completeAgentSignIn', {
@@ -5803,14 +5919,14 @@ export function BuzzChatSurface({
         return (
           <ConnectorOfferCard
             message={item}
-            agent={agentByPubkey.get(item.connectorOffer.agent.pubkey)}
-            viewerIsAgent={viewerIsAgent}
+            agent={agentFor(item.connectorOffer.agent.pubkey)}
+            viewerIsAgent={rowViewer}
             viewerPubkey={cacheViewerPubkey}
-            viewerCanManage={canManageWorkspace}
-            actionId={connectorOfferActionId}
+            viewerCanManage={rowManage}
+            actionId={rowConnector}
             onAccept={handleAcceptConnectorOffer}
             onDecline={async offerId => {
-              if (connectorOfferActionId) return;
+              if (rowConnector) return;
               setConnectorOfferActionId(offerId);
               try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
               catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
@@ -5842,27 +5958,25 @@ export function BuzzChatSurface({
 
       if (item.targetBranchProposal) {
         const notice =
-          targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
-            ? targetBranchNotice.text
-            : null;
+          rowTargetBranchNotice !== undefined
+            ? rowTargetBranchNotice
+            : targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
+              ? targetBranchNotice.text
+              : null;
         return (
           <TargetBranchProposalCard
             message={item}
             roomName={roomName}
-            agent={
-              item.targetBranchProposal.agentPubkey
-                ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
-                : undefined
-            }
-            currentTargetBranch={roomRepository?.targetBranch}
-            canManageWorkspace={canManageWorkspace}
-            viewerIsAgent={viewerIsAgent}
-            actionId={targetBranchActionId}
+            agent={agentFor(item.targetBranchProposal.agentPubkey)}
+            currentTargetBranch={rowBranch}
+            canManageWorkspace={rowManage}
+            viewerIsAgent={rowViewer}
+            actionId={rowBranchAction}
             notice={notice}
             onConfirm={rowActions.handleConfirmTargetBranch}
             viewerPubkey={cacheViewerPubkey}
             onDeny={async () => {
-              if (targetBranchActionId) return;
+              if (rowBranchAction) return;
               setTargetBranchActionId(item.targetBranchProposal!.proposalId);
               try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
               catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
@@ -5935,8 +6049,8 @@ export function BuzzChatSurface({
         );
       }
 
-      const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
+      const knownAgent = agentFor(item.pubkey);
+      const personName = profileName;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
@@ -5946,12 +6060,14 @@ export function BuzzChatSurface({
           firstBylineOfDay={firstBylineOfDay}
           // The byline shows the agent's model from its profile; an agent
           // with no profile model keeps the plain `AGENT` word.
-          agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}
+          agentModel={modelForRow}
           desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
-          participantsHydrated={participantsHydrated}
+          participantsHydrated={rowHydrated}
           {...(personName ? { personName } : {})}
+          {...(profileAvatar ? { personAvatar: profileAvatar } : {})}
+          {...(profileFace ? { personFace: profileFace } : {})}
           viewerPubkey={cacheViewerPubkey}
           speakerWorking={rowSpeakerWorking}
           continued={attributionContinued}
@@ -5975,14 +6091,18 @@ export function BuzzChatSurface({
           onForward={rowActions.beginForward}
           onBookmark={handleBookmarkMessage}
           onReportIssue={handleReportMessage}
-          {...(!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
+          {...((rowCornerSwipeEnabled ??
+            (!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience)) &&
+          rowRoomArchived !== true
             ? { onForwardToNewCorner: rowActions.handleForwardToNewCorner }
             : {})}
-          {...(!isCorner &&
-          !isArchived &&
-          !viewerIsAgent &&
-          !isReadOnlyDirectMessage &&
-          !cornerProposalAnswer
+          {...((rowCornerProposalEnabled ??
+            (!isCorner &&
+              !isArchived &&
+              !viewerIsAgent &&
+              !isReadOnlyDirectMessage &&
+              !cornerProposalAnswer)) &&
+          rowRoomArchived !== true
             ? { onCornerProposalDecision: handleCornerProposalDecision }
             : {})}
           cornerProposalAnswer={cornerProposalAnswer}
@@ -6059,7 +6179,8 @@ export function BuzzChatSurface({
     ],
   );
   // Resolve changing transcript-wide indexes before the memo boundary. A new
-  // hint, byline opener or working speaker changes only that row's props.
+  // hint, byline opener, working speaker, or this row's roster paint changes
+  // only that row's props.
   const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
     firstBylineOfDay: bylineOpeners.has(item.id),
     untaggedHint: hintMessageIds.has(item.id),
@@ -6067,7 +6188,67 @@ export function BuzzChatSurface({
     speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
     cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
     cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
-  }), [bylineOpeners, hintMessageIds, failedOutboxIds, speakerWorking, answerByMessageId, cornerProposalAction]);
+    ...liveCardPresentation(item, {
+      permissionActionId,
+      grantActionId,
+      choiceActionId,
+      connectorOfferActionId,
+      appSignInActionId,
+      targetBranchActionId,
+      targetBranchNotice,
+      targetBranch: roomRepository?.targetBranch,
+      canManageWorkspace,
+      viewerIsAgent,
+    }),
+    ...messageRosterPresentation(
+      item,
+      {
+        participantsHydrated,
+        personByPubkey: personProfileByPubkey,
+        agentByPubkey,
+        agentModelByPubkey: agentProfileModelByPubkey,
+        roleByPubkey: speakerRoleByPubkey,
+        participants: roomParticipants,
+      },
+      item.replyToId ? visibleMessageById.get(item.replyToId) : undefined,
+    ),
+    ...archiveActionPresentation(item, {
+      roomArchived: isArchived,
+      cornerSwipeOffered: !isDirectMessage && !viewerIsAgent && !desktopExperience,
+      cornerProposalOffered: !isCorner && !viewerIsAgent && !isReadOnlyDirectMessage,
+    }),
+    channelReferenceKey,
+  }), [
+    bylineOpeners,
+    hintMessageIds,
+    failedOutboxIds,
+    speakerWorking,
+    answerByMessageId,
+    cornerProposalAction,
+    permissionActionId,
+    grantActionId,
+    choiceActionId,
+    connectorOfferActionId,
+    appSignInActionId,
+    targetBranchActionId,
+    targetBranchNotice,
+    roomRepository?.targetBranch,
+    canManageWorkspace,
+    viewerIsAgent,
+    participantsHydrated,
+    personProfileByPubkey,
+    agentByPubkey,
+    agentProfileModelByPubkey,
+    speakerRoleByPubkey,
+    roomParticipants,
+    visibleMessageById,
+    channelReferenceKey,
+    isArchived,
+    isDirectMessage,
+    desktopExperience,
+    isCorner,
+    isReadOnlyDirectMessage,
+  ]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
     presentationForMessage,

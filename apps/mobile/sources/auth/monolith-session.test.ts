@@ -19,7 +19,6 @@ vi.mock('@/sync/transport/room-fetch', () => ({
 
 import {
   MONOLITH_REQUEST_TIMEOUT_MS,
-  MONOLITH_STALL_PROBE_MS,
   MonolithRequestTimeoutError,
   MonolithRefreshError,
   MonolithSession,
@@ -32,7 +31,11 @@ import { migrate } from '../../../server/src/database';
 import { PgliteDatabase } from '../../../server/src/test-support';
 import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
 import { markRoomOpen } from '@/buzz/room-open-trace';
-import { abandonRoomDraw, observeVisibleRoomRows, roomDrawGeneration } from '@/buzz/room-draw-barrier';
+import {
+  abandonRoomDraw,
+  observeVisibleRoomRows,
+  roomDrawGeneration,
+} from '@/buzz/room-draw-barrier';
 
 const tokens = (generation: number) => ({
   accessToken: `access-${generation}`,
@@ -47,24 +50,40 @@ describe('monolith phone session', () => {
 
   it('dispatches the opening Room read before draw and optional requests only after its frame', async () => {
     const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
     const fetcher = vi.fn(async () => Response.json(tokens(1)));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     try {
       await session.exchangeGitHubTicket('ticket');
       fetcher.mockClear();
       markRoomOpen('nav-dispatch', 'room-a');
-      const optional = ['/v1/phone/operations/readStarPrompt', '/v1/phone/workspaces/w',
-        '/v1/phone/workspaces/w/chats', '/v1/phone/rooms/room-a/read', '/v1/phone/observations/page-load'];
-      const requests = optional.map(path => session.fetch(`https://server.example${path}`));
+      const optional = [
+        '/v1/phone/operations/readStarPrompt',
+        '/v1/phone/workspaces/w',
+        '/v1/phone/workspaces/w/chats',
+        '/v1/phone/rooms/room-a/read',
+        '/v1/phone/observations/page-load',
+      ];
+      const requests = optional.map((path) => session.fetch(`https://server.example${path}`));
       await session.fetch('https://server.example/v1/phone/rooms/room-a');
       await session.fetch('https://server.example/v1/phone/workspaces');
-      await session.fetch('https://server.example/v1/phone/observations/page-load', {
-        method: 'POST', body: JSON.stringify({ failed: true, durationMs: 1 }),
-      }, { afterRoomDraw: false });
-      const required = ['https://server.example/v1/phone/rooms/room-a', 'https://server.example/v1/phone/workspaces',
-        'https://server.example/v1/phone/observations/page-load'];
-      expect(fetcher.mock.calls.map(call => call[0])).toEqual(required);
+      await session.fetch(
+        'https://server.example/v1/phone/observations/page-load',
+        {
+          method: 'POST',
+          body: JSON.stringify({ failed: true, durationMs: 1 }),
+        },
+        { afterRoomDraw: false },
+      );
+      const required = [
+        'https://server.example/v1/phone/rooms/room-a',
+        'https://server.example/v1/phone/workspaces',
+        'https://server.example/v1/phone/observations/page-load',
+      ];
+      expect(fetcher.mock.calls.map((call) => call[0])).toEqual(required);
       markRoomOpen('newest-frame', 'newest-row');
       expect(frames).toHaveLength(0);
       observeVisibleRoomRows('room-a', ['newest-row']);
@@ -73,8 +92,9 @@ describe('monolith phone session', () => {
       expect(fetcher).toHaveBeenCalledTimes(3);
       frames.shift()!(16);
       await Promise.all(requests);
-      expect(fetcher.mock.calls.map(call => call[0])).toEqual([
-        ...required, ...optional.map(path => `https://server.example${path}`),
+      expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+        ...required,
+        ...optional.map((path) => `https://server.example${path}`),
       ]);
     } finally {
       abandonRoomDraw(roomDrawGeneration());
@@ -82,54 +102,89 @@ describe('monolith phone session', () => {
     }
   });
 
-  it.each(['github', 'google'] as const)('preserves anonymous attempt context through %s exchange', async (provider) => {
-    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(tokens(1)));
-    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
-    const context = {event:'provider_tapped' as const,installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android' as const,provider,version:'0.2.22',environment:'production' as const,timestamp:new Date().toISOString()};
-    if (provider === 'google') await session.exchangeGoogleTicket('ticket', context);
-    else await session.exchangeGitHubTicket('ticket', context);
-    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://server.example/v1/auth/${provider}/exchange`);
-    expect(JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)).toEqual({oidcToken:'ticket',funnel:context});
-  });
+  it.each(['github', 'google'] as const)(
+    'preserves anonymous attempt context through %s exchange',
+    async (provider) => {
+      const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(tokens(1)));
+      const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+      const context = {
+        event: 'provider_tapped' as const,
+        installId: '00000000-0000-4000-8000-000000000001',
+        attemptId: '00000000-0000-4000-8000-000000000002',
+        platform: 'android' as const,
+        provider,
+        version: '0.2.22',
+        environment: 'production' as const,
+        timestamp: new Date().toISOString(),
+      };
+      if (provider === 'google') await session.exchangeGoogleTicket('ticket', context);
+      else await session.exchangeGitHubTicket('ticket', context);
+      expect(fetcher.mock.calls[0]?.[0]).toBe(
+        `https://server.example/v1/auth/${provider}/exchange`,
+      );
+      expect(JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)).toEqual({
+        oidcToken: 'ticket',
+        funnel: context,
+      });
+    },
+  );
 
   it('E23: rejects a failed Google exchange without accepting a session', async () => {
-    const fetcher = vi.fn(async () => Response.json({ error: 'google_sign_in_failed' }, { status: 401 }));
+    const fetcher = vi.fn(async () =>
+      Response.json({ error: 'google_sign_in_failed' }, { status: 401 }),
+    );
     const session = new MonolithSession('https://server.example', fetcher);
     await expect(session.exchangeGoogleTicket('ticket')).rejects.toThrow();
     expect(await session.identityId()).toBeNull();
     expect(secure.size).toBe(0);
   });
 
-  it('uses the Room body transport with authentication and the selected fallback origin', async () => {
+  it('uses the Room body transport with authentication on its configured origin', async () => {
     const fetcher = vi.fn(async () => Response.json(tokens(1)));
     vi.stubGlobal('fetch', fetcher);
     try {
-      const session = new MonolithSession('https://server.example', undefined, undefined,
-        ['https://server.example', 'https://alternate.example']);
+      const session = new MonolithSession('https://server.example', undefined, undefined, [
+        'https://server.example',
+        'https://alternate.example',
+      ]);
       await session.exchangeGitHubTicket('ticket');
       fetcher.mockClear();
       vi.mocked(fetchOpeningRoom).mockClear();
       session.noteStalled('https://server.example');
 
-      await session.fetch('https://server.example/v1/phone/rooms/room-a', {}, {
-        timeoutMs: 1000, idempotent: true,
-      });
+      await session.fetch(
+        'https://server.example/v1/phone/rooms/room-a',
+        {},
+        {
+          timeoutMs: 1000,
+          idempotent: true,
+        },
+      );
 
       expect(fetchOpeningRoom).toHaveBeenCalledWith(
-        'https://alternate.example/v1/phone/rooms/room-a',
-        expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer access-1' }) }),
+        'https://server.example/v1/phone/rooms/room-a',
+        expect.objectContaining({
+          headers: expect.objectContaining({ authorization: 'Bearer access-1' }),
+        }),
       );
-      await session.fetch('https://server.example/v1/phone/workspaces', {}, {
-        timeoutMs: 1000, idempotent: true,
-      });
+      await session.fetch(
+        'https://server.example/v1/phone/workspaces',
+        {},
+        {
+          timeoutMs: 1000,
+          idempotent: true,
+        },
+      );
       expect(fetchOpeningRoom).toHaveBeenCalledTimes(1);
       expect(fetcher).toHaveBeenLastCalledWith(
-        'https://alternate.example/v1/phone/workspaces', expect.any(Object),
+        'https://server.example/v1/phone/workspaces',
+        expect.any(Object),
       );
       await session.fetch('https://server.example/v1/phone/rooms/room-a', { method: 'POST' });
       expect(fetchOpeningRoom).toHaveBeenCalledTimes(1);
       expect(fetcher).toHaveBeenLastCalledWith(
-        'https://alternate.example/v1/phone/rooms/room-a', expect.objectContaining({ method: 'POST' }),
+        'https://server.example/v1/phone/rooms/room-a',
+        expect.objectContaining({ method: 'POST' }),
       );
     } finally {
       vi.unstubAllGlobals();
@@ -147,7 +202,9 @@ describe('monolith phone session', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith(
       'https://server.example/v1/phone/rooms/room-a',
-      expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer access-1' }) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: 'Bearer access-1' }),
+      }),
     );
     await read;
   });
@@ -160,9 +217,11 @@ describe('monolith phone session', () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(session.fetch('https://server.example/v1/phone/rooms/room-a', {
-      signal: controller.signal,
-    })).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(
+      session.fetch('https://server.example/v1/phone/rooms/room-a', {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -179,41 +238,52 @@ describe('monolith phone session', () => {
     expect(session.peekIdentityId()).toBeNull();
   });
 
-  it.each([200, 401])('drops an old refresh HTTP %i after another identity signs in', async status => {
-    secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
-    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
-    let reply!: (response: Response) => void;
-    let started!: () => void;
-    const requestStarted = new Promise<void>(resolve => { started = resolve; });
-    const replacement = { ...tokens(2), identityId: 'b'.repeat(64) };
-    const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
-      if (String(input).endsWith('/v1/auth/refresh')) {
-        started();
-        return new Promise(resolve => { reply = resolve; });
-      }
-      return new Response(JSON.stringify(replacement));
-    });
-    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
-    const old = session.authorization();
-    const assertion = expect(old).rejects.toBeInstanceOf(MonolithSessionChangedError);
-    await requestStarted;
-    await session.exchangeGitHubTicket('new-sign-in');
-    reply(new Response(JSON.stringify(tokens(1)), { status }));
-    await assertion;
-    expect(await session.identityId()).toBe(replacement.identityId);
-    expect(await session.authorization()).toBe(replacement.accessToken);
-    expect(secure.get('buzzy.monolith.refresh.v1')).toBe(replacement.refreshToken);
-  });
+  it.each([200, 401])(
+    'drops an old refresh HTTP %i after another identity signs in',
+    async (status) => {
+      secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
+      secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+      let reply!: (response: Response) => void;
+      let started!: () => void;
+      const requestStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const replacement = { ...tokens(2), identityId: 'b'.repeat(64) };
+      const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+        if (String(input).endsWith('/v1/auth/refresh')) {
+          started();
+          return new Promise((resolve) => {
+            reply = resolve;
+          });
+        }
+        return new Response(JSON.stringify(replacement));
+      });
+      const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+      const old = session.authorization();
+      const assertion = expect(old).rejects.toBeInstanceOf(MonolithSessionChangedError);
+      await requestStarted;
+      await session.exchangeGitHubTicket('new-sign-in');
+      reply(new Response(JSON.stringify(tokens(1)), { status }));
+      await assertion;
+      expect(await session.identityId()).toBe(replacement.identityId);
+      expect(await session.authorization()).toBe(replacement.accessToken);
+      expect(secure.get('buzzy.monolith.refresh.v1')).toBe(replacement.refreshToken);
+    },
+  );
 
   it('cannot resurrect a signed-out identity with an in-flight refresh reply', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
     secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
     let reply!: (response: Response) => void;
     let started!: () => void;
-    const requestStarted = new Promise<void>(resolve => { started = resolve; });
+    const requestStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     const fetcher = vi.fn(async () => {
       started();
-      return new Promise<Response>(resolve => { reply = resolve; });
+      return new Promise<Response>((resolve) => {
+        reply = resolve;
+      });
     });
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     const old = session.authorization();
@@ -226,27 +296,39 @@ describe('monolith phone session', () => {
     expect(secure.size).toBe(0);
   });
 
-  it('does not retry an old account\'s rejected write as the newly signed-in person', async () => {
+  it("does not retry an old account's rejected write as the newly signed-in person", async () => {
     let reply!: (response: Response) => void;
     let started!: () => void;
-    const writeStarted = new Promise<void>(resolve => { started = resolve; });
+    const writeStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     const replacement = { ...tokens(2), identityId: 'b'.repeat(64) };
     const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       if (String(input).includes('/operations/')) {
-        started(); return new Promise(resolve => { reply = resolve; });
+        started();
+        return new Promise((resolve) => {
+          reply = resolve;
+        });
       }
-      return new Response(JSON.stringify(fetcher.mock.calls.length === 1 ? tokens(1) : replacement));
+      return new Response(
+        JSON.stringify(fetcher.mock.calls.length === 1 ? tokens(1) : replacement),
+      );
     });
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await session.exchangeGitHubTicket('first');
-    const assertion = expect(session.fetch('https://server.example/v1/phone/operations/sendRoomMessage', {
-      method: 'POST', body: JSON.stringify({ text: 'old account action' }),
-    })).rejects.toBeInstanceOf(MonolithSessionChangedError);
+    const assertion = expect(
+      session.fetch('https://server.example/v1/phone/operations/sendRoomMessage', {
+        method: 'POST',
+        body: JSON.stringify({ text: 'old account action' }),
+      }),
+    ).rejects.toBeInstanceOf(MonolithSessionChangedError);
     await writeStarted;
     await session.exchangeGitHubTicket('second');
     reply(new Response(null, { status: 401 }));
     await assertion;
-    expect(fetcher.mock.calls.filter(([input]) => String(input).includes('/operations/'))).toHaveLength(1);
+    expect(
+      fetcher.mock.calls.filter(([input]) => String(input).includes('/operations/')),
+    ).toHaveLength(1);
     expect(await session.authorization()).toBe(replacement.accessToken);
     expect(await session.identityId()).toBe(replacement.identityId);
   });
@@ -255,20 +337,34 @@ describe('monolith phone session', () => {
     secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
     secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
     let started!: () => void;
-    const bodyStarted = new Promise<void>(resolve => { started = resolve; });
-    const fetcher = vi.fn()
-      .mockResolvedValueOnce({ status: 200, ok: true, json: () => { started(); return new Promise(() => undefined); } })
+    const bodyStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: () => {
+          started();
+          return new Promise(() => undefined);
+        },
+      })
       .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2))));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     vi.useFakeTimers();
     try {
-      const assertion = expect(session.authorization()).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+      const assertion = expect(session.authorization()).rejects.toBeInstanceOf(
+        MonolithRequestTimeoutError,
+      );
       await bodyStarted;
       await vi.advanceTimersByTimeAsync(10_000);
       await assertion;
       expect(await session.identityId()).toBe('a'.repeat(64));
       expect(await session.authorization()).toBe('access-2');
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('erases local credentials and sends device revocation on explicit sign-out', async () => {
@@ -278,19 +374,29 @@ describe('monolith phone session', () => {
     await session.signOut();
     expect(await session.identityId()).toBeNull();
     expect(secure.size).toBe(0);
-    expect(fetcher).toHaveBeenLastCalledWith('https://server.example/v1/auth/logout', expect.objectContaining({
-      body: JSON.stringify({ refreshToken: 'refresh-1' }), method: 'POST',
-    }));
+    expect(fetcher).toHaveBeenLastCalledWith(
+      'https://server.example/v1/auth/logout',
+      expect.objectContaining({
+        body: JSON.stringify({ refreshToken: 'refresh-1' }),
+        method: 'POST',
+      }),
+    );
   });
 
   it('finishes signing out offline even when revocation ignores abort', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
     secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
     let started!: () => void;
-    const revocationStarted = new Promise<void>(resolve => { started = resolve; });
-    const session = new MonolithSession('https://server.example', vi.fn(() => {
-      started(); return new Promise(() => undefined);
-    }) as typeof fetch);
+    const revocationStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const session = new MonolithSession(
+      'https://server.example',
+      vi.fn(() => {
+        started();
+        return new Promise(() => undefined);
+      }) as typeof fetch,
+    );
     vi.useFakeTimers();
     try {
       const signedOut = session.signOut();
@@ -299,7 +405,9 @@ describe('monolith phone session', () => {
       await signedOut;
       expect(await session.identityId()).toBeNull();
       expect(secure.size).toBe(0);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('exchanges once and reuses the access token', async () => {
@@ -317,21 +425,30 @@ describe('monolith phone session', () => {
     await signedIn.exchangeReviewSecret('review');
     const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await expect(Promise.all([cold.authorization(), cold.authorization()])).resolves.toEqual([
-      'access-1', 'access-1',
+      'access-1',
+      'access-1',
     ]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(secure.get('buzzy.monolith.access.v1')).toContain('access-1');
   });
 
   it('refreshes an expired secured access token on a cold launch', async () => {
-    const fetcher = vi.fn()
+    const fetcher = vi
+      .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(tokens(1)), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2)), { status: 200 }));
-    await new MonolithSession('https://server.example', fetcher as typeof fetch)
-      .exchangeReviewSecret('review');
-    secure.set('buzzy.monolith.access.v1', JSON.stringify({
-      token: 'expired', expiresAt: Date.now() - 1, identityId: 'a'.repeat(64),
-    }));
+    await new MonolithSession(
+      'https://server.example',
+      fetcher as typeof fetch,
+    ).exchangeReviewSecret('review');
+    secure.set(
+      'buzzy.monolith.access.v1',
+      JSON.stringify({
+        token: 'expired',
+        expiresAt: Date.now() - 1,
+        identityId: 'a'.repeat(64),
+      }),
+    );
     const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await expect(cold.authorization()).resolves.toBe('access-2');
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -348,12 +465,16 @@ describe('monolith phone session', () => {
         status: new Headers(init?.headers).get('authorization') === 'Bearer access-1' ? 401 : 204,
       });
     });
-    await new MonolithSession('https://server.example', fetcher as typeof fetch)
-      .exchangeReviewSecret('review');
+    await new MonolithSession(
+      'https://server.example',
+      fetcher as typeof fetch,
+    ).exchangeReviewSecret('review');
     const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
-    await expect(cold.fetch('https://server.example/v1/phone/rooms/room-a')).resolves.toMatchObject({
-      status: 204,
-    });
+    await expect(cold.fetch('https://server.example/v1/phone/rooms/room-a')).resolves.toMatchObject(
+      {
+        status: 204,
+      },
+    );
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       'https://server.example/v1/auth/review/exchange',
       'https://server.example/v1/phone/rooms/room-a',
@@ -496,24 +617,26 @@ describe('monolith phone session', () => {
 
   it('aborts a hung phone read only when it opts into the bounded deadline', async () => {
     let hang = false;
-    const fetcher = vi.fn(
-      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        if (!hang) return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
-        return new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () =>
-            reject(new DOMException('Aborted', 'AbortError')),
-          );
-        });
-      },
-    );
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (!hang) return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('Aborted', 'AbortError')),
+        );
+      });
+    });
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await session.exchangeGitHubTicket('ticket');
     hang = true;
     vi.useFakeTimers();
     try {
-      const bounded = session.fetch('https://server.example/v1/phone/workspaces', {}, {
-        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-      });
+      const bounded = session.fetch(
+        'https://server.example/v1/phone/workspaces',
+        {},
+        {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        },
+      );
       const assertion = expect(bounded).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
       await vi.advanceTimersByTimeAsync(15_000);
       await assertion;
@@ -525,28 +648,30 @@ describe('monolith phone session', () => {
   it('bounds a phone read whose shared token refresh hangs, and lets the next read refresh again', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'refresh-0');
     let hangRefresh = true;
-    const fetcher = vi.fn(
-      (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        if (String(input).endsWith('/v1/auth/refresh') && hangRefresh)
-          return new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener('abort', () =>
-              reject(new DOMException('Aborted', 'AbortError')),
-            );
-          });
-        if (String(input).endsWith('/v1/auth/refresh'))
-          return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
-        return Promise.resolve(new Response(null, { status: 204 }));
-      },
-    );
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (String(input).endsWith('/v1/auth/refresh') && hangRefresh)
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+        });
+      if (String(input).endsWith('/v1/auth/refresh'))
+        return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     // Load secure storage before the clock is faked, so the refresh deadline
     // is armed before the timers advance.
     await session.identityId();
     vi.useFakeTimers();
     try {
-      const bounded = session.fetch('https://server.example/v1/phone/rooms/r/corners', {}, {
-        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-      });
+      const bounded = session.fetch(
+        'https://server.example/v1/phone/rooms/r/corners',
+        {},
+        {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        },
+      );
       const assertion = expect(bounded).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
       await vi.advanceTimersByTimeAsync(MONOLITH_REQUEST_TIMEOUT_MS);
       await assertion;
@@ -554,9 +679,13 @@ describe('monolith phone session', () => {
 
       hangRefresh = false;
       vi.useRealTimers();
-      const next = await session.fetch('https://server.example/v1/phone/rooms/r/corners', {}, {
-        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-      });
+      const next = await session.fetch(
+        'https://server.example/v1/phone/rooms/r/corners',
+        {},
+        {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        },
+      );
       expect(next.status).toBe(204);
     } finally {
       vi.useRealTimers();
@@ -569,35 +698,44 @@ describe('monolith phone session', () => {
     try {
       await migrate(db);
       const auth = new TokenAuth(db, async () => ({
-        subject: 'owner', login: 'owner', name: 'Owner',
+        subject: 'owner',
+        login: 'owner',
+        name: 'Owner',
       }));
       const initial = await auth.exchangeGitHubOidc('proof');
       secure.set('buzzy.monolith.refresh.v1', initial.refreshToken);
       let first = true;
       let committed!: () => void;
-      const firstCommitted = new Promise<void>((resolve) => { committed = resolve; });
-      const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        if (!String(input).endsWith('/v1/auth/refresh')) return new Response(null, { status: 204 });
-        const request = JSON.parse(String(init?.body)) as { refreshToken: string };
-        const answer = await auth.refresh(request.refreshToken);
-        if (first) {
-          first = false;
-          committed();
-          return new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener('abort', () =>
-              reject(new DOMException('Aborted', 'AbortError')),
-            );
-          });
-        }
-        return answer
-          ? new Response(JSON.stringify(answer), { status: 200 })
-          : new Response(null, { status: 401 });
+      const firstCommitted = new Promise<void>((resolve) => {
+        committed = resolve;
       });
+      const fetcher = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          if (!String(input).endsWith('/v1/auth/refresh'))
+            return new Response(null, { status: 204 });
+          const request = JSON.parse(String(init?.body)) as { refreshToken: string };
+          const answer = await auth.refresh(request.refreshToken);
+          if (first) {
+            first = false;
+            committed();
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(new DOMException('Aborted', 'AbortError')),
+              );
+            });
+          }
+          return answer
+            ? new Response(JSON.stringify(answer), { status: 200 })
+            : new Response(null, { status: 401 });
+        },
+      );
       const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
       vi.useFakeTimers();
       try {
         const firstAttempt = session.authorization();
-        const firstAssertion = expect(firstAttempt).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+        const firstAssertion = expect(firstAttempt).rejects.toBeInstanceOf(
+          MonolithRequestTimeoutError,
+        );
         await firstCommitted;
         expect(secure.get('buzzy.monolith.refresh.v1')).toBe(initial.refreshToken);
         await vi.advanceTimersByTimeAsync(10_000);
@@ -619,33 +757,29 @@ describe('monolith phone session', () => {
   it('leaves a request without timeoutMs unbounded, so large uploads are never aborted', async () => {
     let hang = false;
     let aborted = false;
-    const fetcher = vi.fn(
-      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        if (!hang) return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
-        return new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            aborted = true;
-            reject(new DOMException('Aborted', 'AbortError'));
-          });
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (!hang) return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          aborted = true;
+          reject(new DOMException('Aborted', 'AbortError'));
         });
-      },
-    );
+      });
+    });
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await session.exchangeGitHubTicket('ticket');
     hang = true;
     vi.useFakeTimers();
     try {
       let settled = false;
-      void session
-        .fetch('https://server.example/v1/phone/media', { method: 'POST' })
-        .then(
-          () => {
-            settled = true;
-          },
-          () => {
-            settled = true;
-          },
-        );
+      void session.fetch('https://server.example/v1/phone/media', { method: 'POST' }).then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
       await vi.advanceTimersByTimeAsync(60_000);
       expect(settled).toBe(false);
       expect(aborted).toBe(false);
@@ -657,9 +791,14 @@ describe('monolith phone session', () => {
   it('clears a rejected refresh so launch routes to one sign-in', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'stale');
     secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
-    secure.set('buzzy.monolith.access.v1', JSON.stringify({
-      token: 'expired', expiresAt: Date.now() - 1, identityId: 'a'.repeat(64),
-    }));
+    secure.set(
+      'buzzy.monolith.access.v1',
+      JSON.stringify({
+        token: 'expired',
+        expiresAt: Date.now() - 1,
+        identityId: 'a'.repeat(64),
+      }),
+    );
     const fetcher = vi.fn(async () => new Response('{}', { status: 401 }));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
@@ -675,10 +814,16 @@ describe('monolith phone session', () => {
     async (status) => {
       secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
       secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
-      secure.set('buzzy.monolith.access.v1', JSON.stringify({
-        token: 'expired', expiresAt: Date.now() - 1, identityId: 'a'.repeat(64),
-      }));
-      const fetcher = vi.fn()
+      secure.set(
+        'buzzy.monolith.access.v1',
+        JSON.stringify({
+          token: 'expired',
+          expiresAt: Date.now() - 1,
+          identityId: 'a'.repeat(64),
+        }),
+      );
+      const fetcher = vi
+        .fn()
         .mockResolvedValueOnce(new Response(null, { status }))
         .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2)), { status: 200 }));
       const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
@@ -686,7 +831,8 @@ describe('monolith phone session', () => {
       session.subscribeIdentityChange(identityChanged);
 
       await expect(session.authorization()).rejects.toMatchObject({
-        name: MonolithRefreshError.name, status,
+        name: MonolithRefreshError.name,
+        status,
       });
       expect(await session.identityId()).toBe('a'.repeat(64));
       expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-old');
@@ -694,7 +840,9 @@ describe('monolith phone session', () => {
       expect(identityChanged).not.toHaveBeenCalled();
 
       await expect(session.authorization()).resolves.toBe('access-2');
-      expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-old' }));
+      expect(fetcher.mock.calls[1]?.[1]?.body).toBe(
+        JSON.stringify({ refreshToken: 'refresh-old' }),
+      );
       expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-2');
     },
   );
@@ -702,7 +850,8 @@ describe('monolith phone session', () => {
   it('keeps the session after a refresh network error and succeeds on the next request', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
     secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
-    const fetcher = vi.fn()
+    const fetcher = vi
+      .fn()
       .mockRejectedValueOnce(new TypeError('Network request failed'))
       .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2)), { status: 200 }));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
@@ -715,154 +864,41 @@ describe('monolith phone session', () => {
     expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-old' }));
   });
 
-  describe('a connection that goes silent', () => {
-    const PRIMARY = 'https://server.example';
-    const ALTERNATE = 'https://alternate.example';
-    /** The primary's pooled connection is dead: nothing on it ever answers. */
-    function deadPrimary() {
-      const seen: string[] = [];
-      const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url = String(input);
-        seen.push(url);
-        if (url.endsWith('/v1/auth/github/exchange'))
-          return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
-        if (url.startsWith(PRIMARY))
-          return new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener('abort', () =>
-              reject(new DOMException('Aborted', 'AbortError')),
-            );
-          });
-        return Promise.resolve(new Response(JSON.stringify({ ok: url }), { status: 200 }));
-      });
-      const session = new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [
-        PRIMARY,
-        ALTERNATE,
-      ]);
-      return { session, seen };
-    }
-
-    it('names a fresh-connection origin only for the production server', () => {
-      expect(monolithOrigins('https://server.usebeeline.app')).toEqual([
-        'https://server.usebeeline.app',
-        'https://beeline-server.fly.dev',
-      ]);
-      expect(monolithOrigins('http://127.0.0.1:8080')).toEqual(['http://127.0.0.1:8080']);
-    });
-
-    it('answers a stalled read from the alternate origin, and sends later reads there first', async () => {
-      const { session, seen } = deadPrimary();
-      await session.exchangeGitHubTicket('ticket');
-      vi.useFakeTimers();
-      try {
-        const read = session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
-          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-          idempotent: true,
-        });
-        await vi.advanceTimersByTimeAsync(MONOLITH_STALL_PROBE_MS - 1);
-        expect(seen.filter((url) => url.startsWith(ALTERNATE))).toEqual([]);
-        await vi.advanceTimersByTimeAsync(1);
-        await expect((await read).json()).resolves.toEqual({ ok: `${ALTERNATE}/v1/phone/rooms/r` });
-
-        // The dead connection dooms nothing after it: the next read starts
-        // on the fresh origin and answers at once.
-        seen.length = 0;
-        const next = await session.fetch(`${PRIMARY}/v1/phone/rooms/r/corners`, {}, {
-          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-          idempotent: true,
-        });
-        expect(next.status).toBe(200);
-        expect(seen).toEqual([`${ALTERNATE}/v1/phone/rooms/r/corners`]);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('never repeats a write that is not keyed, but moves the next request off the dead origin', async () => {
-      const { session, seen } = deadPrimary();
-      await session.exchangeGitHubTicket('ticket');
-      vi.useFakeTimers();
-      try {
-        const write = session.fetch(`${PRIMARY}/v1/phone/operations/updateRoom`, { method: 'POST' }, {
-          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-        });
-        const failed = expect(write).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
-        await vi.advanceTimersByTimeAsync(MONOLITH_REQUEST_TIMEOUT_MS);
-        await failed;
-        expect(seen.filter((url) => url.startsWith(ALTERNATE))).toEqual([]);
-
-        const next = await session.fetch(`${PRIMARY}/v1/phone/operations/updateRoom`, { method: 'POST' }, {
-          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-        });
-        expect(next.status).toBe(200);
-        expect(seen.at(-1)).toBe(`${ALTERNATE}/v1/phone/operations/updateRoom`);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('repeats nothing when the first answer comes before the probe', async () => {
-      const seen: string[] = [];
-      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-        seen.push(String(input));
-        return new Response(JSON.stringify(tokens(1)), { status: 200 });
-      });
-      const session = new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [
-        PRIMARY,
-        ALTERNATE,
-      ]);
-      await session.exchangeGitHubTicket('ticket');
-      vi.useFakeTimers();
-      try {
-        await session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
-          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-          idempotent: true,
-        });
-        await vi.advanceTimersByTimeAsync(60_000);
-        expect(seen.filter((url) => url.startsWith(ALTERNATE))).toEqual([]);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('tries the alternate at once when the first origin fails outright', async () => {
-      const seen: string[] = [];
-      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        seen.push(url);
-        if (url.endsWith('/v1/auth/github/exchange'))
-          return new Response(JSON.stringify(tokens(1)), { status: 200 });
-        if (url.startsWith(PRIMARY)) throw new TypeError('Network request failed');
-        return new Response('{}', { status: 200 });
-      });
-      const session = new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [
-        PRIMARY,
-        ALTERNATE,
-      ]);
-      await session.exchangeGitHubTicket('ticket');
-      const response = await session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
-        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-        idempotent: true,
-      });
-      expect(response.status).toBe(200);
-      expect(seen.slice(-2)).toEqual([`${PRIMARY}/v1/phone/rooms/r`, `${ALTERNATE}/v1/phone/rooms/r`]);
-    });
+  it('uses only the configured origin for every runtime', () => {
+    expect(monolithOrigins('https://server.usebeeline.app')).toEqual([
+      'https://server.usebeeline.app',
+    ]);
+    expect(monolithOrigins('http://127.0.0.1:8080')).toEqual(['http://127.0.0.1:8080']);
   });
 });
 
 it('uses native fetch for refresh and 401 retry while timers are paused', async () => {
-  secure.clear(); secure.set('buzzy.monolith.refresh.v1', 'refresh');
+  secure.clear();
+  secure.set('buzzy.monolith.refresh.v1', 'refresh');
   secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
-  const fallback = vi.fn(async () => { throw new Error('background-paused fetch'); });
-  let requests = 0; let refreshes = 0;
+  const fallback = vi.fn(async () => {
+    throw new Error('background-paused fetch');
+  });
+  let requests = 0;
+  let refreshes = 0;
   const native = vi.fn(async (input: RequestInfo | URL) => {
-    if (String(input).endsWith('/refresh')) return new Response(JSON.stringify(tokens(++refreshes)));
+    if (String(input).endsWith('/refresh'))
+      return new Response(JSON.stringify(tokens(++refreshes)));
     return new Response('ready', { status: ++requests === 1 ? 401 : 200 });
   });
   vi.useFakeTimers();
   try {
     const session = new MonolithSession('https://server.example', fallback as typeof fetch);
-    const response = await session.fetch('https://server.example/idle', {}, { fetchImpl: native as typeof fetch });
-    expect(await response.text()).toBe('ready'); expect(refreshes).toBe(2);
-    expect(fallback).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
-  } finally { vi.useRealTimers(); }
+    const response = await session.fetch(
+      'https://server.example/idle',
+      {},
+      { fetchImpl: native as typeof fetch },
+    );
+    expect(await response.text()).toBe('ready');
+    expect(refreshes).toBe(2);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

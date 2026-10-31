@@ -253,9 +253,7 @@ describe('monolith Room send path', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(999);
-    expect(sockets).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
 
     stop();

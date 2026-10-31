@@ -509,7 +509,17 @@ export class LiveConnection {
         setConnectionState('disconnected');
         this.scheduleReconnect(this.reconnectAttempt === 0);
       };
-      next.onerror = () => next.close();
+      next.onerror = () => {
+        if (this.socket !== next) return;
+        // Some WebSocket implementations emit another error while `close()`
+        // tears down a failed handshake. Drop ownership first so that error
+        // cannot recursively close the same socket.
+        this.socket = undefined;
+        this.dropSocketState();
+        setConnectionState('disconnected');
+        this.scheduleReconnect(true);
+        next.close();
+      };
     } catch {
       if (generation !== this.generation) return;
       setConnectionState('disconnected');

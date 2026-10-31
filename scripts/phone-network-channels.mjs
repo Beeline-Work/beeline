@@ -6,6 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
 export const ALLOWLIST_PATH = 'apps/mobile/network-channels.json';
 export const TRANSPORT_FILE = 'apps/mobile/sources/sync/transport/live-connection.ts';
@@ -35,28 +36,93 @@ export const NETWORK_LIBRARIES = [
   '@tauri-apps/plugin-http',
 ];
 
-// `globalThis.`, `window?.` and the like: the same global reached by a qualified name.
-const GLOBAL = String.raw`(?:globalThis|window|self|global)\s*\??\.\s*`;
 const CALL_KINDS = [
-  // Calls and values (`const send = fetch`); not types, definitions or object keys.
-  ['fetch', new RegExp(String.raw`(?<![\w$.]|typeof\s+|(?:async|function)\s+)(?:${GLOBAL})?fetch(?![\w$]|\s*\??:(?!:)|\s*<)`, 'g')],
   ['fetch-impl', /\bfetchImpl\s*\(/g],
   ['session-fetch', /\bmonolithSession\s*\.\s*fetch\s*\(/g],
-  // `new WebSocket(`, `new globalThis.WebSocket(`, or the qualified constructor read as a value.
-  ['websocket', new RegExp(String.raw`\bnew\s+(?:${GLOBAL})?WebSocket\b|(?<![\w$.]|typeof\s+)${GLOBAL}WebSocket\b`, 'g')],
-  ['xhr', /\bXMLHttpRequest\b/g],
-  ['event-source', /\bEventSource\b/g],
   ['beacon', /\bsendBeacon\b/g],
   // expo-updates and expo-notifications are imported for local metadata too; only these reach the network.
   ['ota-update', /\b(?:checkForUpdateAsync|fetchUpdateAsync)\s*\(/g],
   ['push-token', /\bget(?:Device|Expo)PushTokenAsync\s*\(/g],
 ];
-// `globalThis['WebSocket']`: the same globals by a quoted name, found before strings are blanked.
-const QUOTED_GLOBALS = { fetch: 'fetch', WebSocket: 'websocket', XMLHttpRequest: 'xhr', EventSource: 'event-source' };
-const QUOTED_GLOBAL = new RegExp(
-  String.raw`(?<![\w$.])(?:globalThis|window|self|global)\s*(?:\?\.)?\s*\[\s*(['"\`])(${Object.keys(QUOTED_GLOBALS).join('|')})\1\s*\]`,
-  'g',
-);
+// Globals that open a connection. Every read of one as a value counts, so an
+// alias (`const S = WebSocket`), a qualified or quoted name, or passing it on
+// all count. Types, `typeof`, `instanceof` and names a file declares do not.
+const GLOBAL_KINDS = { fetch: 'fetch', WebSocket: 'websocket', XMLHttpRequest: 'xhr', EventSource: 'event-source' };
+const GLOBAL_OBJECTS = new Set(['globalThis', 'window', 'self', 'global']);
+// Read-only constants on the constructor, such as `WebSocket.OPEN`.
+const SOCKET_STATES = new Set(['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']);
+const DECLARATION_NAMES = new Set([
+  ts.SyntaxKind.VariableDeclaration, ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.Parameter, ts.SyntaxKind.PropertyDeclaration, ts.SyntaxKind.PropertySignature,
+  ts.SyntaxKind.MethodDeclaration, ts.SyntaxKind.MethodSignature, ts.SyntaxKind.PropertyAssignment,
+  ts.SyntaxKind.GetAccessor, ts.SyntaxKind.SetAccessor, ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression, ts.SyntaxKind.InterfaceDeclaration, ts.SyntaxKind.TypeAliasDeclaration,
+  ts.SyntaxKind.EnumMember, ts.SyntaxKind.ImportSpecifier, ts.SyntaxKind.ImportClause,
+  ts.SyntaxKind.NamespaceImport, ts.SyntaxKind.JsxAttribute, ts.SyntaxKind.TypeParameter,
+]);
+
+const unwrap = (node) =>
+  ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)
+    ? unwrap(node.expression)
+    : node;
+
+/** `globalThis`, `window`, `self`, `global`, or one reached through another (`globalThis.window`). */
+function isGlobalObject(node) {
+  const inner = unwrap(node);
+  if (ts.isIdentifier(inner)) return GLOBAL_OBJECTS.has(inner.text);
+  return ts.isPropertyAccessExpression(inner) && GLOBAL_OBJECTS.has(inner.name.text) && isGlobalObject(inner.expression);
+}
+
+/** Whether a member named `name` on `object` is the network global. `x.fetch` is often a cache; `x.WebSocket` never is. */
+const memberIsGlobal = (name, object) => name !== 'fetch' || isGlobalObject(object);
+
+/** Whether this mention of a network global reads its value, as opposed to naming a type or a declaration. */
+function readsGlobal(node) {
+  const parent = node.parent;
+  if (ts.isTypeReferenceNode(parent) || ts.isTypeQueryNode(parent) || ts.isQualifiedName(parent)) return false;
+  if (ts.isExpressionWithTypeArguments(parent)) {
+    const clause = parent.parent;
+    return clause.token === ts.SyntaxKind.ExtendsKeyword && !ts.isInterfaceDeclaration(clause.parent);
+  }
+  if (ts.isTypeOfExpression(parent)) return false;
+  if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword && parent.right === node)
+    return false;
+  if (ts.isPropertyAccessExpression(parent)) {
+    if (parent.name === node) return memberIsGlobal(node.text, parent.expression);
+    return !SOCKET_STATES.has(parent.name.text);
+  }
+  if (ts.isBindingElement(parent)) {
+    // `const { WebSocket: S } = globalThis` reads it; any other destructured name is a local.
+    if ((parent.propertyName ?? parent.name) !== node) return false;
+    let root = parent.parent;
+    while (ts.isBindingElement(root.parent)) root = root.parent.parent;
+    const declaration = root.parent;
+    return Boolean(declaration.initializer) && isGlobalObject(declaration.initializer);
+  }
+  if (DECLARATION_NAMES.has(parent.kind) && parent.name === node) return false;
+  return true;
+}
+
+/** Reads of `fetch`, `WebSocket`, `XMLHttpRequest` and `EventSource` in one JavaScript or TypeScript file. */
+function scanGlobals(file, text) {
+  const kind = /\.[jt]sx$/.test(file) ? ts.ScriptKind.TSX : /\.ts$/.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+  const hits = [];
+  const add = (name, node) =>
+    hits.push({ kind: GLOBAL_KINDS[name], line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 });
+  const visit = (node) => {
+    if (ts.isIdentifier(node) && Object.hasOwn(GLOBAL_KINDS, node.text) && readsGlobal(node)) add(node.text, node);
+    // `globalThis['WebSocket']`
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      const name = node.argumentExpression.text;
+      if (Object.hasOwn(GLOBAL_KINDS, name) && memberIsGlobal(name, node.expression)) add(name, node.argumentExpression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return hits;
+}
+
 const NATIVE_KINDS = [
   ['native-http', /\b(?:openConnection|newCall|newWebSocket|dataTask|uploadTask|downloadTask|webSocketTask)\s*\(/g],
 ];
@@ -154,11 +220,10 @@ export function scanSource(file, text) {
   }
   const bare = stripSource(text, { blankStrings: true });
   for (const [kind, pattern] of CALL_KINDS) add(kind, bare, pattern);
+  hits.push(...scanGlobals(file, text));
   // A type-only import loads nothing at run time.
   const code = stripSource(text, { blankStrings: false })
     .replace(/^\s*import\s+type\b[^;]*;/gm, (statement) => statement.replace(/[^\n]/g, ' '));
-  for (const match of code.matchAll(QUOTED_GLOBAL))
-    hits.push({ kind: QUOTED_GLOBALS[match[2]], line: lineAt(code, match.index) });
   // A new host is a new channel even through an existing call (the hedged backup origin was one).
   for (const match of code.matchAll(/['"`](?:https?|wss?):\/\/([a-zA-Z0-9.-]+)/g))
     hits.push({ kind: `origin:${match[1].toLowerCase()}`, line: lineAt(code, match.index) });

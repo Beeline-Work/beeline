@@ -53,7 +53,7 @@
     {
       "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
       "kind": "fetch",
-      "count": 2,
+      "count": 1,
       "fate": "moves-to-socket",
       "why": "expo/fetch handed to MonolithSession for voice requests; goes with them."
     },

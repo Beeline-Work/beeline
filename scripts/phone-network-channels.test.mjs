@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -20,6 +20,8 @@ function copyOfRepo(name) {
       recursive: true,
       filter: (source) => !['node_modules', 'build', '.gradle'].includes(path.basename(source)),
     });
+  // The checker parses with the repository's TypeScript.
+  symlinkSync(path.join(repo, 'node_modules'), path.join(root, 'node_modules'), 'dir');
   return root;
 }
 
@@ -78,6 +80,45 @@ test('a socket or fetch reached through a qualified global fails the check', () 
   assert.match(result.stderr, /new phone network call site \(websocket\) at (?:\S+review-side-channel\.ts:\d+, ){4}\S+review-side-channel\.ts:5\./);
   assert.match(result.stderr, /new phone network call site \(fetch\) at \S+review-side-channel\.ts:6, \S+review-side-channel\.ts:7\./);
   assert.doesNotMatch(result.stderr, /review-side-channel\.ts:8/);
+});
+
+test('a socket constructor read as a bare value fails the check', () => {
+  const root = copyOfRepo('bare-alias');
+  // The exact file from review: an alias of the bare global, then `new` on the alias.
+  write(root, 'apps/mobile/sources/sync/review-side-channel.ts',
+    'const Socket = WebSocket; export const sideChannel = (url: string) => new Socket(url);\n');
+  const result = runCheck(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /new phone network call site \(websocket\) at apps\/mobile\/sources\/sync\/review-side-channel\.ts:1\./);
+});
+
+test('every other way to reach a network global counts, and types do not', () => {
+  const text = [
+    'const Socket = WebSocket;',
+    'export const passed = Reflect.construct(WebSocket, [url]);',
+    'const { WebSocket: Destructured } = globalThis;',
+    'const { fetch: send } = window;',
+    'export const ctors = { ctor: WebSocket, request: XMLHttpRequest, stream: EventSource };',
+    'export const shorthand = { fetch };',
+    'class Sub extends WebSocket {}',
+    'const g = globalThis; export const viaAlias = new g.WebSocket(url);',
+    "export const quotedAlias = new g['EventSource'](url);",
+    'export const nested = globalThis.window.fetch;',
+    'export const later = cond ? undefined : WebSocket;',
+    'let held: WebSocket | undefined;',
+    'function isOpen(socket: WebSocket, request: XMLHttpRequest): socket is WebSocket { return socket.readyState === WebSocket.OPEN; }',
+    'type Ctor = typeof WebSocket | typeof globalThis.fetch;',
+    'interface Wrapped extends WebSocket {}',
+    "if (typeof EventSource !== 'undefined' && held instanceof WebSocket) cache.fetch(key);",
+    'const { fetch: localName } = props;',
+    'export const options = { fetch: read };',
+    '',
+  ].join('\n');
+  const lines = (kind) => scanSource('apps/mobile/sources/example.ts', text).filter((hit) => hit.kind === kind).map((hit) => hit.line);
+  assert.deepEqual(lines('websocket'), [1, 2, 3, 5, 7, 8, 11]);
+  assert.deepEqual(lines('fetch'), [4, 6, 10]);
+  assert.deepEqual(lines('xhr'), [5]);
+  assert.deepEqual(lines('event-source'), [5, 9]);
 });
 
 test('a second socket in the transport module fails the check', () => {

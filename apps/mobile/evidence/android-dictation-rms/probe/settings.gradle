@@ -1,0 +1,4 @@
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+rootProject.name = 'WaveformR1'
+include ':app'
+dependencyResolutionManagement { repositories { google(); mavenCentral() } }

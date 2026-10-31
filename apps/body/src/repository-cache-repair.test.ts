@@ -9,13 +9,20 @@ import {
   checkRepositoryCaches,
   RepositoryCacheDamagedError,
 } from './repository-cache-repair.js';
-import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { distillTurnFailureReason, TURN_FAILURE_REASON_MAX } from './turn-failure-reason.js';
 
 /**
  * A reboot mid-fetch leaves zero-byte loose objects in the shared bare cache,
  * and every corner on the machine then dies in its first fetch. These run real
  * git against a bare repository standing in for GitHub.
  */
+// Hosted runner names can push the private-cache diagnostic past the receipt
+// budget. Exercise that boundary on every host rather than depending on CI.
+vi.mock('node:os', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:os')>(),
+  hostname: () => 'repository-cache-ci-host-with-a-long-name',
+}));
+
 const execFileAsync = promisify(execFile);
 // Each prepare is several real git processes; four of them run per case.
 vi.setConfig({ testTimeout: 120_000 });
@@ -249,7 +256,15 @@ describe('a repo cache the helper cannot repair', () => {
     const line = `The repo cache ${cache} on ${hostname()} is damaged and automatic repair failed. The machine's owner needs to repair it`;
     expect((failure as Error).message).toBe(line);
     expect(failure).not.toHaveProperty('stderr');
-    expect(distillTurnFailureReason(failure).text).toBe(line);
+    // The complete diagnostic stays in the journal; turn receipts have a
+    // fixed wire budget even when a runner's hostname makes this line longer.
+    const receipt = distillTurnFailureReason(failure).text;
+    expect(line.length).toBeGreaterThan(TURN_FAILURE_REASON_MAX);
+    expect(receipt.length).toBe(TURN_FAILURE_REASON_MAX);
+    expect(receipt).toContain(cache);
+    expect(receipt).toContain(hostname());
+    expect(receipt.endsWith('…')).toBe(true);
+    expect(line.startsWith(receipt.slice(0, -1))).toBe(true);
     expect(await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/heads/feature/corner-b'])).toBe(
       local,
     );

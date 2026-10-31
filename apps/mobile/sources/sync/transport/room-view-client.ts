@@ -31,14 +31,11 @@ import {
   type WorkspaceMemberListView,
   type WorkspaceView,
 } from '@beeline/api-contract/phone';
-import {
-  monolithSession,
-  monolithResponseTiming,
-  MonolithRequestTimeoutError,
-  MONOLITH_REQUEST_TIMEOUT_MS,
-} from '@/auth/monolith-session';
-import { markRoomOpen, recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { MonolithRequestTimeoutError, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
+import { markRoomOpen } from '@/buzz/room-open-trace';
+import { sharedLiveConnection } from './live-connection';
+import { PhoneSocketError } from './phone-socket-error';
+import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { liveFrameEpoch } from './live-frame-epoch';
 import { stampRoomMessageRows } from '@/buzz/room-message-records';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
@@ -57,7 +54,7 @@ function shareRead<T>(key: string, start: () => Promise<T>): Promise<T> {
   const epoch = liveFrameEpoch();
   const shared = readsInFlight.get(key);
   if (shared && shared.epoch === epoch) {
-    if (/^\/v1\/phone\/rooms\/[^/?]+$/.test(key)) markRoomOpen('wire-shared');
+    if (key.startsWith('["readRoom",')) markRoomOpen('wire-shared');
     return shared.promise as Promise<T>;
   }
   const promise = start();
@@ -81,305 +78,83 @@ export function isRoomViewTimeoutError(error: unknown): boolean {
 
 type Guard<T> = SurfaceReader<T>;
 
-/**
- * Room and history reads ask the server to leave out what the reader
- * rebuilds (`readScopedMessage`, packages/api-contract/src/phone-guards.ts);
- * an older server ignores the header and answers in full. Only the native
- * phone asks: in a browser the header costs a CORS preflight, and a server
- * rolled back past its allow-list would refuse the read outright.
- */
-const COMPACT_ROOM_READ: Record<string, string> | undefined =
-  typeof document === 'undefined' ? { 'x-beeline-view': 'compact' } : undefined;
-
 class MonolithRoomViewClient {
-  private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl;
-
   resolveMessageLink(messageId: string) {
-    return this.get(`/v1/phone/message-links/${encodeURIComponent(messageId)}`, readMessageLinkView);
+    return this.get('resolveMessageLink', { messageId }, readMessageLinkView);
   }
-  workspaces(): Promise<WorkspaceListView> {
-    return this.get('/v1/phone/workspaces', readWorkspaceListView);
+  workspaces(): Promise<WorkspaceListView> { return this.get('readWorkspaces', {}, readWorkspaceListView); }
+  workspace(workspaceId: string): Promise<WorkspaceView> {
+    return this.get('readWorkspace', { workspaceId }, readWorkspaceView);
   }
-  workspace(id: string): Promise<WorkspaceView> {
-    return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}`, readWorkspaceView);
-  }
-  workspaceMembers(
-    id: string,
-    query: WorkspaceMemberListQuery = {},
-  ): Promise<WorkspaceMemberListView> {
-    const params = new URLSearchParams();
-    if (query.q) params.set('q', query.q);
-    if (query.memberId) params.set('memberId', query.memberId);
-    if (query.ownerId) params.set('ownerId', query.ownerId);
-    if (query.kind) params.set('kind', query.kind);
-    if (query.offset !== undefined) params.set('offset', String(query.offset));
-    const suffix = params.toString() ? `?${params.toString()}` : '';
-    return this.get(
-      `/v1/phone/workspaces/${encodeURIComponent(id)}/members${suffix}`,
-      readWorkspaceMemberListView,
-    );
+  workspaceMembers(workspaceId: string, query: WorkspaceMemberListQuery = {}): Promise<WorkspaceMemberListView> {
+    return this.get('readWorkspaceMembers', { workspaceId, ...query }, readWorkspaceMemberListView);
   }
   agent(workspaceId: string, agentId: string, workCursor?: string): Promise<AgentDetailView> {
-    return this.get(
-      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}${workCursor ? `?workCursor=${encodeURIComponent(workCursor)}` : ''}`,
-      readAgentDetailView,
-    );
+    return this.get('readAgent', { workspaceId, agentId, workCursor }, readAgentDetailView);
   }
   agentVoices(workspaceId: string, agentId: string, roomId?: string) {
-    return this.get(
-      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voices${roomId ? `?roomId=${encodeURIComponent(roomId)}` : ''}`,
-      readAgentVoiceCatalog,
-    );
+    return this.get('readAgentVoices', { workspaceId, agentId, roomId }, readAgentVoiceCatalog);
   }
   setAgentVoice(workspaceId: string, agentId: string, voiceId: string) {
-    return this.checked(
-      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voices`,
-      'POST',
-      readAgentVoiceCatalog,
-      { voiceId },
-    );
+    return this.checked('saveAgentVoice', { workspaceId, agentId, voiceId }, readAgentVoiceCatalog);
   }
-  previewAgentVoice(
-    workspaceId: string,
-    agentId: string,
-    voiceId: string,
-  ) {
-    return this.checked(
-      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voice-preview`,
-      'POST',
-      readAgentVoicePreview,
-      { voiceId },
-    );
+  previewAgentVoice(workspaceId: string, agentId: string, voiceId: string) {
+    return this.checked('previewAgentVoice', { workspaceId, agentId, voiceId }, readAgentVoicePreview);
   }
-  chats(id: string): Promise<ChatListView> {
-    return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}/chats`, readChatListView);
+  chats(workspaceId: string): Promise<ChatListView> {
+    return this.get('readChats', { workspaceId }, readChatListView);
   }
-  room(id: string): Promise<RoomView> {
-    return this.get(
-      `/v1/phone/rooms/${encodeURIComponent(id)}`,
-      readRoomView,
-      undefined,
-      COMPACT_ROOM_READ,
-    );
+  room(roomId: string): Promise<RoomView> { return this.get('readRoom', { roomId }, readRoomView); }
+  corners(roomId: string, options: { readonly archived?: boolean; readonly before?: string; readonly openBefore?: string } = {}): Promise<CornerListView> {
+    return this.get('readCorners', { roomId, ...options }, readCornerListView);
   }
-  corners(
-    id: string,
-    options: {
-      readonly archived?: boolean;
-      readonly before?: string;
-      readonly openBefore?: string;
-    } = {},
-  ): Promise<CornerListView> {
-    const query = options.archived
-      ? `?archived=1${options.before ? `&before=${encodeURIComponent(options.before)}` : ''}`
-      : options.openBefore
-        ? `?openBefore=${encodeURIComponent(options.openBefore)}`
-        : '';
-    return this.get(
-      `/v1/phone/rooms/${encodeURIComponent(id)}/corners${query}`,
-      readCornerListView,
-    );
+  history(roomId: string, before?: { createdAt: number; id: string }): Promise<RoomHistoryView> {
+    return this.get('readHistory', { roomId, before }, readRoomHistoryView);
   }
-  history(id: string, before?: { createdAt: number; id: string }): Promise<RoomHistoryView> {
-    const query = before ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}` : '';
-    return this.get(
-      `/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`,
-      readRoomHistoryView,
-      undefined,
-      COMPACT_ROOM_READ,
-    );
+  historyAfter(roomId: string, messageId: string): Promise<RoomHistoryView> {
+    return this.get('readHistoryAfter', { roomId, messageId }, readRoomHistoryView);
   }
-  historyAfter(id: string, messageId: string): Promise<RoomHistoryView> {
-    return this.get(
-      `/v1/phone/rooms/${encodeURIComponent(id)}/history?after=${encodeURIComponent(messageId)}`,
-      readRoomHistoryView,
-      undefined,
-      COMPACT_ROOM_READ,
-    );
+  historyAround(roomId: string, messageId: string): Promise<RoomHistoryView> {
+    return this.get('readHistoryAround', { roomId, messageId }, readRoomHistoryView);
   }
-  historyAround(id: string, messageId: string): Promise<RoomHistoryView> {
-    return this.get(
-      `/v1/phone/rooms/${encodeURIComponent(id)}/history?around=${encodeURIComponent(messageId)}`,
-      readRoomHistoryView,
-      undefined,
-      COMPACT_ROOM_READ,
-    );
+  outline(roomId: string, timeZone: string): Promise<RoomHistoryOutline> {
+    return this.get('readHistoryOutline', { roomId, timeZone }, readRoomHistoryOutline);
   }
-  outline(id: string, timeZone: string): Promise<RoomHistoryOutline> {
-    return this.get(
-      `/v1/phone/rooms/${encodeURIComponent(id)}/outline?tz=${encodeURIComponent(timeZone)}`,
-      readRoomHistoryOutline,
-    );
+  searchMessages(workspaceId: string, query: string, before?: string, signal?: AbortSignal): Promise<MessageSearchView> {
+    return this.get('searchMessages', { workspaceId, query, before }, readMessageSearchView, signal);
   }
-  searchMessages(
-    workspaceId: string,
-    query: string,
-    before?: string,
-    signal?: AbortSignal,
-  ): Promise<MessageSearchView> {
-    const params = new URLSearchParams({ q: query });
-    if (before) params.set('before', before);
-    return this.get(
-      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/search?${params.toString()}`,
-      readMessageSearchView,
-      signal,
-    );
-  }
-  invite(token: string): Promise<InviteView> {
-    return this.operation('resolveInvite', { token }, readInviteView);
-  }
+  invite(token: string): Promise<InviteView> { return this.checked('resolveInvite', { token }, readInviteView); }
   claimAgentPairing(code: string): Promise<AgentPairingClaimView> {
-    return this.operation('claimAgentPairing', { code }, readAgentPairingClaimView);
+    return this.checked('claimAgentPairing', { code }, readAgentPairingClaimView);
   }
   abandonAgentPairing(): Promise<never> {
     return Promise.reject(new Error('Pairing abandon is not available on the phone API'));
   }
-  markRead(roomId: string, messageId: string): Promise<void> {
-    return this.request(`/v1/phone/rooms/${encodeURIComponent(roomId)}/read`, 'POST', {
-      messageId,
-    }).then(() => undefined);
-  }
-  markUnread(roomId: string, messageId: string): Promise<void> {
-    return this.request(`/v1/phone/rooms/${encodeURIComponent(roomId)}/unread`, 'POST', {
-      messageId,
-    }).then(() => undefined);
-  }
+  markRead(roomId: string, messageId: string): Promise<void> { return this.request('markRead', { roomId, messageId }).then(() => undefined); }
+  markUnread(roomId: string, messageId: string): Promise<void> { return this.request('markUnread', { roomId, messageId }).then(() => undefined); }
 
-  private get<T>(
-    path: string,
-    guard: Guard<T>,
-    signal?: AbortSignal,
-    headers?: Record<string, string>,
-  ): Promise<T> {
-    // A read its caller can cancel (search) is never shared.
-    if (signal) return this.checked(path, 'GET', guard, undefined, signal);
-    return shareRead(path, () => this.checked(path, 'GET', guard, undefined, undefined, headers));
+  private get<Name extends keyof PhoneOperationMap, T>(name: Name, input: PhoneOperationMap[Name]['input'], guard: Guard<T>, signal?: AbortSignal): Promise<T> {
+    if (signal) return this.checked(name, input, guard, signal);
+    return shareRead(JSON.stringify([name, input]), () => this.checked(name, input, guard));
   }
-  private operation<T>(name: string, input: unknown, guard: Guard<T>): Promise<T> {
-    return this.checked(`/v1/phone/operations/${name}`, 'POST', guard, input);
+  private async checked<Name extends keyof PhoneOperationMap, T>(name: Name, input: PhoneOperationMap[Name]['input'], guard: Guard<T>, signal?: AbortSignal): Promise<T> {
+    const value = await this.request(name, input, signal);
+    if (name === 'readRoom') markRoomOpen('wire-body');
+    const projected = guard(value);
+    if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
+    return projected;
   }
-  private async checked<T>(
-    path: string,
-    method: 'GET' | 'POST',
-    guard: Guard<T>,
-    body?: unknown,
-    signal?: AbortSignal,
-    headers?: Record<string, string>,
-  ): Promise<T> {
-    // The session's deadline ends at the response headers. A body that
-    // stalls after them would leave the read pending forever, so one deadline
-    // covers the headers and the body together.
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, MONOLITH_REQUEST_TIMEOUT_MS);
-    const forwardAbort = () => controller.abort();
-    signal?.addEventListener('abort', forwardAbort);
-    if (signal?.aborted) controller.abort();
+  private async request<Name extends keyof PhoneOperationMap>(name: Name, input: PhoneOperationMap[Name]['input'], signal?: AbortSignal): Promise<PhoneOperationMap[Name]['output']> {
     try {
-      const response = await this.request(path, method, body, controller.signal, headers);
-      const value = await untilAborted(response.json() as Promise<unknown>, controller.signal);
-      if (/^\/v1\/phone\/rooms\/[^/?]+$/.test(path)) markRoomOpen('wire-body');
-      const projected = guard(value);
-      if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
-      return projected;
+      const result = await sharedLiveConnection().request(name, input, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS });
+      if (name === 'readRoom') markRoomOpen('wire-headers');
+      return result;
     } catch (error) {
-      if (timedOut) {
-        // The answer stalled after its headers: the connection under it is
-        // presumed dead, so the next request goes elsewhere.
-        monolithSession.noteStalled(`${this.baseUrl}${path}`);
-        throw new RoomViewHttpError(0, 'timeout');
-      }
+      if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');
+      if (error instanceof PhoneSocketError) throw new RoomViewHttpError(error.status, error.code);
       throw error;
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', forwardAbort);
     }
   }
-  private async request(
-    path: string,
-    method: 'GET' | 'POST',
-    body?: unknown,
-    signal?: AbortSignal,
-    headers?: Record<string, string>,
-  ): Promise<Response> {
-    // The phone API carries room/workspace reads and small writes only; media
-    // uploads go straight through the session and stay unbounded.
-    const response = await monolithSession
-      .fetch(
-        `${this.baseUrl}${path}`,
-        {
-          method,
-          ...(signal ? { signal } : {}),
-          ...(body === undefined
-            ? headers
-              ? { headers }
-              : {}
-            : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-        },
-        // Reads, read marks and invite lookups repeat safely on a fresh
-        // connection; pairing claims and paid voice synthesis must not replay.
-        {
-          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-          idempotent:
-            !path.endsWith('/operations/claimAgentPairing') && !path.endsWith('/voice-preview'),
-        },
-      )
-      .catch((error: unknown) => {
-        if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');
-        throw error;
-      });
-    if (!response.ok) {
-      let code = 'request_failed';
-      try {
-        const json = response.json() as Promise<{ error?: unknown }>;
-        const value = signal ? await untilAborted(json, signal) : await json;
-        if (typeof value.error === 'string') code = value.error;
-      } catch {}
-      throw new RoomViewHttpError(response.status, code);
-    }
-    const roomMatch = /^\/v1\/phone\/rooms\/([^/]+)$/.exec(path);
-    if (roomMatch) {
-      const timing = monolithResponseTiming(response);
-      const serverTiming = /^app;dur=(\d+(?:\.\d+)?)$/.exec(
-        response.headers.get('server-timing') ?? '',
-      );
-      if (timing && serverTiming) {
-        const requestToFirstByteMs = timing.responseReceivedMs - timing.requestStartMs;
-        const jsResponseDelayMs = timing.jsHandledMs - timing.responseCompletedMs;
-        const serverProcessingMs = Number(serverTiming[1]);
-        if (
-          requestToFirstByteMs >= serverProcessingMs &&
-          requestToFirstByteMs < 15_000 &&
-          jsResponseDelayMs >= 0 && jsResponseDelayMs <= 600_000 &&
-          serverProcessingMs >= 0
-        ) {
-          recordRoomReadNetworkTiming(decodeURIComponent(roomMatch[1]!), {
-            requestToFirstByteMs,
-            serverProcessingMs,
-            jsResponseDelayMs,
-          });
-        }
-      }
-    }
-    return response;
-  }
-}
-
-/** Reject with an AbortError once `signal` aborts, whatever `promise` does. */
-function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      const error = new Error('The request was aborted.');
-      error.name = 'AbortError';
-      reject(error);
-    };
-    if (signal.aborted) return onAbort();
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
-  });
 }
 
 /** A push can begin this read before the Room identity/relay setup completes. */

@@ -369,7 +369,6 @@ beforeEach(() => {
     authorization: async () => 'phone-session',
     liveUrl: () => 'wss://server.example/v1/phone/live',
     subscribeIdentityChange: () => () => undefined,
-    subscribeForeground: () => () => undefined,
   });
 });
 

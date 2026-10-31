@@ -1,5 +1,5 @@
 import { getBuzzRuntimeConfig } from './runtime-config';
-import { monolithSession } from '@/auth/monolith-session';
+export { voiceFetch } from './voice-request';
 import { Room, RoomEvent, Track } from 'livekit-client';
 import { Linking, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
 
@@ -31,11 +31,13 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
           const [application, updates, { reportClientError }] = await Promise.all([
             import('expo-application'), import('expo-updates'), import('./client-error-report'),
           ]);
-          const architecture = globalThis as typeof globalThis & { RN$Bridgeless?: boolean; nativeFabricUIManager?: unknown; __turboModuleProxy?: unknown };
+          const bridgeless = (globalThis as typeof globalThis & { RN$Bridgeless?: boolean }).RN$Bridgeless;
+          const fabric = (globalThis as typeof globalThis & { nativeFabricUIManager?: unknown }).nativeFabricUIManager;
+          const turboModules = (globalThis as typeof globalThis & { __turboModuleProxy?: unknown }).__turboModuleProxy;
           await reportClientError('voice-join', new Error(`iOS voice capability check failed: ${JSON.stringify({
             ...failures, appVersion: application.nativeApplicationVersion, build: application.nativeBuildVersion,
-            runtime: updates.runtimeVersion, bridgeless: !!architecture.RN$Bridgeless,
-            fabric: !!architecture.nativeFabricUIManager, turboModules: !!architecture.__turboModuleProxy,
+            runtime: updates.runtimeVersion, bridgeless: !!bridgeless,
+            fabric: !!fabric, turboModules: !!turboModules,
           })}`));
         })().catch(() => {});
       }
@@ -155,11 +157,7 @@ export function subscribeVoiceResume(roomId: string, resume: () => void): () => 
   return () => { disposed = true; remove(); };
 }
 
-/** Expo fetch delivers native responses without background-paused JS timers. */
-export async function voiceFetch(input: string, init: RequestInit): Promise<Response> {
-  const { fetch } = await import('expo/fetch');
-  return monolithSession.fetch(input, init, { fetchImpl: fetch as typeof globalThis.fetch });
-}
+
 
 /** Use the same native processor for the microphone and every remote audio track. */
 export function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {

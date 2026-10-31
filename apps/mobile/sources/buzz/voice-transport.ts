@@ -1,4 +1,4 @@
-import { monolithSession } from '@/auth/monolith-session';
+export { voiceFetch } from './voice-request';
 import { Room, RoomEvent, Track } from 'livekit-client';
 
 export async function createVoiceRoom(_onStop: () => void = () => {}, _roomId?: string): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void> }> {
@@ -17,9 +17,7 @@ export async function routeVoiceResumeNotification(_url: unknown, _ready?: () =>
   return false;
 }
 
-export function voiceFetch(input: string, init: RequestInit): Promise<Response> {
-  return monolithSession.fetch(input, init);
-}
+
 
 /** Sample every audio source each frame; the loudest speaker drives the waveform. */
 export function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {

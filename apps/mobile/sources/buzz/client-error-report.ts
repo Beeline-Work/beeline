@@ -46,17 +46,14 @@ export async function reportNativeCrash(report: NativeCrashReport): Promise<bool
 
 async function sendClientError(scope: ClientErrorScope, cause: unknown, native?: NativeCrashReport): Promise<boolean> {
   try {
-    const [{ monolithSession }, { getBuzzRuntimeConfig }, { loadAppConfig }, updates] = await Promise.all([
-      import('@/auth/monolith-session'), import('./runtime-config'), import('@/sync/appConfig'), import('expo-updates'),
+    const [{ sharedLiveConnection }, { loadAppConfig }, updates] = await Promise.all([
+      import('@/sync/transport/live-connection'), import('@/sync/appConfig'), import('expo-updates'),
     ]);
     const config = loadAppConfig();
-    const response = await monolithSession.fetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/observations/client-error`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scope, ...errorDiagnostic(cause, native ? 64 : 6), platform: Platform.OS,
+    await sharedLiveConnection().request('reportClientError', { scope, ...errorDiagnostic(cause, native ? 64 : 6), platform: Platform.OS,
         platformVersion: native?.platformVersion ?? String(Platform.Version ?? ''), releaseSha: native?.releaseSha ?? config.releaseSha ?? config.buildCommitSha ?? '',
         runtimeVersion: native?.runtimeVersion ?? updates.runtimeVersion ?? '', updateId: native?.updateId ?? updates.updateId ?? '',
-        ...(native ? { device: native.device, appVersion: native.appVersion, crashTimestamp: String(native.timestamp) } : {}) }),
-    }, { timeoutMs: 5000 });
-    return response.ok;
+        ...(native ? { device: native.device, appVersion: native.appVersion, crashTimestamp: String(native.timestamp) } : {}) }, { timeoutMs: 5000 });
+    return true;
   } catch { return false; /* The visible error and Retry do not depend on telemetry. */ }
 }

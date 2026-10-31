@@ -1194,7 +1194,12 @@ function scan(files: Map<string, string>): Entry[] {
   const inlineStack = new Set<ts.Node>();
   // A parameter is one syntax node shared by every call, and each call supplies its own argument.
   // Reuse a walk only within that call's substitution scope.
+  // Each helper records the caller scope that supplied its arguments. When the current scope
+  // does not bind an identifier, the walk continues through those caller scopes so a literal
+  // passed through several helpers stays with the call that wrote it.
+  const scopeParents = new Map<Map<ts.Node, ts.Node>, Map<ts.Node, ts.Node>>();
   const wordingCache = new Map<ts.Node, Map<Map<ts.Node, ts.Node>, string[]>>();
+  const inheritedCache = new Map<ts.Node, Map<Map<ts.Node, ts.Node>, string[]>>();
   let substitutions = new Map<ts.Node, ts.Node>();
   let argumentScope = new Map<ts.Node, ts.Node>();
   const ancestorInlined = (node: ts.Node) => {
@@ -1326,6 +1331,7 @@ function scan(files: Map<string, string>): Entry[] {
               if (argument && !ts.isSpreadElement(argument)) calleeMap.set(parameter, argument);
               else if (parameter.initializer) calleeMap.set(parameter, parameter.initializer);
             });
+            scopeParents.set(calleeMap, savedSubstitutions);
             substitutions = calleeMap;
             argumentScope = savedSubstitutions;
             inlineStack.add(builder);
@@ -1357,31 +1363,67 @@ function scan(files: Map<string, string>): Entry[] {
         ) {
           if (ts.isIdentifier(part)) {
             for (const declaration of declarations(part)) {
-              const replacement = substitutions.get(declaration);
-              if (!replacement) continue;
-              const scope = argumentScope;
-              const cached = wordingCache.get(replacement)?.get(scope);
-              if (cached) {
-                for (const token of cached) literals.push(token);
+              const immediate = substitutions.get(declaration);
+              if (immediate) {
+                const replacement = immediate;
+                const scope = argumentScope;
+                const cached = wordingCache.get(replacement)?.get(scope);
+                if (cached) {
+                  for (const token of cached) literals.push(token);
+                  return;
+                }
+                if (active.has(replacement)) return;
+                const savedSubstitutions = substitutions;
+                const savedArguments = argumentScope;
+                substitutions = savedArguments;
+                argumentScope = savedArguments;
+                const start = literals.length;
+                try {
+                  collect(replacement);
+                } finally {
+                  substitutions = savedSubstitutions;
+                  argumentScope = savedArguments;
+                }
+                const scopes =
+                  wordingCache.get(replacement) ?? new Map<Map<ts.Node, ts.Node>, string[]>();
+                wordingCache.set(replacement, scopes);
+                scopes.set(scope, literals.slice(start));
                 return;
               }
-              if (active.has(replacement)) return;
-              const savedSubstitutions = substitutions;
-              const savedArguments = argumentScope;
-              substitutions = savedArguments;
-              argumentScope = savedArguments;
-              const start = literals.length;
-              try {
-                collect(replacement);
-              } finally {
-                substitutions = savedSubstitutions;
-                argumentScope = savedArguments;
+              let ancestor = scopeParents.get(substitutions);
+              const seenScopes = new Set<Map<ts.Node, ts.Node>>();
+              while (ancestor && !seenScopes.has(ancestor)) {
+                seenScopes.add(ancestor);
+                const replacement = ancestor.get(declaration);
+                if (!replacement) {
+                  ancestor = scopeParents.get(ancestor);
+                  continue;
+                }
+                const scope = ancestor;
+                const cached = inheritedCache.get(replacement)?.get(scope);
+                if (cached) {
+                  for (const token of cached) literals.push(token);
+                  return;
+                }
+                if (active.has(replacement)) return;
+                const savedSubstitutions = substitutions;
+                const savedArguments = argumentScope;
+                const parent = scopeParents.get(ancestor) ?? new Map();
+                substitutions = parent;
+                argumentScope = parent;
+                const start = literals.length;
+                try {
+                  collect(replacement);
+                } finally {
+                  substitutions = savedSubstitutions;
+                  argumentScope = savedArguments;
+                }
+                const scopes =
+                  inheritedCache.get(replacement) ?? new Map<Map<ts.Node, ts.Node>, string[]>();
+                inheritedCache.set(replacement, scopes);
+                scopes.set(scope, literals.slice(start));
+                return;
               }
-              const scopes =
-                wordingCache.get(replacement) ?? new Map<Map<ts.Node, ts.Node>, string[]>();
-              wordingCache.set(replacement, scopes);
-              scopes.set(scope, literals.slice(start));
-              return;
             }
           }
           for (const declaration of declarations(part)) {
@@ -2300,6 +2342,35 @@ it('rejects one changed word in a later call through the same helper chain', () 
   const changed = new Map(base);
   changed.set('/fixtures/producer.ts', source.replace("phrase('joined')", "phrase('left')"));
   expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('rejects one changed word through three forwarding helpers', () => {
+  const helpers = `
+    function first(a: string) { return a; }
+    function second(b: string) { return first(b); }
+    function third(c: string) { return second(c); }`;
+  const forwarded = `${helpers}
+    line(db, { verb: third('hello') });
+    line(db, { verb: third('joined') });`;
+  const direct = fixture(`
+    line(db, { verb: 'hello' });
+    line(db, { verb: 'joined' });`);
+  expect(() => enforce(scan(fixture(forwarded)), scan(direct))).not.toThrow();
+  const changed = fixture(`${helpers}
+    line(db, { verb: third('hello') });
+    line(db, { verb: third('left') });`);
+  expect(() => enforce(scan(changed), scan(fixture(forwarded)))).toThrow(failure);
+  const four = `
+    function first(a: string) { return a; }
+    function second(b: string) { return first(b); }
+    function third(c: string) { return second(c); }
+    function fourth(d: string) { return third(d); }
+    line(db, { verb: fourth('hello') });
+    line(db, { verb: fourth('joined') });`;
+  expect(() => enforce(scan(fixture(four)), scan(direct))).not.toThrow();
+  expect(() =>
+    enforce(scan(fixture(four.replace("fourth('joined')", "fourth('left')"))), scan(fixture(four))),
+  ).toThrow(failure);
 });
 
 it('R1: a chain of local helpers that only returns the voice-call verb keeps the same wording', () => {

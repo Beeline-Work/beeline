@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readSelection, selected } from './selected-tests.mjs';
+import { readSelection, selected as runs } from './selected-tests.mjs';
 
 const [position, count] = process.argv[2]?.split('/').map(Number) ?? [];
 if (
@@ -15,7 +15,7 @@ if (
   throw new Error('expected an integration shard such as 1/8');
 }
 
-if (!selected(readSelection(), 'src/integration.test.ts')) {
+if (!runs(readSelection(), 'src/integration.test.ts')) {
   console.log(`Integration shard ${position}/${count}: skipped, this PR changes nothing the integration file runs`);
   process.exit(0);
 }

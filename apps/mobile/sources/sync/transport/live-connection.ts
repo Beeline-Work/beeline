@@ -890,6 +890,10 @@ export function sharedLiveConnection(): LiveConnection {
       // asynchronously lets an OTA bundle retain its normal socket behavior.
       void import('@react-native-community/netinfo')
         .then(({ default: NetInfo }) => {
+          // NetInfo otherwise falls back to recurring HTTP reachability probes
+          // when a native state does not include isInternetReachable. We only
+          // need native connectivity change events for socket recovery.
+          NetInfo.configure({ reachabilityShouldRun: () => false });
           unsubscribe = NetInfo.addEventListener(() => listener());
         })
         .catch(() => undefined);

@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import InternetReachability from '@react-native-community/netinfo/src/internal/internetReachability';
 
 const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
+const netInfo = vi.hoisted(() => ({
+  configure: vi.fn(),
+  addEventListener: vi.fn(() => vi.fn()),
+}));
 vi.mock('react-native', () => ({
   AppState: {
     currentState: 'active',
@@ -11,6 +16,7 @@ vi.mock('react-native', () => ({
     },
   },
 }));
+vi.mock('@react-native-community/netinfo', () => ({ default: netInfo }));
 
 import { AppState } from 'react-native';
 import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
@@ -128,6 +134,35 @@ describe('LiveConnection', () => {
     resetSharedLiveConnection();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    netInfo.configure.mockClear();
+    netInfo.addEventListener.mockClear();
+  });
+
+  it('disables NetInfo HTTP reachability before subscribing to native changes', async () => {
+    sharedLiveConnection();
+    await vi.waitFor(() => expect(netInfo.addEventListener).toHaveBeenCalledOnce());
+
+    expect(netInfo.configure).toHaveBeenCalledBefore(netInfo.addEventListener);
+    expect(netInfo.configure).toHaveBeenCalledWith({ reachabilityShouldRun: expect.any(Function) });
+    expect(netInfo.configure.mock.calls[0]?.[0].reachabilityShouldRun()).toBe(false);
+  });
+
+  it('NetInfo fallback starts neither an HTTP probe nor a recurring timer when disabled', () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const reachability = new InternetReachability(
+      {
+        reachabilityShouldRun: () => false,
+      } as ConstructorParameters<typeof InternetReachability>[0],
+      () => undefined,
+    );
+
+    (reachability as unknown as { _setExpectsConnection: (connected: boolean) => void })
+      ._setExpectsConnection(true);
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('R1 stand-in: replaces a silent socket when foreground sync misses its deadline', async () => {

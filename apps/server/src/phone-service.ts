@@ -6203,6 +6203,16 @@ export class PhoneService {
    */
   private async cancelAgentTurn(input: Input<'cancelAgentTurn'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+    // Folded human messages remain valid Stop handles for their combined turn.
+    const folded = (await this.database.query<{ turn_request_id: string }>(
+      `SELECT head.turn_request_id FROM agent_commands source
+       JOIN agent_commands head ON source.cancellation_reason='coalesced_into:'||head.id
+         AND head.room_id=source.room_id AND head.agent_id=source.agent_id
+       WHERE source.room_id=$1 AND source.agent_id=$2 AND source.turn_request_id=$3
+         AND source.reason IN ('human_tag','direct_message') AND source.state='cancelled'
+         AND head.state='claimed' ORDER BY head.created_at DESC LIMIT 1`,
+      [input.roomId, input.agentId, input.requestId])).rows[0];
+    if (folded) input = { ...input, requestId: folded.turn_request_id };
     // Anyone in the Room may stop any agent turn there; a Room role never
     // changes that. Membership is checked again under lock before settling.
     const running = (

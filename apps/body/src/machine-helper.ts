@@ -162,6 +162,7 @@ async function serveMachineHelper(
   const archiveStoragePending = new Map<string, import('./helper-storage.js').StorageRoomState>();
   let archiveStorageRunning = false;
   const stopStorageFacts = watchStorageFacts(supervisorRoot, states => {
+    usage?.observe(states);
     for (const state of states) if (state.archived) archiveStoragePending.set(state.roomId, state);
     if (archiveStorageRunning || !archiveStoragePending.size) return;
     archiveStorageRunning = true;

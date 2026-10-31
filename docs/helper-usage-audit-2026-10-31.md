@@ -107,3 +107,43 @@ This stand-in avoids deleting live squire data before fixes land.
 
 Obtain independent review of this first logging/retention fix. The archived emulator is owned by the custom pinfreeze-emu-r3.service and has no kept-emulator record. Dependency sharing still needs ABI-safe mutation isolation; broad process reaping remains inappropriate for unproven orphans. One-time cleanup remains deferred until fixes land; dirty checkouts and
 unpublished work remain protected.
+
+
+## Orphan-first follow-up (brief revision 3)
+
+The attached repository CSV records every observed folder, state, close date,
+allocation snapshot, uncommitted work, and commits absent from local origin
+refs. Across accessible Rooms: open (23, 54.75 GiB), archived (156, 223.18 GiB),
+and inaccessible lifecycle (3, retained as unknown). Git and lifecycle reads
+were taken after the allocation snapshot; this is not an atomic inventory.
+
+Archived preservation reasons: dirty trees (118, 118.36 GiB), publication guard
+(9, 29.80 GiB), unavailable git evidence (5, 2.10 GiB), declared proof retention
+(20, 44.09 GiB), observed process use (2, 23.96 GiB), and missing persisted
+archive facts (2, 4.88 GiB). These are sampled reasons, not evidence that earlier
+cleanup attempts ran or failed. Local origin refs may be stale; one-time removal
+must revalidate publication and cleanliness immediately before applying.
+
+The close path is wired: authoritative storage facts reach Room reconciliation
+and the machine archive listener, which persist ended ownership and call
+`reclaimOwnedCheckout`. The six-hour host sweep retries persisted ended owners.
+The guards above explain why most folders cannot be removed wholesale.
+
+ARCHIVE-FACT-1 disproves the suspected bootstrap membership bug: on a migrated
+PGlite database, a parent-only member receives its archived child in bootstrap
+storage facts with zero direct corner membership rows. Top-level discovery
+remains limited to the parent and unrelated Rooms stay excluded.
+`CornerAccessDatabase` rewrites the SELECT to `effective_memberships`. No query
+change is justified. Missing persisted facts are not proof that this query
+failed; delivery/reconciliation timing remains unproven for those two folders.
+
+Usage lines now count corner folders as open, orphaned (confirmed archived),
+or unknown. Live storage facts and persisted ended-owner records supply the
+classification; missing facts never imply orphaning. Counts read only immediate
+folder entries and owner metadata, with no recursive disk walk. A failed count
+is null rather than a false zero.
+
+Built host count proof after this change returned open (23), orphaned (158),
+unknown (1). Compared with the API-only audit, persisted ended-owner records
+classify two inaccessible folders as archived; no missing-state inference was
+used. Live folder inventories can also change between snapshots.

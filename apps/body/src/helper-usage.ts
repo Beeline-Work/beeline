@@ -2,7 +2,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
-import type { StorageReclaimEntry } from './helper-storage.js';
+import { readdir } from 'node:fs/promises';
+import { readStorageOwners } from './storage-owners.js';
+import type { StorageReclaimEntry, StorageRoomState } from './helper-storage.js';
 
 const exec = promisify(execFile);
 const DISK_INTERVAL_MS = 6 * 60 * 60_000;
@@ -76,13 +78,32 @@ export async function sampleHelperUsage(root: string, mode: 'disk' | 'process', 
   return JSON.parse(stdout);
 }
 
+/** Missing lifecycle evidence is unknown, never proof that a folder is orphaned. */
+export async function countCornerFolders(supervisorRoot: string, states: ReadonlyMap<string, boolean>) {
+  const counts = { open: 0, orphaned: 0, unknown: 0 };
+  const owners = new Map((await readStorageOwners(supervisorRoot))
+    .filter(owner => owner.kind === 'corners').map(owner => [owner.itemId, owner]));
+  const folders = await readdir(resolve(supervisorRoot, 'beeline/corners'), { withFileTypes: true });
+  for (const folder of folders) {
+    if (!folder.isDirectory()) continue;
+    const owner = owners.get(folder.name);
+    const archived = states.get(owner?.roomId ?? folder.name);
+    if (owner?.ended || archived === true) counts.orphaned++;
+    else if (archived === false) counts.open++;
+    else counts.unknown++;
+  }
+  return counts;
+}
+
 /** A disk scan never overlaps another; failures retry only at the next six-hour window. */
 export function monitorHelperUsage(supervisorRoot: string): {
   cleanup: (entry: StorageReclaimEntry) => void;
+  observe: (states: readonly StorageRoomState[]) => void;
   stop: () => void;
 } {
   const controller = new AbortController();
   const root = resolve(supervisorRoot, 'beeline');
+  const lifecycle = new Map<string, boolean>();
   let disk: unknown = null, diskAt: number | null = null, diskError = false;
   let nextDiskAt = 0, scanning = false, sampling = false;
   let cleanupActions = 0, freedBytes = 0;
@@ -98,9 +119,10 @@ export function monitorHelperUsage(supervisorRoot: string): {
     }
     try {
       const processes = await sampleHelperUsage(root, 'process', controller.signal);
+      const cornerFolders = await countCornerFolders(supervisorRoot, lifecycle).catch(() => null);
       if (!controller.signal.aborted) console.log('[helper] usage ' + JSON.stringify({
         version: 1, at: Date.now(), diskAt, disk, diskError, diskScanning: scanning,
-        processes, cleanupActions, freedBytes,
+        processes, cornerFolders, cleanupActions, freedBytes,
       }));
     } catch {
       if (!controller.signal.aborted) console.warn('[helper] usage process sample unavailable');
@@ -111,6 +133,11 @@ export function monitorHelperUsage(supervisorRoot: string): {
   void tick();
   return {
     cleanup: entry => { cleanupActions++; freedBytes += entry.freedBytes; },
+    observe: states => {
+      for (const state of states) {
+        if (lifecycle.get(state.roomId) !== true) lifecycle.set(state.roomId, state.archived);
+      }
+    },
     stop: () => { clearInterval(timer); controller.abort(); },
   };
 }

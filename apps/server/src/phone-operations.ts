@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   MESSAGE_SEARCH_QUERY_MAX_BYTES, PHONE_READ_OPERATIONS, messageSearchTerms,
 } from '@beeline/api-contract/phone';
-import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerCursor } from './phone-service.js';
+import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerCursor, type PhoneService } from './phone-service.js';
 import { recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { IdentityRateLimit, type PhoneReadLimits } from './phone-read-limit.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
@@ -59,8 +59,10 @@ function isIanaTimeZone(value: string): boolean {
 export function createPhoneOperationDispatcher(
   options: ServerOptions,
   readLimits: PhoneReadLimits,
+  legacyOperation: PhoneService['execute'],
 ) {
-  const execute = async (name: string, input: Record<string, unknown>, viewerId: string): Promise<unknown> => {
+  const execute = async (name: string, input: Record<string, unknown>, viewerId: string,
+    invokeLegacy?: () => Promise<unknown>): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
       case 'readWorkspaces': return phone.readWorkspaces(viewerId);
@@ -196,18 +198,20 @@ export function createPhoneOperationDispatcher(
             (network as { serverProcessingMs: number }).serverProcessingMs), jsResponseDelay as number | undefined);
         return;
       }
-      default: return phone.execute(name as never, input as never, viewerId);
+      default: return invokeLegacy ? invokeLegacy()
+        : legacyOperation.call(phone, name as never, input as never, viewerId);
     }
   };
 
-  return async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal): Promise<unknown> => {
+  return async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
+    invokeLegacy?: () => Promise<unknown>): Promise<unknown> => {
     if (!viewerId) refuse(401, 'phone_token_required');
     if (!PHONE_OPERATION_NAMES.has(name as never)) refuse(404, 'unknown_phone_operation');
     if (!input || typeof input !== 'object' || Array.isArray(input)) refuse(400, 'invalid_args');
     signal?.throwIfAborted();
     const startedAt = Date.now();
     // Let admitted writes settle atomically. Never race a transaction against socket closure.
-    const result = await execute(name, input, viewerId);
+    const result = await execute(name, input, viewerId, invokeLegacy);
     if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
       void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
         .catch(error => console.error('[server] human-triggered merge recovery failed:', error));

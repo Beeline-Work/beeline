@@ -38,6 +38,7 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
   let db: PgliteDatabase, phone: PhoneService, live: LiveHub, server: Server, origin: string;
   const sockets: WebSocket[] = [];
   let sequence: number;
+  let authenticatePhone: ReturnType<typeof vi.fn<(token: string) => Promise<string | null>>>;
   beforeEach(async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     db = PgliteDatabase.fromSnapshot(SNAPSHOT);
@@ -48,10 +49,9 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'searchable fixture')`, [MESSAGE, ROOM, VIEWER]);
     live = new LiveHub();
     phone = new PhoneService(db, 'http://local.test', undefined, undefined, live);
+    authenticatePhone = vi.fn(async (token: string) => token === 'viewer'.repeat(8) ? VIEWER : token === 'outsider'.repeat(8) ? OUTSIDER : null);
     server = createBeelineServer({ database: db, phone, live,
-      auth: {
-        authenticatePhone: async (token: string) => token === 'viewer'.repeat(8) ? VIEWER : token === 'outsider'.repeat(8) ? OUTSIDER : null,
-      } as unknown as TokenAuth,
+      auth: { authenticatePhone } as unknown as TokenAuth,
       daemon: {} as DaemonService, mediaMaximumBytes: 1,
       phoneReadLimits: phoneReadLimits({ history: { maxRequestsPerWindow: 4 } }),
     });
@@ -91,6 +91,15 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
       ...(args === undefined ? {} : { method: 'POST', body: JSON.stringify(args) }),
     });
   }
+
+  it('authenticates once at upgrade and reuses that identity for operation requests', async () => {
+    const socket = await open();
+    expect(authenticatePhone).toHaveBeenCalledTimes(1);
+    authenticatePhone.mockResolvedValue(null);
+    expect(await request(socket, 'readWorkspaces')).toMatchObject({ ok: true });
+    expect(await request(socket, 'readRoom', { roomId: ROOM })).toMatchObject({ ok: true });
+    expect(authenticatePhone).toHaveBeenCalledTimes(1);
+  });
 
   it('returns the same authenticated operation result over HTTP and socket, with no read invalidations', async () => {
     const socket = await open();

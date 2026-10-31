@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { requireRoomList } from './capture-ui.mjs';
+import { isKeyboardShown, requireRoomList } from './capture-ui.mjs';
+test('system keyboard visibility takes precedence over a retained IME view', () => {
+  assert.equal(isKeyboardShown('mInputShown=false\n mIsInputViewShown=true mStatusIcon=0'), false);
+  assert.equal(isKeyboardShown('mInputShown=true\n mIsInputViewShown=false'), true);
+  assert.equal(isKeyboardShown('mInputShown=false'), false);
+  assert.equal(isKeyboardShown('mInputShown=true'), true);
+  assert.equal(isKeyboardShown('mIsInputViewShown=true'), true);
+  assert.equal(isKeyboardShown('mIsInputViewShown=false'), false);
+});
 const list = '<node content-desc="Latency Rig 200 — switch Workspace" bounds="[0,0][200,10]"/><node content-desc="all conversations" bounds="[0,10][100,30]"/><node text="#Rig room 001" bounds="[20,50][180,80]"/>';
 test('a signed-out screen or a covering Workspace overlay cannot become a timing sample', () => {
   assert.throws(() => requireRoomList('<node text="Continue with GitHub" bounds="[0,0][100,100]"/>'), /sign in/);

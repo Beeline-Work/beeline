@@ -549,6 +549,17 @@ sample. Keyboard animation and navigation rendering are included in the duration
 The native Screen boundary uses a type check so release obfuscation cannot
 disable completion. These are frame-submission measurements, not physical scanout timings.
 
+Accessibility setup dumps retry at most three times, clearing the old file and
+requiring a successful, complete hierarchy before reading controls. Failed
+attempts wait 35 seconds outside measurement. A fixture send can create a
+pending WORKING receipt with no helper to finish it: the legitimate thinking
+counter changes accessibility content each second until the phone's existing
+90-second freshness deadline. The retry window covers that finite lifetime;
+a screen that stays busy still fails with its action and sample in the error.
+Regression coverage: `node --test scripts/latency-rig/dump-ui.test.mjs`.
+Composer setup uses the system `mInputShown` value when present. An IME can
+retain `mIsInputViewShown=true` after hiding; that older flag is a fallback only.
+
 For a single smoke sample of each new case, build/install the fixture APK and sign
 into its local server, select Latency Rig 200, then run:
 

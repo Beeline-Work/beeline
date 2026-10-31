@@ -1,4 +1,11 @@
 /** Fail closed before arming a timer if the intended entry is not available. */
+export function isKeyboardShown(inputMethodDump) {
+  // InputMethodService can retain its last view while the system hides the IME.
+  const system = inputMethodDump.match(/\bmInputShown=(true|false)\b/);
+  if (system) return system[1] === 'true';
+  return /\bmIsInputViewShown=true\b/.test(inputMethodDump);
+}
+
 export function pointFor(xml, attribute, label) {
   const node = [...xml.matchAll(/<node\b[^>]*>/g)].map((m) => m[0]).find((node) => node.includes(` ${attribute}="${label}"`));
   const b = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);

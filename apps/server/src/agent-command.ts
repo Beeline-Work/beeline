@@ -1226,7 +1226,7 @@ export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow | undefined,
   sourceId: string,
-  speaker?: { roomId: string; agentId: string; initialAgentDepth?: 1 },
+  speaker?: { roomId: string; agentId: string; initialAgentDepth?: 1; wakeTaggedReplyAuthor?: boolean },
 ) {
   const addressedRoomId = speaker?.roomId ?? parent?.room_id;
   const agentId = speaker?.agentId ?? parent?.agent_id;
@@ -1241,6 +1241,21 @@ export async function routeAgentResult(
   if (!source) return { woken, notWoken };
   const roomId = source.room_id;
   const mentions = await resolveCurrentMemberMentions(db, roomId, source.text, parent && parent.room_id !== roomId ? undefined : agentId);
+  // Only connected members opt into threaded answers acting like a back-tag.
+  if (speaker?.wakeTaggedReplyAuthor) {
+    const question = (await db.query<{ text: string; author_id: string; handle: string }>(
+      `SELECT question.text,question.author_id,author.handle FROM messages answer
+       JOIN messages question ON question.id=answer.reply_to_message_id AND question.room_id=answer.room_id
+       JOIN identities author ON author.id=question.author_id AND author.kind='agent'
+       WHERE answer.id=$1 AND question.deleted_at IS NULL AND question.presentation='message'`, [sourceId],
+    )).rows[0];
+    if (question && (await resolveCurrentMemberMentions(db, roomId, question.text, question.author_id))
+      .some(mention => mention.id === agentId)) {
+      const asker = (await resolveCurrentMemberMentions(db, roomId, `@${question.handle}`, agentId))
+        .find(mention => mention.id === question.author_id);
+      if (asker && !mentions.some(mention => mention.id === asker.id)) mentions.push(asker);
+    }
+  }
   for (const handle of typedMentionHandles(source.text)) {
     if (isChannelMentionToken(handle)) continue;
     if (!mentions.some(mention => mention.handle === handle))

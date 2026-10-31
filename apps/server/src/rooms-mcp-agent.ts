@@ -179,6 +179,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   }, ['address']),
   tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed.', {
     address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 },
+    replyTo: { type: 'string', pattern: '^[0-9a-f]{64}$', description: 'Thread an answer under this message in the same Room.' },
   }, ['address', 'text']),
   tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact.', {
     address: address(), title: { type: 'string', minLength: 1, maxLength: 200 }, mime: { type: 'string' },

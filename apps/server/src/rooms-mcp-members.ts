@@ -184,7 +184,7 @@ function webhookKey(): string {
 }
 
 /** What a tagged client is told, in the instructions and on every webhook POST. */
-export const MCP_TAG_INSTRUCTION = 'A Room member tagged you. Your owner\'s Allow is standing approval to answer: read the Room, then answer this message there with send_message (pass replyTo to thread it). Tag another agent only to hand it a spelled-out job.';
+export const MCP_TAG_INSTRUCTION = 'A Room member tagged you. Your owner\'s Allow is standing approval to answer: read the Room, then answer this message there with send_message (pass replyTo to thread it). Tag another agent only to hand it a spelled-out job. Beeline wakes you by tag or by the asking agent\'s schedule. Do not create your own timer or routine for Room work. A threaded reply (replyTo) reaches the agent that tagged you.';
 
 /**
  * Every tag or direct message addressed to an AI-client member, in order.
@@ -531,27 +531,34 @@ export async function setMcpMemberWebhook(
 
 /**
  * The wake chain a member's reply continues: the helper command behind the
- * latest message addressed to it in this Room, read from the mentions ledger
+ * threaded question, or latest message addressed to it in this Room, read from the mentions ledger
  * by index. Bounded, so a slow read can never hold a wake.
  */
 export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: string, messageId?: string) {
   return db.transaction(async tx => {
     await tx.query("SET LOCAL statement_timeout='2s'");
     return (await tx.query<{ command: CommandRow | null }>(
-      `SELECT to_jsonb(command) command FROM rooms_mcp_mentions mention
-       JOIN messages m ON m.id=mention.message_id AND m.deleted_at IS NULL
+      `WITH addressed AS (
+         SELECT coalesce(
+           (SELECT reply_to_message_id FROM messages WHERE id=$3 AND room_id=$2 AND author_id=$1),
+           (SELECT mention.message_id FROM rooms_mcp_mentions mention
+             JOIN messages tagged ON tagged.id=mention.message_id AND tagged.deleted_at IS NULL
+             WHERE mention.member_id=$1 AND mention.room_id=$2
+             AND ($3::text IS NULL OR mention.message_id<>$3) ORDER BY mention.seq DESC LIMIT 1)
+         ) message_id
+       )
+       SELECT to_jsonb(command) command FROM addressed
+       JOIN messages m ON m.id=addressed.message_id AND m.room_id=$2 AND m.deleted_at IS NULL
        LEFT JOIN LATERAL (SELECT c.* FROM agent_commands c
          WHERE c.room_id=m.room_id AND c.agent_id=m.author_id AND c.turn_request_id=m.request_id
-         ORDER BY c.created_at DESC,c.id DESC LIMIT 1) command ON true
-       WHERE mention.member_id=$1 AND mention.room_id=$2 AND ($3::text IS NULL OR mention.message_id<>$3)
-       ORDER BY mention.seq DESC LIMIT 1`,
+         ORDER BY c.created_at DESC,c.id DESC LIMIT 1) command ON true`,
       [memberId, roomId, messageId ?? null],
     )).rows[0];
   });
 }
 
 /**
- * Wake every agent a member's post tags. A durable row is written first and
+ * Wake every agent a member's post tags or answers after its tag. A durable row is written first and
  * removed only after routing commits, so a failed route is retried by
  * maintenance; agent commands and webhook calls dedupe per (message, target),
  * so a retry never wakes twice. A failed provenance read only loses the
@@ -576,7 +583,7 @@ export async function routeMcpMemberPost(
     ? { ...incoming.command, agent_depth: incoming.command.agent_depth + 1 } : undefined;
   try {
     const delivery = await routeAgentResult(db, parent, messageId,
-      { roomId, agentId: memberId, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
+      { roomId, agentId: memberId, wakeTaggedReplyAuthor: true, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
     await db.query('DELETE FROM rooms_mcp_pending_routes WHERE message_id=$1', [messageId]);
     return { woken: delivery.woken, routing: 'done' };
   } catch (error) {

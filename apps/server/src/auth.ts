@@ -355,8 +355,16 @@ export class TokenAuth {
     return !!(await database.query('SELECT id FROM identities WHERE id=$1 FOR UPDATE', [identityId])).rowCount;
   }
 
+  // Own query on purpose. Folding the sign-in family into this lookup changes a locked System message fingerprint.
   async authenticatePhone(token: string): Promise<string | null> {
-    return (await this.authenticatePhoneSession(token))?.identityId ?? null;
+    const hash = tokenHash(token);
+    const result = await this.database.query<{ identity_id: string; token_hash: string }>(
+      `SELECT identity_id, token_hash FROM phone_access_tokens
+       WHERE token_hash = $1 AND expires_at > $2`,
+      [hash, this.now()],
+    );
+    const row = result.rows[0];
+    return row && sameHash(row.token_hash, hash) ? row.identity_id : null;
   }
 
   /** The sign-in family of this access token. One family is one device session. */

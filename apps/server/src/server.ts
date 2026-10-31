@@ -1533,12 +1533,22 @@ async function phoneIdentity(
   options: ServerOptions,
 ): Promise<string | null> {
   const value = bearer(request.headers.authorization);
-  if (!value) return null;
-  const session = await readPhoneSession(options.auth, value);
-  if (!session) return null;
-  if (session.familyId) phoneFamilies.set(request, session.familyId);
-  return session.identityId;
+  // Family is recorded beside the identity lookup. The identity return stays the
+  // access-token query System messages already follow.
+  if (value) await rememberPhoneFamily(request, options.auth, value);
+  return value ? options.auth.authenticatePhone(value) : null;
 }
+
+async function rememberPhoneFamily(
+  request: IncomingMessage,
+  auth: TokenAuth,
+  token: string,
+): Promise<void> {
+  if (typeof auth.authenticatePhoneSession !== 'function') return;
+  const session = await auth.authenticatePhoneSession(token);
+  if (session?.familyId) phoneFamilies.set(request, session.familyId);
+}
+
 async function daemonIdentity(
   request: IncomingMessage,
   options: ServerOptions,

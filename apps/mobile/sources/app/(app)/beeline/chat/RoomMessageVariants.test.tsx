@@ -4522,7 +4522,7 @@ it('opens a standalone corner PR event in its corner', () => {
 });
 
 describe('Reproduction R2 rendered outbox path', () => {
-  it('renders Sending while offline, then the one-off offline state, and removes it after reconnect', async () => {
+  it('renders an offline send exactly like a sent message, then the one-off offline state, and sends once after reconnect', async () => {
     vi.useFakeTimers();
     const { MessageOutbox } = await import('@/buzz/message-outbox');
     const e = { id: 'a'.repeat(64), pubkey: 'b'.repeat(64), created_at: 1, kind: 9, sig: '', content: 'Start with the server PR', tags: [['h', 'room-proof'], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] };
@@ -4535,12 +4535,16 @@ describe('Reproduction R2 rendered outbox path', () => {
       participantHandles: [], channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
       onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(), onDismiss: vi.fn(),
     } satisfies OrdinaryLedgerMessageProps;
+    const sent = JSON.stringify(render(<OrdinaryLedgerMessage {...props} />).toJSON());
+    expect(owner.state(e.id)?.kind).toBe('sending');
     const renderer = render(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />);
     const text = (value: any): string => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' ? value : value?.props ? text(value.props.children) : '';
-    expect(text(renderer.root.findByProps({ testID: `outbox-sending-${e.id}` }).props.children)).toBe(' Sending');
+    expect(renderer.root.findAll((node: any) => String(node.props.testID).startsWith('outbox-'))).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Sending');
+    // Same tree, same text style as a message the server already stored.
+    expect(JSON.stringify(renderer.toJSON())).toBe(sent);
     expect(send).not.toHaveBeenCalled();
-    expect(renderer.root.findByType('LedgerSteer' as never).props.pending).toBe(true);
-    console.log('R2 rendered: Sending; pending prose; no popup; no Retry');
+    console.log('R2 rendered while offline: same as sent; no Sending line; no popup; no Retry');
     await vi.advanceTimersByTimeAsync(120_000);
     act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />));
     expect(renderer.root.findAllByType('Text' as never).map((node: any) => text(node.props.children))).toContain('Not sent yet · no connection');
@@ -4548,7 +4552,8 @@ describe('Reproduction R2 rendered outbox path', () => {
     console.log('R2 rendered after offline cutoff: Not sent yet · no connection; Dismiss');
     await owner.connectionChanged(true);
     act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />));
-    expect(renderer.root.findAllByProps({ testID: `outbox-sending-${e.id}` })).toHaveLength(0);
+    expect(renderer.root.findAll((node: any) => String(node.props.testID).startsWith('outbox-'))).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).toBe(sent);
     expect(send).toHaveBeenCalledTimes(1); expect(modal.alert).not.toHaveBeenCalled();
     console.log('R2 rendered after reconnect: sent; status removed; one publication');
     owner.dispose();

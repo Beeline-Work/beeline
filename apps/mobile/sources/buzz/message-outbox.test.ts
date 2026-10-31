@@ -53,14 +53,6 @@ describe('R2 app-wide message outbox', () => {
   });
 });
 
-it('groups pending own messages under one Sending line', async () => {
-  const { groupMessageSendStates } = await import('./message-outbox');
-  const messages = [{ id: 'a', isUser: true }, { id: 'b', isUser: true }];
-  const states = groupMessageSendStates(messages, new Map(messages.map(message => [message.id, { kind: 'sending' as const, text: 'Sending' }])));
-  expect(states.get('a')?.showStatus).toBe(false);
-  expect(states.get('b')?.text).toBe('Sending 2 messages');
-});
-
 it('replays if reconnect arrives before the old request fails, without starting a second flight', async () => {
   const r = rig(); const owner = r.owner(); const e = event();
   await owner.enqueue(e, row(e));

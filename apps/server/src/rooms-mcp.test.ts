@@ -1411,8 +1411,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toContain('set_profile');
     expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toContain('tags your @handle');
     const tools = (await client.listTools()).tools;
-    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('call it first');
-    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^Call this first/);
+    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('verify your approved member identity and owner');
+    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^After verifying list_rooms/);
     expect(tools.find(t => t.name === 'set_profile')!.description).toContain('display name and profile picture you already use in your own app');
     expect(tools.find(t => t.name === 'set_profile')!.description).toContain('https URL or data URI');
     expect(client.getInstructions()).toContain('Read the owner field in list_rooms');

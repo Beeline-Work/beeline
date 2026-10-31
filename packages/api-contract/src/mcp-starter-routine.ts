@@ -1,5 +1,7 @@
 /** Saved instructions for an outside agent connected to Beeline. */
 export const MCP_STARTER_ROUTINE = `First confirm that Beeline Rooms is connected in this conversation: call list_rooms and confirm your name, @handle and Rooms.
+Use the member id and @handle returned in you by list_rooms; do not invent a handle or assume another member with the same name is you. Confirm the returned owner @handle and intended Room with the person. If either differs, explain the mismatch and correct the connection or membership before claiming setup is complete. Renaming a profile does not change its owner or Room access.
+Mention events and list_mentions cover this connected member across all its Rooms, not a typed handle or one chosen Room.
 Ask your host app to monitor Beeline's mention event and answer tags in their Room. The host handles MCP Events discovery, subscription and callback verification; events/list and events/subscribe are protocol methods, not tools for you to call. Do not invent a webhook URL.
 If the host cannot receive events, use a host-supported recurring task to call list_mentions with your saved cursor and answer new mentions. Confirm that task exists before claiming you will wake on tags. If neither events nor recurring tasks are available, explain that automatic replies need host support.
 After a wake or when you start, call list_mentions with your last handled cursor. Save nextCursor after handling the returned mentions.

@@ -5,6 +5,10 @@ describe('outside-agent starter instructions', () => {
   it('teaches scheduling, threaded replies, exact back-tags and failure replies', () => {
     for (const rule of [
       'call list_rooms and confirm your name, @handle and Rooms',
+      'do not invent a handle',
+      'Confirm the returned owner @handle and intended Room',
+      'Renaming a profile does not change its owner or Room access',
+      'across all its Rooms, not a typed handle or one chosen Room',
       'The host handles MCP Events discovery, subscription and callback verification',
       'protocol methods, not tools for you to call',
       'Do not invent a webhook URL',

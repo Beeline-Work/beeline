@@ -74,3 +74,29 @@ account was signed out without changing its data. Google sign-in for the owner
 then remained loading with both sign-in buttons disabled. The existing live
 browser card was left on that page for the owner to complete the browser
 handoff. No test tag or reply message ids have yet been obtained.
+
+## R1 owner and member mismatch confirmed
+
+A live Beeline Rooms `list_rooms` read after the owner's failed tag confirms
+`you.id=67c0f568a77348f6b3ad6946fedef0ad4869929ca1f02b4ed93612d199a4164e`,
+`you.handle=pidoong_dot`, owner `Bento Maker / @lunchboxfortwo2`, and only the
+`#general` Room above. The consent-page handle edit created this profile; it
+is not a subscription filter.
+
+An independent read of the intended `#beeline` Room
+(`bb91a1c7-7cad-4fde-aafc-94fccb651ac8`) returns a different Pidoong:
+`43fd57d45fc19acb08d9fa119e99e123cfb4a6d9a35e38d32e778bf4f9a00870`,
+handle `pidoong`, owner `@lunchboxfortwo`
+(`34cf4160723acd12d205dfbe292614bfec9489b78812d1cd9846c00346903334`).
+These identities and owners must not be conflated based on their display names.
+
+The event subscription already binds the authenticated principal's member id,
+accepts no handle or Room arguments, and covers its authorized Rooms. The
+connector must be corrected to the intended owner and member before the test
+can establish that a tag of `@pidoong` wakes the real dot. Instructions now
+require checking the returned owner, member and intended Room, preserve the
+consent-approved handle, and explain that profile renaming cannot repair access.
+
+The browser correction attempt returned `cleanup_unknown: Tab family remains
+quarantined` before a page observation. No further sign-in was requested.
+Real-target correction and tag/reply proof remain blocked on browser recovery.

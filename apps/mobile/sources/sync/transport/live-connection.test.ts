@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
@@ -13,13 +13,19 @@ vi.mock('react-native', () => ({
 }));
 
 import { AppState } from 'react-native';
-import { LiveConnection } from './live-connection';
+import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
+import { monolithSession } from '@/auth/monolith-session';
 import { liveFrameEpoch } from './live-frame-epoch';
 import { getRoomCornerSummary, getRoomCorners } from '@/buzz/room-corner-store';
 import { resetClientState } from '@/sync/client-reset';
 
 const ROOM_A = 'room-a';
 const ROOM_B = 'room-b';
+
+function assertNoRepeatingTransportTimers(files: Readonly<Record<string, string>>): void {
+  for (const [file, source] of Object.entries(files))
+    expect(source, file).not.toContain('setInterval');
+}
 
 type TestSocket = {
   autoPong: boolean;
@@ -81,7 +87,6 @@ function stubSockets(): TestSocket[] {
 
 function createConnection(authorization = vi.fn().mockResolvedValue('phone-session')) {
   const identityListeners = new Set<() => void>();
-  const foregroundListeners = new Set<() => void>();
   const networkListeners = new Set<() => void>();
   const connection = new LiveConnection({
     authorization,
@@ -89,10 +94,6 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
     subscribeIdentityChange: (listener) => {
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);
-    },
-    subscribeForeground: (listener) => {
-      foregroundListeners.add(listener);
-      return () => foregroundListeners.delete(listener);
     },
     subscribeNetworkChange: (listener) => {
       networkListeners.add(listener);
@@ -106,7 +107,7 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
       for (const listener of identityListeners) listener();
     },
     foreground: () => {
-      for (const listener of foregroundListeners) listener();
+      for (const listener of appStateListeners) listener('active');
     },
     networkChanged: () => {
       for (const listener of networkListeners) listener();
@@ -124,6 +125,7 @@ describe('LiveConnection', () => {
   });
 
   afterEach(() => {
+    resetSharedLiveConnection();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -153,6 +155,16 @@ describe('LiveConnection', () => {
       monolithLive: { type: 'subscribed', roomId: ROOM_A },
     });
     connection.dispose();
+  });
+
+  it('sends one foreground sync through the shared connection AppState wiring', async () => {
+    vi.spyOn(monolithSession, 'authorization').mockResolvedValue('phone-session');
+    const connection = sharedLiveConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    for (const listener of appStateListeners) listener('background');
+    for (const listener of appStateListeners) listener('active');
+    expect(sockets[0]!.sent.filter((frame) => frame === '{"type":"sync"}')).toHaveLength(1);
   });
 
   it('closes in background after one delay and reopens on foreground', async () => {
@@ -1010,10 +1022,22 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('keeps setInterval out of the transport source', () => {
-    expect(readFileSync(new URL('./live-connection.ts', import.meta.url), 'utf8')).not.toContain(
-      'setInterval',
+  it('keeps setInterval out of every production transport source', () => {
+    const transportDirectory = new URL('./', import.meta.url);
+    const sources = Object.fromEntries(
+      readdirSync(transportDirectory)
+        .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+        .map((file) => [file, readFileSync(new URL(file, transportDirectory), 'utf8')]),
     );
+    assertNoRepeatingTransportTimers(sources);
+  });
+
+  it('detects a repeating timer introduced outside live-connection', () => {
+    expect(() =>
+      assertNoRepeatingTransportTimers({
+        'room-fetch.ts': 'const repeat = setInterval(fetchRooms, 1000);',
+      }),
+    ).toThrow();
   });
   it('unsubscribes when the last holder leaves and keeps the socket open', async () => {
     const { connection } = createConnection();

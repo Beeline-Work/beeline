@@ -1,5 +1,25 @@
 # Squire helper usage audit — 31 October 2026
 
+## Current close policy (brief revision 4)
+
+The owner superseded all preservation exceptions described in the historical
+audit below. Server-confirmed archive now deletes the whole checkout and every
+matching per-agent corner home, including dirty/unpushed work and proof files.
+Linux process cleanup uses exact corner roots and pidfds; it excludes the
+helper/ancestors and Trusty Squire processes and descendants. Open and unknown
+lifecycle states never authorize this deletion. Tombstones retain retry authority
+after an interrupted cleanup. Operational failures (for example an occupied
+mount or unsupported process attribution) are logged and retried, not silently
+accepted as successful deletion.
+
+ARCHIVED-OUTPUT-1 now tests the revised rule: dirty, unpushed, proof-marked data
+and an attributable live child disappear after archive, while an open sibling,
+unknown state and a Squire-named process remain untouched. The built report and
+host-sweep proof deletes the whole checkout and stops the child. No production
+cleanup has run. The bootstrap inheritance suspicion remains disproved.
+
+## Historical measurements and earlier preservation behavior
+
 This extends the October 25 helper-cleanup-audit report and
 [archived cleanup evidence](archived-corner-cleanup-audit.md). No one-time
 cleanup has been performed. Measurements below are allocated blocks or RSS,

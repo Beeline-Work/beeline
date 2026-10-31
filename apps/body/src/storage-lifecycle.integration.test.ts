@@ -195,9 +195,9 @@ it('subscribes a newly assigned Room during storage maintenance without another 
   } finally { release(); await maintenance; await coordinator.shutdown(); }
 });
 
-it('CLEANUP-DISK-1 expires declared proof without losing dirty source or unpublished commits', async () => {
+it('CLEANUP-DISK-1 archive deletes declared proof and unpublished dirty source', async () => {
   const { declareCornerProofOutput } = await import('./corner-proof-output.js');
-  const { readStorageOwners, inspectCheckoutPreservation } = await import('./storage-owners.js');
+  const { readStorageOwners } = await import('./storage-owners.js');
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-proof-archive-')); roots.push(root);
   const checkout = resolve(root, 'beeline/corners/corner');
   await exec('git', ['init', checkout]);
@@ -205,7 +205,6 @@ it('CLEANUP-DISK-1 expires declared proof without losing dirty source or unpubli
   await file(resolve(checkout, 'source.ts'), 'original');
   await exec('git', ['-C', checkout, 'add', '.']);
   await exec('git', ['-C', checkout, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'unpublished']);
-  const head = (await exec('git', ['-C', checkout, 'rev-parse', 'HEAD'])).stdout.trim();
   await file(resolve(checkout, 'source.ts'), 'tracked edit');
   await file(resolve(checkout, '.local/notes'), 'untracked source notes');
   const proof = await declareCornerProofOutput(checkout, 'corner');
@@ -215,16 +214,9 @@ it('CLEANUP-DISK-1 expires declared proof without losing dirty source or unpubli
   await rememberStorageOwner(root, owner);
   await rememberStorageOwner(root, { ...owner, endedAt: endedAt + 86400_000 });
   expect((await readStorageOwners(root))[0]!.endedAt).toBe(endedAt);
-  await reclaimOwnedCheckout(root, owner, { now: endedAt + 6 * 86400_000, inUse: async () => false });
+  await reclaimOwnedCheckout(root, owner, { dryRun: true });
   expect(await exists(proof)).toBe(true);
-  await reclaimOwnedCheckout(root, owner, { now: endedAt + 8 * 86400_000, inUse: async () => false, dryRun: true });
-  expect(await exists(proof)).toBe(true);
-  await reclaimOwnedCheckout(root, owner, { now: endedAt + 8 * 86400_000, inUse: async () => false });
-  expect(await exists(proof)).toBe(false);
-  expect(await readFile(resolve(checkout, 'source.ts'), 'utf8')).toBe('tracked edit');
-  expect(await readFile(resolve(checkout, '.local/notes'), 'utf8')).toBe('untracked source notes');
-  expect((await exec('git', ['-C', checkout, 'rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
-  const reason = await inspectCheckoutPreservation(checkout);
-  expect(reason.allocatedBytes).toBeGreaterThan(0);
-  expect(reason.reason).toContain('tracked edits');
+  await reclaimOwnedCheckout(root, owner);
+  expect(await exists(checkout)).toBe(false);
+
 });

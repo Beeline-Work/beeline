@@ -9,8 +9,7 @@ import { workspaceAssetRoot } from './workspace-assets.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { reclaimWholeStorageObject, capturePrivateProcessUse, ordinaryDirectory, storageTree, isSquirePath, reclaimHelperStorage, type StorageRoomState, type WholeStorageOptions } from './helper-storage.js';
 import { canonicalStoragePath } from './storage-filesystem.js';
-import { cornerProofRetentionActive, reclaimCornerProofOutput } from './corner-proof-output.js';
-import { storageObjectInUse } from './helper-storage.js';
+import { removeArchivedCornerData } from './archived-corner-cleanup.js';
 
 const execFileAsync = promisify(execFile);
 export interface StorageOwner { workspaceId: string; roomId: string; kind: 'corners' | 'room-checkouts'; itemId: string; ended?: boolean; endedAt?: number; landedHeadSha?: string }
@@ -35,11 +34,6 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
     if (!options.dryRun) await rememberStorageOwner(supervisorRoot, owner);
   }
   const path = resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId);
-  if (owner.kind === 'corners' && owner.ended && await cornerProofRetentionActive(path, owner.roomId, owner.endedAt, options.now)) return [];
-  if (owner.kind === 'corners' && owner.ended && owner.endedAt &&
-      !await storageObjectInUse(path, options)) {
-    await reclaimCornerProofOutput(path, owner.roomId, owner.endedAt, options);
-  }
   const published = async () => {
     try {
       if ((await execFileAsync('git', ['-C', path, 'status', '--porcelain=v1', '--untracked-files=all'], { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } })).stdout.trim()) return false;
@@ -52,7 +46,9 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
   };
   const local = await execFileAsync('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--symbolic-full-name', 'HEAD'])
     .then(result => result.stdout.trim().split('\n'), () => []);
-  const entries = await reclaimWholeStorageObject(path, true, { ...options, beforeRemove: published });
+  const entries = owner.kind === 'corners' && owner.ended
+    ? await removeArchivedCornerData(supervisorRoot, owner.roomId, path, options)
+    : await reclaimWholeStorageObject(path, true, { ...options, beforeRemove: published });
   if (entries.length && !options.dryRun && !await lstat(path).catch(() => undefined) && owner.kind === 'corners') {
     // Retire the exact checkout's local branch as well as its registration.
     // Otherwise a squash-merged head survives here and pins the entire clone.
@@ -71,7 +67,7 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
         await execFileAsync('git', [`--git-dir=${resolve(common, repo)}`, 'worktree', 'prune', '--expire=now']);
     }
   }
-  if (entries.length && !options.dryRun && await endedRootCleared(path))
+  if (owner.kind !== 'corners' && entries.length && !options.dryRun && await endedRootCleared(path))
     await rm(resolve(ownersRoot(supervisorRoot), `${owner.kind}-${owner.itemId}.json`), { force: true });
   return entries.map(entry => entry.path);
 }

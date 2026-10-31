@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -33,9 +33,8 @@ import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
-import { reclaimHelperStorage, capturePrivateProcessUse, removeStoragePath, storageTree, isSquirePath, hasMount, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
+import { reclaimHelperStorage, removeStoragePath, storageTree, isSquirePath, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
 import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout, type StorageOwner } from './storage-owners.js';
-import { cornerProofRetentionActive } from './corner-proof-output.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { cornerStarts, isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
 import { RoomSupervisor } from './room-supervisor.js';
@@ -1950,167 +1949,46 @@ export class RoomRuntimeCoordinator {
    * to that exact directory and the host's bare-repository cache.
    */
   private async sweepArchivedCornerWorktrees(
-    corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    _corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
     desired: ReadonlySet<string> = new Set(),
   ): Promise<void> {
     const localIds = await this.getLocalWorktreeIds();
     for (const cornerId of [...localIds]) {
       await this.yieldReconciliation();
       if (this.stopped) return;
-      if (
-        desired.has(cornerId) ||
-        this.running.has(cornerId) ||
-        this.pendingCornerReaps.has(cornerId)
-      )
-        continue;
+      if (desired.has(cornerId) || this.running.has(cornerId) || this.pendingCornerReaps.has(cornerId)) continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
-      if (this.archiveCleanupAbandoned.has(cornerId)) continue;
-      if (await this.cleanupWasRefused(cornerId)) continue;
-      let corner = corners.get(cornerId);
-      let discovered: DiscoveredCornerWorktree | undefined;
-      let candidate: CornerWorktree | undefined;
       try {
-        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, cornerId);
-        if (!discovered) {
-          localIds.delete(cornerId);
-          continue;
-        }
-        const restore = (await this.options.daemonApi.execute('getCornerRestoreState', {
-          cornerId,
-        })) as CornerRestoreResult & { archived?: boolean; parentRoomId?: string };
-        // An old server names archived corners in listRoomCorners but omits
-        // these restore fields. A new server can omit them from the active-only
-        // list; cleanup then requires its explicit archive and parent facts.
-        if (restore.archived === false) continue;
-        // Only an explicit archive stops an emulator; an old server's
-        // missing field is not proof the corner closed.
-        if (restore.archived === true)
-          await stopKeptCornerEmulator(this.runtime.supervisorRoot, cornerId,
-            `corner archived; stopped by agent ${this.agent.publicKey} during worktree sweep`);
-        if (!corner) {
-          if (restore.archived !== true || !restore.parentRoomId) continue;
-          corner = { cornerId, parentRoomId: restore.parentRoomId };
-        } else if (restore.parentRoomId && restore.parentRoomId !== corner.parentRoomId) {
-          throw new Error(`archived corner ${cornerId} parent Room changed during cleanup`);
-        }
-        const repository = await this.options.daemonApi.execute('getRoomRepositoryState', {
-          roomId: corner.parentRoomId,
-        });
-        if (repository.resolution !== 'repository' || !repository.remote) {
-          throw new Error(`archived corner ${corner.cornerId} has no authoritative repository`);
-        }
-        const expectedCommonDir = cornerRepositoryCacheDir(
-          this.runtime.supervisorRoot,
-          repository.remote,
-        );
-        if (resolve(discovered.gitCommonDir) !== expectedCommonDir) {
-          throw new Error(`archived corner ${corner.cornerId} repository cache does not match`);
-        }
-        if (!restore.featureBranch) {
-          throw new Error(`archived corner ${corner.cornerId} has no authoritative feature branch`);
-        }
-        candidate = {
-          ...discovered,
-          cornerId: corner.cornerId,
-          branch: restore.featureBranch,
-          parentRoomId: corner.parentRoomId,
-          token: '',
-          recovered: true,
-        };
-        await this.reapCornerWorktree(candidate);
-        if (!this.archiveCleanupRefused.has(cornerId))
-          console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
+        const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
+        if (state.archived !== true) continue;
+        const owner: StorageOwner = { workspaceId: this.runtime.communityId, roomId: cornerId, kind: 'corners', itemId: cornerId, ended: true };
+        await rememberStorageOwner(this.runtime.supervisorRoot, owner);
+        await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, { progress: () => this.yieldReconciliation() });
+        localIds.delete(cornerId);
       } catch (error) {
-        if (candidate && hasUnpublishedWork(error)) {
-          this.archiveCleanupAbandoned.add(cornerId);
-          this.queueArchivePreservation(cornerId, candidate, 'archived with unpublished local work');
-          continue;
-        }
-        if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
-          await this.refuseArchiveCleanup(cornerId, error, discovered);
-        else {
-          this.deferArchiveCleanup(cornerId);
-          console.error(`[thin-core] archived corner ${cornerId} cleanup deferred:`, error);
-        }
-        // The checkout remains for the next reconciliation. A stale or unsafe
-        // checkout cannot require another full discovery immediately.
+        this.deferArchiveCleanup(cornerId);
+        console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
       }
     }
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
-    if (await this.cleanupWasRefused(worktree.cornerId)) return;
-    // Refused backlogs often have no declared proof. Do not scan or populate
-    // the whole owner store for each entry in that backlog.
-    if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, undefined)) {
-      const ownerPath = resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${worktree.cornerId}.json`);
-      const owner = await readFile(ownerPath, 'utf8').then(text => JSON.parse(text) as StorageOwner, () => undefined) ??
-        { workspaceId: this.runtime.communityId, roomId: worktree.cornerId, kind: 'corners' as const, itemId: worktree.cornerId };
-      const endedAt = owner.endedAt ?? Date.now();
-      if (!owner.ended || owner.endedAt === undefined)
-        await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, endedAt });
-      if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, endedAt)) return;
-    }
-    // The exact local ref is the deletion authority. It was created for this
-    // corner's worktree and survives a failed remote deletion so reconcile can
-    // retry the same exact ref. A missing local ref plus a missing remote ref
-    // is success, so a later pass cannot turn an untrusted branch string into
-    // a guessed deletion.
-    try {
-      // A corner closed with an open pull request keeps its branch: the
-      // worktree goes, the shared artifact does not. An unreadable corner is
-      // never proof its pull request is gone, so it is preserved too.
-      const preserveRemoteBranch = !(await this.cornerBranchMayBeDeleted(worktree.cornerId));
-      const parentRoomId = worktree.parentRoomId;
-      if (!parentRoomId) {
-        throw new Error(`corner ${worktree.cornerId} has no parent Room for GitHub token`);
-      }
-      const token = (
-        await this.options.daemonApi.execute('getRoomGitHubToken', {
-          roomId: parentRoomId,
-        })
-      ).token;
-      if ((await capturePrivateProcessUse())(worktree.path) || await hasMount(worktree.path)) return;
-      await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
-      await rm(resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${worktree.cornerId}.json`), { force: true });
-      this.pendingCornerReaps.delete(worktree.cornerId);
-      this.archiveCleanupFaults.delete(worktree.cornerId);
-      (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
-      // `gone` asserts the remote branch is gone, so a preserved branch must
-      // not post it: the corner's own GitHub facts still own its lifecycle.
-      if (!preserveRemoteBranch) {
-        await this.options.daemonApi.execute('postCornerRemoteState', {
-          cornerId: worktree.cornerId,
-          branch: worktree.branch,
-          state: 'gone',
-          checks: 'unknown',
-        });
-      }
-    } catch (error) {
-      if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500) {
-        await this.refuseArchiveCleanup(worktree.cornerId, error, worktree);
-        return;
-      }
-      this.pendingCornerReaps.set(worktree.cornerId, { ...worktree, token: '' });
-      throw error;
-    }
-  }
-
-  /**
-   * Whether a corner's feature branch is safe to delete on teardown. A read
-   * that fails — an agent removed from the corner, or a corner a helper can no
-   * longer reach — is not proof its pull request is gone, so the branch is
-   * kept.
-   */
-  private async cornerBranchMayBeDeleted(cornerId: string): Promise<boolean> {
-    try {
-      const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
-      return cornerBranchIsSafeToDelete(state.lifecycle);
-    } catch (error) {
-      if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500)
-        throw error;
-      return false;
-    }
+    // A failed lookup is not archive authority. Remote branch permissions do
+    // not control removal of local data after an authoritative close.
+    const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId: worktree.cornerId });
+    if (state?.archived !== true) return;
+    const owner: StorageOwner = {
+      workspaceId: this.runtime.communityId, roomId: worktree.cornerId,
+      kind: 'corners', itemId: worktree.cornerId, ended: true, endedAt: Date.now(),
+    };
+    await rememberStorageOwner(this.runtime.supervisorRoot, owner);
+    await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, {
+      progress: () => this.yieldReconciliation(),
+      log: entry => console.log(`[body] archived corner ${entry.roomId} deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+    });
+    this.pendingCornerReaps.delete(worktree.cornerId);
+    this.archiveCleanupFaults.delete(worktree.cornerId);
+    (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
   }
 
   private async reapCornerScratch(scratch: CornerScratch): Promise<void> {
@@ -2133,6 +2011,9 @@ export class RoomRuntimeCoordinator {
       return false;
     }
     if (restore.archived !== true) return false;
+    const owner: StorageOwner = { workspaceId: this.runtime.communityId, roomId: cornerId, kind: 'corners', itemId: cornerId, ended: true };
+    await rememberStorageOwner(this.runtime.supervisorRoot, owner);
+    await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, { progress: () => this.yieldReconciliation() });
     return (await this.reclaimPrivateStorage([{ roomId: cornerId, archived: true }])).length > 0;
   }
 

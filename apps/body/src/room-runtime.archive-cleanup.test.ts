@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -67,13 +67,13 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('archived corner branch cleanup', () => {
-  it('retains declared proof and persists one archive timestamp without calling GitHub', async () => {
+  it('deletes declared proof after confirmed archive and persists its tombstone', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-proof-reap-'));
     roots.push(root);
     const path = resolve(root, 'beeline/corners/proof-corner');
     await mkdir(path, { recursive: true });
     await declareCornerProofOutput(path, 'proof-corner');
-    const execute = vi.fn();
+    const execute = vi.fn(async () => ({ archived: true }));
     const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), resolve(root, 'agent.json'),
       { workspaceRoot: root } as never, { daemonApi: { execute } as unknown as DaemonApiClient });
     const internal = coordinator as unknown as { reapCornerWorktree(worktree: object): Promise<void> };
@@ -86,7 +86,8 @@ describe('archived corner branch cleanup', () => {
       expect(first.endedAt).toEqual(expect.any(Number));
       await internal.reapCornerWorktree(worktree);
       expect(JSON.parse(await readFile(ownerPath, 'utf8')).endedAt).toBe(first.endedAt);
-      expect(execute).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'proof-corner' });
+      await expect(lstat(path)).rejects.toThrow();
     } finally { await coordinator.shutdown(); }
   });
 
@@ -132,7 +133,7 @@ describe('archived corner branch cleanup', () => {
     } finally { await coordinator.shutdown(); }
   });
 
-  it('reports commits no origin ref contains once, then stops retrying and keeps them', async () => {
+  it('deletes unpublished commits after authoritative archive', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-abandon-'));
     roots.push(supervisorRoot);
@@ -155,7 +156,7 @@ describe('archived corner branch cleanup', () => {
     const execute = vi.fn(async (name: string) => {
       if (name === 'getRoomGitHubToken') return { token: 'unused', expiresAt: now + 60_000 };
       if (name === 'getCornerRestoreState')
-        return { cornerId, lifecycle: { lifecycle: 'working', checks: 'unknown' } };
+        return { cornerId, archived: true, lifecycle: { lifecycle: 'working', checks: 'unknown' } };
       throw new Error(`unexpected operation ${name}`);
     });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -179,32 +180,17 @@ describe('archived corner branch cleanup', () => {
 
     try {
       await internal.retryPendingCornerReaps(new Set());
-      expect(errors).toHaveBeenCalledWith(
-        expect.stringContaining('branch cleanup abandoned'),
-        expect.anything(),
-      );
-      expect(execute).not.toHaveBeenCalledWith('postCornerRemoteState', expect.anything());
-      errors.mockClear();
-      execute.mockClear();
-
-      // Well past any transient backoff window, and still desired by nobody.
-      now += 10 * 60_000;
-      await internal.retryPendingCornerReaps(new Set());
-      expect(execute).not.toHaveBeenCalled();
       expect(errors).not.toHaveBeenCalled();
-
-      // The checkout and its commit were never touched.
-      await expect(
-        git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
-      ).resolves.toBeTruthy();
-      await expect(git(worktree.path, 'log', '-1', '--format=%s')).resolves.toBe('unpushed work');
+      expect(internal.pendingCornerReaps.has(cornerId)).toBe(false);
+      await expect(lstat(worktree.path)).rejects.toThrow();
+      expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     } finally {
       errors.mockRestore();
       await coordinator.shutdown();
     }
   });
 
-  it('reports untracked working-tree work once, then stops retrying and keeps it', async () => {
+  it('deletes untracked work after authoritative archive', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-abandon-worktree-'));
     roots.push(supervisorRoot);
@@ -225,7 +211,7 @@ describe('archived corner branch cleanup', () => {
     const execute = vi.fn(async (name: string) => {
       if (name === 'getRoomGitHubToken') return { token: 'unused', expiresAt: now + 60_000 };
       if (name === 'getCornerRestoreState')
-        return { cornerId, lifecycle: { lifecycle: 'working', checks: 'unknown' } };
+        return { cornerId, archived: true, lifecycle: { lifecycle: 'working', checks: 'unknown' } };
       throw new Error(`unexpected operation ${name}`);
     });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -249,27 +235,10 @@ describe('archived corner branch cleanup', () => {
 
     try {
       await internal.retryPendingCornerReaps(new Set());
-      expect(errors).toHaveBeenCalledWith(
-        expect.stringContaining('branch cleanup abandoned'),
-        expect.anything(),
-      );
-      expect(execute).not.toHaveBeenCalledWith('postCornerRemoteState', expect.anything());
-      errors.mockClear();
-      execute.mockClear();
-
-      // Well past any transient backoff window, and still desired by nobody.
-      now += 10 * 60_000;
-      await internal.retryPendingCornerReaps(new Set());
-      expect(execute).not.toHaveBeenCalled();
       expect(errors).not.toHaveBeenCalled();
-
-      // The checkout and its untracked file were never touched or discarded.
-      await expect(
-        git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
-      ).resolves.toBeTruthy();
-      await expect(git(worktree.path, 'status', '--porcelain')).resolves.toContain(
-        'never-committed.txt',
-      );
+      expect(internal.pendingCornerReaps.has(cornerId)).toBe(false);
+      await expect(lstat(worktree.path)).rejects.toThrow();
+      expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     } finally {
       errors.mockRestore();
       await coordinator.shutdown();

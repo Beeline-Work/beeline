@@ -274,8 +274,25 @@ desktop updater counter, and the store builds this pipeline uploaded.
 published before `release.json` existed is read as a migration record whose
 OTA branch is the legacy `production` branch.
 
-Jobs hand facts to each other only through job outputs. No Actions artifact,
-cache or run lookup carries state between jobs or runs. Artifacts carry build
+Jobs hand facts to each other only through job outputs. Public JSON metadata
+uses the `b64:` transport in `scripts/release-job-output.mjs`; it carries no
+credentials. Raw JSON punctuation can match masked lines of a multiline secret,
+which makes GitHub drop the whole output. The result job validates its state,
+identity and required previous record before applying checkpoints. Missing or
+invalid metadata reports `release-state:missing`, `release-state:invalid`,
+`previous-record:missing` or `previous-record:invalid` and blocks publication.
+
+A component-complete attempt whose result job failed has not published a
+release record. The next dispatch reads the newest **published** release,
+ignores that attempt's draft as a baseline, and reserves its version. It may
+select work that already shipped; each component's existing idempotence checks
+handle that. A recovery dispatch at the same commit reuses the draft identity.
+Rerunning an old Actions run still uses its old workflow and checked-out scripts; it does
+not pick up a later pipeline fix.
+Do not promote an empty draft or infer a delivered record from Actions success:
+the permanent record must include validated component and rollback facts.
+
+No Actions artifact, cache or run lookup carries state between jobs or runs. Artifacts carry build
 outputs only: Mac helper binaries, the Android AAB for the emulator proof,
 desktop installers, the R8 mapping, and proof evidence.
 `scripts/release-artifact-allowlist.mjs` parses every release workflow and the

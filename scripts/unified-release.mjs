@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { runtimeVersionsFromConfig } from '../apps/mobile/scripts/native-fingerprint.mjs';
@@ -77,6 +78,7 @@ export const COMPONENT_PATH_RULES = [
   // or desktop artifacts.
   { exact: '.github/workflows/unified-release.yml', components: ['server', 'mobile-ota', 'website'] },
   { exact: 'scripts/unified-release.mjs', components: ['server', 'mobile-ota', 'website'] },
+  { exact: 'scripts/release-job-output.mjs', components: ['server', 'mobile-ota', 'website'] },
   { exact: 'scripts/release-record.mjs', components: ['server', 'mobile-ota', 'website'] },
 ];
 
@@ -562,7 +564,7 @@ const OTA_BRANCH = /^(?:release-[A-Za-z0-9._-]+|production)$/;
 
 function parseJsonOutput(value, label) {
   if (!value) return undefined;
-  try { return JSON.parse(value); } catch { fail(`${label} is not JSON`); }
+  try { return decodeReleaseOutput(value, label); } catch { fail(`${label} is not JSON`); }
 }
 
 /**
@@ -626,13 +628,13 @@ export function compactState(state) {
   return compact;
 }
 
-/** The initialize job's outputs: one line each, the state as compact JSON. */
+/** One line per output; public JSON uses punctuation-safe transport. */
 export function planOutputs(state, previous) {
   const plan = state.plan;
   const lines = [
-    `release_state=${JSON.stringify(compactState(state))}`,
-    `ota_memory=${JSON.stringify(otaMemory(previous))}`,
-    `previous_record=${previous ? JSON.stringify(compactState(previous)) : ''}`,
+    `release_state=${encodeReleaseOutput(compactState(state))}`,
+    `ota_memory=${encodeReleaseOutput(otaMemory(previous))}`,
+    `previous_record=${previous ? encodeReleaseOutput(compactState(previous)) : ''}`,
     `no_op=${state.state === 'delivered'}`,
     `runtime_pin_changed=${plan.runtimePinChanged ?? false}`,
     `desktop_version=${state.components.desktop.desktopVersion}`,
@@ -737,6 +739,37 @@ async function main(argv) {
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
     else console.log(JSON.stringify(releasePlanSummary(state)));
     if (args.outputs) appendFileSync(args.outputs, planOutputs(state, previous));
+    return;
+  }
+  if (command === 'restore-job-state') {
+    let label = 'release-state';
+    try {
+      const state = decodeReleaseOutput(process.env.RELEASE_STATE, label);
+      currentRelease(state);
+      if (state.version !== process.env.RELEASE_VERSION || state.sourceSha !== process.env.RELEASE_SHA) fail('identity mismatch');
+      for (const component of RELEASE_COMPONENTS) componentEntry(state, component);
+      if (!Array.isArray(state.plan?.selected) || !Array.isArray(state.plan?.carried)) fail('invalid plan');
+      if (!state.delivery || typeof state.delivery !== 'object') fail('invalid delivery');
+      releasePlanSummary(state);
+      label = 'previous-record';
+      const previous = process.env.PREVIOUS_RECORD?.trim()
+        ? decodeReleaseOutput(process.env.PREVIOUS_RECORD, label) : undefined;
+      if (state.supersedes && state.state !== 'delivered' && !previous) fail(`${label}:missing`);
+      if (previous) {
+        currentRelease(previous);
+        const alreadyPublished = state.state === 'delivered' && previous.version === state.version && previous.sourceSha === state.sourceSha;
+        if (!alreadyPublished && state.supersedes && (previous.version !== state.supersedes.version || previous.sourceSha !== state.supersedes.sourceSha)) fail('identity mismatch');
+        writeJson(args.previous, previous);
+      }
+      writeJson(args.state, state);
+    } catch (error) {
+      const failureClass = error.message === `${label}:missing` ? error.message : `${label}:invalid`;
+      appendFileSync(process.env.GITHUB_OUTPUT, `outcome=failure\nfailure_class=${failureClass}\nno_op=false\nstate_ready=false\n`);
+      const detail = `Release metadata unavailable (${failureClass}); initialize job outputs may have been suppressed by GitHub secret masking. No release record will be published.`;
+      console.error(`::error::${detail}`);
+      if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${detail}\n`);
+      process.exitCode = 1;
+    }
     return;
   }
   if (command === 'notify') {

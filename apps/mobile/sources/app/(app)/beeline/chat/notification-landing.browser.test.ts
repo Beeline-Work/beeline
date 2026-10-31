@@ -236,6 +236,15 @@ function shims(mobile: string): Record<string, string> {
       reconnectLive() {}
       async reopenChat() {}
     }`,
+    // The proof exercises a healthy Room landing. Keep the new shared status
+    // line out of its measured viewport, as production does while connected.
+    '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
+      connectionStatus: () => 'connected',
+      subscribeConnectionStatus: () => () => undefined,
+      reconnectNow() {},
+      view: () => () => undefined,
+      register: async () => () => undefined,
+    });`,
     // The network boundary. historyAround parks its promise on globalThis.__around for the entry to settle.
     '@/sync/transport/room-view-client': `import { RoomViewHttpError } from '@beeline/buzz-client';
     export { RoomViewHttpError };

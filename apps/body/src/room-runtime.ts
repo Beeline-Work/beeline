@@ -1918,16 +1918,18 @@ export class RoomRuntimeCoordinator {
       await this.yieldReconciliation();
       if (this.stopped) return;
       if (desired.has(cornerId) || this.running.has(cornerId) || this.pendingCornerReaps.has(cornerId)) continue;
-      if (!this.archiveCleanupDue(cornerId)) continue;
       try {
         const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
-        if (state.archived !== true) continue;
+        if (state.archived !== true) {
+          if (state.archived !== false)
+            console.warn(`[body] corner ${cornerId} archive state unknown; keeping all files until next pass`);
+          continue;
+        }
         const owner: StorageOwner = { workspaceId: this.runtime.communityId, roomId: cornerId, kind: 'corners', itemId: cornerId, ended: true };
         await rememberStorageOwner(this.runtime.supervisorRoot, owner);
         await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, { progress: () => this.yieldReconciliation() });
         localIds.delete(cornerId);
       } catch (error) {
-        this.deferArchiveCleanup(cornerId);
         console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
       }
     }

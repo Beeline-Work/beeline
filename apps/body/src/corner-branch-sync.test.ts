@@ -546,7 +546,43 @@ describe('a helper joining a corner it did not open', () => {
       ): Promise<void>;
     };
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
+      if (source === 'restore') {
+        const assertFiles = async () => {
+          expect(await readFile(resolve(refusedWorktree.path, 'node_modules', 'generated'), 'utf8')).toBe('prune me');
+          await expect(access(resolve(refusedWorktree.path, 'opener.txt'))).resolves.toBeUndefined();
+        };
+        await recovery.sweepArchivedCornerWorktrees(new Map());
+        await assertFiles();
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(warnings).toHaveBeenCalledTimes(1);
+        await recovery.sweepArchivedCornerWorktrees(new Map());
+        await assertFiles();
+        expect(execute).toHaveBeenCalledTimes(2);
+        expect(warnings).toHaveBeenCalledTimes(2);
+        await coordinator.shutdown();
+        const restarted = new RoomRuntimeCoordinator(
+          (coordinator as unknown as { runtime: AgentRuntimeRecord }).runtime,
+          resolve(supervisorRoot, 'agent.json'),
+          { workspaceRoot: supervisorRoot } as never,
+          { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
+        );
+        try {
+          const sweep = () => (restarted as unknown as typeof recovery).sweepArchivedCornerWorktrees(new Map());
+          await sweep();
+          await assertFiles();
+          expect(execute).toHaveBeenCalledTimes(3);
+          expect(warnings).toHaveBeenCalledTimes(3);
+          execute.mockImplementation(async () => ({ archived: false }));
+          await sweep();
+          await assertFiles();
+          execute.mockImplementation(async () => ({ archived: true }));
+          await sweep();
+          await expect(access(refusedWorktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally { await restarted.shutdown(); }
+        return;
+      }
       await recovery.sweepArchivedCornerWorktrees(new Map());
       const baseline = execute.mock.calls.length;
       expect(baseline).toBe(source === 'restore' ? 1 : 4);
@@ -584,6 +620,7 @@ describe('a helper joining a corner it did not open', () => {
       } finally { await restarted.shutdown(); }
     } finally {
       errors.mockRestore();
+      warnings.mockRestore();
       await coordinator.shutdown();
     }
   });

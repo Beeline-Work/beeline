@@ -705,6 +705,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       // being unavailable; the message already names GitHub's status.
       if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
         status = 502;
+        if (error.rateLimited && error.retryAfter) response.setHeader('retry-after', error.retryAfter);
       }
       // A failing Telegram delivery must not create another alert to itself.
       if (status >= 500 && !['/api/webhooks/sentry', '/v1/sentry/webhook'].includes(url.pathname)) captureServerError(error);

@@ -445,6 +445,40 @@ describe('delivery-driven presence', () => {
     });
   });
 
+  it('WAKE-STORM: real helper changes recover adapter failures without clearing authentication failures', async () => {
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'old', releaseVersion: 'v9', sourceSha: 'old-build' });
+    const fail = async (kind: string) => {
+      const command = await createAgentCommand(database, { roomId: ROOM, agentId: AGENT, sourceMessageId: null, reason: 'human_tag' });
+      await database.query(`UPDATE agent_commands SET state='complete',completed_at=now(),
+        review_context=jsonb_build_object('failureKind',$2::text) WHERE id=$1`, [command!.id,kind]);
+      await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,failure_reason)
+        VALUES($1,$2,$3,'failed',$4) ON CONFLICT(room_id,request_id,agent_id)
+        DO UPDATE SET status='failed',failure_reason=EXCLUDED.failure_reason`, [ROOM,command!.turn_request_id,AGENT,kind]);
+      return command!.id;
+    };
+    const protocol = await fail('helper-out-of-date');
+    const auth = await fail('not-signed-in');
+    const recovered = async (id: string) => (await database.query<{ recovered: boolean }>(
+      `SELECT review_context ? 'helperRecoveredAt' recovered FROM agent_commands WHERE id=$1`, [id])).rows[0]!.recovered;
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'same', releaseVersion: 'v9', sourceSha: 'old-build' });
+    expect(await recovered(protocol)).toBe(false);
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'new-build', releaseVersion: 'v9', sourceSha: 'new-build' });
+    expect(await recovered(protocol)).toBe(true);
+    expect(await recovered(auth)).toBe(false);
+    const failedAgain = await fail('helper-out-of-date');
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'reconnect', releaseVersion: 'v9', sourceSha: 'new-build' });
+    expect(await recovered(failedAgain)).toBe(false);
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'upgraded', releaseVersion: 'v10' });
+    expect(await recovered(failedAgain)).toBe(true);
+    expect(await recovered(auth)).toBe(false);
+  });
+
+  it('keeps the helper version recovery signal across announcements without version metadata', async () => {
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-new', releaseVersion: 'v9', sourceSha: 'source-v9' });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-new' });
+    expect(await body()).toMatchObject({ releaseVersion: 'v9', sourceSha: 'source-v9' });
+  });
+
   it('makes a first lifecycle announcement authoritative over a concurrent evidence insert', async () => {
     await presence.stop();
     let insertedEvidence = false;

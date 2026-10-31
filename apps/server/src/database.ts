@@ -2284,6 +2284,7 @@ CREATE TABLE IF NOT EXISTS github_installations (
   status text NOT NULL DEFAULT 'active',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS api_retry_at timestamptz;
 ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS account_id text;
 ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS account_avatar_url text;
 ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS repository_selection text NOT NULL DEFAULT 'selected';

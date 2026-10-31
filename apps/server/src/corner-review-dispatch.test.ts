@@ -10,6 +10,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
+import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
@@ -101,6 +102,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
+  await db.query(`DELETE FROM live_outputs`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
   await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [C]);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
@@ -262,6 +264,8 @@ describe('corner message attribution', () => {
 
   it.each([
     {reason:'ACP error -32000: Authentication required',free:false},
+    {reason:'ACP error -32602: Invalid params',reasonKind:'hiccup' as const,free:false},
+    {reason:'ACP error -32602: Invalid params',free:true},
     {reason:'model selection unavailable',free:false},
     {reason:'provider refused the selected configuration',reasonKind:'model-selection-unavailable' as const,free:false},
     {reason:'ACP error -32000: Authentication required',free:true},
@@ -269,6 +273,8 @@ describe('corner message attribution', () => {
     if (free) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'{}')`, [B,W,H]);
     await db.query('UPDATE agents SET selected_model=NULL WHERE agent_id=$1', [B]);
     await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R, B]);
+    if (reason.includes('-32602')) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+      VALUES($1,$2,'presence','presence','{"releaseVersion":"v0.1.113"}')`, [R,B]);
     await greenHead(7, 'a'.repeat(40));
     const [review] = await commands(B, C);
     expect(review).toBeDefined();
@@ -285,8 +291,17 @@ describe('corner message attribution', () => {
     await greenHead(8, 'b'.repeat(40));
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(0);
-    // A model selection change is a concrete recovery signal.
-    await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
+    if (reason.includes('-32602')) {
+      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'reconnect', releaseVersion: 'v0.1.113' });
+      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'missing-version' });
+      await reconcileConfiguredCornerReviewers(db, R);
+      expect(await commands(B, C)).toHaveLength(0);
+    }
+    // A helper upgrade repairs an adapter rejection; model selection repairs
+    // the other standing provider conditions. A reconnect alone repairs neither.
+    if (reason.includes('-32602')) await announceAgentLifecycle(db, new LiveHub(), R, B,
+      { lifecycleId: 'upgraded-helper', releaseVersion: 'v0.1.114' });
+    else await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(1);
   });
@@ -444,6 +459,17 @@ describe('corner message attribution', () => {
       generationId: 'g1', status: 'done', text: 'done: FAIL on the reviewed head.' }, B);
     await greenHead(84, '2'.repeat(40));
     expect((await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('FAIL on the reviewed head'))).toEqual([]);
+  });
+
+  it('WAKE-STORM: repeated restores use committed PR state without reading GitHub', async () => {
+    await greenHead(83, '1'.repeat(40));
+    const refresh = vi.fn(async () => { throw new Error('GitHub rate limit'); });
+    Object.assign(daemon, { github: { refreshCornerReviewHead: refresh } });
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const restored = await daemon.execute('getCornerRestoreState', { cornerId: C }, A);
+      expect(restored.lifecycle?.pr?.headSha).toBe('1'.repeat(40));
+    }
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it('Reproduction REVIEW-HEAD-1: a worker that pushes while repairing hands off the new head', async () => {

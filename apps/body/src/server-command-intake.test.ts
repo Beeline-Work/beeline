@@ -46,6 +46,63 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
 }
 
 describe('command intake mechanics', () => {
+  it('WAKE-STORM: a rejected turn waits through snapshots and reconnects until a real configuration change', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'claimAgentCommand') return {};
+      throw new Error(`unexpected ${name}`);
+    });
+    const socket = socketApi(execute);
+    let recover: (() => void) | undefined;
+    const run = vi.fn(async () => { throw new Error('ACP error -32602: Invalid params'); });
+    const intake = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, stop: vi.fn(), run,
+      onRecovery: callback => { recover = callback; } });
+    await vi.waitFor(() => expect(socket.api.liveSubscribe).toHaveBeenCalled());
+    socket.push([command('first')]);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    for (let i = 0; i < 20; i++) { socket.push([command(`next-${i}`)]); socket.connected(); }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(run).toHaveBeenCalledOnce();
+    run.mockImplementationOnce(async () => abort.abort());
+    recover?.();
+    await intake;
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('WAKE-STORM: a rate-limited turn requeues once and resumes after reset despite pushed snapshots', async () => {
+    const ctx = await context();
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    const reset = Date.now() + 600_000;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'claimAgentCommand') return {};
+      throw new Error(`unexpected ${name}`);
+    });
+    const socket = socketApi(execute);
+    const run = vi.fn(async () => {
+      if (Date.now() < reset) throw new DaemonApiError(
+        `GitHub rate limit; checks readable again at ${new Date(reset).toISOString()}`, 502, true);
+      abort.abort();
+    });
+    const intake = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: ctx, signal: abort.signal, stop: vi.fn(), run });
+    await vi.advanceTimersByTimeAsync(0);
+    socket.push([command('first')]);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    for (let i = 0; i < 10; i++) {
+      socket.push([command('retry')]);
+      socket.connected();
+      await vi.advanceTimersByTimeAsync(50_000);
+    }
+    expect(run).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(101_000);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    await intake;
+  });
+
   it('uses a claim-refreshed digest source and clears context removed by workflow expiry', async () => {
     const abort = new AbortController();
     const cached = { ...command(), coalescedContext: 'obsolete workflow attempt' };

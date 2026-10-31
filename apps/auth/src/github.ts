@@ -1,4 +1,5 @@
 import { ExternalServiceTimeoutError, githubFetch } from './external-fetch.js';
+import { createHash } from 'node:crypto';
 import { importPKCS8, SignJWT } from 'jose';
 
 const GITHUB_ISSUER = 'https://github.com';
@@ -470,6 +471,55 @@ export class GitHubAppClient {
     this.#config = { ...config, apiBaseUrl: config.apiBaseUrl ?? DEFAULT_API };
   }
 
+  // Tokens from different repositories share one installation quota. Keep only
+  // token digests in the scope map; mint caching preserves the exact grant.
+  readonly #tokenScopes = new Map<string, { installationId: number; expiresAt: number }>();
+  readonly #tokens = new Map<string, GitHubInstallationToken>();
+  readonly #mints = new Map<string, Promise<GitHubInstallationToken>>();
+  readonly #retryAt = new Map<string, number>();
+  #activeRequests = 0;
+  readonly #requestQueue: Array<() => void> = [];
+  #rateLimitStore?: {
+    get(installationId: number): Promise<number>;
+    set(installationId: number, retryAt: number): Promise<void>;
+  };
+
+  /** Shared server storage makes an installation cooldown survive deploys and replicas. */
+  setRateLimitStore(store: { get(installationId: number): Promise<number>; set(installationId: number, retryAt: number): Promise<void> }): void {
+    this.#rateLimitStore = store;
+  }
+
+  private async request(input: string | URL, init: RequestInit = {}): Promise<Response> {
+    if (this.#activeRequests >= 4) await new Promise<void>(resolve => this.#requestQueue.push(resolve));
+    else this.#activeRequests++;
+    try {
+      const token = new Headers(init.headers).get('authorization')?.replace(/^Bearer /, '');
+      const digest = token ? createHash('sha256').update(token).digest('hex') : '';
+      const scope = this.#tokenScopes.get(digest);
+      const mint = new URL(input).pathname.match(/\/app\/installations\/(\d+)\/access_tokens$/);
+      const installationId = mint ? Number(mint[1]) : scope?.installationId;
+      const key = installationId ? `installation:${installationId}` : `token:${digest}`;
+      const sharedRetryAt = installationId && this.#rateLimitStore
+        ? await this.#rateLimitStore.get(installationId) : 0;
+      const retryAt = Math.max(this.#retryAt.get(key) ?? 0, sharedRetryAt);
+      if (retryAt > Date.now())
+        throw new GitHubHttpError('GitHub installation cooldown', 429, new Date(retryAt).toUTCString());
+      this.#retryAt.delete(key);
+      const response = await githubFetch(input, init);
+      const retry = responseRetryAfter(response);
+      if (retry && (response.status === 403 || response.status === 429 || response.headers.get('x-ratelimit-remaining') === '0')) {
+        const until = retryAfterTime(retry)!;
+        this.#retryAt.set(key, until);
+        if (installationId && this.#rateLimitStore) await this.#rateLimitStore.set(installationId, until);
+      }
+      return response;
+    } finally {
+      const next = this.#requestQueue.shift();
+      if (next) next();
+      else this.#activeRequests--;
+    }
+  }
+
   installationUrl(state: string, selectTarget = false): string {
     const url = new URL(`https://github.com/apps/${this.#config.slug}/installations/${selectTarget ? 'select_target' : 'new'}`);
     url.searchParams.set('state', state);
@@ -494,7 +544,7 @@ export class GitHubAppClient {
    */
   async fetchApp(): Promise<{ slug: string; events?: unknown; permissions?: unknown }> {
     const body = await jsonObject(
-      await githubFetch(`${this.#config.apiBaseUrl}/app`, {
+      await this.request(`${this.#config.apiBaseUrl}/app`, {
         headers: githubHeaders(await this.appJwt()),
       }),
       'GitHub app lookup',
@@ -528,8 +578,31 @@ export class GitHubAppClient {
     if (!Number.isSafeInteger(installationId) || installationId <= 0) {
       throw new Error('invalid GitHub installation id');
     }
+    const now = Date.now();
+    for (const [key, value] of this.#tokens) if (Date.parse(value.expiresAt) <= now + 5 * 60_000) this.#tokens.delete(key);
+    for (const [key, value] of this.#tokenScopes) if (value.expiresAt <= now) this.#tokenScopes.delete(key);
+    const key = JSON.stringify([installationId, [...(options.repositoryIds ?? [])].sort((a,b) => a-b),
+      options.permissions === undefined ? null : Object.entries(options.permissions).sort(([a],[b]) => a.localeCompare(b))]);
+    const cached = this.#tokens.get(key);
+    if (cached) return { ...cached };
+    const pending = this.#mints.get(key);
+    if (pending) return { ...await pending };
+    const mint = this.mintInstallationToken(installationId, options).then(value => {
+      this.#tokenScopes.set(createHash('sha256').update(value.token).digest('hex'),
+        { installationId, expiresAt: Date.parse(value.expiresAt) });
+      if (Date.parse(value.expiresAt) > Date.now() + 5 * 60_000) this.#tokens.set(key, value);
+      return value;
+    });
+    this.#mints.set(key, mint);
+    try { return { ...await mint }; }
+    finally { this.#mints.delete(key); }
+  }
+
+  private async mintInstallationToken(installationId: number, options: {
+    repositoryIds?: readonly number[]; permissions?: Readonly<Record<string, string>>;
+  }): Promise<GitHubInstallationToken> {
     const hasBody = Boolean(options.repositoryIds?.length) || Boolean(options.permissions);
-    const response = await githubFetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
+    const response = await this.request(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
       method: 'POST',
       headers: {
         ...githubHeaders(await this.appJwt()),
@@ -578,7 +651,7 @@ export class GitHubAppClient {
     const candidates: { id: number; name: string; path: string; state: string }[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
-        await githubFetch(
+        await this.request(
           `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows?per_page=100&page=${page}`,
           { headers: githubHeaders(accessToken) },
         ),
@@ -616,7 +689,7 @@ export class GitHubAppClient {
         let content: Record<string, unknown>;
         try {
           content = await jsonObject(
-            await githubFetch(
+            await this.request(
               `${this.#config.apiBaseUrl}/repos/${path}/contents/${workflow.path
                 .split('/')
                 .map((part) => encodeURIComponent(part))
@@ -637,7 +710,7 @@ export class GitHubAppClient {
         let runs: Record<string, unknown>;
         try {
           runs = await jsonObject(
-            await githubFetch(
+            await this.request(
               `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows/${workflow.id}/runs?per_page=1`,
               { headers: githubHeaders(accessToken) },
             ),
@@ -693,7 +766,7 @@ export class GitHubAppClient {
         .join('/')}`,
     );
     url.searchParams.set('ref', input.ref);
-    const response = await githubFetch(url, { headers: githubHeaders(input.accessToken) });
+    const response = await this.request(url, { headers: githubHeaders(input.accessToken) });
     if (response.status === 404) return undefined;
     if (!response.ok) throw new GitHubHttpError('GitHub file lookup', response.status);
     let body: unknown;
@@ -725,7 +798,7 @@ export class GitHubAppClient {
         throw new Error(`Production release ${run.id} is already ${status}. Wait for it to finish or cancel it in GitHub Actions.`);
       }
     }
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/workflows/unified-release.yml/dispatches`,
       { method: 'POST', headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
         body: JSON.stringify({ ref: 'main', inputs }) },
@@ -739,7 +812,7 @@ export class GitHubAppClient {
     workflowId: number,
     defaultBranch: string,
   ): Promise<void> {
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/workflows/${workflowId}/dispatches`,
       {
         method: 'POST',
@@ -798,7 +871,7 @@ export class GitHubAppClient {
   /** A PR's changed files, reviews, inline review comments and conversation comments. */
   async readPullRequestDiscussion(accessToken: string, fullName: string, number: number) {
     const list = async (path: string) => {
-      const response = await githubFetch(
+      const response = await this.request(
         `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}?per_page=100`,
         { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
       );
@@ -862,7 +935,7 @@ export class GitHubAppClient {
     url.searchParams.set('state', 'open');
     url.searchParams.set('head', `${owner}:${branch}`);
     url.searchParams.set('per_page', '100');
-    const response = await githubFetch(url, {
+    const response = await this.request(url, {
       headers: githubHeaders(accessToken),
       signal: AbortSignal.timeout(15_000),
     });
@@ -897,7 +970,7 @@ export class GitHubAppClient {
     if (!owner || !name || !/^[a-f0-9]{40,64}$/i.test(headSha)) {
       throw new Error('invalid GitHub commit check target');
     }
-    const response = await githubFetch(`${this.#config.apiBaseUrl}/graphql`, {
+    const response = await this.request(`${this.#config.apiBaseUrl}/graphql`, {
       method: 'POST',
       headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
       signal: AbortSignal.timeout(15_000),
@@ -1027,7 +1100,7 @@ export class GitHubAppClient {
     headSha: string,
     reported: readonly { readonly name: string; readonly appId: number | null }[],
   ): Promise<string[]> {
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/commits/${headSha}/pulls?per_page=100`,
       { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
     );
@@ -1093,7 +1166,7 @@ export class GitHubAppClient {
   /** A completed Actions job's log is available before its workflow run finishes. */
   async readJobLog(accessToken: string, fullName: string, jobId: number): Promise<string> {
     if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('invalid GitHub job id');
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/jobs/${jobId}/logs`,
       { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
     );
@@ -1106,7 +1179,7 @@ export class GitHubAppClient {
     fullName: string,
     path: string,
   ): Promise<Record<string, unknown>> {
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
       {
         headers: githubHeaders(accessToken),
@@ -1149,7 +1222,7 @@ export class GitHubAppClient {
 
   /** Read live repository and branch protection before destructive cleanup. */
   async branchDeletionSafety(accessToken: string, fullName: string, branch: string) {
-    const response = await githubFetch(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}`, {
+    const response = await this.request(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}`, {
       headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new GitHubHttpError('GitHub repository', response.status, responseRetryAfter(response));
@@ -1193,7 +1266,7 @@ export class GitHubAppClient {
       .split('/')
       .map((part) => encodeURIComponent(part))
       .join('/');
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath}/git/refs/heads/${branchPath}`,
       { method: 'DELETE', headers: githubHeaders(token.token), signal: AbortSignal.timeout(15_000) },
     );
@@ -1221,7 +1294,7 @@ export class GitHubAppClient {
   }
 
   private async queueGraphql(token: string, query: string, variables: Record<string, unknown>, label = 'GitHub merge queue') {
-    const response = await githubFetch(`${this.#config.apiBaseUrl}/graphql`, {
+    const response = await this.request(`${this.#config.apiBaseUrl}/graphql`, {
       method: 'POST', headers: { ...githubHeaders(token), 'content-type': 'application/json' },
       signal: AbortSignal.timeout(15_000), body: JSON.stringify({ query, variables }),
     });
@@ -1277,7 +1350,7 @@ export class GitHubAppClient {
       .split('/')
       .map((part) => encodeURIComponent(part))
       .join('/');
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${encodedRepositoryPath}/pulls/${pullRequestNumber}/merge`,
       {
         method: 'PUT',
@@ -1319,7 +1392,7 @@ export class GitHubAppClient {
       `pulls?state=open&base=${encodeURIComponent(head.ref)}&per_page=1`);
     if (!Array.isArray(dependents)) throw new Error('GitHub dependent pull requests are invalid');
     if (dependents.length) throw new Error('The pull request branch is the base of an open pull request');
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${pullRequestNumber}`,
       {
         method: 'PATCH',
@@ -1351,7 +1424,7 @@ export class GitHubAppClient {
     path: string,
     body?: Record<string, unknown>,
   ): Promise<unknown> {
-    const response = await githubFetch(
+    const response = await this.request(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
       {
         method,
@@ -1412,7 +1485,7 @@ export class GitHubAppClient {
 
   async installationAccount(installationId: number): Promise<GitHubInstallationAccount> {
     const body = await jsonObject(
-      await githubFetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
+      await this.request(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
         headers: githubHeaders(await this.appJwt()),
       }),
       'GitHub installation lookup',
@@ -1434,7 +1507,7 @@ export class GitHubAppClient {
       // GitHub answers this endpoint with a BARE array of installations —
       // unlike GET /user/installations' {total_count, installations} envelope.
       const entries = await jsonArray(
-        await githubFetch(`${this.#config.apiBaseUrl}/app/installations?per_page=100&page=${page}`, {
+        await this.request(`${this.#config.apiBaseUrl}/app/installations?per_page=100&page=${page}`, {
           headers: githubHeaders(await this.appJwt()),
         }),
         'GitHub app installation list',
@@ -1462,7 +1535,7 @@ export class GitHubAppClient {
     const repositories: GitHubInstallationRepository[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
-        await githubFetch(
+        await this.request(
           `${this.#config.apiBaseUrl}/installation/repositories?per_page=100&page=${page}`,
           { headers: githubHeaders(installation.token) },
         ),
@@ -1517,7 +1590,7 @@ export class GitHubAppClient {
     let body: Record<string, unknown>;
     try {
       body = await jsonObject(
-        await githubFetch(`${this.#config.apiBaseUrl}${path}`, {
+        await this.request(`${this.#config.apiBaseUrl}${path}`, {
           method: 'POST',
           headers: { ...githubHeaders(token), 'content-type': 'application/json' },
           // GitHub creates README.md and the default-branch first commit in the
@@ -1586,7 +1659,7 @@ export class GitHubAppClient {
     if (!owner || !repository) return undefined;
     try {
       const body = await jsonObject(
-        await githubFetch(
+        await this.request(
           `${this.#config.apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository.replace(/\.git$/i, ''))}`,
           { headers: githubHeaders(await this.appJwt()), redirect: 'follow' },
         ),
@@ -1608,7 +1681,7 @@ export class GitHubAppClient {
 
   /** A linked installation may change owners only with an explicit admin grant. */
   async organizationAdmin(accessToken: string, organization: string): Promise<boolean> {
-    const response = await githubFetch(`${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
+    const response = await this.request(`${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
       { headers: githubHeaders(accessToken) });
     if (!response.ok) return false;
     const body = await response.json() as Record<string, unknown>;
@@ -1638,7 +1711,7 @@ export class GitHubAppClient {
   ): Promise<GitHubOrganizationMembership> {
     let response: Response;
     try {
-      response = await githubFetch(
+      response = await this.request(
         `${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
         { headers: githubHeaders(accessToken) },
       );
@@ -1670,7 +1743,7 @@ export class GitHubAppClient {
   async repositoryStarred(accessToken: string, fullName: string): Promise<boolean | 'unknown'> {
     let response: Response;
     try {
-      response = await githubFetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+      response = await this.request(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
         headers: githubHeaders(accessToken),
       });
     } catch {
@@ -1688,7 +1761,7 @@ export class GitHubAppClient {
    */
   async starRepository(accessToken: string, fullName: string): Promise<boolean> {
     try {
-      const response = await githubFetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+      const response = await this.request(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
         method: 'PUT',
         headers: { ...githubHeaders(accessToken), 'content-length': '0' },
       });
@@ -1705,7 +1778,7 @@ export class GitHubAppClient {
     const installationIds: number[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
-        await githubFetch(`${this.#config.apiBaseUrl}/user/installations?per_page=100&page=${page}`, {
+        await this.request(`${this.#config.apiBaseUrl}/user/installations?per_page=100&page=${page}`, {
           headers: githubHeaders(accessToken),
         }),
         'GitHub user installations',

@@ -6,7 +6,7 @@ import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-e
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { readSidebarPreview } from '@beeline/api-contract/phone';
 import { useSyncExternalStore } from 'react';
-import { AppState } from 'react-native';
+import { AppState, NativeModules, Platform } from 'react-native';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
@@ -981,11 +981,15 @@ export function sharedLiveConnection(): LiveConnection {
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: subscribeClientReset,
     subscribeNetworkChange: (listener) => {
+      // Metro reports native module initialization errors as fatal before an
+      // import rejection reaches .catch. Check the same capability NetInfo uses
+      // before evaluating it on older OTA runtimes. Web uses its own adapter.
+      if (Platform.OS !== 'web' && !NativeModules.RNCNetInfo) return () => undefined;
+      let disposed = false;
       let unsubscribe: (() => void) | undefined;
-      // Older native runtimes do not contain this optional module. Loading it
-      // asynchronously lets an OTA bundle retain its normal socket behavior.
       void import('@react-native-community/netinfo')
         .then(({ default: NetInfo }) => {
+          if (disposed) return;
           // NetInfo otherwise falls back to recurring HTTP reachability probes
           // when a native state does not include isInternetReachable. We only
           // need native connectivity change events for socket recovery.
@@ -993,7 +997,10 @@ export function sharedLiveConnection(): LiveConnection {
           unsubscribe = NetInfo.addEventListener(() => listener());
         })
         .catch(() => undefined);
-      return () => unsubscribe?.();
+      return () => {
+        disposed = true;
+        unsubscribe?.();
+      };
     },
   });
   return shared;

@@ -15,6 +15,8 @@ vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: controls.act
 
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
+  Platform: { OS: 'android' },
+  NativeModules: { RNCNetInfo: null },
 }));
 vi.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(7),

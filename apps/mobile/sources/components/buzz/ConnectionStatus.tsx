@@ -4,7 +4,7 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Button } from './Button';
 import { InlineRow } from './IndexRow';
-import { PixelLoader } from './MonoHull';
+import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 
 /** One socket status line shared by the Room deck and every open Room. */
 export function ConnectionStatus() {
@@ -17,7 +17,7 @@ export function ConnectionStatus() {
   if (state === 'connected') return null;
   if (state === 'connecting') {
     return <InlineRow accessibilityLiveRegion="polite" style={styles.line} testID="connection-status-connecting">
-      <PixelLoader compact />
+      <BeelineMarkSpinner live />
       <Text style={styles.copy}>Connecting…</Text>
     </InlineRow>;
   }

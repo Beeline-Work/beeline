@@ -11,7 +11,7 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
   subscribeConnectionStatus: () => () => undefined,
   reconnectNow: state.reconnect,
 }) }));
-vi.mock('./MonoHull', () => ({ PixelLoader: () => React.createElement('PixelLoader') }));
+vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => React.createElement('BeelineMarkSpinner') }));
 vi.mock('./Button', () => ({ Button: (p: any) => React.createElement('Button', p, p.label) }));
 import { ConnectionStatus } from './ConnectionStatus';
 

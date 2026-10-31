@@ -46,6 +46,7 @@ import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerS
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
+import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -912,6 +913,7 @@ export default function BuzzChannels() {
 
           />
         )}
+        <ConnectionStatus />
         {pinError && (
           <IndexRow title={pinError} />
         )}

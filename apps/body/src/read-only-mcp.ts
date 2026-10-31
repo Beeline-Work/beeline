@@ -3032,9 +3032,26 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       return execute(operation);
     }
     case 'revise_corner': {
-      if (args.action === 'metadata' || args.action === 'install_brief') return execute('rename_corner', addressed);
-      if (args.action !== 'brief') throw new Error('action must be metadata or brief');
-      const input = { ...addressed, ...asObject(args.brief) };
+      if (args.action === 'metadata') return execute('rename_corner', addressed);
+      if (args.action !== 'brief' && args.action !== 'install_brief') throw new Error('action must be metadata, install_brief or brief');
+      const copied = asObject(args.brief);
+      // Projection metadata is read-only. Keep revision and change from the call,
+      // and let the server resolve the approval and attachment metadata again.
+      const input = { ...addressed, spec: copied.spec, repositoryWork: copied.repositoryWork,
+        approval: copied.approval === undefined ? undefined : {
+          sourceMessageId: asObject(copied.approval).sourceMessageId,
+        },
+        attachments: Array.isArray(copied.attachments) ? copied.attachments.map(item => {
+          const file = asObject(item);
+          return { ...(file.objectId !== undefined ? { objectId: file.objectId } : {}),
+            ...(file.path !== undefined ? { path: file.path } : {}),
+            purpose: file.purpose, required: file.required };
+        }) : undefined,
+      };
+      if (args.action === 'install_brief') {
+        const { spec, repositoryWork, approval, attachments } = input;
+        return execute('rename_corner', { ...addressed, brief: { spec, repositoryWork, approval, attachments } });
+      }
       return execute('revise_corner_brief', input);
     }
     case 'report':

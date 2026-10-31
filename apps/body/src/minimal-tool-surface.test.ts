@@ -237,6 +237,43 @@ describe('minimal agent surface', () => {
     });
   });
 
+  it('R1 accepts a projected read brief and sends only writable fields', async () => {
+    const brief = {
+      id: 'target', revision: 7, spec: 'Fix tool inputs. Reproduction R1: copy read brief.',
+      repositoryWork: true, authorId: 'author', sourceRoomId: 'parent', sourceMessageId: 'source',
+      change: 'Previous change',
+      approval: { sourceMessageId: 'source', text: 'Approved', approvedBy: 'person', approverName: 'Owner' },
+      attachments: [{ objectId: '11111111-1111-4111-8111-111111111111',
+        purpose: 'Evidence', required: true, title: 'proof.txt', mime: 'text/plain', sha256: 'abc', size: 12 }],
+    };
+    await callAgentTool('revise_corner', { action: 'brief', address: 'target',
+      expectedRevision: 7, change: 'Edit copied brief', brief }, 'R1');
+    expect(calls.at(-1)?.input.brief).toEqual({ spec: brief.spec, repositoryWork: true,
+      approval: { sourceMessageId: 'source' }, change: 'Edit copied brief',
+      attachments: [{ objectId: brief.attachments[0].objectId, purpose: 'Evidence', required: true }] });
+  });
+
+  it('R2 states schedule administration and the prompt and report limits', () => {
+    const tools = agentToolsFor(true, false);
+    expect(tools.find(tool => tool.name === 'wake')!.description).toContain('human Workspace admin');
+    expect(tools.find(tool => tool.name === 'wake')!.description).toContain('scheduled wake');
+    expect((tools.find(tool => tool.name === 'wake')!.inputSchema.properties as any).prompt.description).toContain('2000 UTF-16');
+    expect((tools.find(tool => tool.name === 'report')!.inputSchema.properties as any).text.description).toContain('16000');
+  });
+
+  it('advertises and enforces the schedule prompt boundary before execution', async () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'wake')!.inputSchema;
+    const input = { action: 'create', trigger: 'schedule', title: 'Check work',
+      prompt: 'x'.repeat(2000), cadence: { kind: 'interval', everyMinutes: 60 } };
+    expect(Check(schema, input)).toBe(true);
+    await callAgentTool('wake', input, 'prompt-limit');
+    expect(calls.at(-1)?.input.prompt).toHaveLength(2000);
+    expect(Check(schema, { ...input, prompt: 'x'.repeat(2001) })).toBe(false);
+    expect(Check(schema, { ...input, trigger: 'event', when: 'On check failure', prompt: 'x'.repeat(2001) })).toBe(true);
+    await expect(callAgentTool('wake', { ...input, prompt: 'x'.repeat(2001) }, 'too-long'))
+      .rejects.toThrow(/invalid arguments/);
+  });
+
   it('revise-schema keeps the complete object visible without discriminator unions', async () => {
     const tool = agentToolsFor(true, false, true).find(tool => tool.name === 'revise_corner')!;
     expect(JSON.stringify(tool.inputSchema)).not.toContain('"anyOf":[{"properties":{"action"');
@@ -249,8 +286,8 @@ describe('minimal agent surface', () => {
     expect(Check(tool.inputSchema, input)).toBe(true);
     await callAgentTool('revise_corner', input, 'revise-schema');
     expect(calls.at(-1)?.input.brief).toMatchObject({ ...input.brief, change: input.change });
-    for (const brief of [{}, { spec: 42 }, { spec: 'Fix', change: 'misplaced' },
-      { spec: 'Fix', approval: { sourceMessageId: 'source', text: 'unsupported' } },
+    for (const brief of [{}, { spec: 42 }, { spec: 'Fix', unknownField: 'misplaced' },
+      { spec: 'Fix', approval: { sourceMessageId: 'source', unknownField: 'unsupported' } },
       { spec: 'Fix', attachments: [{ purpose: 'Fixture', required: true }] }]) {
       expect(Check(tool.inputSchema, { ...input, brief })).toBe(false);
       await expect(callAgentTool('revise_corner', { ...input, brief }, 'nested')).rejects.toThrow();

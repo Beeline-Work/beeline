@@ -152,6 +152,8 @@ export class LiveConnection {
   private readonly requests = new Map<string, PendingRequest>();
   private nextRequestId = 0;
   private socket: WebSocket | undefined;
+  /** True only after this socket's `onopen`. A failed handshake stays false. */
+  private socketReachedOpen = false;
   private connectInFlight: Promise<void> | undefined;
   /** Rooms on screen, counted per holder; the server holds their pushes. */
   private readonly viewing = new Map<string, number>();
@@ -436,6 +438,7 @@ export class LiveConnection {
     }
     const current = this.socket;
     this.socket = undefined;
+    this.socketReachedOpen = false;
     this.dropSocketState();
     current.close();
     void this.ensureSocket();
@@ -499,6 +502,7 @@ export class LiveConnection {
     this.backgroundCloseTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
+    this.socketReachedOpen = false;
     current?.close();
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
@@ -545,21 +549,27 @@ export class LiveConnection {
   }
 
   /**
-   * Opens one socket. An authorization failure, a handshake error, or a close
-   * ends that attempt. A socket that never opens stays until foreground, a
-   * network change, a push, or an explicit Retry. The next attempt waits for
-   * one of those events.
+   * Opens one socket. A handshake that never opens waits for foreground, a
+   * network change, a push, or an explicit Retry. A socket that had opened
+   * and then closes or errors starts one new attempt immediately, with no
+   * timer. That attempt does not start another if it never opens.
    */
   private async connect(): Promise<void> {
     const generation = this.generation;
     try {
       const token = await this.deps.authorization();
       if (generation !== this.generation) return;
+      if (this.registrations.size === 0 && this.requests.size === 0) {
+        setConnectionState('disconnected');
+        return;
+      }
       const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
+      this.socketReachedOpen = false;
       next.onopen = () => {
         if (this.socket !== next) return;
+        this.socketReachedOpen = true;
         setConnectionState('connected');
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
@@ -587,24 +597,53 @@ export class LiveConnection {
       };
       next.onclose = () => {
         if (this.socket !== next) return;
-        this.socket = undefined;
-        this.dropSocketState();
-        setConnectionState('disconnected');
+        const reachedOpen = this.socketReachedOpen;
+        this.forgetSocket();
+        if (reachedOpen) this.recoverOpenedSocket();
       };
       next.onerror = () => {
         if (this.socket !== next) return;
         // Some WebSocket implementations emit another error while `close()`
         // tears down a failed handshake. Drop ownership first so that error
         // cannot recursively close the same socket.
-        this.socket = undefined;
-        this.dropSocketState();
-        setConnectionState('disconnected');
+        const reachedOpen = this.socketReachedOpen;
+        this.forgetSocket();
         next.close();
+        if (reachedOpen) this.recoverOpenedSocket();
       };
     } catch {
       if (generation !== this.generation) return;
       setConnectionState('disconnected');
     }
+  }
+
+  /** Drop ownership. The caller decides whether this close starts a new socket. */
+  private forgetSocket(): void {
+    this.socket = undefined;
+    this.socketReachedOpen = false;
+    this.dropSocketState();
+    setConnectionState('disconnected');
+  }
+
+  /**
+   * One replacement after a socket that had opened. Nothing is scheduled:
+   * a handshake that never opens, a background shutdown, or the last
+   * registration leaving does not start another.
+   */
+  private recoverOpenedSocket(): void {
+    if (this.backgroundSocketClosed || this.registrations.size === 0) return;
+    const flight = this.connectInFlight;
+    // Register resolves before its socket attempt finishes. A close in that
+    // gap must not reuse the attempt that just died.
+    if (!flight) {
+      void this.ensureSocket();
+      return;
+    }
+    void flight.finally(() => {
+      if (this.socket || this.connectInFlight || this.backgroundSocketClosed || this.registrations.size === 0)
+        return;
+      void this.ensureSocket();
+    });
   }
 
   private dropSocketState(): void {

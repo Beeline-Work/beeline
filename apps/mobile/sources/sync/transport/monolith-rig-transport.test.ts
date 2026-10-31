@@ -180,15 +180,23 @@ describe('monolith Room send path', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: 'subscribed', roomId: ROOM, epoch: 'epoch-1', cursor: 3 }),
+    });
+    received.length = 0;
 
     sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    sharedLiveConnection().reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
     sockets[1]!.onopen?.();
-    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
+    expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({
+      type: 'subscribe',
+      sidebarPreviews: true,
+      roomIds: [ROOM],
+      cursors: { [ROOM]: { epoch: 'epoch-1', base: 3, seen: [] } },
+    });
     sockets[1]!.onmessage?.({
       data: JSON.stringify({
         type: 'invalidate',
@@ -279,10 +287,12 @@ describe('monolith Room send path', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    sharedLiveConnection().reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
 
     stop();

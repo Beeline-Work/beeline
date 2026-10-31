@@ -271,6 +271,23 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('reopens once when an established socket errors, and not after a failed handshake', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.error();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0]!.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.error();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+    connection.dispose();
+  });
+
   it('does not open another socket after a handshake error until an external event', async () => {
     vi.useFakeTimers();
     const { connection, networkChanged } = createConnection();
@@ -1043,7 +1060,7 @@ describe('LiveConnection', () => {
 
   it('covers a no-room registration once per reopened socket and never on a timer', async () => {
     vi.useFakeTimers();
-    const { connection, networkChanged } = createConnection();
+    const { connection } = createConnection();
     const received: unknown[] = [];
 
     await connection.register([], (event) => received.push(event));
@@ -1055,11 +1072,11 @@ describe('LiveConnection', () => {
     expect(received).toEqual([]);
 
     sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    expect(received).toEqual([]);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    expect(received).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
     sockets[1]!.open();
     expect(received).toEqual([
       { monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } },
@@ -1166,16 +1183,15 @@ describe('LiveConnection', () => {
 
   it('resubscribes every current room after the socket drops', async () => {
     vi.useFakeTimers();
-    const { connection, networkChanged } = createConnection();
+    const { connection } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     await connection.register([{ '#h': [ROOM_B] }], () => undefined);
     sockets[0]!.open();
     sockets[0]!.drop();
 
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.open();
     expect(sockets[1]!.sent).toEqual([
@@ -1187,7 +1203,7 @@ describe('LiveConnection', () => {
 
   it('notifies subscribeConnected on first connect and every reconnect, never in between', async () => {
     vi.useFakeTimers();
-    const { connection, networkChanged } = createConnection();
+    const { connection } = createConnection();
     const connectedCalls: number[] = [];
     let calls = 0;
     const unsubscribe = connection.subscribeConnected(() => {
@@ -1204,20 +1220,17 @@ describe('LiveConnection', () => {
     expect(calls).toBe(1);
 
     sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.open();
     expect(calls).toBe(2);
 
     unsubscribe();
     sockets[1]!.drop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(2);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(3);
     sockets[2]!.open();
     expect(calls).toBe(2);
 
@@ -1226,7 +1239,7 @@ describe('LiveConnection', () => {
 
   it('notifies observed disconnects and stops after unsubscribe', async () => {
     vi.useFakeTimers();
-    const { connection, networkChanged } = createConnection();
+    const { connection } = createConnection();
     const disconnected = vi.fn();
     const unsubscribe = connection.subscribeDisconnected(disconnected);
     await connection.register([], () => undefined);
@@ -1234,10 +1247,10 @@ describe('LiveConnection', () => {
     expect(disconnected).not.toHaveBeenCalled();
     sockets[0]!.drop();
     expect(disconnected).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
     sockets[1]!.open();
     connection.reconnect();
     expect(disconnected).toHaveBeenCalledTimes(2);
@@ -1373,7 +1386,7 @@ describe('LiveConnection', () => {
   });
   it('tells the server which Rooms are on screen, once each way, and again on a new socket', async () => {
     vi.useFakeTimers();
-    const { connection, networkChanged } = createConnection();
+    const { connection } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     await vi.advanceTimersByTimeAsync(0);
     // A Room comes on screen before the socket opens: the open carries it.
@@ -1396,13 +1409,13 @@ describe('LiveConnection', () => {
       viewing(ROOM_B, false),
     ]);
 
-    // The server ended the old socket's views when it closed. Time passing
-    // does not open a replacement; a network change does.
+    // The server ended the old socket's views when it closed. The replacement
+    // sends them again. Time passing does not open a further socket.
     sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
     sockets[1]!.open();
     expect(sockets[1]!.sent.filter((frame) => frame.includes('"viewing"'))).toEqual([
       viewing(ROOM_A, true),
@@ -1412,21 +1425,51 @@ describe('LiveConnection', () => {
 
     connection.dispose();
   });
-  it('reconnects on foreground after the socket drops, and not on a timer', async () => {
+  it('reopens once after a server disconnect and resubscribes with the catch-up cursor', async () => {
     vi.useFakeTimers();
-    const { connection, foreground } = createConnection();
-    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    const { connection } = createConnection();
+    const room = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], room);
     sockets[0]!.open();
-    sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'epoch-1', cursor: 4 });
+    room.mockClear();
 
-    foreground();
+    sockets[0]!.drop();
     await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
-    sockets[1]!.open();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
+
+    sockets[1]!.open();
+    expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({
+      type: 'subscribe',
+      sidebarPreviews: true,
+      roomIds: [ROOM_A],
+      cursors: { [ROOM_A]: { epoch: 'epoch-1', base: 4, seen: [] } },
+    });
+    sockets[1]!.emit({
+      type: 'subscribed',
+      roomId: ROOM_A,
+      epoch: 'epoch-1',
+      cursor: 9,
+      resumed: true,
+    });
+    expect(room).toHaveBeenCalledWith({
+      monolithLive: {
+        type: 'subscribed',
+        roomId: ROOM_A,
+        epoch: 'epoch-1',
+        cursor: 9,
+        resumed: true,
+      },
+    });
+
+    sockets[1]!.drop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(3);
+    sockets[2]!.error();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(3);
 
     connection.dispose();
   });
@@ -1499,10 +1542,12 @@ describe('LiveConnection', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.open();
     sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(1);
-    networkChanged();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.error();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
 
     connection.dispose();
@@ -1697,12 +1742,13 @@ describe('phone socket request/reply', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
   it('rejects in-flight sends on close and queued reads on identity change', async () => {
-    const sockets = stubSockets(), { connection, changeIdentity, networkChanged } = createConnection();
+    const sockets = stubSockets(), { connection, changeIdentity } = createConnection();
     await connection.register([], () => {}); sockets[0]!.open();
     const first = connection.request('sendRoomMessage', { roomId: 'r', messageId: 'm', text: 'hello' }).catch(e => e);
     sockets[0]!.drop(); expect((await first).name).toBe('PhoneSocketDisconnectedError');
-    await vi.advanceTimersByTimeAsync(60_000); expect(sockets).toHaveLength(1);
-    networkChanged(); await vi.advanceTimersByTimeAsync(0); sockets[1]!.open();
+    await vi.advanceTimersByTimeAsync(0); expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000); expect(sockets).toHaveLength(2);
+    sockets[1]!.open();
     expect(sockets[1]!.sent.some(v => JSON.parse(v).t === 'req')).toBe(false);
     const second = connection.request('readWorkspaces', {}).catch(e => e);
     changeIdentity(); expect((await second).name).toBe('PhoneSocketDisconnectedError'); connection.dispose();

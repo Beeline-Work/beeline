@@ -23,20 +23,6 @@
       "why": "Desktop-shell HTTP behind monolithFetch; goes with it."
     },
     {
-      "file": "apps/mobile/sources/auth/monolith-session.ts",
-      "kind": "origin:beeline-server.fly.dev",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "The hedged backup origin, a second HTTP connection added in #2272. Removed by the socket migration."
-    },
-    {
-      "file": "apps/mobile/sources/auth/monolith-session.ts",
-      "kind": "origin:server.usebeeline.app",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Primary origin key of the hedged backup-origin map; the map goes with monolithFetch."
-    },
-    {
       "file": "apps/mobile/sources/buzz/client-error-report.ts",
       "kind": "session-fetch",
       "count": 1,

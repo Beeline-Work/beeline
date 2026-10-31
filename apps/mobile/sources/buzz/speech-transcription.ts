@@ -1,3 +1,4 @@
+import type { DictationTiming } from './dictation-timing';
 /**
  * Sends a dictation's recorded pieces to the Beeline server as they close; the
  * server transcribes them with Groq Whisper. The Groq key stays on the server.
@@ -64,8 +65,10 @@ async function transcribeOne(
   wav: Uint8Array,
   prompt: string,
   language: string,
+  timing?: DictationTiming,
 ): Promise<string | null> {
   const audio = compressDictationWav(wav);
+  timing?.mark('upload_start');
   const response = await monolithSession.fetch(
     `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/transcriptions`,
     {
@@ -79,6 +82,7 @@ async function transcribeOne(
     },
     { timeoutMs: PIECE_TIMEOUT_MS },
   );
+  timing?.mark('upload_response');
   if (response.status === 503) {
     // Only the server's own answer means no Groq key; a proxy 503 is passing.
     const value = (await response.json().catch(() => null)) as { error?: unknown } | null;
@@ -89,6 +93,7 @@ async function transcribeOne(
     return null;
   }
   const value = (await response.json()) as { text?: unknown };
+  if (typeof value.text === 'string') timing?.mark('groq_text_back');
   return typeof value.text === 'string' ? value.text.trim() : null;
 }
 
@@ -132,7 +137,7 @@ export type DictationUpload = {
  * failed piece keeps its place and its audio, later pieces still upload, and
  * stop retries it once.
  */
-export function startDictationUpload(lexicon: readonly string[], locale: string): DictationUpload {
+export function startDictationUpload(lexicon: readonly string[], locale: string, timing?: DictationTiming): DictationUpload {
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   const uris: string[] = [];
   // Each piece's chunk texts, in order; null until Groq answers it.
@@ -159,7 +164,7 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
     try {
       const chunks = splitDictationWav(wav, CHUNK_SECONDS);
       const results = await Promise.all(
-        chunks.map((chunk) => transcribeOne(chunk, prompt, language)),
+        chunks.map((chunk) => transcribeOne(chunk, prompt, language, timing)),
       );
       if (results.some((text) => text === null)) {
         failedPieces.set(slot, wav);

@@ -699,7 +699,7 @@ describe('useSpeechInput', () => {
         captured = await stopped;
       });
 
-      expect(startDictationUpload).toHaveBeenCalledWith(['Jellybean', 'corner'], 'en-GB');
+      expect(startDictationUpload).toHaveBeenCalledWith(['Jellybean', 'corner'], 'en-GB', expect.objectContaining({ mark: expect.any(Function) }));
       expect(upload.add).toHaveBeenCalledWith('file:///cache/take-1.wav');
       expect(onResult).toHaveBeenCalledTimes(1);
       expect(onResult).toHaveBeenCalledWith('Ask Jellybean to open a corner.');

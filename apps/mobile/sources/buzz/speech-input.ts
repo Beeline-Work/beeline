@@ -1,3 +1,4 @@
+import { createDictationTiming, type DictationTiming } from './dictation-timing';
 /**
  * useSpeechInput — free platform speech recognition.
  *
@@ -45,6 +46,8 @@ export interface SpeechInputValue {
   /** Declines the model for this composer and starts dictating without it. */
   declineModelDownload(): Promise<void>;
   start(): Promise<void>;
+  /** Content-free trace for the current recording. */
+  dictationTiming?(): DictationTiming;
   /** Stops native capture and resolves after its final result or bounded fallback. */
   stop(): Promise<boolean | null>;
   /** Ends capture and drops the take: nothing is transcribed or committed. */
@@ -145,6 +148,7 @@ export function useSpeechInput(
   const androidModelRequestedRef = React.useRef(false);
   // A recorded take holds its on-device finals until the server's text
   // replaces them on stop. The id voids a transcription that outlives its take.
+  const timingRef = React.useRef<DictationTiming | null>(null);
   const takeRef = React.useRef<RecordedTake>(NO_TAKE);
   const takeIdRef = React.useRef(0);
   const capability: SpeechInputCapability =
@@ -264,6 +268,7 @@ export function useSpeechInput(
     if (!take.upload) return;
     takeRef.current = NO_TAKE;
     const takeId = takeIdRef.current;
+    const timing = timingRef.current;
     const onDevice = joinSpeechPieces(
       [...take.finals, pendingPartialRef.current],
       lexiconRef.current,
@@ -274,6 +279,7 @@ export function useSpeechInput(
     // finish() also flushes short buffered pieces and handles missing audio.
     const transcribed = await take.upload.finish();
     if (takeId !== takeIdRef.current) return;
+    if (!transcribed) timing?.mark('fallback');
     if (transcribed) text = correctorRef.current.correct([transcribed]);
     const captured = finishStopWithCapture(text);
     if (stopSettlementRef.current) {
@@ -431,12 +437,14 @@ export function useSpeechInput(
     const onAudioEnd = (event: any) => {
       const uri = typeof event?.uri === 'string' ? event.uri : '';
       if (!uri) return;
+      timingRef.current?.mark('audio_closed');
       // A closed piece uploads now, while the user keeps talking.
       if (takeRef.current.upload) takeRef.current.upload.add(uri);
       else void discardDictationRecordings([uri]);
     };
 
     const onEnd = () => {
+      timingRef.current?.mark('native_end');
       if (stopRequestedRef.current) {
         if (takeRef.current.upload) {
           void finishTake();
@@ -535,10 +543,12 @@ export function useSpeechInput(
       pendingPartialRef.current = '';
       takeIdRef.current += 1;
       takeRef.current.upload?.discard();
+      timingRef.current = createDictationTiming();
+      timingRef.current.mark('recording_started');
       takeRef.current = {
         upload:
           recordingSupported(m) && dictationTranscriptionAvailable()
-            ? startDictationUpload(lexiconRef.current, startOptions.lang)
+            ? startDictationUpload(lexiconRef.current, startOptions.lang, timingRef.current)
             : null,
         finals: [],
       };
@@ -668,6 +678,7 @@ export function useSpeechInput(
   }, [start]);
 
   return {
+    dictationTiming: () => timingRef.current ??= createDictationTiming(),
     capability,
     state,
     partialText,

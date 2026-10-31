@@ -1,3 +1,4 @@
+import type { DictationTiming } from '@/buzz/dictation-timing';
 import { InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
@@ -34,7 +35,7 @@ import { composerBackspaceCursor, deleteComposerTagBackward, splitComposerTags }
  * A dictated message on its way out. Stop sets `cancelled` until the parent sets
  * `committed`, the moment the message enters the Room.
  */
-export type DictatedSend = { cancelled: boolean; committed: boolean };
+export type DictatedSend = { cancelled: boolean; committed: boolean; timing?: DictationTiming };
 
 type Props = {
   voice?: VoiceCallState;
@@ -351,10 +352,12 @@ function ConversationComposerContent({
   // Send while dictating: stop, wait for the final words, then send them with
   // any typed text and staged files.
   const sendTake = () => {
+    const timing = speech.dictationTiming?.();
+    timing?.mark('send_tapped');
     const hadTypedText = Boolean(tagSplit.rest.trim());
     // Held from the press, so the field stays a waveform from the
     // transcription through the send.
-    const send: DictatedSend = { cancelled: false, committed: false };
+    const send: DictatedSend = { cancelled: false, committed: false, timing };
     const settle = () =>
       setSendingTake((current) => (current === send ? null : current));
     setSendingTake(send);

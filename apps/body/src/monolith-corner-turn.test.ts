@@ -1,3 +1,5 @@
+import { harvestWarmNodeModules, warmNodeModulesStoreDir, mobileNodeModulesStoreDir } from './warm-node-modules.js';
+import { existsSync } from 'node:fs';
 import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 import { resetOpenRouterKeyThrottle } from './openrouter-key-usage.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
@@ -504,7 +506,7 @@ describe('corner merge instructions', () => {
       undefined,
     );
     // Checkout isolation is exercised separately with a real remote.
-    (loop as unknown as { reviewerCheckout: boolean }).reviewerCheckout = true;
+    vi.spyOn(loop as unknown as { withCheckout(work: () => Promise<void>): Promise<void> }, 'withCheckout').mockImplementation(work => work());
     let promptRun = 0;
     let moveHeadOnPrompt = false;
     let newestHead = '';
@@ -679,7 +681,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
     const turn = (loop as unknown as {
       prompt(requestId: string, trigger: string, attachments?: [], requestedById?: string, restates?: string[]): Promise<void>;
     }).prompt.bind(loop);
-    (loop as unknown as { reviewerCheckout: boolean }).reviewerCheckout = true;
+    vi.spyOn(loop as unknown as { withCheckout(work: () => Promise<void>): Promise<void> }, 'withCheckout').mockImplementation(work => work());
     await turn('green-wake', `GitHub passed a check on ${head}`);
 
     const session = sessionNew.mock.calls[0]?.[0]?.systemPrompt ?? '';
@@ -704,7 +706,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
     expect(prompts[0]).toContain('call approve_merge with the reviewed head SHA as a tool argument');
     expect(prompts).toHaveLength(1);
     for (const text of prompts) expect(text).not.toContain(CORNER_DELIVERY_NUDGE);
-    (loop as unknown as { reviewerCheckout: boolean }).reviewerCheckout = true;
+    vi.spyOn(loop as unknown as { withCheckout(work: () => Promise<void>): Promise<void> }, 'withCheckout').mockImplementation(work => work());
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   }, 30_000);
 });
@@ -1998,7 +2000,9 @@ describe('corner close-request delivery', () => {
     await fixture.scheduler.dispose();
   });
 
-  it('CHECKOUT-REVIEW: reviewer gets a private copy while the implementation checkout is held', async () => {
+  it.each(['shared', 'waited', 'dirty', 'timeout'])('CHECKOUT-REVIEW: %s', async (mode) => {
+    const dirty = mode === 'dirty';
+    const fallback = mode === 'dirty' || mode === 'timeout';
     const fixture = await cornerHarness(vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { isReviewer: true };
       if (name === 'getRoomGitHubToken') return { token: 'fixture-token' };
@@ -2007,27 +2011,59 @@ describe('corner close-request delivery', () => {
     const root = fixture.root;
     await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Test']);
     await execFileAsync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+    const supervisorRoot = (fixture.loop as unknown as { options: { runtime: { supervisorRoot: string } } }).options.runtime.supervisorRoot;
+    const lock = JSON.stringify({ name: 'fixture', lockfileVersion: 3,
+      packages: { '': { name: 'fixture' }, 'node_modules/proof': { version: '1.0.0' } } });
+    await writeFile(join(root, '.gitignore'), 'node_modules\nagent-home\n');
+    for (const [path, storeRoot] of [[root, warmNodeModulesStoreDir(supervisorRoot)],
+      [join(root, 'apps/mobile'), mobileNodeModulesStoreDir(supervisorRoot)]]) {
+      await mkdir(join(path, 'node_modules/proof'), { recursive: true });
+      await writeFile(join(path, 'package-lock.json'), lock);
+      await writeFile(join(path, 'node_modules/proof/package.json'), '{"name":"proof","version":"1.0.0"}');
+      await writeFile(join(path, 'node_modules/.package-lock.json'), '{"packages":{"node_modules/proof":{}}}');
+      expect((await harvestWarmNodeModules({ worktreePath: path, storeRoot })).reason).toBe('stored');
+    }
     await writeFile(join(root, 'review.txt'), 'published head');
-    await execFileAsync('git', ['-C', root, 'add', 'review.txt']);
+    await execFileAsync('git', ['-C', root, 'add', 'review.txt', '.gitignore', 'package-lock.json', 'apps/mobile/package-lock.json']);
     await execFileAsync('git', ['-C', root, 'commit', '-m', 'head']);
     await execFileAsync('git', ['-C', root, 'branch', '-M', 'feature/widget']);
     await execFileAsync('git', ['-C', root, 'remote', 'add', 'origin', root]);
     const head = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim();
     const internal = fixture.loop as unknown as {
       options: { worktreePath: string; config: BodyConfig; repository: { featureBranch: string } };
-      withCheckout(work: () => Promise<void>): Promise<void>; syncBranch(): Promise<void>;
+      withCheckout(work: () => Promise<void>, waitMs?: number): Promise<void>; syncBranch(): Promise<void>;
     };
     internal.options.config.agentHomeRoot = join(root, 'agent-home');
     internal.options.repository.featureBranch = 'feature/widget';
-    await withCornerCheckoutLock(root, async () => {
-      await writeFile(join(root, 'review.txt'), 'uncommitted implementer work');
-      await internal.withCheckout(async () => {
+    await execFileAsync('git', ['-C', root, 'fetch', 'origin', 'feature/widget:refs/remotes/origin/feature/widget']);
+    {
+      if (dirty) await writeFile(join(root, 'review.txt'), 'uncommitted implementer work');
+      let reviewPath = '';
+      const review = () => internal.withCheckout(async () => {
         await internal.syncBranch();
-        expect(internal.options.worktreePath).not.toBe(root);
+        reviewPath = internal.options.worktreePath;
+        for (const relative of ['node_modules/proof/package.json', 'apps/mobile/node_modules/proof/package.json']) {
+          expect(await readFile(join(reviewPath, relative), 'utf8')).toContain('proof');
+        }
+        if (fallback) {
+          expect(reviewPath).not.toBe(root);
+          expect((await readFile(join(reviewPath, '.git'), 'utf8')).startsWith('gitdir:')).toBe(true);
+        } else expect(reviewPath).toBe(root);
         expect(await readFile(join(internal.options.worktreePath, 'review.txt'), 'utf8')).toBe('published head');
         expect((await execFileAsync('git', ['-C', internal.options.worktreePath, 'rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
-      });
-    });
+      }, mode === 'waited' ? 1000 : 20);
+      if (mode === 'waited') {
+        let pending!: Promise<void>;
+        await withCornerCheckoutLock(root, async () => {
+          pending = review();
+          await new Promise(done => setTimeout(done, 30));
+          expect(reviewPath).toBe('');
+        });
+        await pending;
+      } else if (mode === 'timeout') await withCornerCheckoutLock(root, review);
+      else await review();
+      if (fallback) expect(existsSync(reviewPath)).toBe(false);
+    }
     fixture.abort.abort();
     await fixture.scheduler.dispose();
   });

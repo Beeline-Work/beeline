@@ -8,7 +8,7 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
@@ -159,6 +159,7 @@ import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-gith
 import { agentGitIdentityEnv } from './agent-git-identity.js';
 import {
   harvestWarmNodeModules,
+  seedWarmNodeModules,
   mobileNodeModulesStoreDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
@@ -1683,28 +1684,61 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
-    if (this.options.repository && !this.reviewerCheckout) {
-      const configuration = await this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey, roomId: this.options.cornerId,
-      });
-      if (configuration.isReviewer) {
-        const source = this.options.worktreePath;
-        const copy = resolve(this.options.config.agentHomeRoot ?? dirname(source), 'review-checkout', this.options.cornerId, this.agent.publicKey);
-        await mkdir(dirname(copy), { recursive: true });
-        const remote = (await execFileAsync('git', ['-C', source, 'remote', 'get-url', 'origin'])).stdout.trim();
-        if (!existsSync(resolve(copy, '.git'))) {
-          await execFileAsync('git', ['clone', '--no-hardlinks', source, copy]);
-        }
-        await execFileAsync('git', ['-C', copy, 'remote', 'set-url', 'origin', remote]);
-        await execFileAsync('git', ['-C', copy, 'config', 'credential.https://github.com.helper',
-          '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f']);
+  private async withCheckout<T>(work: () => Promise<T>, reviewWaitMs = 60_000): Promise<T> {
+    const repository = this.options.repository;
+    const configuration = repository ? await this.options.api.execute('getAgentConfiguration', {
+      agentId: this.agent.publicKey, roomId: this.options.cornerId,
+    }) : undefined;
+    if (!configuration?.isReviewer || !repository) return this.runWithCheckout(work);
+    const source = this.options.worktreePath;
+    this.reviewerCheckout = true;
+    const fallback = async () => {
+      const copy = resolve(this.options.config.agentHomeRoot ?? dirname(source),
+        'review-checkout', this.options.cornerId, this.agent.publicKey + '-' + randomUUID());
+      await mkdir(dirname(copy), { recursive: true });
+      await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`,
+        'worktree', 'add', '--detach', copy, 'HEAD']);
+      try {
         this.options.worktreePath = copy;
-        this.options.repository.gitCommonDir = resolve(copy, '.git');
-        this.reviewerCheckout = true;
+        await this.syncBranch();
+        await seedWarmNodeModules({ worktreePath: copy,
+          storeRoot: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
+        await seedWarmNodeModules({ worktreePath: resolve(copy, 'apps/mobile'),
+          storeRoot: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
+        return await this.runWithCheckout(work);
+      } finally {
+        await this.discardSession();
+        this.options.worktreePath = source;
+        await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`, 'worktree', 'remove', '--force', copy]);
+        await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`, 'worktree', 'prune']);
       }
+    };
+    let entered = false;
+    try {
+      return await withCornerCheckoutLock(source, async () => {
+        entered = true;
+        const dirty = (await execFileAsync('git', ['-C', source, 'status', '--porcelain'])).stdout.trim();
+        if (dirty) return fallback();
+        const head = (await execFileAsync('git', ['-C', source, 'rev-parse', 'HEAD'])).stdout.trim();
+        const branch = (await execFileAsync('git', ['-C', source, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+          .catch(() => ({ stdout: '' }))).stdout.trim();
+        try { return await this.runWithCheckout(work, true); }
+        finally {
+          await this.discardSession();
+          await execFileAsync('git', ['-C', source, 'checkout', branch || head]);
+        }
+      // One minute lets ordinary turns finish without holding review behind a two-hour job.
+      }, reviewWaitMs);
+    } catch (error) {
+      if (entered || !(error instanceof Error) || !error.message.includes('timed out waiting')) throw error;
+      return await fallback();
+    } finally {
+      this.reviewerCheckout = false;
     }
-    return withCornerCheckoutLock(this.options.worktreePath, async () => {
+  }
+
+  private async runWithCheckout<T>(work: () => Promise<T>, locked = false): Promise<T> {
+    const run = async () => {
       try {
         return await work();
       } catch (error) {
@@ -1733,7 +1767,8 @@ export class MonolithCornerTurnLoop {
           }
         }
       }
-    });
+    };
+    return locked ? run() : withCornerCheckoutLock(this.options.worktreePath, run);
   }
 
   private async prompt(

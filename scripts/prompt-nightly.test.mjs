@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue, DEFAULT_MODELS, decideCandidate, chooseMode, floorReached, weeklyShorteningSkip, validateCandidatePatch, grantTransport, runCli } from './prompt-nightly.mjs';
+import { parseAnswer, replayInterleaved, assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue, DEFAULT_MODELS, decideCandidate, chooseMode, floorReached, weeklyShorteningSkip, validateCandidatePatch, grantTransport, runCli } from './prompt-nightly.mjs';
 import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
@@ -95,7 +95,7 @@ test('continues through skill and factual file reads to the final reply, retaini
   assert.ok(JSON.stringify(bodies[1]).includes('requested body'));
   assert.ok(!JSON.stringify(bodies).includes('private unread body'));
   assert.equal(bodies[0].response_format.type, 'json_schema');
-  assert.equal(bodies[0].response_format.json_schema.strict, false);
+  assert.equal(bodies[0].response_format.json_schema.strict, true);
 });
 
 test('separates format, invalid tool behavior, transport, truncation, and missing scenario facts', async () => {
@@ -105,7 +105,7 @@ test('separates format, invalid tool behavior, transport, truncation, and missin
   assert.equal(format.status, 'format');
   assert.equal(format.pass, null);
   assert.equal((await sample({ request: async () => response({ calls: [read(9)], text: '' }) })).status, 'behavior');
-  assert.equal((await sample({ request: async () => response({ calls: [read('/missing')], text: '' }) })).terminal, 'scenario');
+  assert.equal((await sample({ rule: { call: 'Read' }, request: async () => response({ calls: [read('/missing')], text: '' }) })).terminal, 'scenario');
   for (const reply of [{ ...response({ calls: [], text: '' }), model: 'wrong' }, { ...response({ calls: [], text: '' }), usage: undefined }]) {
     assert.equal((await sample({ request: async () => reply })).status, 'incomplete');
   }
@@ -465,15 +465,19 @@ test('an audit patch replaces the removal experiment and replays the patched pro
     const marker = 'AUDITMARKER';
     const { file } = writePatch(dir, 'apps/body/src/prompt-assembly.ts', marker);
     let patchedRequests = 0;
+    const arms = [];
     const out = join(dir, 'out');
     const result = await runNightly({ out, history: join(dir, 'history.jsonl'), models: [model], candidatePatch: file, request: async body => {
-      if (JSON.stringify(body.messages).includes(marker)) patchedRequests++;
+      const patched = JSON.stringify(body.messages).includes(marker);
+      arms.push({ patched, seed: body.seed });
+      if (patched) patchedRequests++;
       return { ...response({ calls: [], text: '72' }), model: body.model };
     } });
     assert.equal(result.experiment.mode, 'audit');
     assert.equal(result.experiment.block, undefined);
     assert.deepEqual(result.experiment.patch.paths, ['apps/body/src/prompt-assembly.ts']);
     assert.ok(patchedRequests > 0);
+    assert.deepEqual(arms.slice(0, 6), [false, false, true, false, false, true].map((patched, i) => ({ patched, seed: 1000 + Math.floor(i / 3) })));
     assert.equal(result.candidate.length, result.eligibleCount);
     assert.ok(!existsSync(join(out, 'prompt-assembly.ts')));
     // Without a patch and below the floor, nothing replaces the audit.
@@ -494,8 +498,8 @@ test('each model gets its own paired rows, and an off-model reply stays incomple
       sent[body.model] = { reasoning: body.reasoning, strict: body.response_format.json_schema.strict };
       return { ...response({ calls: [], text: '72' }), model: body.model === small ? 'openai/substitute' : body.model };
     } });
-    // Both upstream endpoints rejected strict free-form args and the large model rejects disabled reasoning.
-    assert.deepEqual(sent, { [small]: { reasoning: { enabled: false }, strict: false }, [large]: { reasoning: { effort: 'low' }, strict: false } });
+    // Closed string arguments enable strict output; the large model needs low reasoning.
+    assert.deepEqual(sent, { [small]: { reasoning: { enabled: false }, strict: true }, [large]: { reasoning: { effort: 'low' }, strict: true } });
     const n = result.eligibleCount * FIXED_SAMPLES;
     assert.equal(result.models[small].classes.baseline.incomplete, n);
     assert.equal(result.models[large].classes.baseline.incomplete, 0);
@@ -622,4 +626,67 @@ test('the CLI requires exactly one transport and an owner-only grant token file'
     await runCli([...base, '--exchange', join(dir, 'x')], { run: async (options) => { ran.push(options); return { status: 'complete' }; } });
     assert.equal(typeof ran[0].request, 'function');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('R1: prose-wrapped single answers recover, conflicting objects stay format-invalid', async () => {
+  const reply = response({ calls: [], text: 'done {quoted}' });
+  reply.choices[0].message.content = `I'll check.\n${reply.choices[0].message.content}\nFinished.`;
+  const recovered = await sample({ request: async () => reply });
+  assert.equal(recovered.status, 'behavior');
+  assert.equal(diagnostics([{ id: 'one', samples: [recovered] }]).recoveredSamples, 1);
+  reply.choices[0].message.content += '\n{"calls":[],"text":"different"}';
+  assert.equal((await sample({ request: async () => reply })).status, 'format');
+  assert.throws(() => parseAnswer('before {"calls":[],"text":"ok"} {unfinished'), /one replay/);
+});
+
+test('R1: strict schema decodes JSON argument strings and retries only unsupported schemas', async () => {
+  const bodies = [];
+  const replies = [response({ calls: [{ name: 'Read', args: '{"file_path":"/skill"}' }], text: '' }), response({ calls: [], text: 'done' })];
+  const result = await sample({ skills: { '/skill': 'body' }, request: async body => {
+    bodies.push(structuredClone(body));
+    if (bodies.length === 1) throw new Error('Grant request failed: HTTP 400');
+    return replies.shift();
+  } });
+  assert.equal(result.status, 'behavior');
+  assert.equal(result.transcript.calls[0].args.file_path, '/skill');
+  assert.deepEqual(bodies.map(b => b.response_format.json_schema.strict), [true, false, false]);
+  assert.equal(bodies[0].response_format.json_schema.schema.properties.calls.items.properties.args.type, 'string');
+  let count = 0;
+  await sample({ request: async () => { count++; throw new Error('HTTP 503'); } });
+  assert.equal(count, 1);
+});
+
+test('R1: unrecorded exploration continues with marked empty results but graded actions need facts', async () => {
+  const replies = [response({ calls: [read('/unknown')], text: '' }), response({ calls: [], text: 'finished' })];
+  const result = await sample({ request: async () => replies.shift() });
+  assert.equal(result.status, 'behavior');
+  assert.equal(result.rounds[0].results[0].unrecorded, true);
+  assert.equal(result.rounds[0].results[0].result, '');
+  assert.equal(diagnostics([{ id: 'one', samples: [result] }]).unrecordedCalls, 1);
+  assert.equal(scenarioResult({ pass: { all: [{ ordered: [{ call: 'Read' }, { call: 'report' }] }] } }, read('/unknown'), {}).boundary, 'missing');
+  assert.deepEqual(scenarioResult({}, { name: 'Bash', args: { command: 'unrecorded' } }, {}).result, { exitCode: 0, stdout: '' });
+  assert.deepEqual(scenarioResult({}, { name: 'connect', args: { mode: 'discover' } }, {}).result, { connected: false, apps: [] });
+});
+
+test('R1: all arms and both models finish a seed before the next; budget interruption keeps pairing', async () => {
+  const source = await loadSource(process.cwd());
+  const cases = loadCases().filter(c => ['task-answers-newest-message', 'memory-answers-from-note'].includes(c.id));
+  const names = ['baseline', 'control', 'candidate'], models = ['fixture/a', 'fixture/b'];
+  const sent = [], interrupted = [];
+  // Stop during the second seed after one complete six-arm group.
+  const ledger = budget();
+  let reservations = 0;
+  const rows = await replayInterleaved(Object.fromEntries(names.map(n => [n, source])), cases, {
+    models, ledger: { reserve(body) { if (++reservations === 9) throw new Error('Replay budget exhausted'); return ledger.reserve(body); }, record: u => ledger.record(u) },
+    onInterrupted: g => interrupted.push(g),
+    request: async body => { sent.push([body.model, body.seed]); return { ...response({ calls: [], text: '72' }), model: body.model }; },
+  });
+  assert.deepEqual(sent.slice(0, 6), models.flatMap(m => names.map(() => [m, 1000])));
+  assert.equal(interrupted.length, 1);
+  assert.equal(interrupted[0].attempts.length, 3);
+  assert.equal(sent.length, 8);
+  for (const m of models) for (const name of names) {
+    assert.equal(rows[m][name][0].samples[0].status, 'behavior');
+    assert.deepEqual(rows[m][name].map(r => r.samples.map(s => [s.seed, s.terminal])), rows[models[0]][names[0]].map(r => r.samples.map(s => [s.seed, s.terminal])));
+  }
 });

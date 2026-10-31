@@ -309,6 +309,40 @@ export function scenarioShell(state, command) {
   return { result: { exitCode, stdout } };
 }
 
+// Rules inspect calls, not tool-result fields. A matching positive action still
+// needs its recorded result: an empty acknowledgement must not certify success.
+function needsRecordedResult(rule, call) {
+  if (!rule) return false;
+  if (rule.all || rule.any) return (rule.all ?? rule.any).some(r => needsRecordedResult(r, call));
+  if (rule.not || rule.noCall || rule.atMostOnce) return false;
+  if (rule.ordered) return rule.ordered.some(r => needsRecordedResult(r, call));
+  if (rule.skill) return call.name === rule.beforeRetry || call.name === 'Read' && call.args.file_path === skillPath(rule.skill);
+  return rule.call && evaluateRule(rule, { calls: [call], text: '' }).pass;
+}
+
+/** Extract complete top-level objects, respecting strings and nested braces. */
+export function parseAnswer(raw) {
+  try { return { answer: JSON.parse(raw), recovered: false }; } catch {}
+  const objects = [];
+  let start = -1, depth = 0, quoted = false, escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (depth && quoted) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quoted = false;
+      continue;
+    }
+    if (depth && c === '"') quoted = true;
+    else if (c === '{') { if (!depth) start = i; depth++; }
+    else if (c === '}' && depth && !--depth) {
+      try { objects.push(JSON.parse(raw.slice(start, i + 1))); } catch { throw new Error('Malformed replay transcript'); }
+    }
+  }
+  if (depth || objects.length !== 1) throw new Error('Expected one replay answer object');
+  return { answer: objects[0], recovered: true };
+}
+
 export function scenarioResult(testCase, call, skills) {
   if (call.name === 'Read' && Object.hasOwn(skills, call.args.file_path)) return { result: skills[call.args.file_path] };
   const state = testCase.scenario ?? {};
@@ -334,8 +368,14 @@ export function scenarioResult(testCase, call, skills) {
     let result; try { result = JSON.parse(legacy); } catch { result = legacy; }
     return { result, ...(/pending approval/i.test(legacy) ? { boundary: 'approval' } : {}) };
   }
-  // Missing facts are a simulator limitation, never invented success or agent failure.
-  return { result: { error: 'No scenario result recorded for this call' }, boundary: 'missing' };
+  if (needsRecordedResult(testCase.pass, call) || needsRecordedResult(testCase.truthfulness, call))
+    return { result: { error: 'No scenario result recorded for this call' }, boundary: 'missing' };
+  const result = command !== undefined ? { exitCode: 0, stdout: '' }
+    : call.name === 'Read' ? '' : call.name === 'read' ? []
+    : call.name === 'connect' ? { connected: false, apps: [] }
+    : ['remember', 'stop', 'open_corner'].includes(call.name) ? { acknowledged: true }
+    : {};
+  return { result, unrecorded: true };
 }
 
 /** Fail closed on already-observed forbidden actions, even if continuation is unavailable. */
@@ -348,10 +388,10 @@ function safetyViolation(rule, transcript) {
 }
 
 export async function replaySample({ prompt, skills, rule, model, request, ledger, testCase = {}, tools = [], seed = 1, structured = true }) {
-  const messages = [{ role: 'user', content: prompt }];
+  const messages = [{ role: 'user', content: prompt + '\nFor the response schema, encode each calls[].args as a JSON string containing the tool argument object.' }];
   const transcript = { calls: [], text: '' };
   const requests = [], rounds = [], invalidCalls = [], attemptedCalls = [];
-  let tokens = 0, cost = 0;
+  let tokens = 0, cost = 0, recovered = 0, strict = structured;
   const finish = (status, reason, terminal) => {
     const unsafe = safetyViolation(rule, { ...transcript, calls: attemptedCalls });
     if (unsafe && status === 'incomplete') { status = 'behavior'; reason = unsafe; terminal = 'unsafe-action'; }
@@ -361,18 +401,27 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
     let verdict = { pass: null, reason };
     if (status === 'behavior') verdict = unsafe || terminal === 'invalid-call'
       ? { pass: false, reason: unsafe ?? reason } : evaluateRule(rule, transcript);
-    return { ...verdict, status, terminal, transcript, attemptedCalls, invalidCalls, tokens, cost, requests, rounds, seed,
+    return { ...verdict, status, terminal, transcript, attemptedCalls, invalidCalls, recovered, tokens, cost, requests, rounds, seed,
       truthfulness: testCase.truthfulness ? evaluateRule(testCase.truthfulness, transcript) : undefined };
   };
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const answerSchema = { type: 'object', properties: { calls: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, args: { type: 'object' } }, required: ['name', 'args'], additionalProperties: false } }, text: { type: 'string' } }, required: ['calls', 'text'], additionalProperties: false };
-    // Free-form args cannot satisfy OpenAI strict schemas; validSchema enforces the shape locally.
+    // String-encoded arguments keep the wire schema closed; decoded calls still
+    // undergo the original mounted-tool validation below.
+    const wireSchema = structuredClone(answerSchema);
+    wireSchema.properties.calls.items.properties.args = { type: 'string' };
     const body = { model, messages, seed, provider: { require_parameters: true }, stream: false, max_tokens: MAX_OUTPUT, reasoning: REASONING[model] ?? { enabled: false }, usage: { include: true },
-      ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'replay_turn', strict: false, schema: answerSchema } } } : {}) };
+      ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'replay_turn', strict, schema: strict ? wireSchema : answerSchema } } } : {}) };
     let response, release;
     try {
       release = ledger.reserve(body);
-      response = await request(body);
+      try { response = await request(body); }
+      catch (error) {
+        if (!strict || !/strict|json.?schema|HTTP (400|422)\b/i.test(error.message)) throw error;
+        strict = false;
+        body.response_format.json_schema = { name: 'replay_turn', strict: false, schema: wireSchema };
+        response = await request(body);
+      }
       if (Number.isFinite(response.usage?.total_tokens)) tokens += response.usage.total_tokens;
       if (Number.isFinite(response.usage?.cost)) cost += response.usage.cost;
       ledger.record(response.usage);
@@ -389,8 +438,11 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
     if (!choice || choice.finish_reason !== 'stop') return finish('incomplete', 'Incomplete model answer', 'output-limit');
     let answer;
     try {
-      answer = JSON.parse(raw);
+      const parsed = parseAnswer(raw);
+      answer = parsed.answer;
+      for (const call of answer?.calls ?? []) if (typeof call.args === 'string') call.args = JSON.parse(call.args);
       if (!validSchema(answerSchema, answer)) throw new Error('Malformed replay transcript');
+      if (parsed.recovered) recovered++;
     } catch (error) { return finish('format', error.message, 'json'); }
     if (answer.text) transcript.text += `${transcript.text ? '\n' : ''}${answer.text}`;
     if (!answer.calls.length) return finish('behavior', undefined, 'final');
@@ -405,13 +457,16 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
       } else validCalls.push(call);
     }
     transcript.calls.push(...validCalls);
+    // An observed forbidden action already decides behavior; neutral results
+    // must not extend it into unnecessary simulated retries.
+    if (safetyViolation(rule, { ...transcript, calls: attemptedCalls })) return finish('behavior', undefined, 'unsafe-action');
     for (const call of validCalls) {
       // These calls end the assigned turn; trailing calls are never silently dropped.
       if (['order', 'report', 'no_reply_needed'].includes(call.name)) {
         if (answer.calls.at(-1) !== call) return { ...finish('behavior', undefined, 'invalid-sequence'), pass: false, reason: 'Calls after terminal action' };
         return finish('behavior', undefined, call.name);
       }
-      const result = scenarioResult(testCase, call, skills);
+      const result = scenarioResult({ ...testCase, pass: rule }, call, skills);
       trace.results.push({ call, ...result });
       if (result.boundary === 'missing') return finish('incomplete', result.result.error, 'scenario');
       if (result.boundary) {
@@ -446,7 +501,9 @@ export function diagnostics(rows) {
   const incomplete = rows.flatMap(row => row.samples.filter(s => s.status === 'incomplete')
     .map(s => ({ id: row.id, seed: s.seed, terminal: s.terminal, reason: s.reason,
       ...(s.terminal === 'scenario' ? { call: s.rounds.at(-1)?.results?.at(-1)?.call } : {}) })));
-  return { invalidCalls: rows.reduce((n, r) => n + r.samples.reduce((a, s) => a + s.invalidCalls.length, 0), 0),
+  return { recoveredSamples: rows.reduce((n, r) => n + r.samples.filter(s => s.recovered > 0).length, 0),
+    unrecordedCalls: rows.flatMap(r => r.samples.flatMap(s => s.rounds.flatMap(round => round.results ?? []))).filter(r => r.unrecorded).length,
+    invalidCalls: rows.reduce((n, r) => n + r.samples.reduce((a, s) => a + s.invalidCalls.length, 0), 0),
     scenarioIncomplete: incomplete.filter(s => s.terminal === 'scenario').length, incomplete };
 }
 
@@ -480,6 +537,45 @@ export async function replaySuite(source, cases, options) {
   }
   await Promise.all(Array.from({ length: 4 }, worker));
   return rows.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Commit a case/seed only after every model and arm finishes its budgeted turn.
+ * Paid partial work remains in interruptedGroups, outside the paired cohort.
+ */
+export async function replayInterleaved(sources, cases, { models, request, ledger, onCase, onInterrupted }) {
+  const names = Object.keys(sources);
+  const rows = Object.fromEntries(models.map(model => [model, Object.fromEntries(names.map(name => [name, []]))]));
+  let stopped = false;
+  for (const testCase of cases) {
+    const samples = Object.fromEntries(models.map(model => [model, Object.fromEntries(names.map(name => [name, []]))]));
+    for (let index = 0; index < FIXED_SAMPLES; index++) {
+      const seed = 1000 + index, group = [];
+      if (!stopped) {
+        outer: for (const model of models) for (const name of names) {
+          const source = sources[name];
+          const skills = Object.fromEntries(source.skills.beelineManagedSkills('source', { isReviewer: testCase.session?.reviewer === true })
+            .map(skill => [skillPath(skill.name), skill.content]));
+          const sample = await replaySample({ prompt: replayPrompt(source, testCase), skills, rule: testCase.pass,
+            model, request, ledger, testCase, tools: toolsFor(source, testCase), seed });
+          group.push({ model, arm: name, sample });
+          if (sample.terminal === 'budget') { stopped = true; onInterrupted?.({ id: testCase.id, seed, attempts: group }); break outer; }
+        }
+      }
+      for (const model of models) for (const name of names) samples[model][name].push(stopped
+        ? { status: 'incomplete', terminal: 'budget', reason: 'Replay budget exhausted before complete paired group', pass: null,
+            seed, tokens: 0, cost: 0, invalidCalls: [], rounds: [], requests: [], transcript: { calls: [], text: '' } }
+        : group.find(g => g.model === model && g.arm === name).sample);
+    }
+    for (const model of models) for (const name of names) {
+      const ss = samples[model][name], stats = proportion(ss);
+      const row = { id: testCase.id, section: testCase.section, pass: stats.scored === FIXED_SAMPLES ? stats.proportion > 0.5 : null,
+        status: ss.some(s => s.status === 'incomplete') ? 'incomplete' : ss.some(s => s.status === 'format') ? 'format' : 'behavior',
+        ...stats, medianTokensPerTurn: median(ss.filter(s => s.tokens > 0).map(s => s.tokens)), samples: ss };
+      rows[model][name].push(row);
+      onCase?.(model, name, row);
+    }
+  }
+  return rows;
 }
 
 /** File exchange permits a Beeline agent to use sealed Squire calls, without keys in this process. */
@@ -597,8 +693,22 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
       applyCandidatePatch(temp, candidatePatch);
       candidateSource = await loadSource(temp);
     }
-    await arm('baseline', source);
-    await arm('control', source);
+    let interleaved = false;
+    if (candidateSource) {
+      const invalid = check(candidateSource, allCases);
+      if (invalid.length) throw new Error(`Invalid candidate: ${invalid.join('; ')}`);
+      result.interruptedGroups = [];
+      await replayInterleaved({ baseline: source, control: source, candidate: candidateSource }, cases, {
+        models, request, ledger,
+        onCase(model, name, row) { perModel[model][name].push(row); save(); },
+        onInterrupted(group) { result.interruptedGroups.push(group); save(); },
+      });
+      interleaved = true;
+    } else {
+      // D2 chooses a shortening only after the full baseline reveals protected sections.
+      await arm('baseline', source);
+      await arm('control', source);
+    }
     for (const model of models) perModel[model].noise = assessExperiment(perModel[model].baseline, perModel[model].baseline, perModel[model].control);
     result.noise = assessExperiment(pool('baseline'), pool('baseline'), pool('control'));
     const rates = Object.fromEntries(models.map((model) => [model, scoreRows(perModel[model].baseline, cases.length).passRate]));
@@ -624,7 +734,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
       const invalid = check(candidateSource, allCases);
       if (invalid.length) result.experiment.outcome = `rejected: ${invalid.join('; ')}`;
       else {
-        await arm('candidate', candidateSource);
+        if (!interleaved) await arm('candidate', candidateSource);
         const pooled = assessExperiment(pool('baseline'), pool('candidate'), pool('control'));
         for (const model of models) {
           const assessment = assessExperiment(perModel[model].baseline, perModel[model].candidate, perModel[model].control);
@@ -664,6 +774,14 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     for (const name of ARMS) result[name] = pool(name);
     save();
   }
+  result.pairing = {
+    completeCases: result.baseline.filter(row => ARMS.every(name => result[name].find(r => r.id === row.id)?.samples.length === FIXED_SAMPLES &&
+      result[name].find(r => r.id === row.id).samples.every(s => s.terminal !== 'budget'))).length,
+    scoredSamples: result.baseline.reduce((n, row) => n + row.samples.filter((s, index) => ARMS.every(name => {
+      const other = result[name].find(r => r.id === row.id)?.samples[index];
+      return other?.status === 'behavior' && other.seed === s.seed;
+    })).length, 0),
+  };
   result.classes = Object.fromEntries(ARMS.map(name => [name, classCounts(result[name])]));
   result.diagnostics = Object.fromEntries(ARMS.map(name => [name, diagnostics(result[name])]));
   result.scoring = scoreRows(result.baseline, cases.length * models.length);
@@ -684,7 +802,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     const m = modelSummaries[model];
     return `${model.replace(/^.*\//, '')} ${m.scoredCases ? `${m.passed}/${m.scoredCases} (${(100 * m.passRate).toFixed(1)}%)` : 'unscored'}`;
   }).join(', ');
-  const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([name, d]) => [name, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));
+  const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([name, d]) => [name, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete, recoveredSamples: d.recoveredSamples, unrecordedCalls: d.unrecordedCalls }]));
   const reasons = Object.entries(result.diagnostics).flatMap(([name, d]) => {
     const groups = new Map();
     for (const s of d.incomplete) {
@@ -695,10 +813,10 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     return [...groups].map(([reason, ids]) => `${name} incomplete — ${reason}: ${ids.join(', ')}`);
   });
   const experimentName = result.experiment.block?.id ?? (result.experiment.patch ? `patch ${result.experiment.patch.paths.join(', ')}` : 'none');
-  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; baseline ${perModelRates}; ${result.floorReached ? `both models at or above ${100 * PASS_FLOOR}%` : `below ${100 * PASS_FLOOR}% floor`}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; diagnostics ${JSON.stringify(diagnosticCounts)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; detectable effect (80% power approximation) ${result.noise?.detectableEffect ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${experimentName}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.\n${reasons.join('\n')}`;
+  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; complete three-arm cases ${result.pairing.completeCases}/${cases.length * models.length}, scored triplets ${result.pairing.scoredSamples}; baseline ${perModelRates}; ${result.floorReached ? `both models at or above ${100 * PASS_FLOOR}%` : `below ${100 * PASS_FLOOR}% floor`}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; diagnostics ${JSON.stringify(diagnosticCounts)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; detectable effect (80% power approximation) ${result.noise?.detectableEffect ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${experimentName}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.\n${reasons.join('\n')}`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
-  appendFileSync(history, `${JSON.stringify({ schemaVersion: 3, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model: result.model, status: result.status, ...result.scoring, cases: cases.length, skipped, medianTokensPerTurn: total,
+  appendFileSync(history, `${JSON.stringify({ schemaVersion: 3, pairing: result.pairing, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model: result.model, status: result.status, ...result.scoring, cases: cases.length, skipped, medianTokensPerTurn: total,
     tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, model, pass, medianTokensPerTurn, proportion, interval, scored }) => ({ id, model, pass, medianTokensPerTurn, proportion, interval, scored })),
     floorReached: Boolean(result.floorReached), models: modelSummaries, experiment: result.experiment })}\n`);
   console.log(summary);

@@ -144,6 +144,8 @@ export type LiveEvent =
 
 export class LiveHub {
   readonly #events = new EventEmitter();
+  /** Compatibility cache for standalone hubs. Production phone subscriptions
+   * use DurableLiveReplay; this cache never decides whether they resumed. */
   readonly #history = new Map<string, {
     epoch: string;
     sequence: number;
@@ -332,6 +334,15 @@ export class LiveHub {
   subscribeAll(listener: (event: LiveEvent) => void): () => void {
     this.#events.on('*', listener);
     return () => this.#events.off('*', listener);
+  }
+
+  journalChanged(streams: readonly string[]): void {
+    this.#events.emit('journal-change', streams);
+  }
+
+  subscribeJournal(listener: (streams: readonly string[]) => void): () => void {
+    this.#events.on('journal-change', listener);
+    return () => this.#events.off('journal-change', listener);
   }
 
   presenceSnapshot(roomId: string): readonly Extract<LiveEvent, { type: 'presence' }>[] {

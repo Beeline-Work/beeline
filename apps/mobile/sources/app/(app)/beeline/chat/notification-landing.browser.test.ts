@@ -218,7 +218,7 @@ function shims(mobile: string): Record<string, string> {
     };
     export const surfaceAddress = (relayOrigin, viewerPubkey, endpoint, params) =>
       ({ relayOrigin, viewerPubkey, endpoint, params });
-    export const createRoomOutbox = () => ({ restore: async () => undefined, list: () => [], reconcile: async () => undefined,
+    export const createRoomOutbox = () => ({ subscribe: () => () => undefined, state: () => undefined, acknowledgeFailures: async () => undefined, restore: async () => undefined, list: () => [], reconcile: async () => undefined,
       fail: async () => undefined, retry: async () => undefined, remove: async () => undefined, attempted: async () => undefined,
       get: () => undefined, add: async () => undefined });`,
     '@/buzz/community-storage': `export const saveActiveCommunityId = async () => undefined; export const saveLastViewedChannel = async () => undefined;`,

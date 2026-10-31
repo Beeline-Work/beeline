@@ -1,4 +1,3 @@
-vi.mock('@/buzz/message-outbox-runtime', () => ({ startMessageOutbox: async () => undefined }));
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 import { SurfaceRegistry } from '@/buzz/surface-registry';

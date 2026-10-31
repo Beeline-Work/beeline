@@ -29,3 +29,9 @@ BEELINE_OUTBOX_TEST_THEME=bone npx vitest run 'sources/app/(app)/beeline/chat/Ro
 From the root, run `npm run typecheck` and `npm run lint:ui-components`. The design, calm, and inline-action lint suites pass. The Impeccable detector reports no findings on the changed UI.
 
 This proof validates delivery and rendered text/controls with test hosts. Physical device layout, gestures, and real radio reconnection remain unproved in this session. The connection-state PR is still open, so this implementation uses the existing shared socket's `subscribeConnected` event through the named `onOutboxConnected` hook, as the brief permits.
+
+## CI integration coverage
+
+The Room and layout import paths keep native send transports lazy. Mutation storage lives in `message-outbox-storage.ts`, apart from response caching; the app layout starts its runtime, and Room sessions only select/observe their records. The existing offline, silent-socket, notification-landing, read-mark, and composer-status fixtures follow that interface. Shared-control and error-surface inventories retain the same exceptions with fingerprints for the approved refusal presentation.
+
+After integration with main, all failing CI files pass locally: the targeted unit/render/guard run passes (124 tests), and the real-route notification browser suite passes (18 tests). Mobile typecheck, UI component policy, and the phone network-channel guard also pass; the network allowlist is unchanged.

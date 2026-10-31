@@ -1,8 +1,7 @@
-import { useEffect } from 'react';
 import { observeMessageOutbox } from './message-outbox-observer';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from './runtime-config';
-import { configureMessageOutboxDelivery, getMessageOutbox, resetMessageOutboxes } from './surface-storage';
+import { configureMessageOutboxDelivery, getMessageOutbox, resetMessageOutboxes } from './message-outbox-storage';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { MonolithRigTransport } from '@/sync/transport/monolith-rig-transport';
 import { MonolithPhoneOperationError } from '@/sync/transport/monolith-operation';
@@ -50,7 +49,3 @@ subscribeClientReset(() => {
   resetMessageOutboxes(); observeMessageOutbox();
   void startMessageOutbox();
 });
-
-export function useMessageOutbox(): void {
-  useEffect(() => { void startMessageOutbox(); }, []);
-}

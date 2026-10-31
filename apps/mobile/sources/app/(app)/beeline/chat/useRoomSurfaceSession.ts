@@ -1,4 +1,3 @@
-import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
 import type { MessageSendState } from '@/buzz/message-outbox';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
@@ -1193,8 +1192,6 @@ export function useRoomSurfaceSession({
         setTransport(nextTransport);
         setRoomClient(nextRoomClient);
 
-        await startMessageOutbox();
-        if (cancelled) return;
         const outbox = createRoomOutbox(relayUrl, identity, channelId);
         outboxRef.current = outbox;
         await outbox.restore();

@@ -106,6 +106,9 @@ export const surfaceAddress = (relayOrigin, viewerPubkey, path, params) => ({
   params,
 });
 export const createRoomOutbox = () => ({
+  subscribe: () => noop,
+  state: () => undefined,
+  acknowledgeFailures: asyncNoop,
   restore: asyncNoop,
   list: () => [],
   reconcile: asyncNoop,

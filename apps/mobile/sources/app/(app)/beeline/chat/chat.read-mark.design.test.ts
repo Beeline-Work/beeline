@@ -27,8 +27,8 @@ describe('the chat surface read-mark contract', () => {
     // The server moves the author's mark in the send's own write, so the
     // phone neither posts a second mark nor reads the whole Room back.
     const sendBlock = chatSource.slice(
-      chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);'),
-      chatSource.indexOf('scheduleOutboxConfirmation(preparedEvent.id);'),
+      chatSource.indexOf('await activeOutbox.send(preparedEvent.id);'),
+      chatSource.indexOf('acknowledgeReadMark(preparedEvent.id);'),
     );
     expect(sendBlock.length).toBeGreaterThan(0);
     expect(sendBlock).not.toContain('markRead(');

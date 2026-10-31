@@ -190,10 +190,10 @@
   },
   {
     "file": "components/buzz/ConversationRow.tsx",
-    "line": 113,
+    "line": 118,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "b70c7ac26be892116f36",
+    "id": "20608bd2d9d5e42ef153",
     "control": "<Pressable onPress={onPress} onLongPress={onPin} accessibilityRole=\"button\" accessibilityHint=\"Long press to toggle this conversation's pin\" accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`} accessibilityState={selected ? { selected: true } : undefined} accessibilityActions={[ { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin convers",
     "reason": "Shared conversation content row with long-press pin interaction."
   },
@@ -235,16 +235,16 @@
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",
-    "line": 48,
+    "line": 50,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "0821f9b25d445222becf",
-    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={inline ? styles.inline : styles.banner} testID={testID} > <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}> {inline && description ? `${title} ${description}` : title} </Text> {!inline && description ? ( <Text style={inline ? styles.inlineText : styles.description}>{description}</Text> ) : null} {on",
+    "id": "816b57b963be3aac0d8b",
+    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={inline ? styles.inline : styles.banner} testID={testID} > {icon} <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}> {inline && description ? `${title} ${description}` : title} </Text> {!inline && description ? ( <Text style={inline ? styles.inlineText : styles.description}>{description}</Text> ) : nu",
     "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",
-    "line": 61,
+    "line": 64,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
     "id": "51ec48f7706c7dd7f1ae",

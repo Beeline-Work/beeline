@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { median } from './prompt-nightly.mjs';
-import { summarize, frontier } from './prompt-subscription-replay.mjs';
+import { summarize, frontier, usableSample } from './prompt-subscription-replay.mjs';
 
 export const MODELS = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-5.6-terra'];
 export function tuningReport(runs, partition, expectedModels = MODELS) {
@@ -45,8 +45,7 @@ export function tuningReport(runs, partition, expectedModels = MODELS) {
       const pairedPassRate = scoredPairs.length ? scoredPairs.filter(r => r.pass).length / scoredPairs.length : null;
       const baseRate = basePairs.length ? basePairs.filter(r => r.pass).length / basePairs.length : null;
       if (baseRate !== null && pairedPassRate < baseRate - 0.05 - 1e-12) regressions.push(model);
-      complete &&= Boolean(entry && rows.length === entry.expected && rows.every(r => r.status === 'behavior' && r.telemetry?.status === 'complete' &&
-        r.telemetry.initialExposure === (configs.get(name).mode === 'full' ? 'explicit-replay-definitions' : 'purpose-index-only')) &&
+      complete &&= Boolean(entry && rows.length === entry.expected && rows.every(r => usableSample(r, configs.get(name))) &&
         scoredPairs.length && scoredPairs.every(r => Number.isFinite(r.inputTokens) && Number.isFinite(r.modelRequests)));
       inputs.push(...scoredPairs.map(r => r.inputTokens).filter(Number.isFinite));
       owned.push(...scoredPairs.flatMap(r => r.telemetry?.calls ?? []).map(c => c.beelineOwnedTokensPerCall).filter(Number.isFinite));

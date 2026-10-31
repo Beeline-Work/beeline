@@ -167,3 +167,15 @@ export function parseRollout(text, { prompt, variant, tools = [] }) {
 }
 
 export function readTelemetry(path, context) { return parseRollout(readFileSync(path, 'utf8'), context); }
+
+/** Completion requires both ownership axes for every provider response. */
+export function completeAccounting(row) {
+  const telemetry = row?.telemetry, calls = telemetry?.calls;
+  const fields = ['inputTokens', 'beelineOwnedTokensPerCall', 'codexInstructionTokens', 'codexToolTokens', 'codexAddedTokensPerCall'];
+  return telemetry?.status === 'complete' && Array.isArray(calls) && calls.length > 0 &&
+    row.modelRequests === calls.length && telemetry.modelRequests === calls.length &&
+    calls.every(c => fields.every(key => Number.isFinite(c[key]) && c[key] >= 0) &&
+      c.codexAddedTokensPerCall === c.codexInstructionTokens + c.codexToolTokens) &&
+    Number.isFinite(row.inputTokens) && row.inputTokens === calls.reduce((sum, c) => sum + c.inputTokens, 0) &&
+    telemetry.sumProviderInputTokens === row.inputTokens;
+}

@@ -4,17 +4,18 @@ import { tmpdir, homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { spawn, execFileSync } from 'node:child_process';
 import { loadCases, loadSource, replayPrompt, toolsFor } from './prompt-cases.ts';
 import { evaluateRule, skillPath } from './prompt-case-rules.ts';
 import { median, needsSquire } from './prompt-nightly.mjs';
 import { deniesAvailableTool } from './prompt-tool-loading.mjs';
-import { findRollout, readTelemetry } from './prompt-codex-telemetry.mjs';
+import { findRollout, readTelemetry, completeAccounting } from './prompt-codex-telemetry.mjs';
 import { createStub } from './prompt-replay-stub.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIGS = join(ROOT, 'scripts/prompt-variants');
-const usableSample = (row, variant) => row.status === 'behavior' && row.telemetry?.status === 'complete' &&
+export const usableSample = (row, variant) => row.status === 'behavior' && completeAccounting(row) &&
   row.telemetry.initialExposure === (variant.mode === 'full' ? 'explicit-replay-definitions' : 'purpose-index-only');
 const p90 = values => values.length ? [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.9) - 1] : null;
 export function loadSplit(cases) {
@@ -151,8 +152,8 @@ export function summarize(rows, variant) {
     medianCodexInputTokensPerCall: median(provider), p90CodexInputTokensPerCall: p90(provider),
     sumCodexInputTokensAcrossCases: inputs.length ? inputs.reduce((n, v) => n + v, 0) : null,
     medianModelRequestsPerCase: median(rows.map(r => r.modelRequests).filter(Number.isFinite)),
-    missingTelemetry: rows.filter(r => r.telemetry?.status !== 'complete').length,
-    missingExposureProof: rows.filter(r => variant ? !usableSample({ ...r, status: 'behavior' }, variant) :
+    missingTelemetry: rows.filter(r => !completeAccounting(r)).length,
+    missingExposureProof: rows.filter(r => variant ? r.telemetry?.initialExposure !== (variant.mode === 'full' ? 'explicit-replay-definitions' : 'purpose-index-only') :
       !['explicit-replay-definitions', 'purpose-index-only'].includes(r.telemetry?.initialExposure)).length,
     unsupportedBoundaryCases: rows.filter(r => r.terminal === 'unsupported-operation').length,
     meanSearchCalls: rows.length ? rows.reduce((n, r) => n + r.searchCalls, 0) / rows.length : null };
@@ -161,6 +162,31 @@ export function frontier(variants) {
   const comparable = variants.filter(v => v.complete && !v.regressionModels.length && Number.isFinite(v.medianBeelineOwnedTokensPerCall));
   return comparable.filter(v => !comparable.some(o => o.meanPassRate > v.meanPassRate && o.medianBeelineOwnedTokensPerCall < v.medianBeelineOwnedTokensPerCall));
 }
+
+// Rebuild old telemetry from retained evidence before deciding whether reuse is safe.
+// The source result and its files are never rewritten.
+function reparseRetained(row, variant, output, directories) {
+  if (completeAccounting(row)) return row;
+  const candidates = [...directories, ...(row.telemetry?.rolloutPath ? [dirname(resolve(row.telemetry.rolloutPath))] : [])];
+  for (const directory of candidates) {
+    if (!['rollout.jsonl', 'prompt.txt', 'fixture.json'].every(name => existsSync(join(directory, name)))) continue;
+    const fixture = JSON.parse(readFileSync(join(directory, 'fixture.json'), 'utf8'));
+    if (!isDeepStrictEqual(fixture.variant, variant) || fixture.testCase?.id !== row.id) continue;
+    const prompt = readFileSync(join(directory, 'prompt.txt'), 'utf8');
+    const telemetry = readTelemetry(join(directory, 'rollout.jsonl'), { prompt, variant, tools: fixture.tools });
+    const refreshed = { ...row, telemetry, modelRequests: telemetry.modelRequests };
+    // A retained rollout must still reconcile with the original provider total.
+    if (!completeAccounting(refreshed)) continue;
+    mkdirSync(output, { recursive: true });
+    for (const name of ['rollout.jsonl', 'prompt.txt', 'fixture.json'])
+      if (resolve(directory) !== resolve(output)) copyFileSync(join(directory, name), join(output, name));
+    refreshed.telemetry.rolloutPath = join(output, 'rollout.jsonl');
+    writeFileSync(join(output, 'telemetry.json'), JSON.stringify(refreshed.telemetry, null, 2) + '\n');
+    return refreshed;
+  }
+  return row;
+}
+
 export async function runSubscription(args) {
   const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 ? fallback : args[i + 1]; };
   const model = option('--model');
@@ -188,12 +214,14 @@ export async function runSubscription(args) {
   });
   if (variants.length > (partition === 'tune' ? 3 : 4)) throw new Error('Too many variants for this round');
   const repairPath = option('--repair-from');
+  const reparseOnly = args.includes('--reparse-only');
+  if (reparseOnly && !repairPath) throw new Error('--reparse-only requires --repair-from');
   if (repairPath && resolve(repairPath) === join(out, 'result.json')) throw new Error('Use a fresh repair output; preserve the original result file');
   if (repairPath && partition !== 'tune') throw new Error('Missing-data repairs are restricted to tune results');
   const prior = repairPath ? JSON.parse(readFileSync(resolve(repairPath), 'utf8')) : undefined;
   if (prior && (prior.model !== model || prior.partition !== partition || prior.smokeOnly || prior.splitHash !== createHash('sha256').update(JSON.stringify(split)).digest('hex')))
     throw new Error('Repair source has a different model, partition or split');
-  if (prior && variants.some(v => JSON.stringify(prior.variants[v.name]?.config) !== JSON.stringify(v))) throw new Error('Repair source config differs from the requested variant');
+  if (prior && variants.some(v => !isDeepStrictEqual(prior.variants[v.name]?.config, v))) throw new Error('Repair source config differs from the requested variant');
   const source = await loadSource(ROOT);
   mkdirSync(out, { recursive: true });
   const result = { status: 'running', model, partition, splitSeed: split.seed, sampleSeed: split.caseSeed,
@@ -215,25 +243,34 @@ export async function runSubscription(args) {
       if (existsSync(cached)) {
         const saved = JSON.parse(readFileSync(cached));
         if (saved.configHash !== createHash('sha256').update(JSON.stringify(variant)).digest('hex') || saved.model !== model || saved.partition !== partition) throw new Error('Existing sample has a different model, partition or variant; use a fresh output directory');
-        if (repairPath && !usableSample(saved, variant))
+        row = reparseRetained(saved, variant, directory, [directory]);
+        if (!usableSample(row, variant) && !reparseOnly) {
           renameSync(directory, directory + `.superseded-${Date.now()}`);
-        else row = saved;
+          row = undefined;
+        }
       }
-      if (!row && prior?.variants[variant.name].rows.find(r => r.id === testCase.id && usableSample(r, variant))) {
-        row = prior.variants[variant.name].rows.find(r => r.id === testCase.id);
+      if (!row) {
+        const before = prior?.variants[variant.name].rows.find(r => r.id === testCase.id);
+        if (before) {
+          const repaired = reparseRetained(before, variant, directory, [join(dirname(resolve(repairPath)), variant.name, testCase.id)]);
+          if (usableSample(repaired, variant) || reparseOnly) row = repaired;
+        }
       }
+      if (!row && reparseOnly) throw new Error(`No retained sample for ${variant.name}/${testCase.id}; --reparse-only never calls a model`);
       if (!row) {
         const before = prior?.variants[variant.name].rows.find(r => r.id === testCase.id);
         row = { id: testCase.id, model, partition, configHash: createHash('sha256').update(JSON.stringify(variant)).digest('hex'),
           ...await executeSample({ source, testCase, variant, model, directory, seed: split.caseSeed }),
           ...(before ? { replaces: { source: resolve(repairPath), status: before.status, inputTokens: before.inputTokens,
-            reason: before.status !== 'behavior' ? 'ungraded scenario' : before.telemetry?.status !== 'complete' ? 'missing request telemetry' : 'incorrect first-call exposure' } } : {}) };
+            reason: before.status !== 'behavior' ? 'ungraded scenario' : !completeAccounting(before) ? 'missing request accounting' : 'incorrect first-call exposure' } } : {}) };
         writeFileSync(cached, JSON.stringify(row, null, 2) + '\n');
       }
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(cached, JSON.stringify(row, null, 2) + '\n');
       result.variants[variant.name].rows.push(row); save();
       console.log(JSON.stringify({ model, partition, variant: variant.name, id: row.id, pass: row.pass, status: row.status, inputTokens: row.inputTokens, error: row.error }));
       if (row.modelStopped) { result.error = row.error; result.status = 'model-stopped'; save(); return result; }
-      if (row.telemetry?.status === 'complete' && !usableSample({ ...row, status: 'behavior' }, variant)) {
+      if (row.telemetry?.status === 'complete' && row.telemetry.initialExposure !== (variant.mode === 'full' ? 'explicit-replay-definitions' : 'purpose-index-only')) {
         result.error = `First-call exposure mismatch: ${variant.name}/${row.id} received ${row.telemetry.initialExposure}`;
         result.status = 'failed'; save(); return result;
       }

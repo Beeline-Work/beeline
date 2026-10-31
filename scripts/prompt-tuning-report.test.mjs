@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { tuningReport, stoppingDecision, MODELS } from './prompt-tuning-report.mjs';
 const row = (id, pass, inputTokens = 100, status = 'behavior') => ({ id, pass, status, inputTokens,
-  modelRequests: 1, telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', calls: [{ beelineOwnedTokensPerCall: inputTokens }] },
+  modelRequests: 1, telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', modelRequests: 1, sumProviderInputTokens: inputTokens, calls: [{ inputTokens, beelineOwnedTokensPerCall: inputTokens, codexInstructionTokens: 5, codexToolTokens: 3, codexAddedTokensPerCall: 8 }] },
   toolCalls: 1, searchCalls: 0, searches: [], transcript: { calls: [{ name: 'read', args: {} }], text: '' } });
 const config = name => ({ name, mode: name === 'full' ? 'full' : 'deferred', core: ['read'] });
 const run = (model, full, deferred) => ({ model, partition: 'tune', splitHash: 'fixed', expectedCases: full.length,
@@ -75,4 +75,20 @@ test('two flat rounds stop; a sufficient accuracy or token improvement keeps tun
   assert.equal(stoppingDecision([point(.5, 10000), point(.54, 9800), point(.55, 9600)]).stop, false);
   assert.equal(stoppingDecision([point(.5, 10000), point(.51, 9500), point(.52, 9400)]).stop, false);
   assert.equal(stoppingDecision(Array.from({length: 8}, () => point(.5, 10000))).stop, true);
+});
+
+test('legacy per-response accounting cannot complete or enter the frontier even with complete status and correct exposure', () => {
+  const runs = MODELS.map(model => run(model, [row('a', true)], [row('a', true, 80)]));
+  for (const modelRun of runs) for (const entry of Object.values(modelRun.variants)) {
+    for (const call of entry.rows[0].telemetry.calls) {
+      delete call.codexInstructionTokens; delete call.codexToolTokens; delete call.codexAddedTokensPerCall;
+    }
+  }
+  const legacy = tuningReport(runs, 'tune');
+  assert.deepEqual(legacy.frontier, []);
+  assert.ok(legacy.variants.every(v => !v.complete));
+  assert.ok(legacy.variants.every(v => Object.values(v.perModel).every(m => m.missingTelemetry === 1 && m.medianCodexAddedTokensPerCall === null)));
+  for (const modelRun of runs) for (const entry of Object.values(modelRun.variants))
+    Object.assign(entry.rows[0].telemetry.calls[0], { codexInstructionTokens: 5, codexToolTokens: 3, codexAddedTokensPerCall: 8 });
+  assert.ok(tuningReport(runs, 'tune').variants.every(v => v.complete));
 });

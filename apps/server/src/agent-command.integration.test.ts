@@ -177,6 +177,63 @@ it.each([0, 1, 2])('QUEUED-TAGS-REPEAT: Stop message %s cancels the combined tur
     [R, A, head.turnRequestId])).rows[0]!.status).toBe('cancelled');
 });
 
+it.runIf(Boolean(stopProofPostgresUrl))('QUEUED-TAGS-REPEAT: Stop crossing a claim cannot lose its folded target', async () => {
+  // Idle dispatch paints optimistic turns before helper pickup; Stop can
+  // therefore race the first claim through any queued message's handle.
+  const messages = [];
+  for (const detail of ['First question', 'Follow-up question', 'Last detail'])
+    messages.push(await send(`@hoots ${detail}`));
+  const [head] = await commands();
+  let reached!: () => void, release!: () => void, claimStarted!: () => void;
+  const aliasRead = new Promise<void>(resolve => { reached = resolve; });
+  const resume = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { claimStarted = resolve; });
+  const wrapStop = (database: SqlDatabase): SqlDatabase => ({
+    query: async (sql, values) => {
+      const result = await database.query(sql, values);
+      if (sql.includes('SELECT head.turn_request_id FROM agent_commands source')) {
+        reached();
+        await resume;
+      }
+      return result;
+    },
+    transaction: work => database.transaction(transaction => work(wrapStop(transaction))),
+  });
+  const wrapClaim = (database: SqlDatabase): SqlDatabase => ({
+    query: (sql, values) => {
+      if (sql.includes('pg_advisory_xact_lock')) claimStarted();
+      return database.query(sql, values);
+    },
+    transaction: work => database.transaction(transaction => work(wrapClaim(transaction))),
+  });
+  const stop = new PhoneService(wrapStop(db), 'http://test').execute('cancelAgentTurn',
+    { roomId: R, agentId: A, requestId: messages[1]!.messageId }, H);
+  // Observe rejections immediately, including on the unfixed implementation.
+  const outcome = stop.then(() => undefined, error => error);
+  let claimAttempt: Promise<{ coalescedContext?: string }> | undefined;
+  try {
+    await aliasRead;
+    claimAttempt = new DaemonService(wrapClaim(db), live).execute('claimAgentCommand',
+      { roomId: R, commandId: head!.id, generationId: 'crossing-claim' }, A);
+    await started;
+    const fence = await db.transaction(transaction => transaction.query<{ available: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtext($1)) available`, [`agent-command-queue:${R}:${A}`]));
+    // Before the fix, commit the fold while Stop still holds its stale alias
+    // result. With the fix, the shared lock forces Stop to settle first.
+    if (fence.rows[0]!.available) await claimAttempt;
+    release();
+    expect(await outcome).toBeUndefined();
+    const claimed = await claimAttempt;
+    expect(claimed.coalescedContext).not.toContain(messages[1]!.messageId);
+    expect(claimed.coalescedContext).toContain(messages[2]!.messageId);
+    await result(head!, 'Answers the remaining queued messages', 'crossing-claim');
+    expect((await commands()).filter(command => command.action === 'input')).toEqual([]);
+  } finally {
+    release();
+    await Promise.allSettled([stop, ...(claimAttempt ? [claimAttempt] : [])]);
+  }
+});
+
 it.each(['deleted', 'stopped'])('QUEUED-TAGS-REPEAT: reclaim drops a %s folded source', async kind => {
   const messages = await queuedHumanTags();
   const [head] = await commands();

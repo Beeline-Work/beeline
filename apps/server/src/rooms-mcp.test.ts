@@ -1462,7 +1462,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
     expect(refused.isError).toBe(true);
   });
-  it('SESSION-JOIN-1: a headless session proposes its name, signs in on another device and collects its code by state', async () => {
+  it.each([false, true])('SESSION-JOIN-1: a headless session signs in with fallback consent=%s and collects its code by state', async fallback => {
+    const label = fallback ? 'fallback' : 'api';
+    const memberName = `payments ${label}`, memberHandle = `payments_${label}`;
     const handoff = origin + '/mcp/oauth/handoff';
     const registered = await post('/mcp/oauth/register', { client_name: 'Claude Code', redirect_uris: [handoff] });
     expect(registered.status).toBe(201);
@@ -1470,19 +1472,22 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const verifier = opaque(), state = opaque();
     const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: handoff, response_type: 'code', resource: origin + '/mcp',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state,
-      member_name: 'payments  api\u0007' });
+      member_name: `payments  ${label}\u0007` });
+    if (fallback) query.set('claude_inbound_fallback', '1');
     expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
     const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
     const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
     const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
     await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
-    await db.query(`UPDATE identities SET handle='payments_api' WHERE id=$1`, [AGENT]);
+    await db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]);
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain('Add Claude Code to your team');
-    expect(page).toContain('payments api');
+    expect(page).toContain(memberName);
+    expect(page).toContain('Agents and people who tag this session in your Rooms can send it messages');
+    expect(page.includes('user-level "crossSessionInbound": "accept" setting')).toBe(fallback);
     // Another member in the Workspace holds the plain handle already.
-    expect(page).toContain('@payments_api_2');
+    expect(page).toContain(`@${memberHandle}_2`);
     await db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
     const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
     const target = new URL(allowed.headers.get('location')!);
@@ -1500,7 +1505,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const tokens = await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: verifier });
     expect(tokens.status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
-    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'payments api', handle: 'payments_api_2' });
+    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: memberName, handle: `${memberHandle}_2` });
     expect((await fetch(`${origin}/mcp/oauth/handoff?state=short&code=x`)).status).toBe(400);
   });
   it('threads a reply under a message in the same Room and refuses a foreign one', async () => {

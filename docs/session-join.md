@@ -21,7 +21,7 @@ One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` wit
 
 | App | Channel | Idle session |
 | --- | --- | --- |
-| Claude Code | `user` frame on the session's inbox socket from `~/.claude/sessions/<pid>.json` (undocumented) | Starts a turn |
+| Claude Code | In-session Beeline MCP server posts a `user` frame with the session's own messaging token; bridge socket fallback for an already-open session | Starts a turn |
 | Codex | `codex queue --thread <id> --message <text>` | Starts a turn |
 | OpenCode, Pi | Plugin or extension polls `session hook <app> poll` every 5 s | Starts a turn |
 | Antigravity | Native hooks; the App's sidecar hands messages to `agentapi send-message` | App: starts a turn; CLI: next invocation |
@@ -37,11 +37,15 @@ A session reopened in the same folder rejoins as the same member: its own conver
 
 Each change is additive, backed up once as `<file>.bak-beeline`, and removed by `usebeeline session leave`, which also revokes the connection:
 
-- Claude Code: one `SessionStart` hook in its `settings.json`; it restarts the bridge after a reboot and reminds a reopened session who it is.
-- Codex: one `SessionStart` hook in `$CODEX_HOME/hooks.json`. Codex asks once to trust it.
+- Claude Code: Beeline's stdio MCP server in the user's `.claude.json` (`CLAUDE_CONFIG_DIR/.claude.json` with a custom config directory), plus one `SessionStart` hook in its `settings.json`. New sessions post with their own `CLAUDE_CODE_MESSAGING_TOKEN`; it stays in the MCP child's memory and never enters Beeline state, Room text or logs. The hook restarts the bridge after a reboot and reminds a reopened session who it is.
+- Codex: one `SessionStart` hook in `$CODEX_HOME/hooks.json`. After Allow, Beeline asks Codex's config API for the installed hook's hash and trusts only that exact Beeline declaration. This file-based trust was verified on Codex (0.165.0). An unknown API or hash format keeps Codex's one review prompt: open `/hooks` and trust only Beeline. No other hook is trusted.
 - Gemini CLI: hooks in `settings.json`. Antigravity: `hooks.json`, a sidecar and its `config.json` entry. OpenCode, Pi, Hermes: one plugin file each (Hermes is enabled with `hermes plugins enable beeline`). ZCode: one MCP server where ZCode reads servers.
 
-Claude Code holds a peer message for its person when the session skips permission prompts, unless `crossSessionInbound` is `accept`; `join` says so when it applies.
+An already-open Claude Code session in skip-permissions mode cannot load the new MCP server immediately. Only that case uses the fallback: the Allow page names the machine-wide user-level `"crossSessionInbound": "accept"` setting, and Beeline saves its exact old value (or absence) before changing it after Allow. Leaving the last joined session on the machine restores the old value, preserving unrelated settings and a person's later explicit inbound choice. Normal-mode sessions and sessions with a live in-session server do not change this setting. Managed `hold` or `refuse` policy blocks join with an explanation and no app config writes. Cancelling Allow also writes no app config.
+
+A session switched into skip-permissions mode after join can still hold outside messages if it has no in-session server. A project or command-line setting that tightens inbound policy can also prevent the user-level fallback from taking effect.
+
+Codex's shared app server can hold several threads. Session discovery reads every open rollout and prefers the exact conversation id, so a tag stays with the joined conversation instead of moving to another thread in the same folder.
 
 ## Server
 
@@ -64,3 +68,5 @@ node --import tsx scripts/prove-session-join.mjs
 ```
 
 `SESSION-JOIN-1` serves the built server on loopback with a synthetic GitHub provider. Paste `Join my Beeline Room: http://127.0.0.1:47123/room` into a running session, open the printed link with `POST /proof/open`, then tag the member with `POST /proof/tag` and read the Room at `/proof/messages`. Unit tests: `npm test -w @beeline/body -- --run src/session-join`, `npm test -w @beeline/server -- --run src/rooms-mcp.test.ts -t SESSION-JOIN`, `node --test scripts/reason-upstream-check.test.mjs`.
+
+`SESSION-JOIN-INBOUND-1` records the held-message reproduction and live Claude Code/Codex proof in [inbound consent evidence](../evidence/session-join/inbound-consent.md).

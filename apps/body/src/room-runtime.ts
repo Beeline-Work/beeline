@@ -997,10 +997,11 @@ export class RoomRuntimeCoordinator {
     await onServing?.();
     if (this.stopped) return 'member';
     this.noteReconciliationStage('corner-reaping');
+    const attemptedReaps = new Set([...desired, ...this.pendingCornerReaps.keys()]);
     await this.retryPendingCornerReaps(desired);
     if (this.stopped) return 'member';
     this.noteReconciliationStage('archived-corner-storage');
-    await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
+    await this.sweepArchivedCornerWorktrees(archivedCorners, attemptedReaps);
     if (this.stopped) return 'member';
     await this.reapClosedCornerEmulators(desired);
     if (this.stopped) return 'member';

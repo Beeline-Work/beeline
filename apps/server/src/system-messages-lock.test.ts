@@ -1192,8 +1192,9 @@ function scan(files: Map<string, string>): Entry[] {
   };
   const inlinedPhraseFunctions = new Set<ts.Node>();
   const inlineStack = new Set<ts.Node>();
-  // Parameter uses repeat one argument. Walk that argument once and reuse its wording.
-  const wordingCache = new Map<ts.Node, string[]>();
+  // A parameter is one syntax node shared by every call, and each call supplies its own argument.
+  // Reuse a walk only within that call's substitution scope.
+  const wordingCache = new Map<ts.Node, Map<Map<ts.Node, ts.Node>, string[]>>();
   let substitutions = new Map<ts.Node, ts.Node>();
   let argumentScope = new Map<ts.Node, ts.Node>();
   const ancestorInlined = (node: ts.Node) => {
@@ -1358,7 +1359,8 @@ function scan(files: Map<string, string>): Entry[] {
             for (const declaration of declarations(part)) {
               const replacement = substitutions.get(declaration);
               if (!replacement) continue;
-              const cached = wordingCache.get(replacement);
+              const scope = argumentScope;
+              const cached = wordingCache.get(replacement)?.get(scope);
               if (cached) {
                 for (const token of cached) literals.push(token);
                 return;
@@ -1375,7 +1377,10 @@ function scan(files: Map<string, string>): Entry[] {
                 substitutions = savedSubstitutions;
                 argumentScope = savedArguments;
               }
-              wordingCache.set(replacement, literals.slice(start));
+              const scopes =
+                wordingCache.get(replacement) ?? new Map<Map<ts.Node, ts.Node>, string[]>();
+              wordingCache.set(replacement, scopes);
+              scopes.set(scope, literals.slice(start));
               return;
             }
           }
@@ -2280,6 +2285,20 @@ it('R1: moving a guarded message into another function or file with the same tex
   `);
   expect(() => enforce(scan(addedCall), scan(base))).not.toThrow();
   const changed = fixture("line(db, { verb: 'hello world' });");
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('rejects one changed word in a later call through the same helper chain', () => {
+  const source = `import { systemLine as line } from './system-line.js';
+    function identity(text: string) { return text; }
+    function phrase(text: string) { return identity(text); }
+    line(db, {verb: phrase('hello')});
+    line(db, {verb: phrase('joined')});`;
+  const base = fixture();
+  base.set('/fixtures/system-line.ts', 'export function systemLine(db: unknown, input: unknown) {}');
+  base.set('/fixtures/producer.ts', source);
+  const changed = new Map(base);
+  changed.set('/fixtures/producer.ts', source.replace("phrase('joined')", "phrase('left')"));
   expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
 });
 

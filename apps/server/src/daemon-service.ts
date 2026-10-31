@@ -8772,9 +8772,9 @@ export class DaemonService {
           [parentCommand.source_message_id, commandRoomId],
         )
       ).rows[0];
-      // A real dispatching message owns the opening. Without one, the parent
-      // Room is the call site. Do not write a duplicate before the source row.
-      const destinations = [{ roomId: source ? commandRoomId : roomId, sourceMessageId: source?.id }];
+      // A real dispatching message anchors the opening beneath it. Without one,
+      // the command room is the call site and the row is appended there.
+      const destinations = [{ roomId: commandRoomId, sourceMessageId: source?.id }];
       for (const destination of destinations) {
         await systemLine(db, {
           roomId: destination.roomId,

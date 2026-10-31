@@ -172,6 +172,29 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('keeps the original background shutdown deadline across network recovery', async () => {
+    vi.useFakeTimers();
+    const { connection, networkChanged } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    AppState.currentState = 'background';
+    for (const listener of appStateListeners) listener('background');
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    networkChanged();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0]!.closed).toBe(true);
+    sockets[1]!.open();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets[1]!.closed).toBe(true);
+    networkChanged();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    connection.dispose();
+  });
+
   it('uses a finite reconnect backoff after failed reconnects', async () => {
     vi.useFakeTimers();
     const authorization = vi.fn().mockRejectedValue(new Error('offline'));

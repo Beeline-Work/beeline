@@ -147,6 +147,7 @@ export class LiveConnection {
   private readonly subscribeWaiters = new Set<() => void>();
   private foregroundSyncTimer: ReturnType<typeof setTimeout> | undefined;
   private backgroundCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  private backgroundSocketClosed = false;
   private readonly unsubscribeAppState: () => void;
   private readonly unsubscribeNetworkChange: () => void;
   private reconnectAttempt = 0;
@@ -167,7 +168,7 @@ export class LiveConnection {
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
     this.unsubscribeForeground = deps.subscribeForeground(() => this.handleForeground());
     this.unsubscribeNetworkChange =
-      deps.subscribeNetworkChange?.(() => this.reconnectNow()) ?? (() => undefined);
+      deps.subscribeNetworkChange?.(() => this.handleNetworkChange()) ?? (() => undefined);
   }
 
   register(filters: SurfaceFilters, listener: SurfaceListener): Promise<() => void> {
@@ -316,8 +317,6 @@ export class LiveConnection {
 
   /** Explicit Retry, foreground, network and deadline recovery entry point. */
   reconnectNow(): void {
-    if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
-    this.backgroundCloseTimer = undefined;
     if (this.connectInFlight) {
       // Registration can return while the first connect promise is still
       // settling. Keep a foreground/read recovery request made in that gap.
@@ -351,6 +350,7 @@ export class LiveConnection {
   }
 
   private handleForeground(): void {
+    this.backgroundSocketClosed = false;
     if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
     this.backgroundCloseTimer = undefined;
     // A one-shot ordered socket echo proves the background connection still
@@ -375,10 +375,21 @@ export class LiveConnection {
 
   private handleBackground(): void {
     if (this.backgroundCloseTimer) return;
+    this.backgroundSocketClosed = false;
     this.backgroundCloseTimer = setTimeout(() => {
       this.backgroundCloseTimer = undefined;
-      if (AppState.currentState === 'background') this.dropConnection();
+      if (AppState.currentState === 'background') {
+        this.backgroundSocketClosed = true;
+        this.dropConnection();
+      }
     }, BACKGROUND_CLOSE_DELAY_MS);
+  }
+
+  private handleNetworkChange(): void {
+    // Background traffic ends at its original deadline. A network change can
+    // replace a socket before then, but cannot bring one back after shutdown.
+    if (AppState.currentState === 'background' && this.backgroundSocketClosed) return;
+    this.reconnectNow();
   }
 
   /**

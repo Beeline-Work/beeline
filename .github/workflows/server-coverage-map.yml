@@ -1,0 +1,81 @@
+# Runs the whole server suite on every push to main and records which
+# functions and files each server test file runs. The `server-coverage-map`
+# artifact is what SERVER SUITE on a pull request reads to run only the tests
+# its diff touches (apps/server/scripts/test-selection.mjs). Because PRs run a
+# subset, this is also where the full server suite runs after every merge.
+#
+# No schedule: it follows main pushes, and a newer push cancels an older run.
+# `gh workflow run checks.yml --ref <branch> -f suite=coverage-map` builds a
+# map for a branch; only PRs into that branch, or from it, will use it.
+name: Server coverage map
+
+on:
+  push:
+    branches: [main]
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-coverage-map-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shard:
+    name: SERVER COVERAGE SHARD ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ci-workspace
+      - name: Run the server suite shard and its integration batches, recording coverage
+        working-directory: apps/server
+        env:
+          SHARD: ${{ matrix.shard }}
+          SERVER_COVERAGE_MAP_DIR: ${{ runner.temp }}/coverage-records
+        run: |
+          status=0
+          node scripts/run-ci-shard.mjs "$SHARD/4" || status=1
+          node scripts/run-integration-shard.mjs "$SHARD/8" || status=1
+          node scripts/run-integration-shard.mjs "$((SHARD + 4))/8" || status=1
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage-records-${{ matrix.shard }}
+          path: ${{ runner.temp }}/coverage-records
+          retention-days: 3
+          if-no-files-found: error
+
+  map:
+    name: SERVER COVERAGE MAP
+    needs: shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ci-workspace
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-coverage-records-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/coverage-records
+      - name: Build the coverage map
+        run: >-
+          node apps/server/scripts/test-selection.mjs build-map
+          --records "$RUNNER_TEMP/coverage-records" --commit "$GITHUB_SHA"
+          --out "$RUNNER_TEMP/server-coverage-map.json"
+      # Fails when a test read source code as text on main but the static scan
+      # that keeps such tests in every PR's selection did not find it.
+      - name: Check every test that reads source code is always run
+        run: node apps/server/scripts/test-selection.mjs check-map "$RUNNER_TEMP/server-coverage-map.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage-map
+          path: ${{ runner.temp }}/server-coverage-map.json
+          retention-days: 14
+          if-no-files-found: error

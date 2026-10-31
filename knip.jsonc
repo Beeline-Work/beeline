@@ -351,6 +351,8 @@
       "entry": [
         "src/{index,measure-cli,corner-cleanup-cli}.ts",
         "scripts/{copy-postgres-data,verify-fly-cutover}.mjs",
+        // Vitest loads this setup file only while a coverage map is recorded.
+        "scripts/coverage-map-setup.mjs",
       ],
     },
     "packages/buzz-client": {

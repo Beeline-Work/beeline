@@ -1,0 +1,168 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import {
+  buildMap, changedFunctions, describeChange, MAP_VERSION, parseHunks, readsSourceText, selectTests,
+  sourcePath, sourceTextTests, staleMapReason, unscannedSourceReaders,
+} from '../apps/server/scripts/test-selection.mjs';
+
+const ts = createRequire(import.meta.url)('typescript');
+const script = new URL('../apps/server/scripts/test-selection.mjs', import.meta.url);
+
+const guard = 'apps/server/src/system-messages-lock.test.ts';
+const records = [
+  { test: 'apps/server/src/a.test.ts', sources: { 'apps/server/src/rooms.ts': ['', 'createRoom', 'listRooms'] }, reads: [] },
+  { test: 'apps/server/src/b.test.ts', sources: { 'apps/server/src/rooms.ts': ['', 'listRooms'], 'apps/server/src/wallet.ts': ['pay'] }, reads: ['docs/workflows/triage.json'] },
+  { test: 'apps/server/src/c.test.ts', sources: { 'packages/nostr/dist/relay.js': ['connect'] }, reads: [] },
+  { test: guard, sources: {}, reads: ['apps/server/src/rooms.ts', 'apps/server/src/wallet.ts'] },
+];
+const testFiles = [...records.map((record) => record.test), 'apps/server/src/new.test.ts'].sort();
+const map = buildMap(records, { commit: 'abc', createdAt: '2026-10-31T00:00:00Z', exists: (path) => path === 'packages/nostr/src/relay.ts' });
+const select = (changes, alwaysRun = [guard]) => selectTests({ map, changes, alwaysRun, testFiles });
+const modified = (path, names, fileLevel = false) => ({ path, status: 'M', names, fileLevel });
+
+test('a function change runs only the tests that ran that function, plus source-text tests', () => {
+  const selection = select([modified('apps/server/src/rooms.ts', ['createRoom'])]);
+  assert.equal(selection.mode, 'subset');
+  assert.deepEqual(selection.files, ['apps/server/src/a.test.ts', guard]);
+  assert.deepEqual(select([modified('apps/server/src/rooms.ts', ['listRooms'])]).files,
+    ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', guard]);
+});
+
+test('module-level changes, deletions and unknown function names use every test that loaded the file', () => {
+  const loaders = ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', guard];
+  assert.deepEqual(select([modified('apps/server/src/rooms.ts', [], true)]).files, loaders);
+  assert.deepEqual(select([{ path: 'apps/server/src/rooms.ts', status: 'D', names: [], fileLevel: true }]).files, loaders);
+  assert.deepEqual(select([modified('apps/server/src/rooms.ts', ['get roomCount'])]).files, loaders);
+});
+
+test('type-only edits, new code files and phone files outside the map run only the always-run set', () => {
+  assert.deepEqual(select([modified('apps/server/src/rooms.ts', [])]).files, [guard]);
+  assert.deepEqual(select([{ path: 'apps/server/src/brand-new.ts', status: 'A', names: [], fileLevel: true }]).files, [guard]);
+  assert.deepEqual(select([{ path: 'apps/mobile/sources/app.tsx', status: 'M', names: [], fileLevel: true }]).files, [guard]);
+});
+
+test('changed and new test files run themselves; deleted ones do not', () => {
+  assert.deepEqual(select([{ path: 'apps/server/src/new.test.ts', status: 'A', names: [], fileLevel: true }]).files,
+    ['apps/server/src/new.test.ts', guard]);
+  assert.deepEqual(select([{ path: 'apps/server/src/gone.test.ts', status: 'D', names: [], fileLevel: true }]).files, [guard]);
+});
+
+test('files a test read on main select that test; built package code maps back to its source', () => {
+  assert.deepEqual(select([modified('docs/workflows/triage.json', [], true)]).files, ['apps/server/src/b.test.ts', guard]);
+  assert.deepEqual(select([modified('packages/nostr/src/relay.ts', ['connect'])]).files, ['apps/server/src/c.test.ts', guard]);
+  assert.equal(sourcePath('packages/nostr/dist/relay.js', () => false), 'packages/nostr/dist/relay.js');
+});
+
+test('the full suite runs for contract, CI, harness and dependency changes', () => {
+  for (const path of ['packages/api-contract/src/phone.ts', '.github/workflows/checks.yml', '.github/actions/ci-workspace/action.yml',
+    'apps/server/scripts/run-ci-shard.mjs', 'apps/server/vitest.config.ts', 'apps/server/src/test-support.ts',
+    'apps/server/package.json', 'package-lock.json', 'package.json', 'tsconfig.base.json']) {
+    const selection = select([modified('apps/server/src/rooms.ts', ['createRoom']), modified(path, [], true)]);
+    assert.equal(selection.mode, 'full', path);
+    assert.match(selection.reason, /changes how every server test runs/);
+  }
+});
+
+test('the full suite runs when a changed file is not in the coverage map', () => {
+  for (const path of ['apps/server/src/never-loaded.ts', 'apps/server/src/fixtures/new-data.json', 'apps/auth/src/session.ts', 'infra/deploy.toml']) {
+    const selection = select([modified(path, [], true)]);
+    assert.equal(selection.mode, 'full', path);
+    assert.match(selection.reason, /not in the coverage map/);
+  }
+  assert.equal(select([{ path: 'apps/server/src/fixtures/new-data.json', status: 'A', names: [], fileLevel: true }]).mode, 'full');
+});
+
+test('the full suite runs when the coverage map is missing, from another version, unrelated, old or far behind', () => {
+  const fresh = { version: MAP_VERSION, commit: 'abc', createdAt: '2026-10-30T00:00:00Z' };
+  const now = Date.parse('2026-10-31T00:00:00Z');
+  const ok = { now, isAncestor: () => true, distance: () => 3 };
+  assert.equal(staleMapReason(fresh, ok), undefined);
+  assert.match(staleMapReason(undefined, ok), /no coverage map/);
+  assert.match(staleMapReason({ ...fresh, version: MAP_VERSION + 1 }, ok), /version/);
+  assert.match(staleMapReason(fresh, { ...ok, isAncestor: () => false }), /not in this branch's history/);
+  assert.match(staleMapReason({ ...fresh, createdAt: '2026-10-01T00:00:00Z' }, ok), /days old/);
+  assert.match(staleMapReason(fresh, { ...ok, distance: () => 5000 }), /commits behind/);
+  assert.equal(selectTests({ map: undefined, changes: [], alwaysRun: [], testFiles }).mode, 'full');
+});
+
+test('changed functions come from both sides of the diff and use the names V8 reports', () => {
+  const before = [
+    'export interface Room { id: string }',
+    'const LIMIT = 10;',
+    'export function createRoom() {',
+    '  return [1].map((x) => x + 1);',
+    '}',
+    'export class Store {',
+    '  constructor() { this.n = 1; }',
+    '  get size() { return 1; }',
+    '  load = () => 2;',
+    '}',
+    'export const listRooms = async () => {',
+    '  // comment',
+    '  return LIMIT;',
+    '};',
+    'export function removed() { return 0; }',
+  ].join('\n');
+  const names = (lines) => changedFunctions(ts, 'rooms.ts', before, lines);
+  assert.deepEqual(names([4]), { fileLevel: false, names: ['createRoom'] });
+  assert.deepEqual(names([7, 8, 9]), { fileLevel: false, names: ['Store', 'get size', 'load'] });
+  assert.deepEqual(names([13]), { fileLevel: false, names: ['listRooms'] });
+  assert.deepEqual(names([1, 12]), { fileLevel: false, names: [] });
+  assert.deepEqual(names([2]), { fileLevel: true, names: [] });
+  const after = before.replace('\nexport function removed() { return 0; }', '').replace('x + 1', 'x + 2');
+  const diff = '@@ -4 +4 @@\n-  return [1].map((x) => x + 1);\n+  return [1].map((x) => x + 2);\n@@ -15 +14,0 @@\n-export function removed() { return 0; }';
+  assert.deepEqual(parseHunks(diff), [{ oldStart: 4, oldCount: 1, newStart: 4, newCount: 1 }, { oldStart: 15, oldCount: 1, newStart: 14, newCount: 0 }]);
+  assert.deepEqual(describeChange(ts, { path: 'apps/server/src/rooms.ts', status: 'M', before, after, hunks: parseHunks(diff) }),
+    { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: false, names: ['createRoom', 'removed'] });
+});
+
+test('the source-text scan finds guards that read code and ignores tests that read data', () => {
+  const reads = (text) => readsSourceText(ts, 'x.test.ts', text);
+  assert.equal(reads("import { readFileSync } from 'node:fs';\nreadFileSync(new URL('./index.ts', import.meta.url), 'utf8');"), true);
+  assert.equal(reads("import { readdirSync, readFileSync } from 'node:fs';\nreaddirSync(dir).filter((f) => f.endsWith('.ts')).map((f) => readFileSync(f));"), true);
+  assert.equal(reads("import { readdirSync } from 'node:fs';\nreaddirSync(dir).filter((f) => /\\.[cm]?[jt]sx?$/.test(f));"), true);
+  assert.equal(reads("import ts from 'typescript';\nimport { readFileSync } from 'node:fs';\nreadFileSync(lockPath, 'utf8');"), true);
+  assert.equal(reads("import { readFile } from 'node:fs/promises';\nawait readFile(new URL('./fixture.json', import.meta.url));"), false);
+  assert.equal(reads("import { thing } from './thing.js';\nvi.mock('./other.js');\nconst row = { file: 'apps/mobile/x.tsx' };"), false);
+  assert.equal(reads("import { readFileSync } from 'node:fs';\nimport { x } from './x.ts';\nreadFileSync('data.txt');"), false);
+});
+
+test('the System guard and every current source scanner are in the always-run set', () => {
+  const alwaysRun = sourceTextTests(ts);
+  for (const file of [guard, 'apps/server/src/system-line.contract.test.ts', 'apps/server/src/system-dm-sites.test.ts',
+    'apps/server/src/corner-state-lock.test.ts', 'apps/server/src/workspace-role-authority.test.ts']) {
+    assert.ok(alwaysRun.includes(file), `${file} reads source but is not always run`);
+  }
+  assert.ok(!alwaysRun.includes('apps/server/src/integration.test.ts'));
+});
+
+test('a test seen reading source on main but missed by the scan fails the map check', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'coverage-map-'));
+  const missed = buildMap([{ test: 'apps/server/src/sneaky.test.ts', sources: {}, reads: ['apps/server/src/index.ts'] }], { commit: 'abc', createdAt: '2026-10-31T00:00:00Z' });
+  assert.deepEqual(unscannedSourceReaders(missed, []), ['apps/server/src/sneaky.test.ts']);
+  writeFileSync(join(directory, 'map.json'), JSON.stringify(missed));
+  const result = spawnSync(process.execPath, [script.pathname, 'check-map', join(directory, 'map.json')], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /sneaky\.test\.ts/);
+  const clean = buildMap([{ test: guard, sources: {}, reads: ['apps/server/src/index.ts'] }], { commit: 'abc', createdAt: '2026-10-31T00:00:00Z' });
+  writeFileSync(join(directory, 'clean.json'), JSON.stringify(clean));
+  assert.equal(spawnSync(process.execPath, [script.pathname, 'check-map', join(directory, 'clean.json')]).status, 0);
+});
+
+test('replaying fifty past PRs selects every test file that really failed on them', () => {
+  const replay = JSON.parse(readFileSync(new URL('../apps/server/scripts/test-selection-replay.json', import.meta.url), 'utf8'));
+  assert.equal(replay.prs.length, 50);
+  const misses = [];
+  for (const pr of replay.prs) {
+    const selection = selectTests({ map: replay.map, changes: pr.changes, alwaysRun: replay.alwaysRun, testFiles: replay.testFiles });
+    const selected = selection.mode === 'full' ? replay.testFiles : selection.files;
+    for (const file of pr.failed) if (!selected.includes(file)) misses.push(`#${pr.number} ${file}`);
+  }
+  assert.deepEqual(misses, []);
+  assert.ok(replay.prs.filter((pr) => pr.failed.includes(guard)).length >= 7, 'the seven System guard failures stay in the replay');
+});

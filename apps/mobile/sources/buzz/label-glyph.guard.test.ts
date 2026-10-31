@@ -28,8 +28,6 @@ const ALLOWED: Readonly<Record<string, string>> = {
   'components/buzz/MentionSuggestionMenu.tsx|✓': 'already-selected mention',
   'components/buzz/AgentSignInCard.tsx|✓ Looks like a ': 'sign-in code recognised',
   // State circles.
-  'buzz/corners.ts|●': 'corner state circle',
-  'buzz/corners.ts|○': 'corner state circle',
   'buzz/corner-display-state.ts|●': 'corner state circle',
   'buzz/corner-display-state.ts|○': 'corner state circle',
   'components/buzz/EmptyLedgerState.tsx|○': 'empty ledger state circle',

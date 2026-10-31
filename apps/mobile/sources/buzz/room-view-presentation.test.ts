@@ -3,7 +3,6 @@ import type { RoomView, RoomViewMessage } from '@beeline/buzz-client';
 import { buildTurnActivity } from './activity-timeline';
 import {
   conversationIdentityByPubkey,
-  cornerSummaries,
   createRoomMessageProjector,
   displayRoomMessage,
   displayRoomMessages,
@@ -164,56 +163,6 @@ describe('Room view presentation', () => {
       'older',
       'newest',
     ]);
-  });
-
-  it('uses the child turn receipt time for a working corner instead of stale metadata', () => {
-    const receiptAt = Math.floor(Date.now() / 1_000);
-    const [corner] = cornerSummaries([
-        {
-          corner: {
-            id: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
-            workspaceId: 'ec08be9d-9d9d-413e-b546-959d4abe39df',
-            parentId: '7d111868-52eb-43ab-98ae-8a6c49b92da8',
-            name: 'Receipt-driven corner',
-            archived: false,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-          lifecycle: { lifecycle: 'WORKING' },
-          state: 'working',
-          stateAt: receiptAt,
-        },
-    ]);
-
-    expect(corner).toMatchObject({
-      state: 'working',
-      stateAt: receiptAt,
-    });
-  });
-
-  it('presents a review corner as live while a fresh steering turn is working', () => {
-    const receiptAt = Math.floor(Date.now() / 1_000);
-    const [corner] = cornerSummaries([
-        {
-          corner: {
-            id: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
-            workspaceId: 'ec08be9d-9d9d-413e-b546-959d4abe39df',
-            parentId: '7d111868-52eb-43ab-98ae-8a6c49b92da8',
-            name: 'Review steering corner',
-            archived: false,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-          lifecycle: { lifecycle: 'REVIEW' },
-          state: 'working',
-          stateAt: receiptAt,
-        },
-    ]);
-
-    expect(corner).toMatchObject({
-      state: 'working',
-      stateAt: receiptAt,
-    });
   });
 
   it('keeps an indexed system row visible as a system notice', () => {

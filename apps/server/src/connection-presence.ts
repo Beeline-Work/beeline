@@ -586,7 +586,18 @@ export class ConnectionPresence {
       );
       if (removed.rowCount) {
         this.live.publish({ type: 'invalidate', roomId: turn.room_id, reason: 'turn' });
-        if ((await this.database.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [turn.room_id])).rowCount)
+        // Dispatch can precede another turn's claim. Its optimistic row is
+        // stale, but the pending command is legitimately waiting for that turn.
+        const running = await this.database.query(`SELECT 1 FROM agent_commands command
+          JOIN agent_turns active ON active.room_id=command.room_id
+            AND active.agent_id=command.agent_id AND active.request_id=command.turn_request_id
+            AND active.generation_id=command.generation_id AND active.status='working'
+          WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id<>$3
+            AND command.state='claimed' AND command.lease_expires_at>now()
+            AND command.action IN ('input','resume')
+            AND active.generation_id NOT LIKE 'pending:%' LIMIT 1`,
+        [turn.room_id, turn.agent_id, turn.request_id]);
+        if (!running.rowCount && (await this.database.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [turn.room_id])).rowCount)
           await noteFirstSilence(this.database, this.live, {
             roomId: turn.room_id, requestId: turn.request_id, agentId: turn.agent_id,
             reason: `the helper did not claim the queued turn within ${Math.floor(this.pickupWindowMs / 1000)} seconds`,

@@ -430,6 +430,42 @@ it('Reproduction reported-stall: delivered done survives loss of terminal receip
   console.info('Demonstrated reported-stall: commander retains done; worker complete; no failure or retry');
 });
 
+it('Reproduction R1: pickup deadline keeps work queued behind a claimed turn', async () => {
+  const opened = await open();
+  const running = (await commands(opened.cornerId, WORKER))[0]!;
+  // The second wake arrives just before the first claim (the production race).
+  const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+    sourceMessageId: null, reason: 'corner_background_tool',
+    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: WORKER, fromRoomId: opened.cornerId } });
+  await db.query(`UPDATE agent_commands SET wake_after=NULL WHERE id=$1`, [queued!.id]);
+  expect((await db.query(`SELECT generation_id FROM agent_turns WHERE request_id=$1`, [queued!.turn_request_id])).rows)
+    .toEqual([{ generation_id: 'pending:' + queued!.id }]);
+  await claim(running);
+  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes'
+    WHERE room_id=$1 AND request_id=$2`, [opened.cornerId, queued!.turn_request_id]);
+  const { ConnectionPresence } = await import('./connection-presence.js');
+  const presence = new ConnectionPresence(db, new LiveHub());
+  try {
+    await presence.start();
+    await vi.waitFor(async () => expect((await db.query(`SELECT 1 FROM agent_turns
+      WHERE room_id=$1 AND request_id=$2 AND generation_id LIKE 'pending:%'`,
+      [opened.cornerId, queued!.turn_request_id])).rows).toEqual([]));
+    await new Promise(resolve => setTimeout(resolve, 200));
+  } finally { await presence.stop(); }
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, queued!.turn_request_id])).rows).toEqual([]);
+  expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%did not claim%'`,
+    [opened.cornerId])).rows).toEqual([]);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])).rows)
+    .toEqual([{ state: 'pending' }]);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(running), agentId: WORKER, status: 'complete' }, WORKER);
+  const next = (await commands(opened.cornerId, WORKER)).find(command => command.id === queued!.id)!;
+  expect(next).toBeDefined();
+  await claim(next);
+  expect((await db.query(`SELECT status,generation_id FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, next.turnRequestId])).rows).toEqual([{ status: 'working', generation_id: 'proof-generation' }]);
+});
+
 it.each(['unclaimed', 'disconnected', 'connected'])('Reproduction explained-stall: %s reaches the corner or commander with its cause', async kind => {
   const opened = await open();
   const turn = (await commands(opened.cornerId, WORKER))[0]!;

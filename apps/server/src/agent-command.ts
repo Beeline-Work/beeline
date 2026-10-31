@@ -269,8 +269,12 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
         OR COALESCE(start_card->>'runStatus','live')<>'live'
         OR (attempt IS NOT NULL AND attempt IS DISTINCT FROM latest_card->>'seq') OR expired)
     UNION
+    -- The attention index already records a commander answer. Fence its queued
+    -- wake too, including absorbed digest sources, without interrupting a live claim.
     SELECT command.id FROM recovery_scope command WHERE command.reason='report' AND (
-      EXISTS (SELECT 1 FROM rooms origin LEFT JOIN corner_facts fact ON fact.corner_id=origin.id
+      (command.private_payload->>'waitingAnswered'='true'
+        AND (command.state<>'claimed' OR command.lease_expires_at<=now()))
+      OR EXISTS (SELECT 1 FROM rooms origin LEFT JOIN corner_facts fact ON fact.corner_id=origin.id
         WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
           AND origin.parent_id IS NOT NULL AND (origin.archived_at IS NOT NULL
             OR fact.lifecycle->>'lifecycle' IN ('closed','landed')))
@@ -351,7 +355,9 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
               AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
   ), cancelled_wakes AS (
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),
-      cancellation_reason=CASE WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
+      cancellation_reason=CASE WHEN stale.id IS NOT NULL AND scoped.reason='report'
+        AND scoped.private_payload->>'waitingAnswered'='true' THEN 'answered_report'
+        WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
         WHEN superseded.id IS NOT NULL THEN 'superseded_wake'
         ELSE 'superseded_on_return:' || head.id END
     FROM recovery_scope scoped

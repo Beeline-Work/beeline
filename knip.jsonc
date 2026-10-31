@@ -9,6 +9,8 @@
   // Only proof adapters: bundlers supply these exports through runtime aliases.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // CONNECT-RING-1 selects router/transport aliases and the temporary Metro adapter.
+    "apps/mobile/scripts/connect-ring-proof/{state.ts,metro.cjs}": ["exports"],
     // Metro selects the fitted web title implementation through this platform export.
     "apps/mobile/sources/buzz/use-autofit-text.web.ts": ["exports"],
     // The local GitHub card proof resolves these exports through temporary Metro aliases.
@@ -112,6 +114,8 @@
       "expo": false,
       "entry": [
         "index.ts",
+        // CONNECT-RING-1 selects the native entry and Metro adapter by path.
+        "scripts/connect-ring-proof/{index.tsx,metro.cjs}",
         // The approved GitHub card proof uses temporary native/web entry and resolver overrides.
         "scripts/github-card-proof.tsx",
         // Gradle selects the Rooms connector native proof through entryFile.

@@ -1017,7 +1017,101 @@ function scan(files: Map<string, string>): Entry[] {
       return values.length > 0 && values.every((value) => arrayData(value, new Set(seen)));
     });
   };
+  // A local helper that only builds the phrase is the message text, not another
+  // producer. Inlining it keeps a move or rename on the same wording fingerprint.
+  type PhraseFunction = ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+  const isPhraseFunction = (fn: ts.Node): fn is PhraseFunction =>
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) &&
+    !!fn.body;
+  const returnExpressions = (fn: PhraseFunction): ts.Expression[] => {
+    if (!ts.isBlock(fn.body!)) return [fn.body as ts.Expression];
+    const found: ts.Expression[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isReturnStatement(node)) {
+        if (node.expression) found.push(node.expression);
+      } else if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(fn.body!, visit);
+    return found;
+  };
+  const sinkCalls = new Map<ts.Node, boolean>();
+  const callsSink = (fn: PhraseFunction): boolean => {
+    const cached = sinkCalls.get(fn);
+    if (cached !== undefined) return cached;
+    let found = false;
+    const visit = (node: ts.Node) => {
+      if (found || (node !== fn && ts.isFunctionLike(node))) return;
+      if (ts.isCallExpression(node) && (named(node, 'systemLine') || named(node, 'restateSystemLine') || writes.has(node)))
+        found = true;
+      else ts.forEachChild(node, visit);
+    };
+    visit(fn);
+    sinkCalls.set(fn, found);
+    return found;
+  };
+  // Only straight phrase helpers. Inlining arbitrary functions rewalks the program.
+  const simplePhraseBody = (fn: PhraseFunction) => {
+    if (!fn.body) return false;
+    if (!ts.isBlock(fn.body)) return true;
+    return fn.body.statements.some((statement) => ts.isReturnStatement(statement)) &&
+      fn.body.statements.every((statement) => ts.isReturnStatement(statement) || ts.isVariableStatement(statement));
+  };
+  const localHelperCalls = new Map<ts.Node, boolean>();
+  // Formatters that call other helpers stay on the old walk. Inlining those
+  // repeats each argument once per use and rewalks the program.
+  const callsLocalHelper = (fn: PhraseFunction): boolean => {
+    const cached = localHelperCalls.get(fn);
+    if (cached !== undefined) return cached;
+    let found = false;
+    const visit = (node: ts.Node) => {
+      if (found || (node !== fn && ts.isFunctionLike(node))) return;
+      if (ts.isCallExpression(node) && callableDeclarations(node.expression).some((declaration) => {
+        const target = functions.get(declaration) ?? declaration;
+        return target !== fn && isPhraseFunction(target);
+      })) found = true;
+      else ts.forEachChild(node, visit);
+    };
+    visit(fn);
+    localHelperCalls.set(fn, found);
+    return found;
+  };
+  const phraseBuilder = (call: ts.CallExpression): PhraseFunction | undefined => {
+    if (call.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
+    const found: PhraseFunction[] = [];
+    const seen = new Set<ts.Node>();
+    for (const declaration of callableDeclarations(call.expression)) {
+      const fn = functions.get(declaration) ?? declaration;
+      if (seen.has(fn) || !isPhraseFunction(fn) || !simplePhraseBody(fn)) continue;
+      seen.add(fn);
+      if (fn.parameters.some((parameter) => parameter.dotDotDotToken || !ts.isIdentifier(parameter.name))) continue;
+      if (callsSink(fn) || callsLocalHelper(fn)) continue;
+      found.push(fn);
+    }
+    return found.length === 1 ? found[0] : undefined;
+  };
+  const inlinedPhraseFunctions = new Set<ts.Node>();
+  const inlineStack = new Set<ts.Node>();
+  // Parameter uses repeat one argument. Walk that argument once and reuse its wording.
+  const wordingCache = new Map<ts.Node, string[]>();
+  let substitutions = new Map<ts.Node, ts.Node>();
+  let argumentScope = new Map<ts.Node, ts.Node>();
+  const ancestorInlined = (node: ts.Node) => {
+    for (let current: ts.Node | undefined = node; current; current = current.parent)
+      if (inlinedPhraseFunctions.has(current)) return true;
+    return false;
+  };
   for (const [node, kind] of direct) {
+    if (kind === 'system-card' && ancestorInlined(node)) continue;
+    if (
+      kind === 'wrapper' &&
+      ts.isCallExpression(node) &&
+      callableDeclarations(node.expression).some((declaration) =>
+        inlinedPhraseFunctions.has(functions.get(declaration) ?? declaration),
+      )
+    )
+      continue;
+    substitutions = new Map();
+    argumentScope = new Map();
     const file = relative(server, node.getSourceFile().fileName).replaceAll('\\', '/');
     const template = writes.get(node)?.template ?? templatePrint(node);
     const scope: string[] = [];
@@ -1105,6 +1199,7 @@ function scan(files: Map<string, string>): Entry[] {
         }
         // Member/callee identities choose what people see, even without fixed words.
         // Omit the root local name so person.name and recipient.name stay equivalent.
+        // A local phrase builder is inlined, so the helper call itself is not wording.
         if (ts.isBinaryExpression(part))
           literals.push(`binary:${ts.tokenToString(part.operatorToken.kind)}`);
         if (ts.isPrefixUnaryExpression(part) || ts.isPostfixUnaryExpression(part))
@@ -1117,14 +1212,37 @@ function scan(files: Map<string, string>): Entry[] {
         const localCallable = (target: ts.Node) => callableDeclarations(target).some((declaration) =>
           (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration) ||
             ts.isArrowFunction(declaration) || ts.isFunctionExpression(declaration)) && !!declaration.body);
-        if (ts.isPropertyAccessExpression(part))
-          literals.push(localCallable(part) ? '.$local' : `.${part.name.text}`);
         if (ts.isCallExpression(part)) {
+          const builder = phraseBuilder(part);
+          if (builder && !inlineStack.has(builder)) {
+            const savedSubstitutions = substitutions;
+            const savedArguments = argumentScope;
+            const calleeMap = new Map<ts.Node, ts.Node>();
+            builder.parameters.forEach((parameter, index) => {
+              const argument = part.arguments[index];
+              if (argument && !ts.isSpreadElement(argument)) calleeMap.set(parameter, argument);
+              else if (parameter.initializer) calleeMap.set(parameter, parameter.initializer);
+            });
+            substitutions = calleeMap;
+            argumentScope = savedSubstitutions;
+            inlineStack.add(builder);
+            inlinedPhraseFunctions.add(builder);
+            try {
+              for (const expression of returnExpressions(builder)) collect(expression);
+            } finally {
+              inlineStack.delete(builder);
+              substitutions = savedSubstitutions;
+              argumentScope = savedArguments;
+            }
+            return;
+          }
           const callee = part.expression;
           if (localCallable(callee)) literals.push('$local()');
           else if (ts.isIdentifier(callee)) literals.push(`${callee.text}()`);
           else if (ts.isPropertyAccessExpression(callee)) literals.push(`.${callee.name.text}()`);
         }
+        if (ts.isPropertyAccessExpression(part))
+          literals.push(localCallable(part) ? '.$local' : `.${part.name.text}`);
         if (ts.isStringLiteralLike(part)) literals.push(JSON.stringify(part.text));
         if (ts.isTemplateExpression(part)) {
           literals.push(JSON.stringify([part.head.text, ...part.templateSpans.map((span) => span.literal.text)]));
@@ -1134,6 +1252,31 @@ function scan(files: Map<string, string>): Entry[] {
           !(ts.isPropertyAccessExpression(part.parent) && part.parent.name === part) &&
           !(ts.isPropertyAssignment(part.parent) && part.parent.name === part)
         ) {
+          if (ts.isIdentifier(part)) {
+            for (const declaration of declarations(part)) {
+              const replacement = substitutions.get(declaration);
+              if (!replacement) continue;
+              const cached = wordingCache.get(replacement);
+              if (cached) {
+                for (const token of cached) literals.push(token);
+                return;
+              }
+              if (active.has(replacement)) return;
+              const savedSubstitutions = substitutions;
+              const savedArguments = argumentScope;
+              substitutions = savedArguments;
+              argumentScope = savedArguments;
+              const start = literals.length;
+              try {
+                collect(replacement);
+              } finally {
+                substitutions = savedSubstitutions;
+                argumentScope = savedArguments;
+              }
+              wordingCache.set(replacement, literals.slice(start));
+              return;
+            }
+          }
           for (const declaration of declarations(part)) {
             if (!files.has(declaration.getSourceFile().fileName)) continue;
             if (ts.isVariableDeclaration(declaration) && declaration.initializer)
@@ -2003,6 +2146,39 @@ it('SYSTEM-REFACTOR-2: moves strings and producers, renames locals, and reformat
   expect(() => enforce(scan(moved),scan(base))).not.toThrow();
   const changed = new Map([...moved].map(([path,text])=>[path,text.replace("'hello'","'goodbye'")]));
   expect(() => enforce(scan(changed),scan(base))).toThrow(failure);
+});
+
+it('R1: moving a guarded message into another function or file with the same text passes', () => {
+  const base = fixture("line(db, { verb: 'hello there' });");
+  const moved = fixture(`
+    function buildNotice() { return { verb: 'hello there' }; }
+    line(db, buildNotice());
+  `);
+  expect(() => enforce(scan(moved), scan(base))).not.toThrow();
+  const renamed = fixture(`
+    function renderNotice(name: string) { return { verb: 'hello ' + name }; }
+    line(db, renderNotice('there'));
+  `);
+  const inPlace = fixture("line(db, { verb: 'hello ' + 'there' });");
+  expect(() => enforce(scan(renamed), scan(inPlace))).not.toThrow();
+  const otherFile = fixture();
+  otherFile.set('/fixtures/builder.ts', "export function buildNotice() { return { verb: 'hello there' }; }");
+  otherFile.set(
+    '/fixtures/producer.ts',
+    `import { systemLine as line } from './system-line.js';
+     import { buildNotice } from './builder.js';
+     const phrase = 'joined';
+     export function existing(db: unknown) { return line(db, { verb: phrase }); }
+     line(db, buildNotice());`,
+  );
+  expect(() => enforce(scan(otherFile), scan(base))).not.toThrow();
+  const addedCall = fixture(`
+    function identity(text: string) { return text; }
+    line(db, { verb: identity('hello there') });
+  `);
+  expect(() => enforce(scan(addedCall), scan(base))).not.toThrow();
+  const changed = fixture("line(db, { verb: 'hello world' });");
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
 });
 
 it('SYSTEM-REFACTOR-2: keeps SQL projected parameters locked across forwarding helpers', () => {

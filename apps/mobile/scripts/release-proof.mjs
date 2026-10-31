@@ -18,7 +18,11 @@
  *   node scripts/release-proof.mjs --apk app-release.apk
  *   node scripts/release-proof.mjs --aab app-release.aab
  *
- * The rig's signed-in session (GitHub user methoxine-debug on emulator-5554)
+ * Optional OTA launch proof: --ota --sha <sha> --targets <targets.json>.
+ * Uses a prebuilt beta-apk for a live runtime and requires the Play reviewer
+ * bypass; no native build or broad Maestro suite runs in this mode.
+ *
+ * Legacy artifact mode: the rig's signed-in session
  * must already exist: the runner never scripts a sign-in. If the app starts
  * signed out, room/corner/settings flows cannot run and the runner exits 2
  * with a loud message.
@@ -32,6 +36,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runEas, collectUpdates, updateMessage, messageText, readChannelBranch } from './ota-release.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const MOBILE_DIR = resolve(SCRIPT_DIR, '..');
@@ -54,7 +59,10 @@ function parseArgs(argv) {
   const args = { device: 'emulator-5554', out: join(MOBILE_DIR, 'release-proof-out') };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    if (flag === '--apk') args.apk = resolve(argv[++i]);
+    if (flag === '--ota') args.ota = true;
+    else if (flag === '--sha') args.sha = argv[++i];
+    else if (flag === '--targets') args.targets = resolve(argv[++i]);
+    else if (flag === '--apk') args.apk = resolve(argv[++i]);
     else if (flag === '--aab') args.aab = resolve(argv[++i]);
     else if (flag === '--device') args.device = argv[++i];
     else if (flag === '--out') args.out = resolve(argv[++i]);
@@ -64,6 +72,12 @@ function parseArgs(argv) {
     }
   }
   if (args.help) return args;
+  if (args.ota) {
+    if (args.apk || args.aab || !/^[a-f0-9]{40}$/.test(args.sha ?? '') || !args.targets) {
+      fail('--ota requires --sha <40-hex> --targets <targets.json> and no native artifact.');
+    }
+    return args;
+  }
   if (!args.apk && !args.aab) fail('Provide exactly one of --apk <path> or --aab <path>.');
   if (args.apk && args.aab) fail('Provide only one of --apk and --aab.');
   if (args.apk && !existsSync(args.apk)) fail(`APK not found: ${args.apk}`);
@@ -572,6 +586,131 @@ function writeJunit(results, path, { releaseProofApk, device }) {
   writeFileSync(path, xml);
 }
 
+// Lightweight OTA path: reuse the prebuilt beta binary, never compile native
+// code from the candidate (that would mask missing-native-module crashes).
+export function otaFatal(log) {
+  return /FATAL EXCEPTION|Fatal signal \d+|ReactNativeJS.*(?:Invariant Violation|TurboModuleRegistry|\[runtime not ready\])|JavascriptException|Unhandled JS Exception|EmergencyLaunch|Emergency launch/i.test(log);
+}
+
+export function candidateVisible(xml, sha) {
+  return xml.includes('Beeline version ') && xml.includes(sha.slice(0, 12));
+}
+
+export async function runOtaLaunchProof(device, args, outDir) {
+  const secret = process.env.BEELINE_REVIEW_SECRET?.trim();
+  if (!secret || !/^[A-Za-z0-9_-]+$/.test(secret)) {
+    throw new Error('BEELINE_REVIEW_SECRET is required; no persisted-account fallback is allowed.');
+  }
+  if (!adbDevices().includes(device)) throw new Error(`Existing rig ${device} is not connected; no emulator is created.`);
+  await waitForDevice(device, 15_000);
+  const targets = JSON.parse(readFileSync(args.targets, 'utf8')).targets;
+  const target = targets.find((t) => t.platform === 'android');
+  if (!target) throw new Error('Candidate has no live Android runtime.');
+  // The staging action already moved beta to the candidate branch. Read the
+  // pointer again and require this exact source/runtime before touching the rig.
+  const branch = readChannelBranch('beta');
+  const updates = collectUpdates(runEas(['update:list', '--branch', branch, '--limit', '50', '--json', '--non-interactive']));
+  const candidate = updates.find((u) => u.platform === 'android' && u.runtimeVersion === target.runtimeVersion &&
+    messageText(u.message) === updateMessage(args.sha, target));
+  if (!candidate) throw new Error('Beta does not hold the candidate source and Android runtime.');
+  const builds = runEas(['build:list', '--platform', 'android', '--build-profile', 'beta-apk',
+    '--status', 'finished', '--runtime-version', target.runtimeVersion, '--limit', '1', '--json', '--non-interactive']);
+  const build = (Array.isArray(builds) ? builds : builds?.data)?.[0];
+  const url = build?.artifacts?.buildUrl ?? build?.artifacts?.applicationArchiveUrl;
+  if (!url) throw new Error(`Provision a beta-apk for live Android runtime ${target.runtimeVersion}; the proof never builds a new native binary.`);
+  const apk = join(outDir, 'beta.apk');
+  run('curl', ['--fail', '--location', '--silent', '--show-error', '--max-time', '45', '-o', apk, url], { timeout: 50_000 });
+  const started = Date.now();
+  let ok = false;
+  let failure;
+  try {
+    // Own exactly this rig package, remove any other identity before sign-in.
+    // Target every intent explicitly so competing scheme handlers are untouched.
+    adb(device, ['uninstall', APP_ID], { allowFailure: true, timeout: 15_000 });
+    adb(device, ['install', apk], { timeout: 30_000 });
+    adbShell(device, `pm grant ${APP_ID} android.permission.POST_NOTIFICATIONS`, { allowFailure: true, timeout: 5000 });
+    adb(device, ['logcat', '-c'], { timeout: 5000 });
+    const logs = () => {
+      const log = adb(device, ['logcat', '-d', '-v', 'brief'], { timeout: 5000 }).stdout.replaceAll(secret, '[REDACTED]');
+      writeFileSync(join(outDir, 'launch-logcat.log'), log);
+      if (otaFatal(log)) throw new Error('Native crash, JS fatal, or Expo emergency fallback during OTA launch (see launch-logcat.log).');
+    };
+    const open = (url) => {
+      // Do not include the reviewer secret in thrown command diagnostics.
+      const r = adb(device, ['shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', url, LAUNCH_ACTIVITY], { allowFailure: true, timeout: 5000 });
+      if (!r.ok) throw new Error('Could not open the rig app intent.');
+    };
+    open(`beeline://review/${secret}`);
+    const size = adbShell(device, 'wm size', { timeout: 5000 }).stdout.match(/(\d+)x(\d+)/);
+    const [width, height] = size ? [Number(size[1]), Number(size[2])] : [1080, 2400];
+    const showsCandidate = () => {
+      // Settings is a ScrollView; the release stamp is in its footer.
+      for (let i = 0; i < 5; i++) {
+        if (candidateVisible(dumpUi(device, null, 'ota-settings'), args.sha)) return true;
+        adbShell(device, `input swipe ${Math.round(width / 2)} ${Math.round(height * 0.8)} ${Math.round(width / 2)} ${Math.round(height * 0.25)} 200`, { timeout: 5000 });
+      }
+      return false;
+    };
+    const deadline = Date.now() + 120_000;
+    let signedIn = false;
+    let verified = false;
+    while (Date.now() < deadline) {
+      logs();
+      const xml = dumpUi(device, null, 'ota');
+      if (xml.includes('resource-id="room-list"') && xml.includes('room-bee11e00-0000-4000-8000-000000000103')) signedIn = true;
+      if (signedIn) {
+        open('beeline://beeline/settings');
+        await sleep(1000);
+        if (showsCandidate()) { verified = true; break; }
+      }
+      // Expo downloads on one launch and selects on the next. A crash or
+      // fallback never passes merely because an older bundle still renders.
+      await sleep(5000);
+      logs();
+      adbShell(device, `am force-stop ${APP_ID}`, { timeout: 5000 });
+      open(signedIn ? 'beeline://beeline/channels' : `beeline://review/${secret}`);
+      await sleep(2000);
+    }
+    if (!verified) throw new Error('Candidate OTA did not report its source SHA after reviewer sign-in within 120s.');
+    // Cold start with a clean launch intent, then watch for delayed fatals.
+    open('beeline://beeline/channels');
+    await sleep(1000);
+    adbShell(device, `am force-stop ${APP_ID}`, { timeout: 5000 });
+    adbShell(device, `am start -n ${LAUNCH_ACTIVITY}`, { timeout: 5000 });
+    const roomDeadline = Date.now() + 20_000;
+    let roomVisible = false;
+    while (Date.now() < roomDeadline) {
+      logs();
+      const xml = dumpUi(device, outDir, 'ota-room-list');
+      roomVisible = xml.includes('resource-id="room-list"') && xml.includes('room-bee11e00-0000-4000-8000-000000000103');
+      if (roomVisible) break;
+      await sleep(1000);
+    }
+    if (!roomVisible) throw new Error('Candidate did not cold-start to the reviewer Room list.');
+    await sleep(10_000);
+    logs();
+    if (!adbShell(device, `pidof ${APP_ID}`, { allowFailure: true, timeout: 5000 }).stdout.trim()) throw new Error('App exited during launch watch.');
+    // A later startup fallback must not satisfy the Room-list assertion.
+    open('beeline://beeline/settings');
+    await sleep(1000);
+    if (!showsCandidate()) throw new Error('Candidate no longer running after cold start.');
+    open('beeline://beeline/channels');
+    logs();
+    ok = true;
+  } catch (error) {
+    failure = error.message;
+    throw error;
+  } finally {
+    rmSync(apk, { force: true });
+    screenshot(device, join(outDir, 'ota-launch.png'));
+    const results = [{ name: 'ota-reviewer-launch', ok, message: failure, seconds: (Date.now() - started) / 1000 }];
+    writeJunit(results, join(outDir, 'release-proof-junit.xml'), { releaseProofApk: build.id, device });
+    writeFileSync(join(outDir, 'release-proof.json'), JSON.stringify({ device, branch, sourceSha: args.sha,
+      runtimeVersion: target.runtimeVersion, group: candidate.group, nativeBuild: build.id, results }, null, 2));
+  }
+  console.log('release-proof: candidate OTA cold-started to the Play reviewer Room list without a fatal error.');
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -579,7 +718,7 @@ function writeJunit(results, path, { releaseProofApk, device }) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log('usage: node scripts/release-proof.mjs (--apk <path> | --aab <path>) [--device emulator-5554] [--out <dir>]');
+    console.log('usage: node scripts/release-proof.mjs (--ota --sha <sha> --targets <json> | --apk <path> | --aab <path>) [--device emulator-5554] [--out <dir>]');
     return;
   }
   const device = args.device;
@@ -592,9 +731,15 @@ async function main() {
   // that file for tooling output.
   writeFileSync(join(outDir, '.gitignore'), '*\n!.gitignore\n');
 
-  const lock = await acquireLock(device);
+  const lock = await acquireLock(device, args.ota ? 20_000 : undefined);
+  process.once('SIGTERM', () => { releaseLock(lock); process.exit(1); });
+  process.once('SIGINT', () => { releaseLock(lock); process.exit(1); });
   let competingDisabled = [];
   try {
+    if (args.ota) {
+      await runOtaLaunchProof(device, args, outDir);
+      return;
+    }
     await ensureDevice(device, avd);
 
     // Isolate the beeline:// scheme so deep links land on the artifact under test.
@@ -783,7 +928,7 @@ async function main() {
   }
 }
 
-main().catch((e) => {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((e) => {
   console.error(e?.stack ?? e);
   process.exit(1);
 });

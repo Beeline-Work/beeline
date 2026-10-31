@@ -21,11 +21,16 @@
   at TestFlight. Apple API or submission-state errors fail the native job;
   successful evidence includes the review submission ID. See the
   [store runbook](../apps/mobile/docs/store-submission.md) for retry constraints.
-- **The device proof is opt-in.** `run_release_proof=true` runs the emulator
-  release proof before OTA promotion; the default is `false`. An OTA promoted
-  without a proof is recorded as UNPROVEN in the release record. Request the
-  proof when a release changes signing, install, or cold-start behavior; skip
-  it for ordinary OTA-only JS changes.
+- **The device proof is opt-in.** Request the existing rig's Play-reviewer OTA launch check with `inputs: { run_release_proof: true }`; default `false` adds no device wait.
+  The lane stages the candidate on beta, uses an existing `beta-apk` for a live
+  Android store runtime (never a native build from the candidate), signs in
+  through `BEELINE_REVIEW_SECRET` into Beeline Review, and verifies the candidate
+  source SHA plus a cold start to its Room list with no native crash or JS fatal.
+  The device step has a five-minute ceiling including lock wait and download;
+  missing rig, reviewer secret, matching prebuilt beta APK, or candidate evidence
+  fails closed. Only OTA promotion waits for this lane; server/helper proceed
+  independently. It checks Android; the fast static native-import gate covers
+  both platforms. An OTA promoted without the optional proof is recorded UNPROVEN.
 
 ## Routine release
 

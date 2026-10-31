@@ -240,6 +240,7 @@ jobs:
               - 'scripts/release-preflight*'
               - 'scripts/unified-release*'
               - 'scripts/release-record*'
+              - 'scripts/release-job-output*'
               - 'scripts/release-artifact-allowlist*'
               - 'scripts/ota-release.test.mjs'
               - 'scripts/read-store-runtimes.mjs'

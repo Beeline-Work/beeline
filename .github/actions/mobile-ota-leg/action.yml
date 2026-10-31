@@ -25,7 +25,7 @@ inputs:
     required: false
     default: ''
   ota_memory:
-    description: JSON from the initialize job — store build identities and the runtimes the previous release served
+    description: Encoded public metadata from the initialize job — store build identities and the runtimes the previous release served
     required: false
     default: '{}'
   branch:
@@ -51,7 +51,7 @@ outputs:
     description: Comma-separated platform@runtime targets on the branch
     value: ${{ steps.publish.outputs.targets }}
   store_runtime:
-    description: Store runtime observations for the release record (JSON)
+    description: Store runtime observations for the release record (encoded public metadata)
     value: ${{ steps.publish.outputs.store_runtime }}
   completed_at:
     description: Epoch seconds when production pointed at the branch
@@ -79,7 +79,8 @@ runs:
         mkdir -p "$RUNNER_TEMP/ota"
         memory="${OTA_MEMORY:-}"
         [ -n "$memory" ] || memory='{}'
-        printf '%s' "$memory" > "$RUNNER_TEMP/ota/memory.json"
+        export OTA_MEMORY="$memory"
+        node ../../scripts/release-job-output.mjs OTA_MEMORY "$RUNNER_TEMP/ota/memory.json"
         node scripts/ota-release.mjs targets --memory "$RUNNER_TEMP/ota/memory.json" --output "$RUNNER_TEMP/ota/targets.json"
     - name: Publish every live runtime to the release branch and point beta at it
       id: publish
@@ -102,11 +103,13 @@ runs:
           --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --branch "$BRANCH" \
           --channel "$BETA_CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
           --output "$RUNNER_TEMP/ota/published.json"
-        node - "$RUNNER_TEMP/ota/published.json" >> "$GITHUB_OUTPUT" <<'NODE'
-        const facts = require(process.argv[2]);
+        node --input-type=module - "$RUNNER_TEMP/ota/published.json" >> "$GITHUB_OUTPUT" <<'NODE'
+        import { readFileSync } from 'node:fs';
+        import { encodeReleaseOutput } from '../../scripts/release-job-output.mjs';
+        const facts = JSON.parse(readFileSync(process.argv[2], 'utf8'));
         console.log(`branch=${facts.branch}`);
         console.log(`targets=${facts.targets.map((t) => `${t.platform}@${t.runtimeVersion}`).join(',')}`);
-        console.log(`store_runtime=${JSON.stringify({ previouslyLive: facts.storeRuntime?.previouslyLive ?? [] })}`);
+        console.log(`store_runtime=${encodeReleaseOutput({ previouslyLive: facts.storeRuntime?.previouslyLive ?? [] })}`);
         NODE
         echo "OTA branch publish: $(( $(date +%s) - started ))s" >> "$GITHUB_STEP_SUMMARY"
     - name: Point production at the exact branch beta got

@@ -241,3 +241,17 @@ test('SERVER-SPLIT: a fleet left on two images is finished on the release image'
     'fail-release',
   ]);
 });
+
+test('run 41175457061: a shipped attempt with no published record leaves the previous baseline intact', () => {
+  const releases = [
+    release('v0.1.123', { sha: A }),
+    release('v0.1.124', { draft: true, sha: C }),
+    release('v0.1.125', { draft: true, sha: B }),
+  ];
+  assert.equal(latestPublished(releases).tag_name, 'v0.1.123');
+  const previous = migrationRecord({ version: 'v0.1.123', sourceSha: A });
+  assert.deepEqual(assignReleaseVersion({ releases, previous, sha: C }), { version: 'v0.1.124', reason: 'resume-draft' });
+  const newSha = 'd'.repeat(40);
+  assert.deepEqual(assignReleaseVersion({ releases, previous, sha: newSha }), { version: 'v0.1.126', reason: 'next' });
+  assert.deepEqual(assignReleaseVersion({ releases, previous, sha: B }), { version: 'v0.1.125', reason: 'resume-draft' });
+});

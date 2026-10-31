@@ -45,19 +45,48 @@ function object(parent: Json, key: string): Json {
 }
 
 /** Writes `content` if it differs, backing up an original once. Returns whether anything changed. */
-export function writeFile(path: string, content: string): boolean {
+export function writeFile(path: string, content: string, expected?: { text: string | undefined }): boolean {
   let before: string | undefined;
   try { before = readFileSync(path, 'utf8'); } catch { /* new file */ }
   if (before === content) return false;
   mkdirSync(dirname(path), { recursive: true });
   const backup = `${path}.bak-${NAME}`;
   if (before !== undefined && !existsSync(backup) && !before.includes(' session hook ')) copyFileSync(path, backup);
-  const temp = `${path}.tmp-${NAME}`;
+  const temp = `${path}.${process.pid}.tmp-${NAME}`;
   writeFileSync(temp, content);
   // Keep its permissions: a config holding tokens may be 0600.
   try { chmodSync(temp, statSync(path).mode & 0o777); } catch { /* new file */ }
+  if (expected) {
+    let latest: string | undefined;
+    try { latest = readFileSync(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { rmSync(temp, { force: true }); throw error; }
+    }
+    if (latest !== expected.text) { rmSync(temp, { force: true }); throw new ConfigChanged(); }
+  }
   renameSync(temp, path);
   return true;
+}
+
+class ConfigChanged extends Error {}
+
+/** Re-merge when Claude rewrites its user config while Beeline prepares the replacement. */
+function mergeClaudeMcp(path: string, context: SetupContext): string[] {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let before: string | undefined;
+    try { before = readFileSync(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const value = readJson(path);
+    const servers = object(value, 'mcpServers');
+    if (context.remove) delete servers[NAME];
+    else servers[NAME] = { type: 'stdio', command: context.node, args: [context.bundle, 'session', 'claude-mcp'] };
+    if (!Object.keys(servers).length) delete value.mcpServers;
+    try {
+      const changed = writeFile(path, JSON.stringify(value, null, 2) + '\n', { text: before });
+      return changed ? [`${context.remove ? 'removed Beeline from' : 'updated'} ${path}`] : [];
+    } catch (error) { if (!(error instanceof ConfigChanged)) throw error; }
+  }
+  throw new Error('Claude Code kept changing its user config; retry joining when it is idle.');
 }
 
 function writeJson(path: string, value: Json): boolean {
@@ -118,13 +147,15 @@ function saveJson(path: string, value: Json, remove: boolean): string[] {
 
 function claudeCode(context: SetupContext): string[] {
   const command = (event: string) => ({ hooks: [{ type: 'command', command: hookCommand(context, 'claude-code', event), timeout: 10 }] });
-  return hooksFile(join(claudeConfigDir(context.env), 'settings.json'), 'claude-code', [['SessionStart', command('session-start')]], Boolean(context.remove));
+  const remove = Boolean(context.remove);
+  const path = context.env.CLAUDE_CONFIG_DIR ? join(context.env.CLAUDE_CONFIG_DIR, '.claude.json') : join(home(context.env), '.claude.json');
+  return [...mergeClaudeMcp(path, context), ...hooksFile(join(claudeConfigDir(context.env), 'settings.json'), 'claude-code', [['SessionStart', command('session-start')]], remove)];
 }
 
 function codex(context: SetupContext): string[] {
   const group = (event: string) => ({ matcher: '*', hooks: [{ type: 'command', command: hookCommand(context, 'codex', event), timeout: 10 }] });
   const lines = hooksFile(join(codexHome(context.env), 'hooks.json'), 'codex', [['SessionStart', group('session-start')]], Boolean(context.remove));
-  if (lines.length && !context.remove) lines.push('Codex asks once to trust these hooks: choose "Trust all and continue".');
+  if (lines.length && !context.remove) lines.push('Codex asks once to trust Beeline’s SessionStart hook if automatic trust is unavailable: open /hooks and trust only Beeline.');
   return lines;
 }
 

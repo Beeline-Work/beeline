@@ -89,6 +89,10 @@ describe('Codex threads', () => {
     mkdirSync(join(proc, '701', 'fd'), { recursive: true });
     mkdirSync(join(proc, 'self'));
     expect(scanCodex(proc)).toEqual([{ pid: 700, threadId: '01a18fa5-951a-7730-989a-50a80b6939c1', cwd: '/work/api', rollout }]);
+    const second = join(scratch(), 'rollout-2026-10-31T00-00-00-01a18fa5-951a-7730-989a-50a80b6939c2.jsonl');
+    writeFileSync(second, '');
+    symlinkSync(second, join(proc, '700', 'fd', '10'));
+    expect(scanCodex(proc).map(s => s.threadId).sort()).toEqual(['01a18fa5-951a-7730-989a-50a80b6939c1', '01a18fa5-951a-7730-989a-50a80b6939c2']);
     expect(rolloutThread('/x/notes.jsonl')).toBeUndefined();
   });
 });

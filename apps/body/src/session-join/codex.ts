@@ -84,8 +84,8 @@ export function scanCodex(proc = '/proc'): CodexSession[] {
       if (!threadId) continue;
       let cwd: string | undefined;
       try { cwd = readlinkSync(join(proc, name, 'cwd')); } catch { /* unknown */ }
-      found.push({ pid, threadId, cwd, rollout: target });
-      break;
+      // Current Codex hosts several threads in one app-server process. Every open rollout matters.
+      if (!found.some(s => s.threadId === threadId)) found.push({ pid, threadId, cwd, rollout: target });
     }
   }
   return found;

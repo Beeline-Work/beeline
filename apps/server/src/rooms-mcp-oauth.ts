@@ -138,7 +138,17 @@ interface Flow {
   challenge: string; scope: string; identity_id: string | null; provider: string | null;
   name: string; redirects: string[]; logo: string | null; identity_name: string | null;
   joiner_name: string | null; joiner_handle: string | null;
+  claude_inbound_fallback: boolean;
 }
+export function sessionMessageConsent(fallback: boolean, codex = false): string {
+  const consent = fallback
+    ? 'Agents and people who tag this session in your Rooms can send it messages; Claude Code on this machine will accept messages from other sessions through the user-level "crossSessionInbound": "accept" setting.'
+    : 'Agents and people who tag this session in your Rooms can send it messages.';
+  return codex
+    ? `${consent} Codex may ask “Would you like to run the following command?” to set up Beeline’s hook; choose “Yes, proceed”.`
+    : consent;
+}
+
 export interface McpPrincipal { hash: string; client_id: string; identity_id: string; member_id: string | null; scope: string }
 
 export class RoomsMcpOAuth {
@@ -324,10 +334,10 @@ export class RoomsMcpOAuth {
         const id = opaque(), browser = opaque();
         // A joining session proposes its own name; the Allow page shows it and the person can edit it.
         const proposed = (q.get('member_name') ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/\s+/g, ' ').slice(0, 60).trim();
-        await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at,joiner_name,joiner_handle)
-          VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes',$8,$9)`,
+        await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at,joiner_name,joiner_handle,claude_inbound_fallback)
+          VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes',$8,$9,$10)`,
           [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE,
-            proposed || null, null]);
+            proposed || null, null, q.get('claude_inbound_fallback') === '1']);
         response.setHeader('set-cookie', `beeline_mcp=${browser}; Path=/mcp/oauth; HttpOnly; SameSite=Lax; Max-Age=600${this.origin.startsWith('https:') ? '; Secure' : ''}`);
         this.redirect(response, `/mcp/oauth/consent?flow=${id}`); return true;
       }
@@ -383,7 +393,7 @@ export class RoomsMcpOAuth {
           const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called. Paste the token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><div id="starter-routine" class="routine-text">${escape(MCP_STARTER_ROUTINE)}</div><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div>${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called. Paste the token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><div id="starter-routine" class="routine-text">${escape(MCP_STARTER_ROUTINE)}</div><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
         }
         return true;
       }

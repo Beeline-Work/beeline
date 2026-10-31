@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_flows (
 CREATE INDEX IF NOT EXISTS rooms_mcp_flows_identity ON rooms_mcp_flows(identity_id);
 ALTER TABLE rooms_mcp_flows ADD COLUMN IF NOT EXISTS joiner_name text;
 ALTER TABLE rooms_mcp_flows ADD COLUMN IF NOT EXISTS joiner_handle text;
+ALTER TABLE rooms_mcp_flows ADD COLUMN IF NOT EXISTS claude_inbound_fallback boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS rooms_mcp_flows_client ON rooms_mcp_flows(client_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_flows_expiry ON rooms_mcp_flows(expires_at);
 CREATE TABLE IF NOT EXISTS rooms_mcp_codes (

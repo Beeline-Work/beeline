@@ -185,27 +185,12 @@ to fill unmeasured routes with static estimates.
 
 Run `node scripts/latency-rig/check-routes.mjs` and
 `node --test scripts/latency-rig/*.test.mjs` to validate route coverage and the
-deterministic budget evaluator. Device capture runs on squire; GitHub Actions
-checks PR evidence with `latency-proof.yml` and does not run an emulator.
+deterministic budget evaluator. Device capture runs on squire.
 Nightly timing uses the squire emulator and parent-Room schedule documented below. A full launch report still requires all route and
 interaction marks; the
 nightly subset does not establish that broader budget. Missing required subset
 cases fail closed.
 
-### Pull request proof
-
-`sensitive-paths.json` owns the latency-sensitive path prefixes. Pull requests
-touching those paths must include one line with measured before/after p95 values
-for each nightly case, in milliseconds:
-
-```text
-Rig before/after: room-list-1=BEFORE->AFTERms; room-list-5=BEFORE->AFTERms; push-1=BEFORE->AFTERms; push-5=BEFORE->AFTERms; warm-room=BEFORE->AFTERms; send-text=BEFORE->AFTERms
-```
-
-Replace every placeholder with a measured number and link the reports alongside
-the line. `LATENCY RIG PROOF` fails missing or nonnumeric cases and reevaluates
-when the PR body changes. Unrelated paths need no line. The evidence check
-validates the summary's presence; independent review must verify its reports.
 Room request contracts also reject any star-prompt, Workspace, read-mark or
 Room-list request starting before the native draw mark, even when the overall
 request-count budget would allow it.

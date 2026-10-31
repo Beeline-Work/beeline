@@ -263,11 +263,25 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     ) latest ON true
     LEFT JOIN messages start ON start.id=latest.card->>'runId' AND start.room_id=command.room_id
     WHERE source.card_type IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'
+  ), answered_reports AS MATERIALIZED (
+    SELECT command.id FROM recovery_scope command WHERE command.reason='report'
+      AND (command.state<>'claimed' OR command.lease_expires_at<=now())
+      AND (command.private_payload->>'waitingAnswered'='true' OR (
+        command.private_payload->>'text' ~ '^(blocked|needs-decision):'
+        AND EXISTS (SELECT 1 FROM agent_commands answer
+          JOIN rooms origin ON origin.id=answer.room_id AND origin.parent_id IS NOT NULL
+          WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
+            AND answer.private_payload->>'kind'='order'
+            AND answer.private_payload->>'authorId'=command.agent_id
+            AND answer.agent_id=command.private_payload->>'authorId'
+            AND answer.created_at>command.created_at)))
   ), stale_wakes AS MATERIALIZED (
     SELECT id FROM recovery_workflows WHERE run_id IS NOT NULL
       AND (latest_card IS NULL OR latest_card->'cancellation' IS NOT NULL
         OR COALESCE(start_card->>'runStatus','live')<>'live'
         OR (attempt IS NOT NULL AND attempt IS DISTINCT FROM latest_card->>'seq') OR expired)
+    UNION
+    SELECT id FROM answered_reports
     UNION
     SELECT command.id FROM recovery_scope command WHERE command.reason='report' AND (
       EXISTS (SELECT 1 FROM rooms origin LEFT JOIN corner_facts fact ON fact.corner_id=origin.id
@@ -351,7 +365,8 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
               AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
   ), cancelled_wakes AS (
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),
-      cancellation_reason=CASE WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
+      cancellation_reason=CASE WHEN EXISTS(SELECT 1 FROM answered_reports answered WHERE answered.id=scoped.id) THEN 'answered_report'
+        WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
         WHEN superseded.id IS NOT NULL THEN 'superseded_wake'
         ELSE 'superseded_on_return:' || head.id END
     FROM recovery_scope scoped

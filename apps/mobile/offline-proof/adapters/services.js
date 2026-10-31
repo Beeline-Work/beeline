@@ -145,7 +145,14 @@ export class RoomViewClient {
 }
 export { RoomViewHttpError } from '@beeline/buzz-client';
 export const isRoomViewTimeoutError = () => false;
-const live = { view: () => noop, register: async () => noop, subscribe: () => noop };
+const live = {
+  view: () => noop,
+  register: async () => noop,
+  subscribe: () => noop,
+  connectionStatus: () => 'connected',
+  subscribeConnectionStatus: () => noop,
+  reconnectNow: noop,
+};
 export const sharedLiveConnection = () => live;
 export const liveChatList = () => null;
 export const useChatList = () => null;

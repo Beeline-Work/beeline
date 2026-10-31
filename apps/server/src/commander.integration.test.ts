@@ -2001,3 +2001,69 @@ it('Reproduction SELF-2: own brief revision and background shell completion can 
   await daemon.execute('markAgentTurnSilent', authority(revision), RUBY);
   console.info('Demonstrated SELF-2: completion and revision continuations accept silence without filler');
 });
+
+it.each([
+  ['recover', '40P01', 1, 2],
+  ['exhaust', '40P01', 10, 3],
+  ['other error', '23505', 1, 1],
+  ['authority revoked', '40P01', 1, 1],
+  ['revision changed', '40P01', 1, 2],
+])('R-BRIEF-DEADLOCK: %s rolls back the revision and command delivery', async (scenario, code, failures, expectedAttempts) => {
+  const opened = await open();
+  const snapshot = async () => ({
+    briefs: (await db.query(`SELECT * FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`, [opened.cornerId])).rows,
+    commands: (await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows,
+    journal: (await db.query(`SELECT * FROM live_journal WHERE event->>'roomId'=$1 ORDER BY stream_id,sequence`, [opened.cornerId])).rows,
+    notes: (await db.query(`SELECT * FROM messages WHERE room_id=$1 ORDER BY id`, [opened.cornerId])).rows,
+  });
+  const before = await snapshot();
+  const events: unknown[] = [];
+  const hub = new LiveHub();
+  hub.publish = event => { events.push(event); };
+  let attempts = 0;
+  const failure = Object.assign(new Error('brief transaction failure'), { code });
+  const wrapped: import('./database.js').SqlDatabase = {
+    query: (sql, values) => db.query(sql, values),
+    transaction: async work => {
+      attempts++;
+      try {
+        return await db.transaction(async tx => {
+          const result = await work(tx);
+          if (attempts <= failures) throw failure;
+          return result;
+        });
+      } catch (error) {
+        if (error !== failure) throw error;
+        expect(events).toHaveLength(0);
+        expect(await snapshot()).toEqual(before);
+        if (scenario === 'authority revoked')
+          await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [RUBY]);
+        if (scenario === 'revision changed')
+          await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+            expectedRevision: 1, brief: { spec: 'Concurrent authorized scope', change: 'Concurrent revision' } }, RUBY);
+        throw error;
+      }
+    },
+  };
+  const watched = new DaemonService(wrapped, hub);
+  const input = { ...authority(order), cornerId: opened.cornerId, expectedRevision: 1,
+    brief: { spec: 'Build the clarified widget', change: 'Clarify scope' } };
+  if (scenario === 'recover') {
+    expect((await watched.execute('reviseCornerBrief', input, RUBY)).revision).toBe(2);
+    const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
+    expect(restored.brief?.spec).toBe(input.brief.spec);
+    const after = await snapshot();
+    expect(after.briefs).toHaveLength(2);
+    expect(after.journal.length).toBeGreaterThan(before.journal.length);
+    expect(after.notes.length).toBe(before.notes.length + 1);
+    const pending = after.commands.filter(row => row.state === 'pending' && row.room_id === opened.cornerId);
+    expect(pending).toHaveLength(1);
+  } else {
+    await expect(watched.execute('reviseCornerBrief', input, RUBY)).rejects.toThrow(
+      scenario === 'authority revoked' ? /access|member|authority/i :
+      scenario === 'revision changed' ? /revision changed/ : failure.message);
+    expect(events).toHaveLength(0);
+    if (scenario !== 'revision changed') expect(await snapshot()).toEqual(before);
+  }
+  expect(attempts).toBe(expectedAttempts);
+});

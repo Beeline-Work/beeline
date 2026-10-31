@@ -7,7 +7,8 @@ import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
-import { reassignFailedCornerReviewer } from './corner-lifecycle.js';
+import { reassignFailedCornerReviewer, lockCornerLifecycle } from './corner-lifecycle.js';
+import { createAgentCommand } from './agent-command.js';
 
 const url = process.env.BEELINE_INCIDENT_TEST_POSTGRES_URL;
 if (url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname))
@@ -111,6 +112,29 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
     for (const who of [H,A,B,F]) for (const room of [null,R])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
+  });
+
+  it('R-BRIEF-DEADLOCK: brief revision recovers a real PostgreSQL lifecycle deadlock', async () => {
+    const source = 'e'.repeat(64);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Clarify the brief')`, [source,R,H]);
+    const command = await createAgentCommand(db,{roomId:R,agentId:A,sourceMessageId:source,reason:'human_tag'});
+    const daemon = new DaemonService(db,new LiveHub());
+    await daemon.execute('claimAgentCommand',{roomId:R,commandId:command!.id,generationId:'brief-proof'},A);
+    const turn = {roomId:R,requestId:command!.turn_request_id,generationId:'brief-proof'};
+    await daemon.execute('reviseCornerBrief',{...turn,cornerId:C,expectedRevision:0,
+      brief:{spec:'Build the widget',change:'Record scope'}},A);
+    const race = contention(db);
+    const watched = new DaemonService(race.victim,new LiveHub());
+    const revision = watched.execute('reviseCornerBrief',{...turn,cornerId:C,expectedRevision:1,
+      brief:{spec:'Build the clarified widget',change:'Clarify scope'}},A);
+    await race.entered;
+    const [result] = await Promise.all([revision,race.other.transaction(tx => lockCornerLifecycle(tx,C))]);
+    expect(race.errors).toEqual(['40P01']);
+    expect(race.attempts()).toBe(2);
+    expect(result.revision).toBe(2);
+    expect((await daemon.execute('getCornerRestoreState',{cornerId:C},A)).brief?.spec).toBe('Build the clarified widget');
+    expect((await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`,[C])).rowCount).toBe(2);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%Revision 2%'`,[C])).rowCount).toBe(1);
   });
 
   it('BEELINE-SERVER-1W: concurrent refreshes recover a PostgreSQL deadlock and commit one rollup event', async () => {

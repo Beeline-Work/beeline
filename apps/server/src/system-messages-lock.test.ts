@@ -38,8 +38,29 @@ function sources(directory: string): Map<string, string> {
   return files;
 }
 
+// A fixture may reuse a path with different contents. Cache each exact version,
+// never just its path, so mutations still receive their own syntax tree.
+const parsedSources = new Map<string, Map<string, ts.SourceFile>>();
+function parsedSource(path: string, text: string): ts.SourceFile {
+  let versions = parsedSources.get(path);
+  if (!versions) parsedSources.set(path, versions = new Map());
+  let source = versions.get(text);
+  if (!source) {
+    source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    versions.set(text, source);
+  }
+  return source;
+}
+
+// Reuse analysis only when the entire input graph (including order) is identical.
+// Changed imports, removed files and changed dependency text all require a scan.
+const scannedSources = new Map<string, Entry[]>();
+
 /** Parse symbols, not source substrings: aliases and wrappers retain their sink identity. */
 function scan(files: Map<string, string>): Entry[] {
+  const key = createHash('sha256').update(JSON.stringify([...files])).digest('hex');
+  const cached = scannedSources.get(key);
+  if (cached) return cached;
   const options: ts.CompilerOptions = {
     noLib: true,
     allowJs: true,
@@ -49,7 +70,7 @@ function scan(files: Map<string, string>): Entry[] {
   const host = ts.createCompilerHost(options);
   host.getSourceFile = (path) =>
     files.has(path)
-      ? ts.createSourceFile(path, files.get(path)!, ts.ScriptTarget.Latest, true)
+      ? parsedSource(path, files.get(path)!)
       : undefined;
   host.fileExists = (path) => files.has(path);
   host.readFile = (path) => files.get(path);
@@ -1168,7 +1189,9 @@ function scan(files: Map<string, string>): Entry[] {
         occurrences: 1,
       });
   }
-  return [...entries.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const result = [...entries.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  scannedSources.set(key, result);
+  return result;
 }
 
 function compare(current: Entry[], locked: Entry[]): { violations: string[]; removed: string[] } {
@@ -1518,7 +1541,7 @@ it('allows access predicate changes in sendMessage, deleteRoomMessage and record
     const path = resolve(server, 'src', filename);
     let text = changed.get(path)!;
     for (const method of methods) {
-      const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+      const ast = parsedSource(path, text);
       let found = false;
       const visit = (node: ts.Node) => {
         if (ts.isMethodDeclaration(node) && node.name.getText(ast) === method) {
@@ -1937,7 +1960,7 @@ it.each(refactors)('SYSTEM-REFACTOR-2: PR $pr / run $run preserves visible wordi
       expect(source).toContain(refactor.before);
       files.set(path, source.replace(refactor.before, version));
     } else {
-      const tree = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+      const tree = parsedSource(path, source);
       let target: ts.MethodDeclaration | undefined;
       const visit = (node: ts.Node) => {
         if (ts.isMethodDeclaration(node) && node.name.getText(tree) === (refactor.name ?? 'execute')) target = node;
@@ -2062,4 +2085,29 @@ it('SYSTEM-REFACTOR-2: fails closed for an unresolvable destructured array origi
   const after = scan(fixture(source.replace("==='hello'", "==='world'")));
   expect(compare(after, before).violations).not.toEqual([]);
   expect(() => enforce(after, before)).toThrow(failure);
+});
+
+it('keeps imported wording changes locked when the producer source is reused', () => {
+  const base = fixture();
+  base.set('/fixtures/words.ts', "export const phrase = 'joined';");
+  base.set('/fixtures/producer.ts', `
+    import { systemLine as line } from './system-line.js';
+    import { phrase } from './words.js';
+    line(db, { verb: phrase });
+  `);
+  const baseline = scan(base);
+  const changed = new Map(base);
+  changed.set('/fixtures/words.ts', "export const phrase = 'left';");
+  expect(() => enforce(scan(changed), baseline)).toThrow(failure);
+  // Returning to the original graph must still reproduce its original entries.
+  expect(scan(new Map(base))).toEqual(baseline);
+});
+
+it('keeps producer removals locked after scanning the same graph', () => {
+  const base = fixture();
+  const baseline = scan(base);
+  expect(scan(new Map(base))).toEqual(baseline);
+  const removed = new Map(base);
+  removed.delete('/fixtures/producer.ts');
+  expect(() => enforce(scan(removed), baseline)).toThrow(failure);
 });

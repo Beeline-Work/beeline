@@ -8834,6 +8834,19 @@ export class DaemonService {
       await this.reach(input.cornerId, agentId, db).catch(() => {
         throw new CommandRefusalError('corner brief revision denied', 403);
       });
+      // Read projections of commander-direct approvals have no message citation.
+      // Only normalize that projection against the locked, server-owned approval.
+      if (draft.approval && (draft.approval.sourceMessageId === '' ||
+          draft.approval.sourceMessageId === undefined)) {
+        const stored = (await db.query<{ approval_basis: { kind?: string; approvedBy?: string } }>(
+          `SELECT approval_basis FROM corner_brief_revisions
+           WHERE corner_id=$1 ORDER BY revision DESC LIMIT 1`, [input.cornerId],
+        )).rows[0]?.approval_basis;
+        if (corner.created_by !== agentId || stored?.kind !== 'commander-direct' ||
+            stored.approvedBy !== agentId)
+          throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
+        draft = { ...draft, approval: undefined };
+      }
       validateCornerBrief(draft);
       const commandRoomId = input.roomId ?? input.cornerId;
       const command = await authorizeCommandOutput(

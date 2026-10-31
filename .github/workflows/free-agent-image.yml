@@ -84,5 +84,6 @@ jobs:
             echo "::warning::Free starter agent image was not published; Machines keep the previous image"
           fi
         env:
+          FLY_API_TOKEN: ${{ secrets.FLY_FREE_AGENT_IMAGE_TOKEN }}
           RELEASE_SHA: ${{ steps.release.outputs.sha }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}

@@ -1,0 +1,183 @@
+folder,name,state,closedAt,allocatedBytes,uncommitted,unpushed,commitsAbsentFromOrigin,ownerRecorded,ownerEnded,reason
+0034ffc6-be78-4a99-b07f-158057603023,android-mic-service,archived,2026-10-19T19:15:38+00:00,1232941056,True,True,2,True,True,dirty-tree guard
+00407964-1439-42cb-ab69-7e026a485d92,trading-dashboard,open,,65396736,True,False,0,True,False,dirty-tree guard
+009c0870-f64f-482e-b2e2-571eaade9663,voice-latency-rerun,archived,2026-10-14T20:18:42+00:00,476123136,True,False,0,True,True,dirty-tree guard
+00e7a728-d507-45fc-a285-ffb75df2e80d,app-slowness-audit,archived,2026-10-22T20:45:33+00:00,642121728,True,False,0,True,True,dirty-tree guard
+01d23234-3372-4bf1-8cb9-f3c0e545ede9,repo-clutter-sweep,archived,2026-10-21T00:18:44+00:00,384733184,False,True,1,True,True,publication guard
+02964337-24e8-475f-ba0b-892452e65e66,corner-glyph-line,archived,2026-10-23T15:30:43+00:00,492830720,True,True,5,True,True,dirty-tree guard
+035d850a-70a6-4a58-a978-be25b1b760d5,voice-second-review,archived,2026-10-25T04:01:32+00:00,550817792,True,False,0,True,True,dirty-tree guard
+03ce2aff-c2e9-4969-b931-11ad3c8961f4,cleanup-refusal-repro,archived,2026-10-31T18:59:39+00:00,4579680256,False,False,0,True,False,missing persisted archive fact
+05e3bb30-4332-4dfc-b2d2-017e5fa03154,byline-name-truncation,archived,2026-10-29T16:27:35+00:00,17033400320,True,True,3,True,True,dirty-tree guard
+06910a62-73af-464e-b10d-e1e25a349426,webhook-subscriptions,archived,2026-10-24T02:49:34+00:00,544243712,True,True,7,True,True,dirty-tree guard
+079bf437-1542-442e-a6ee-d6ea4d4582a7,squire-connect-wakes-agent,open,,4586782720,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+07e8418d-e9a2-4cbe-b7db-740c4e2b2ed2,chat-identity-stores,archived,2026-10-11T04:03:31+00:00,323092480,True,False,0,True,True,dirty-tree guard
+0a803570-ba70-43d1-adee-b35a3dc6fcaf,Join-Room-Settings,archived,2026-10-13T03:26:32+00:00,358457344,True,True,2,True,True,dirty-tree guard
+0aedbe35-c9dc-45e0-86e4-73332e38dbcc,google-device-proof,archived,2026-10-30T03:40:16+00:00,1709883392,True,True,5,True,True,dirty-tree guard
+0b4c0cc7-3445-4540-a360-10449c57f155,navbar-capture-proof,archived,2026-10-28T13:18:49+00:00,722944000,True,True,2,True,True,dirty-tree guard
+0d6d0602-5b5b-4850-b68d-1d669b93c1c2,operator-system-dm,archived,2026-10-22T19:51:20+00:00,2250092544,,,,True,True,git evidence unavailable
+139454ab-340e-4a1a-93f3-143744c8e3cd,transcript-row-cost,archived,2026-10-25T04:38:45+00:00,12246298624,False,True,4,True,True,publication guard
+13ad0177-c596-4c0e-beda-6fa75ecf9bca,mark-for-review,open,,294735872,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+16179b1f-ef4b-483c-b6e5-25b252e998a8,ci-test-selection,archived,2026-10-31T06:02:01+00:00,5851312128,False,True,1,True,True,publication guard
+16457ac8-07f5-4075-b942-57c3194901e7,latency-clock-calibration,archived,2026-10-30T04:59:21+00:00,2160488448,False,True,1,True,True,declared proof retention guard
+1695dc37-eecf-4109-98e3-dc369feea5e9,incident-gap-tests,archived,2026-10-31T05:55:50+00:00,654733312,False,True,4,True,True,declared proof retention guard
+17b76bf5-b33d-4a40-8183-e9388432ef79,font-turn-verify,archived,2026-10-22T04:18:37+00:00,999776256,True,False,0,True,True,dirty-tree guard
+18fb7b79-d5f3-4e26-bef5-8b2b822ce81e,service-review-sweep,archived,2026-10-18T16:55:04+00:00,429977600,True,True,6,True,True,dirty-tree guard
+1960fe99-6e7b-4758-9e9a-d06507d0160e,rig-four-actions,archived,2026-10-30T23:37:45+00:00,11977420800,False,True,1,True,True,declared proof retention guard
+1b252aca-848f-463d-9c57-1b313ad2583f,ui-screenshot-sweep,archived,2026-10-29T05:10:29+00:00,670633984,False,False,0,True,True,declared proof retention guard
+1c09fd2f-10db-4bdc-9d24-f891e63def42,label-sweep,archived,2026-10-28T01:15:05+00:00,608686080,True,False,0,True,True,dirty-tree guard
+22074e94-d014-421f-925b-8cc50e6b7467,call-design,archived,2026-10-18T21:05:04+00:00,417624064,True,False,0,True,True,dirty-tree guard
+22be648d-f6d2-4e16-a4de-4f285c413a8c,release-corner,open,,729587712,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+23cf397b-84ff-498b-bf92-d69e16bb8773,tray-choice-plates,archived,2026-10-22T13:14:41+00:00,426496000,True,True,3,True,True,dirty-tree guard
+25fc7722-2cf6-4a7b-a526-3ef173385954,Remove-translations,archived,2026-10-05T18:58:59+00:00,368959488,True,True,2,True,True,dirty-tree guard
+282235fb-0b4c-40c5-8b00-e2c5448aa37c,voice-pin-freeze,archived,2026-10-24T14:39:01+00:00,5368033280,True,False,0,True,True,dirty-tree guard
+289c6fb7-b22f-44be-a1b5-7dc319562699,game-lane-check,archived,2026-10-22T19:15:11+00:00,449359872,True,False,0,True,True,dirty-tree guard
+28b1b285-89d5-4ad3-9fea-34edec3c84f5,google-cancel-repro,archived,2026-10-29T05:08:28+00:00,2142060544,True,True,2,True,True,dirty-tree guard
+2b586c06-3b12-45bd-b073-c8abbb15f406,android-native-revert,archived,2026-10-21T07:32:30+00:00,477863936,True,True,7,True,True,dirty-tree guard
+2c9da405-993f-4f97-ad53-399d04e5c819,funnel-new-steps,archived,2026-10-22T19:00:38+00:00,1323008,True,False,0,True,True,dirty-tree guard
+2eacebf9-143b-4eba-b21c-f892983f19df,release-pipeline-lock,archived,2026-10-18T01:33:53+00:00,406446080,True,False,0,True,True,dirty-tree guard
+30a5910f-5c5b-4f28-96b1-9fe0753efbfc,mic-longpress-crash,archived,2026-10-13T21:03:49+00:00,368975872,True,False,0,True,True,dirty-tree guard
+326a91aa-2a3b-4b45-8709-2a44801b034b,voice-lost-request,archived,2026-10-29T04:35:29+00:00,8192,,,,True,True,git evidence unavailable
+348bc0c2-b7f5-47d6-9181-0fce4622087c,signup-live-proof,archived,2026-10-29T20:16:55+00:00,939302912,True,True,1,True,True,dirty-tree guard
+34fd63bc-cb93-4096-b787-4e3182ec233e,sec-filing-desk,open,,704512,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+35a99ca0-b77a-4a5d-bef7-6584bdd7ce4b,stale-leftovers-cleanup,archived,2026-10-21T05:39:11+00:00,404770816,True,True,3,True,True,dirty-tree guard
+36bbb7b4-997b-40ed-9237-45f9330b4048,transcript-perf-baseline,archived,2026-10-24T23:15:35+00:00,10580938752,True,True,8,True,True,dirty-tree guard
+38f56111-571f-434f-bbfb-696cd6d72a40,speaking-speed-setting,archived,2026-10-25T05:26:45+00:00,561881088,True,True,5,True,True,dirty-tree guard
+3d29e4aa-1138-4078-9184-9fe91d9493e0,required-app-update,archived,2026-10-30T01:46:15+00:00,4028710912,True,True,6,True,True,dirty-tree guard
+3d63aa9c-1f10-4969-a5d9-799839067afb,macro-desk,open,,876544,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+3e133825-0bd4-46b5-8975-d957be2d28b4,,unknown,,2490368,True,False,0,True,True,dirty-tree guard
+3e1dfea1-34a2-4e20-80dc-848620a63962,tagged-human-waiting,archived,2026-10-18T15:25:59+00:00,416796672,True,False,0,True,True,dirty-tree guard
+3f769201-70f6-4000-82e9-739274c4ac2b,tray-approvals-diagnosis,archived,2026-10-09T03:45:41+00:00,301527040,True,True,7,True,True,dirty-tree guard
+3fc16016-f211-4a09-b48a-4b10b7406bba,film-workflow-run,open,,2114236416,True,False,0,True,False,dirty-tree guard
+42d10e5b-d3d5-436c-a528-0c0448b551cb,Corner-history-loss,archived,2026-10-06T03:02:41+00:00,286732288,True,True,1,True,True,dirty-tree guard
+431bfa15-adb7-40a0-a260-79087f8f0874,pi-session-new,archived,2026-10-16T22:46:39+00:00,413597696,True,False,0,True,True,dirty-tree guard
+441a13b7-2002-42dd-b4f2-16eec993150f,system-line-more,archived,2026-10-29T23:03:00+00:00,632643584,True,True,2,True,True,dirty-tree guard
+45ae4fc2-8021-4815-9f29-fffe63dca313,first-run-web-fixes,archived,2026-10-28T22:49:47+00:00,619835392,True,True,6,True,True,dirty-tree guard
+468dc897-b8a5-4817-8469-3d785e028d55,feedback-version-stamp,open,,4597547008,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+480b8414-48ab-4183-85f8-7769a8826045,deploy-time-periods,archived,2026-10-23T22:43:59+00:00,9990144,True,False,0,True,True,dirty-tree guard
+497def46-7c7c-41e2-9101-cd645b7e2dd8,checkout-and-background,open,,4588212224,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+49a4654a-cfaa-4581-a228-964a87d621ca,header-icons-grey,archived,2026-10-24T04:17:22+00:00,527851520,True,True,4,True,True,dirty-tree guard
+49dab7ce-9835-47bb-ac99-66cf19ba8419,x-ads-site-visits,archived,2026-10-27T14:43:54+00:00,594653184,False,True,2,True,True,declared proof retention guard
+4d4179e8-d729-4e44-bc65-864c4838e4c4,history-search-args,archived,2026-10-25T15:16:27+00:00,8192,,,,True,True,git evidence unavailable
+4ec5f48c-cd2b-471f-9ede-e503d0ce49e0,loop-fetch-redirect,archived,2026-10-23T14:59:29+00:00,2686976,True,False,0,True,True,dirty-tree guard
+4f4b92f9-ac9c-4acc-8300-7013524434e8,source-guard-cache,archived,2026-10-31T05:11:45+00:00,664350720,False,True,2,True,True,declared proof retention guard
+4f53d15c-78bf-4e19-8d7b-2546c63f253f,Class-names,archived,2026-10-02T02:31:55+00:00,342917120,False,True,13,True,True,publication guard
+4f8db1aa-33c5-4f7e-aed4-9ba545dc04d2,repo-row-polish,archived,2026-10-20T23:36:27+00:00,439136256,True,True,1,True,True,dirty-tree guard
+500f6c94-376b-4eed-a9b6-1f05059e558f,settings-flow-prototype,archived,2026-10-22T02:13:21+00:00,4471664640,True,True,24,True,True,dirty-tree guard
+53a90fe4-8dd5-47dd-950a-75783e6de514,stack-corner-markers,archived,2026-10-22T19:49:25+00:00,464244736,True,True,4,True,True,dirty-tree guard
+53aaf04a-05ff-47f1-bf99-8c0a5da47b1f,google-popup-freeze,archived,2026-10-30T17:21:05+00:00,133853184,True,False,0,True,True,dirty-tree guard
+546618e2-c76e-41a8-b29d-93f995f0e323,live-share-typing,archived,2026-10-28T22:22:17+00:00,127131648,True,False,0,True,True,dirty-tree guard
+556a7df1-dc97-4369-b282-ddcba448c65c,swipe-row-stuck,archived,2026-10-25T04:04:17+00:00,3881717760,True,False,0,True,True,dirty-tree guard
+5927e023-4db0-4797-9f5f-d77ccc773022,unify-log-rows,archived,2026-10-24T07:21:54+00:00,765181952,True,True,19,True,True,dirty-tree guard
+596601a6-f48c-4a91-b2fd-30f10358a407,screen-off-acceptance,archived,2026-10-14T19:22:19+00:00,399511552,True,True,23,True,True,dirty-tree guard
+5dfef96a-246d-46bd-b1c7-4f3798fb304f,commander-decides-grants,archived,2026-10-16T12:31:10+00:00,403488768,True,False,0,True,True,dirty-tree guard
+5f287acb-bf73-462a-b8df-bfca5754e301,voice-router-first,archived,2026-10-20T21:10:41+00:00,457342976,True,True,7,True,True,dirty-tree guard
+6015d67b-d3c0-4d83-a280-b64011b6c977,squire-ga-1139,open,,125693952,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+601ccfe2-af9c-47bf-b1ce-1cc66ce1acec,pending-checks-gate,archived,2026-10-23T16:22:06+00:00,491053056,True,True,6,True,True,dirty-tree guard
+601ea716-da50-4b16-a372-d6474a45cfef,connector-one-tap,archived,2026-10-19T19:42:15+00:00,429281280,True,True,4,True,True,dirty-tree guard
+610f7250-827d-4200-8935-76e5a8389b57,disk-memory-audit,open,,4579688448,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+637b457f-d4ed-40b5-af6e-0e9a9c222791,mcp-search-discovery,archived,2026-10-25T16:58:13+00:00,1278648320,False,True,2,True,True,declared proof retention guard
+64d53d30-03e3-4a98-abd5-4104c9c80da4,hide-internal-text,archived,2026-10-27T02:30:37+00:00,630145024,True,True,12,True,True,dirty-tree guard
+660196cc-f961-4c6a-a50c-ac18aa06b74b,browser-viewer-cleanup,archived,2026-10-29T03:48:09+00:00,3908857856,True,True,3,True,True,dirty-tree guard
+6ae296b2-43bc-4711-a936-7443f75867fe,schedule-row-titles,archived,2026-10-22T00:33:06+00:00,422060032,True,True,5,True,True,dirty-tree guard
+6d1456c5-0dce-4c7b-b19c-01281ef26150,connector-card-trim,archived,2026-10-29T04:10:46+00:00,629575680,False,True,1,True,True,declared proof retention guard
+7033c91a-3055-49d6-bb5d-7675f15cd85c,corner-glyph-rows,archived,2026-10-25T13:05:53+00:00,5831593984,False,True,3,True,True,declared proof retention guard
+705e9433-3a3a-4238-bb1f-be33895a541f,error-failed-rows,archived,2026-10-27T00:41:07+00:00,634384384,False,True,7,True,True,declared proof retention guard
+71264d10-4279-404b-89bb-7af245563946,voice-turn-merge,archived,2026-10-14T19:27:59+00:00,713453568,True,True,3,True,True,dirty-tree guard
+72659473-68c2-4d8c-bfd1-9212fb88f51d,squire-local-status,archived,2026-10-13T03:40:09+00:00,369577984,False,True,16,True,True,publication guard
+72ac8128-1f5e-4361-bab5-6e16a2249a37,dashboard-local-days,archived,2026-10-23T01:10:36+00:00,475152384,True,True,1,True,True,dirty-tree guard
+72d0de31-ea79-4edd-aa4c-aa10f02adb05,download-to-vault,archived,2026-10-21T03:56:36+00:00,122777600,True,False,0,True,True,dirty-tree guard
+7396becb-76d7-4cd4-aa23-8bfb72ed1702,squire-approval-card,archived,2026-10-23T18:57:39+00:00,586313728,True,True,20,True,True,dirty-tree guard
+73ca92d0-1678-418d-a7c1-bf85d4217337,squire-host-supervisor,archived,2026-10-29T23:38:14+00:00,130002944,True,False,0,True,True,dirty-tree guard
+7463730c-1bf9-451a-83b8-123f6823a3bf,corner-reviewer-field,archived,2026-10-23T18:18:29+00:00,506138624,False,True,13,True,True,publication guard
+74951d00-9a76-44d8-a887-1bbd85ea5030,media-studio,open,,419188736,True,False,0,True,False,dirty-tree guard
+7960accc-10aa-4fe1-91ca-86428dabe117,gh-edit-repro,open,,656003072,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+7d2a0065-321d-4fc0-b21c-7cf490dc2fb2,sol-503-and-more,archived,2026-10-07T20:02:58+00:00,292200448,True,True,1,True,True,dirty-tree guard
+818044d6-3a2d-48b9-b6a7-e1e67a1b44df,Run-status,archived,2026-10-06T01:41:55+00:00,290021376,True,True,3,True,True,dirty-tree guard
+81c91ed4-032e-4350-ae81-71471c06ca79,codex-dot-connect,open,,4581793792,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+8277a0b8-dfa8-4afe-87c0-2471350cb6ac,avatar-system-mocks,open,,656535552,True,False,0,True,False,dirty-tree guard
+84e7dbb3-f36f-421a-a581-66902a4ad922,voice-filler-latency,archived,2026-10-21T16:29:26+00:00,894349312,True,True,4,True,True,dirty-tree guard
+85676192-4231-4081-b6fd-03b070e6c0c0,push-cache-restore,archived,2026-10-31T03:17:36+00:00,10399047680,True,True,9,True,True,dirty-tree guard
+874f6632-165a-4ef0-88a1-6a7a55fadf6b,new-user-startup-stall,archived,2026-10-23T15:48:52+00:00,480026624,True,True,1,True,True,dirty-tree guard
+8a6188e6-f287-4fbb-a52a-4405550675a5,font-timeout-startup,archived,2026-10-26T16:40:12+00:00,588476416,False,True,3,True,True,declared proof retention guard
+8ab909ca-65c6-48e8-9a17-c1788228e3b9,deferred-tools-replay,archived,2026-10-31T04:44:22+00:00,5541224448,False,True,13,True,True,declared proof retention guard
+8b6e998e-c7f8-4b94-9701-c4122515ef02,smooth-screen-thread,archived,2026-10-23T19:41:29+00:00,2827112448,True,True,5,True,True,dirty-tree guard
+93734cb8-9a49-40be-97d3-18ab6b5b1f2e,member-model-right,archived,2026-10-23T17:46:38+00:00,489312256,True,True,4,True,True,dirty-tree guard
+94590186-b545-4ad2-a7aa-7c3f51f52dd2,remove-sending-line,archived,2026-10-31T15:58:59+00:00,655998976,False,False,0,True,False,missing persisted archive fact
+94898089-4473-4b08-b9a6-ebc05563d95d,,unknown,,2621440,True,False,0,True,True,dirty-tree guard
+96215ba7-b6aa-4128-b42c-2c59398f96a1,transcript-redraw-scope,archived,2026-10-25T02:40:49+00:00,15004893184,False,True,18,True,True,process guard
+9688d456-c16b-4ce5-9cff-6ecb9decb75d,search-bar-margin,archived,2026-10-24T00:39:13+00:00,522272768,True,True,1,True,True,dirty-tree guard
+99be89a5-d913-46ff-a183-151fcf67f93e,Design-consistency-fixes,archived,2026-10-03T19:42:42+00:00,413995008,True,True,9,True,True,dirty-tree guard
+9a995687-e22f-4d7c-827e-4f34bf59f0bf,release-corner,archived,2026-10-21T14:40:10+00:00,333926400,True,True,3,True,True,dirty-tree guard
+9b15f7b1-3c91-4fbc-91f9-9ebfd39fe3f9,handoff-file-delivery,archived,2026-10-30T14:50:21+00:00,654954496,True,True,3,True,True,dirty-tree guard
+9df7a675-68ba-494a-ac56-39accb064f00,voice-error-sticks,archived,2026-10-24T05:50:38+00:00,532762624,True,True,1,True,True,dirty-tree guard
+9e398f0e-d655-40d4-bd18-560d6a554c5a,squire-connect-flow,archived,2026-10-29T17:34:21+00:00,2098679808,True,True,7,True,True,dirty-tree guard
+9e54bc1b-f590-4156-a562-a10a1bb135d9,android-flashlist-migration,archived,2026-10-25T18:38:20+00:00,11054866432,False,True,2,True,True,publication guard
+a197982c-5727-4478-b201-8dd8758bf18d,tiktok-finish,archived,2026-10-28T23:48:23+00:00,614768640,True,True,4,True,True,dirty-tree guard
+a21f300c-81ca-49d7-87ac-685fb4671345,corner-projection-server,archived,2026-10-10T18:00:30+00:00,313233408,True,True,1,True,True,dirty-tree guard
+a2de34a9-a724-4c2a-8c06-8fd4f5b406b8,font-check-android,archived,2026-10-22T12:42:31+00:00,418312192,True,False,0,True,True,dirty-tree guard
+a2e088b8-e13d-4bf2-85b7-3a11fa083014,ci-test-measure,open,,674197504,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+a65beeb6-8b34-48c8-825d-ea2bb165936e,search-cell-pickers,archived,2026-10-21T14:47:20+00:00,422289408,True,True,6,True,True,dirty-tree guard
+a7abe215-7917-41f3-8ef0-358693c3ba1a,latency-drift-tracking,archived,2026-10-30T14:56:17+00:00,677322752,False,True,1,True,True,declared proof retention guard
+a914716f-cd6c-4663-b42a-6e1044dc2bb9,issues-triage,open,,1783177216,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+a95e2f66-41e6-41b9-af6b-5ae17886ca7d,Finish-PR-602,archived,2026-09-12T12:38:32+00:00,618528768,False,True,1,True,True,publication guard
+a9c406e6-a4cc-4767-befe-668f904af6b5,voice-screen-off,archived,2026-10-14T20:39:47+00:00,416518144,True,True,32,True,True,dirty-tree guard
+ac1e9862-dcca-419a-b8f4-bb5cd19416cb,onboarding-github-return,archived,2026-10-23T00:06:30+00:00,1423499264,True,True,8,True,True,dirty-tree guard
+acca09be-d0fb-443d-a32f-31d1a9737023,latency-rig,open,,7707365376,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+ad53a97e-fbb6-4377-8d6a-d4402b0774df,,unknown,,221184,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+aeed37fa-64d9-417e-a0c7-7b385abe0a84,disabled-primary-button,archived,2026-10-22T20:15:17+00:00,455122944,True,True,2,True,True,dirty-tree guard
+b1eb44f5-915e-4a75-b9b6-018e6e60c064,mcp-hosted-registration,archived,2026-10-28T14:39:05+00:00,687239168,True,True,2,True,True,dirty-tree guard
+b2492b0e-2c11-4e5f-aab8-a20d84198512,dm-schedules-menu,archived,2026-10-24T19:50:38+00:00,556822528,True,True,28,True,True,dirty-tree guard
+b2aa2a49-8265-41f4-b137-6ffe3cf079de,corner-list-live,archived,2026-10-20T02:55:57+00:00,721408000,True,True,5,True,True,dirty-tree guard
+b47fb8b0-53c1-4313-b588-c2e37825501d,done-before-pr,archived,2026-10-25T15:18:48+00:00,8192,,,,True,True,git evidence unavailable
+b4abc04c-336b-4ae9-a2f7-90d907aa8547,server-jit-off,archived,2026-10-22T21:24:33+00:00,463343616,True,True,1,True,True,dirty-tree guard
+b7831d80-fb9f-493a-887f-c898aede0e91,compact-room-search,archived,2026-10-24T02:20:34+00:00,542511104,True,True,1,True,True,dirty-tree guard
+b94d8899-3dd2-4afd-a47e-f6233ffac099,room-rail-width,archived,2026-10-07T15:27:06+00:00,300163072,True,True,2,True,True,dirty-tree guard
+bbaa9725-64fe-4f9a-a7e0-c1392045468b,wording-check-scope,open,,655998976,True,False,0,True,False,dirty-tree guard
+bdf5ac36-8b68-4c2d-a7e7-32d09ccb0bd2,locked-button-ring-fix,open,,10802388992,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+be8adc58-de18-4560-9e5c-a936478793ed,tool-contract-fixes,open,,4587761664,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"
+bfa1f812-5b2f-4d50-b14d-5ab12f769862,quiet-row-actions,archived,2026-10-25T03:04:00+00:00,1969373184,True,True,3,True,True,dirty-tree guard
+c0954a5f-279b-4c22-91a9-bfaeca1b1e01,one-font-turn,archived,2026-10-21T21:56:53+00:00,417902592,True,True,2,True,True,dirty-tree guard
+c28a5375-521f-4758-b4c3-b32593d25eac,repo-clutter-sweep,archived,2026-10-21T01:33:15+00:00,407023616,True,True,1,True,True,dirty-tree guard
+c2dcf9f9-b068-428c-a193-cba28f7b7407,phone-signin-dropoff,archived,2026-10-28T22:58:07+00:00,636092416,False,True,4,True,True,declared proof retention guard
+c3cbd693-8ce6-4696-9635-3343a8c1b39a,client-network-audit,archived,2026-10-25T05:17:18+00:00,2121326592,True,False,0,True,True,dirty-tree guard
+c5c5797e-6318-4b06-8646-5adc217fedf8,room-header-glyph,archived,2026-10-22T19:54:15+00:00,653963264,True,True,20,True,True,dirty-tree guard
+c63cc9fb-e3f7-418b-a394-f9739834a31e,helper-cleanup-audit,archived,2026-10-25T04:15:21+00:00,548827136,True,False,0,True,True,dirty-tree guard
+c7091c69-bc98-4376-a7e8-07e5a40a970d,prompt-tradeoff-loop,archived,2026-10-20T12:30:21+00:00,446148608,True,True,8,True,True,dirty-tree guard
+c7a76e42-fefa-42d2-9588-fe746eaaa112,check-rows-13px,archived,2026-10-24T02:14:39+00:00,539049984,True,True,7,True,True,dirty-tree guard
+c7f7c5ad-b543-409d-a834-9e50e6f998ac,tiktok-consent-click,archived,2026-10-28T22:39:04+00:00,127221760,True,False,0,True,True,dirty-tree guard
+cc24d4f8-8aa7-4cb2-a0ed-de54887d5f64,chat-list-read-dedupe,archived,2026-10-25T05:41:26+00:00,555450368,True,True,1,True,True,dirty-tree guard
+ce114f41-cc9d-4da3-b5d8-ff11d317e090,ci-runners-squire,archived,2026-10-21T00:23:25+00:00,456597504,True,False,0,True,True,dirty-tree guard
+d0dedb54-162b-4185-a9ef-0e241540a1d4,squire-shard-runners,archived,2026-10-26T03:23:25+00:00,580567040,True,True,28,True,True,dirty-tree guard
+d272c9cc-1707-4369-92d1-5e09e03d7c80,replay-measurement-repair,archived,2026-10-25T18:18:38+00:00,588230656,False,True,9,True,True,declared proof retention guard
+d4f23959-65c3-4e16-976e-38715e33e713,github-new-signup,archived,2026-10-29T23:40:28+00:00,2150973440,True,False,0,True,True,dirty-tree guard
+d50214de-1e48-44dc-9ba2-8a1f8d3e2fd6,desktop-voice-conversation,archived,2026-10-14T04:56:23+00:00,1469034496,True,True,6,True,True,dirty-tree guard
+d62d66d6-9214-4511-ac97-1069a2afdd27,game-mime-schema,archived,2026-10-22T19:49:47+00:00,451444736,True,True,1,True,True,dirty-tree guard
+daa46ca2-2bf4-48ab-8559-9cb5345e5059,PLO5-NL-Clone,archived,2026-09-12T21:57:01+00:00,619171840,False,True,4,True,True,publication guard
+dac9d764-e14e-4ca0-b263-cda37ffa737a,join-link-wrong-workspace,archived,2026-10-15T15:53:11+00:00,620851200,True,False,0,True,True,dirty-tree guard
+ddab1893-9a1d-47cb-8824-a354e9d54a07,desktop-subpage-widths,archived,2026-10-25T03:37:50+00:00,583176192,True,True,21,True,True,dirty-tree guard
+def86f7b-7c41-443e-8b94-38f3c4531b4a,concurrent-stream-clip,archived,2026-10-25T09:43:12+00:00,10720583680,False,True,1,True,True,process guard
+e0117ba3-998e-457e-af4b-624e127002c9,voice-cuts-in,archived,2026-10-25T03:39:42+00:00,554557440,True,True,1,True,True,dirty-tree guard
+e10da014-e2db-45e0-a547-45d5c52c1564,card-button-rule,archived,2026-10-25T17:23:45+00:00,2455412736,False,True,4,True,True,declared proof retention guard
+e47cc195-9840-4403-92d3-624ea8d5a76d,open-request-deferral,archived,2026-10-30T20:21:52+00:00,9960771584,False,True,12,True,True,declared proof retention guard
+e4884714-eeaf-44d5-bd10-7381b25dee9e,lock-wording-only,archived,2026-10-26T22:36:32+00:00,598933504,False,True,12,True,True,declared proof retention guard
+e5bb79f3-285b-4809-833a-ddebd55fac37,voice-fragment-regressions,archived,2026-10-20T02:44:20+00:00,441643008,True,True,9,True,True,dirty-tree guard
+e63453d2-fa91-4d04-bf0e-46b6ef52619e,schedules-flat-list,archived,2026-10-22T16:09:10+00:00,443625472,True,True,3,True,True,dirty-tree guard
+e7d59073-964f-42b8-82b9-a7927a151b52,hash-name-autocomplete,archived,2026-10-08T18:10:08+00:00,293580800,True,True,3,True,True,dirty-tree guard
+e9244a2e-64b8-4709-8bd8-343448b9b6b8,voice-merge-proof,archived,2026-10-14T15:32:40+00:00,1488855040,True,False,0,True,True,dirty-tree guard
+ed24f068-bc34-4811-960b-3b8dd18997f4,remove-inapp-push-notice,archived,2026-10-21T12:52:59+00:00,415318016,True,False,0,True,True,dirty-tree guard
+ed6d16ce-4147-4f7e-ae65-2df41f8979b8,Ban,archived,2026-09-28T22:51:23+00:00,4096,,,,True,True,git evidence unavailable
+f0334151-0254-433d-9259-166e437e3cd4,squire-no-systemd,archived,2026-10-28T21:48:32+00:00,125435904,True,False,0,True,True,dirty-tree guard
+f2ba0a85-c6e2-484b-af74-b860f50a431a,reasoning-leak-cause,archived,2026-10-25T15:07:34+00:00,574111744,False,True,1,True,True,declared proof retention guard
+f5675eb6-abf0-41d7-8a93-676d0c58cde9,stale-order-repro,open,,4581777408,True,False,0,True,False,dirty-tree guard
+f5dce9ea-a35d-4c3e-8152-fdbae9392895,no-progress-wakes,archived,2026-10-13T19:51:04+00:00,364756992,True,False,0,True,True,dirty-tree guard
+f5ff5c4a-5867-452d-b423-873bd4a11d01,android-abort-event,archived,2026-10-21T03:02:00+00:00,402350080,True,False,0,True,True,dirty-tree guard
+f7bb2dd3-3a96-42d5-ac63-6323114e0ac7,time-limit-continue,archived,2026-10-27T20:18:03+00:00,622092288,False,True,2,True,True,declared proof retention guard
+f95aa673-2eb5-491a-930b-51dc1aa2d2ee,truthful-corner-states,archived,2026-10-14T20:09:16+00:00,387436544,True,True,5,True,True,dirty-tree guard
+fa680239-90e6-484d-8bdd-081bc7eb23d3,settings-tabs-build,archived,2026-10-22T13:16:32+00:00,461619200,True,True,29,True,True,dirty-tree guard
+fa88deb8-4d02-462a-b0d7-c08c0886aa85,db-setup-snapshot,archived,2026-10-31T10:16:23+00:00,1600933888,True,True,1,True,True,dirty-tree guard
+fbcbb6cc-3b23-4167-a922-d29472b6a903,new-user-signup-proof,archived,2026-10-31T01:46:32+00:00,911843328,True,False,0,True,True,dirty-tree guard
+fc536f33-946c-404c-acc3-694ad4c64eed,squire-approval-card,archived,2026-10-23T13:18:10+00:00,481775616,True,False,0,True,True,dirty-tree guard
+fcb091e6-c3da-41a3-8eb9-68b542488da0,repo-card-padding,archived,2026-10-23T14:58:25+00:00,475381760,True,False,0,True,True,dirty-tree guard
+fd3d80b2-30ed-46e2-b4fd-a31ee53fb922,agent-usage-meter,archived,2026-10-18T14:29:21+00:00,417243136,True,False,0,True,True,dirty-tree guard
+ff1d8fb4-29a9-4f02-9f1b-09aeda443dfc,connector-one-tap,archived,2026-10-19T18:21:18+00:00,428163072,True,False,0,True,True,dirty-tree guard
+ffa9fe26-c852-4821-bfe9-853e8cb3bd2e,Milestone-Research,open,,12288,False,False,0,True,False,"publication/cleanliness pass; inspect process, mount, proof retention and scheduling"

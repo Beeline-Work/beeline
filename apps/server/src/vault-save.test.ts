@@ -210,6 +210,18 @@ it('keeps an unanswered submission in memory only and drops it on timeout or dis
   expect(values).toEqual({});
 });
 
+it('abandons a phone submission on abort and erases its in-memory values', async () => {
+  const sent = vi.fn(() => true);
+  relay.attach(AGENT, sent);
+  const controller = new AbortController();
+  const values = { password: SECRET };
+  const answer = relay.submit(AGENT, cardId, ROOM, metadata, values, 65_000, controller.signal);
+  expect(sent).toHaveBeenCalledOnce();
+  controller.abort();
+  expect(await answer).toEqual({ status: 'retry' });
+  expect(values).toEqual({});
+});
+
 it('accepts only names at the agent boundary and masks password fields', () => {
   expect(() => vaultSaveRequest({ ...metadata, value: SECRET })).toThrow();
   expect(() =>

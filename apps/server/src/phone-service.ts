@@ -1,3 +1,4 @@
+import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { setMcpMemberWebhook, McpToolError } from './rooms-mcp-members.js';
 import { disconnectMcp, MCP_SCOPES } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
@@ -11040,6 +11041,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  ...PHONE_ROUTE_OPERATION_NAMES,
   'disconnectAiClient',
   'openComputerSession',
   'handbackComputerSession',

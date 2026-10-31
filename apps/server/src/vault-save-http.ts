@@ -30,8 +30,6 @@ export async function vaultSaveHttp(
     response.end(JSON.stringify(result));
   };
   let input: Record<string, unknown> | undefined;
-  let values: Record<string, string> | undefined;
-  let claimed: { cardId: string; attemptId: string } | undefined;
   try {
     if (request.method !== 'POST') {
       reply(405, { error: 'invalid_request' });
@@ -79,8 +77,44 @@ export async function vaultSaveHttp(
       reply(200, { ok: true });
       return;
     }
+    if (request.url !== '/v1/vault-save/submit') throw new Error('invalid');
+    const result = await submitVaultSave(input, actor, dependencies, relay,
+      !request.headers['fly-replay-src']);
+    if (result.replayTarget) {
+      response.writeHead(307, {
+        'fly-replay': `instance=${result.replayTarget};timeout=5s`,
+        'cache-control': 'no-store',
+      });
+      response.end();
+    } else reply(result.status, result.body);
+  } catch {
+    reply(200, { status: 'retry' });
+  } finally {
+    if (input) delete input.values;
+  }
+}
+
+export type VaultSaveResult = {
+  status: number;
+  body: { error?: string; status?: 'saved' | 'retry'; card?: VaultSaveCard };
+  replayTarget?: string;
+};
+
+/** Shared secret boundary for HTTP and the authenticated phone socket. Never throw values. */
+export async function submitVaultSave(
+  input: Record<string, unknown>,
+  actor: string,
+  dependencies: { database: SqlDatabase; phone: PhoneService; live: LiveHub },
+  relay: VaultSaveRelay,
+  replayAllowed = false,
+  signal?: AbortSignal,
+): Promise<VaultSaveResult> {
+  let outcome: VaultSaveResult = { status: 200, body: { status: 'retry' } };
+  let values: Record<string, string> | undefined;
+  let claimed: { cardId: string; attemptId: string } | undefined;
+  const reply = (status: number, body: VaultSaveResult['body']) => { outcome = { status, body }; };
+  try {
     if (
-      request.url !== '/v1/vault-save/submit' ||
       typeof input.cardId !== 'string' ||
       typeof input.roomId !== 'string'
     )
@@ -88,7 +122,7 @@ export async function vaultSaveHttp(
     const { cardId, roomId } = input;
     if (!(await dependencies.phone.canReadRoom(roomId, actor))) {
       reply(403, { error: 'access_denied' });
-      return;
+      return outcome;
     }
     const row = (
       await dependencies.database.query<{ card: VaultSaveCard & { originCommandId: string } }>(
@@ -102,16 +136,16 @@ export async function vaultSaveHttp(
     ).rows[0];
     if (!row) {
       reply(403, { error: 'access_denied' });
-      return;
+      return outcome;
     }
     if (row.card.status === 'saved') {
       reply(200, { status: 'saved', card: readVaultSaveCard(row.card) });
-      return;
+      return outcome;
     }
     if (
       !relay.hasHelper(row.card.agentId) &&
       process.env.FLY_MACHINE_ID &&
-      !request.headers['fly-replay-src']
+      replayAllowed
     ) {
       const connection = (
         await dependencies.database.query<{ instance_id: string }>(
@@ -122,12 +156,8 @@ export async function vaultSaveHttp(
       const target = connection?.instance_id.split(':')[0];
       if (target && /^[0-9a-f]{14,16}$/.test(target) && target !== relay.instanceId) {
         // Route to the socket's server without a PostgreSQL payload or a durable queue.
-        response.writeHead(307, {
-          'fly-replay': `instance=${target};timeout=5s`,
-          'cache-control': 'no-store',
-        });
-        response.end();
-        return;
+        outcome = { status: 307, body: {}, replayTarget: target };
+        return outcome;
       }
     }
     values = vaultSaveValues(row.card, input.values);
@@ -141,7 +171,7 @@ export async function vaultSaveHttp(
     );
     if (!lock.rows.length) {
       reply(409, { status: 'retry' });
-      return;
+      return outcome;
     }
     claimed = { cardId, attemptId };
     const { service, label, purpose, fields, allowedHosts, authStrategy } = row.card;
@@ -153,7 +183,7 @@ export async function vaultSaveHttp(
       allowedHosts,
       authStrategy,
     });
-    const result = await relay.submit(row.card.agentId, cardId, roomId, metadata, values);
+    const result = await relay.submit(row.card.agentId, cardId, roomId, metadata, values, undefined, signal);
     if (result.status === 'saved') {
       await dependencies.database.transaction(async (database) => {
         const updated = await database.query(
@@ -230,4 +260,5 @@ export async function vaultSaveHttp(
     if (values) for (const name of Object.keys(values)) delete values[name];
     if (input) delete input.values;
   }
+  return outcome;
 }

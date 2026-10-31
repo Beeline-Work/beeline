@@ -33,6 +33,7 @@
     "test:feedback-signals": "node --test scripts/feedback-signals.test.mjs",
     "prove:workspace-walk-history": "npm run build -w @beeline/server && node --import tsx scripts/prove-workspace-walk-history.mjs",
     "prove:message-links": "npm run build -w @beeline/server && node --import tsx scripts/prove-message-links.mjs",
+    "prove:phone-socket": "npm run build -w @beeline/server && node --import tsx scripts/prove-phone-socket.mjs",
     "prove:system-message-visibility": "npm run build -w @beeline/server && node --import tsx scripts/prove-system-message-visibility.mjs",
     "prove:operator-system-dm": "npm run build && node --import tsx scripts/prove-operator-system-dm.mjs",
     "prove:operator-finances": "npm run build -w @beeline/server && node --import tsx scripts/prove-operator-finances.mjs",

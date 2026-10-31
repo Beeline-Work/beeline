@@ -23,7 +23,7 @@ try {
   await new StarterOnboardingService(db).enter(workspace.roomId, owner);
   const view = await phone.readRoom(workspace.roomId, owner);
   const welcome = view.messages.find(message => message.choice).choice;
-  await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'B' }, owner);
+  await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'A' }, owner);
   const beebee = welcome.agent.pubkey;
   const clipBytes = await readFile('docs/evidence/starter-onboarding/test-clip.mp4');
   const frameBytes = await readFile('docs/evidence/starter-onboarding/test-frame.jpg');

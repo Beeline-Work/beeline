@@ -9,13 +9,12 @@ import type { CornerVisualState } from '@/buzz/corners';
 export type CornerDisplayState = {
   readonly status: CornerState;
   readonly visual: CornerVisualState;
-  readonly needsYou: boolean;
   readonly glyph: string;
   readonly word: CornerState;
   readonly detail?: string;
   readonly prUrl?: string;
   readonly terminal: boolean;
-  readonly headerSuffix?: 'failed' | 'checks failed';
+  readonly headerSuffix?: 'checks failed';
   readonly tone: 'brass' | 'quiet' | 'ghost';
 };
 
@@ -74,10 +73,9 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
-    visual,
-    needsYou: state === 'review' || state === 'waiting',
-    glyph: state === 'working' ? '◌' : state === 'review' ? '●' : state === 'waiting' ? 'Ⅱ' : '○',
     word: state,
+    visual,
+    glyph: state === 'working' ? '◌' : state === 'review' ? '●' : state === 'waiting' ? 'Ⅱ' : '○',
     ...(detail ? { detail } : {}),
     ...(item.lifecycle.pr?.url ? { prUrl: item.lifecycle.pr.url } : {}),
     terminal: state === 'archived',
@@ -85,10 +83,6 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
 
     tone: state === 'waiting' ? 'brass' : state === 'archived' ? 'ghost' : 'quiet',
   };
-}
-
-export function cornerHeaderStateLabel(state: CornerDisplayState): string {
-  return state.headerSuffix ? `${state.status} · ${state.headerSuffix}` : state.status;
 }
 
 export type CornerHeaderAgentInput = {
@@ -99,7 +93,7 @@ export type CornerHeaderAgentInput = {
   readonly ownerPubkey?: string;
   /** Absent until the corner's row lands; the header then shows no state. */
   readonly status?: CornerState;
-  readonly headerSuffix?: 'failed' | 'checks failed';
+  readonly headerSuffix?: 'checks failed';
   /** Pubkeys holding a live working receipt in this corner. */
   readonly activeTurnPubkeys: readonly string[];
 };

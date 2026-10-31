@@ -7,7 +7,7 @@ import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
-import { agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -43,7 +43,24 @@ span.plate{display:grid;place-items:center;padding:0;font-weight:500}
 .perm strong{display:block;font-weight:500}.perm span{font-size:13px;line-height:19px;color:var(--quiet)}
 label{display:block;font-weight:500;margin-bottom:8px}.field{margin-bottom:24px}.field p{font-size:13px;line-height:19px;color:var(--quiet);margin:8px 0 0}
 input{width:100%;height:44px;font:16px SG,system-ui,sans-serif;padding:0 12px;border:1px solid var(--strong);border-radius:3px;background:var(--raised);color:var(--t1)}
+.routine{margin-top:32px;padding-top:24px;border-top:1px solid var(--border)}.routine h2{font-size:16px;line-height:23px;font-weight:500;margin:0 0 8px}.routine-text{white-space:pre-line;color:var(--t2);margin:16px 0}.copy{min-height:44px;padding:0;border:0;background:transparent;color:var(--brass);font:inherit;cursor:pointer}.copy-status{font-size:13px;line-height:19px;color:var(--quiet)}
 .foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}`;
+// Static code only; owner, app and Room text never enter executable script.
+const COPY_ROUTINE_SCRIPT = `document.getElementById('copy-routine').addEventListener('click', async () => {
+  const prompt = document.getElementById('starter-routine');
+  const status = document.getElementById('copy-status');
+  try {
+    await navigator.clipboard.writeText(prompt.textContent);
+    status.textContent = 'Copied';
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(prompt);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    status.textContent = 'Could not copy. Copy the selected text into your agent’s saved instructions.';
+  }
+});`;
 /** Whose privacy terms cover Room text a known client reads. */
 const PUBLISHERS: Record<string, string> = { 'meta muse': 'Meta', muse: 'Meta', grok: 'xAI', 'grok bot': 'xAI', chatgpt: 'OpenAI', claude: 'Anthropic' };
 export function mcpJson(response: ServerResponse, status: number, value: unknown): void {
@@ -137,13 +154,16 @@ export class RoomsMcpOAuth {
   private page(response: ServerResponse, title: string, content: string, status = 200): void {
     // No form-action: Chrome applies it to every redirect after a form POST, so
     // a client callback that redirects again (www.cursor.com to cursor.com) stalls.
+    const nonce = randomBytes(18).toString('base64');
+    const copyScript = content.includes('id="starter-routine"')
+      ? `<script nonce="${nonce}">${COPY_ROUTINE_SCRIPT}</script>` : '';
     response.writeHead(status, {
       // Preserve Origin on same-origin form POSTs without sending referrers to other sites.
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
-      'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
+      'content-security-policy': `default-src 'none'; ${copyScript ? `script-src 'nonce-${nonce}'; ` : ''}style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
       'x-content-type-options': 'nosniff',
     });
-    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main></html>`);
+    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main>${copyScript}</html>`);
   }
   /** The client's own mark joined to the real Beeline icon by a dashed line. */
   private brand(flow: Pick<Flow, 'name' | 'logo'>): string {
@@ -359,7 +379,7 @@ export class RoomsMcpOAuth {
           const plate = flow.logo ? `<img class="plate" src="${escape(flow.logo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Wake link (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called.</p></div><div class="field"><label for="wake_key">Wake key (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Wake link (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called.</p></div><div class="field"><label for="wake_key">Wake key (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><div id="starter-routine" class="routine-text">${escape(MCP_STARTER_ROUTINE)}</div><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
         }
         return true;
       }

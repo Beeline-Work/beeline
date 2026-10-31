@@ -97,14 +97,7 @@ export function useConnectionState(): ConnectionState {
   );
 }
 
-/** A socket stuck opening on a bad network fires no close on its own. */
-const LIVE_CONNECT_TIMEOUT_MS = 15_000;
-/** A foreground sync is a one-off liveness check, never a periodic ping. */
-const FOREGROUND_SYNC_TIMEOUT_MS = 3_000;
 const BACKGROUND_CLOSE_DELAY_MS = 120_000;
-/** A push can beat the socket frame for the same message; past this, the
- *  socket missed it. */
-const PUSH_MISS_GRACE_MS = 5_000;
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
 /** Parent-Room invalidations that name a corner change without its rows. */
@@ -164,7 +157,6 @@ export class LiveConnection {
   private readonly viewing = new Map<string, number>();
   private readonly heardMessages = new Set<string>();
   private readonly subscribeWaiters = new Set<() => void>();
-  private foregroundSyncTimer: ReturnType<typeof setTimeout> | undefined;
   private backgroundCloseTimer: ReturnType<typeof setTimeout> | undefined;
   private backgroundSocketClosed = false;
   private readonly unsubscribeAppState: () => void;
@@ -387,16 +379,12 @@ export class LiveConnection {
   }
 
   /**
-   * A push arrived for a message in a Room this socket carries. When the
-   * socket never delivered that message, it is silently dead: replace it.
+   * A push arrived for a message in a Room this socket carries. Replace the
+   * socket when that message has not already arrived on it.
    */
   notePushedMessage(roomId: string, messageId: string): void {
     if (!this.seenSubscribed.has(roomId) || this.heardMessages.has(messageId)) return;
-    const socket = this.socket;
-    setTimeout(() => {
-      if (this.socket !== socket || !this.seenSubscribed.has(roomId)) return;
-      if (!this.heardMessages.has(messageId)) this.reconnect();
-    }, PUSH_MISS_GRACE_MS);
+    this.reconnect();
   }
 
   /** Fires once per successful socket open, first connect and every
@@ -426,7 +414,9 @@ export class LiveConnection {
 
   /**
    * Next socket for an explicit Retry, a foreground return, a network change,
-   * or a request deadline. A failed attempt does not schedule another.
+   * a push the socket has not delivered, or a request deadline. A handshake
+   * that is still opening yields to that event too. A failed attempt does not
+   * schedule another.
    */
   reconnectNow(): void {
     if (this.connectInFlight) {
@@ -440,7 +430,6 @@ export class LiveConnection {
       }
       return;
     }
-    if (this.socket?.readyState === 0) return;
     if (!this.socket) {
       if (this.registrations.size) void this.ensureSocket();
       return;
@@ -448,7 +437,7 @@ export class LiveConnection {
     const current = this.socket;
     this.socket = undefined;
     this.dropSocketState();
-    current?.close();
+    current.close();
     void this.ensureSocket();
   }
 
@@ -462,23 +451,6 @@ export class LiveConnection {
     this.backgroundSocketClosed = false;
     if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
     this.backgroundCloseTimer = undefined;
-    // A one-shot ordered socket echo proves the background connection still
-    // carries its subscriptions. Replace it only when that path is silent.
-    if (this.socket && isSocketOpen(this.socket)) {
-      if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-      const current = this.socket;
-      try {
-        current.send(JSON.stringify({ type: 'sync' }));
-      } catch {
-        this.reconnectNow();
-        return;
-      }
-      this.foregroundSyncTimer = setTimeout(() => {
-        this.foregroundSyncTimer = undefined;
-        if (this.socket === current) this.reconnect();
-      }, FOREGROUND_SYNC_TIMEOUT_MS);
-      return;
-    }
     this.reconnectNow();
   }
 
@@ -528,8 +500,6 @@ export class LiveConnection {
     const current = this.socket;
     this.socket = undefined;
     current?.close();
-    if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-    this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     this.overlays.clear();
@@ -575,9 +545,10 @@ export class LiveConnection {
   }
 
   /**
-   * Opens one socket. An authorization failure, a hung open, a handshake
-   * error, or a close ends that attempt. The next socket waits for
-   * foreground, a network change, or an explicit Retry.
+   * Opens one socket. An authorization failure, a handshake error, or a close
+   * ends that attempt. A socket that never opens stays until foreground, a
+   * network change, a push, or an explicit Retry. The next attempt waits for
+   * one of those events.
    */
   private async connect(): Promise<void> {
     const generation = this.generation;
@@ -587,15 +558,7 @@ export class LiveConnection {
       const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
-      const connectTimer = setTimeout(() => {
-        if (this.socket !== next || next.readyState !== 0) return;
-        this.socket = undefined;
-        this.dropSocketState();
-        next.close();
-        setConnectionState('disconnected');
-      }, LIVE_CONNECT_TIMEOUT_MS);
       next.onopen = () => {
-        clearTimeout(connectTimer);
         if (this.socket !== next) return;
         setConnectionState('connected');
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
@@ -614,11 +577,7 @@ export class LiveConnection {
           return;
         }
         if (this.receiveReply(live, next)) return;
-        if (live.type === 'sync-ok') {
-          if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-          this.foregroundSyncTimer = undefined;
-          return;
-        }
+        if (live.type === 'sync-ok') return;
         noteLiveFrame();
         if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) {
           this.reconnect();
@@ -627,7 +586,6 @@ export class LiveConnection {
         this.dispatch(live, next);
       };
       next.onclose = () => {
-        clearTimeout(connectTimer);
         if (this.socket !== next) return;
         this.socket = undefined;
         this.dropSocketState();
@@ -651,8 +609,6 @@ export class LiveConnection {
 
   private dropSocketState(): void {
     this.rejectRequests();
-    if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-    this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     noteCornerSocketDropped();

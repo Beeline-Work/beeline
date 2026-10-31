@@ -7,7 +7,8 @@ import pg from 'pg';
 import os from 'node:os';
 import { calibrateDeviceClock } from './device-clock.mjs';
 import { createDeviceClockReader } from './device-clock-reader.mjs';
-import { pointFor, requireRoomList } from './capture-ui.mjs';
+import { isKeyboardShown, pointFor, requireRoomList } from './capture-ui.mjs';
+import { dumpUi } from './dump-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
 import { extractArrivalMoments, nativeArrivalMoment, findNativeArrival, validateArrivalCases } from './room-arrivals.mjs';
@@ -29,11 +30,8 @@ const cases = JSON.parse(await readFile(new URL('./room-arrival-cases.json', imp
 validateArrivalCases(cases);
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const dump = () => {
-  adb('shell', 'rm', '-f', '/sdcard/latency-rig.xml');
-  adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml');
-  return adb('shell', 'cat', '/sdcard/latency-rig.xml');
-};
+let dumpStep = 'Room list readiness';
+const dump = () => dumpUi(adb, dumpStep);
 const tap = (point) => adb('shell', 'input', 'tap', ...point.map(String));
 const open = (route) => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', `beeline://${route}`, 'app.usebeeline/.MainActivity');
 const db = new pg.Client({ connectionString: databaseUrl });
@@ -59,7 +57,7 @@ try {
   const latest = (await db.query('SELECT id FROM messages WHERE room_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1', [fixture.id])).rows[0];
   let listReady = false;
   for (let ready = 0; ready < 30; ready++) {
-    const xml = dump();
+    const xml = await dump();
     if (pointFor(xml, 'content-desc', 'all conversations')) {
       if (pointFor(xml, 'content-desc', 'Latency Rig 200 — switch Workspace') &&
           pointFor(xml, 'text', '#Rig room 001') && !pointFor(xml, 'content-desc', 'Close Workspace switcher')) { listReady = true; break; }
@@ -119,6 +117,7 @@ try {
     let sendComposer;
     let sendButton;
     for (let sample = 0; sample < count; sample++) {
+      dumpStep = `${scenario.name} setup (sample ${sample + 1}/${count})`;
       if (scenario.entry !== 'send-text' && !taps.includes(scenario.entry)) adb('shell', 'input', 'keyevent', '4');
       await pause(1000);
       let targetId = (await db.query('SELECT id FROM messages WHERE room_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1', [fixture.id])).rows[0]?.id;
@@ -138,42 +137,42 @@ try {
         if (scenario.entry === 'switch-tabs') {
           open('beeline/channels');
           await pause(1500);
-          const all = pointFor(dump(), 'content-desc', 'all conversations');
+          const all = pointFor(await dump(), 'content-desc', 'all conversations');
           if (!all) throw new Error('Switch-tabs requires the conversation tabs');
           tap(all);
           await pause(500);
-          const xml = dump();
+          const xml = await dump();
           if (xml.includes('No pinned conversations yet.')) throw new Error('Target tab content already visible');
           point = pointFor(xml, 'content-desc', 'pinned conversations');
         } else {
           open(`beeline/chat/${fixture.id}`);
           await pause(1500);
           if (scenario.entry === 'open-composer') {
-            const keyboardShown = () => /mInputShown=true|mIsInputViewShown=true/.test(adb('shell', 'dumpsys', 'input_method'));
+            const keyboardShown = () => isKeyboardShown(adb('shell', 'dumpsys', 'input_method'));
             if (keyboardShown()) { adb('shell', 'input', 'keyevent', '4'); await pause(500); }
             if (keyboardShown()) throw new Error('Composer setup requires a dismissed keyboard');
-            point = pointFor(dump(), 'content-desc', 'Message');
+            point = pointFor(await dump(), 'content-desc', 'Message');
           } else if (scenario.entry === 'react-message') {
             targetId = randomBytes(32).toString('hex');
             await db.query('INSERT INTO messages(id,room_id,author_id,text,reactions) VALUES($1,$2,$3,$4,$5::jsonb)',
               [targetId, fixture.id, author, `Rig ${targetId.slice(0, 16)}`, JSON.stringify({'👍': [author]})]);
             await pause(1500);
             // UI Automator serializes emoji as numeric XML character references.
-            const xml = dump().replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, value) =>
+            const xml = (await dump()).replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, value) =>
               String.fromCodePoint(value[0].toLowerCase() === 'x' ? parseInt(value.slice(1), 16) : Number(value)));
             point = pointFor(xml, 'resource-id', `reaction-chip-${targetId}-👍`);
             const chip = [...xml.matchAll(/<node\b[^>]*>/g)].map(m => m[0])
               .find(node => node.includes(`resource-id="reaction-chip-${targetId}-👍"`));
             if (!chip?.includes('content-desc="👍, 1 reaction"')) throw new Error('Reaction setup requires one existing reaction');
           } else {
-            const doorXml = dump();
+            const doorXml = await dump();
             const doorNode = [...doorXml.matchAll(/<node\b[^>]*>/g)].map(m => m[0]).find(n => n.includes('resource-id="room-corners-menu"'));
             const doorLabel = doorNode?.match(/content-desc="([^"]+)"/)?.[1];
             const door = doorLabel && pointFor(doorXml, 'content-desc', doorLabel);
             if (!door) throw new Error('Room corners door missing');
             tap(door);
             await pause(1500);
-            const xml = dump();
+            const xml = await dump();
             const rowNode = [...xml.matchAll(/<node\b[^>]*>/g)].map(m => m[0])
               .find(node => /resource-id="room-corner-[a-f0-9-]{36}"/.test(node));
             const cornerId = rowNode?.match(/resource-id="room-corner-([a-f0-9-]{36})"/)?.[1];
@@ -185,12 +184,12 @@ try {
             await db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',
               [targetId, corner.id, author, `Rig ${targetId.slice(0, 16)}`]);
             await pause(500);
-            point = pointFor(dump(), 'content-desc', row);
+            point = pointFor(await dump(), 'content-desc', row);
           }
         }
         if (!point) throw new Error(`Visible action missing: ${scenario.entry}`);
       } else if (scenario.entry === 'send-text') {
-        const composer = sendComposer ?? pointFor(dump(), 'content-desc', 'Message');
+        const composer = sendComposer ?? pointFor(await dump(), 'content-desc', 'Message');
         if (!composer) throw new Error('Send-text requires the visible Room composer');
         sendComposer = composer;
         tap(composer);
@@ -204,13 +203,13 @@ try {
         await pause(500);
         // Sending starts animated status rows that prevent UI Automator idle.
         // Reuse the established controls; native text paint still proves every send.
-        point = sendButton ?? pointFor(dump(), 'content-desc', 'Send message');
+        point = sendButton ?? pointFor(await dump(), 'content-desc', 'Send message');
         if (!point) throw new Error('Send-text fixture has no enabled send button');
         sendButton = point;
       } else {
         let xml;
         for (let precondition = 0; precondition < 3; precondition++) {
-          xml = dump();
+          xml = await dump();
           const close = pointFor(xml, 'content-desc', 'Close Workspace switcher');
           if (!close) break;
           tap(close);
@@ -255,7 +254,7 @@ try {
       await writeFile(`${output}/attempts.json`, JSON.stringify(attempts, null, 2));
       if (smoke && moment.timedOut) throw new Error(`Smoke completion never became visible: ${scenario.name}`);
       if (scenario.entry === 'switch-tabs') {
-        const all = pointFor(dump(), 'content-desc', 'all conversations');
+        const all = pointFor(await dump(), 'content-desc', 'all conversations');
         if (!all) throw new Error('Cannot restore All after tab capture');
         tap(all);
         await pause(500);

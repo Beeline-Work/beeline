@@ -200,10 +200,17 @@ async function runTurn(
     fetchImpl,
   });
   const loop = roomLoop.run();
-  await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
-  abort.abort();
-  await loop;
-  await scheduler.dispose();
+  try {
+    // Prompt invocation precedes reply publication. Wait for the visible reply
+    // before stopping intake, or a fast assertion can cancel this very turn.
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(
+      'postRoomMessage', expect.objectContaining({ text: 'A photo of a bee.' }),
+    ), { timeout: 5_000 });
+  } finally {
+    abort.abort();
+    await loop;
+    await scheduler.dispose();
+  }
   // The session's `TMPDIR` is the short symlink `roomAgentHomeEnv` reports, so
   // attachments are named under it, not under the long agent home.
   const scratch = join(roomSessionTmpDir(agentHomeRoot), 'beeline-attachments', 'msg-photo');

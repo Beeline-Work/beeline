@@ -816,6 +816,26 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/consent', { flow: grant.flow, decision: 'allow' }, { cookie: grant.cookie, origin })).status).toBe(400);
     expect((await fetch(`${origin}/mcp/oauth/consent?flow=${grant.flow}`)).status).toBe(400);
   });
+  it('R1: explains a taken consent handle without granting or changing the existing member', async () => {
+    const existing = await connected();
+    const handle = `pidoong_${randomBytes(4).toString('hex')}`;
+    await existing.client.callTool({ name: 'set_profile', arguments: { name: 'Pidoong', handle } });
+    const client = await (await post('/mcp/oauth/register', { client_name: 'ChatGPT', redirect_uris: ['http://127.0.0.1:9876/callback'] })).json() as { client_id: string };
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:9876/callback', response_type: 'code',
+      code_challenge: createHash('sha256').update(opaque()).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state: 'collision' });
+    const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
+    const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+    const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+    await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+    await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Pidoong', joiner_handle: handle }, { cookie, origin })).status).toBe(302);
+    const refused = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain('Handle already taken');
+    expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [client.client_id])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_codes WHERE client_id=$1', [client.client_id])).rowCount).toBe(0);
+    expect((await db.query('SELECT handle FROM identities WHERE id=$1', [existing.member])).rows[0]!.handle).toBe(handle);
+  });
   it('previews and edits the joining member on consent', async () => {
     const registered = await post('/mcp/oauth/register', { client_name: 'Grok Bot', redirect_uris: ['http://127.0.0.1:9876/callback'] });
     const client = await registered.json() as { client_id: string };
@@ -1411,8 +1431,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toContain('set_profile');
     expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toContain('tags your @handle');
     const tools = (await client.listTools()).tools;
-    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('call it first');
-    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^Call this first/);
+    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('verify your approved member identity and owner');
+    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^After verifying list_rooms/);
     expect(tools.find(t => t.name === 'set_profile')!.description).toContain('display name and profile picture you already use in your own app');
     expect(tools.find(t => t.name === 'set_profile')!.description).toContain('https URL or data URI');
     expect(client.getInstructions()).toContain('Read the owner field in list_rooms');

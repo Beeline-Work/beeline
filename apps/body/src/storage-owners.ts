@@ -271,7 +271,7 @@ export async function pruneStoppedAgentStorage(supervisorRoot: string, options: 
   }
 }
 
-/** Open code copies keep source and unpublished work. Only whole ignored build
+/** Code copies keep source and unpublished work, including archived dirty trees. Only whole ignored build
  * objects qualify, and a tracked descendant preserves even an ignored parent. */
 export async function pruneOpenCheckoutObjects(supervisorRoot: string, states: readonly StorageRoomState[], options: WholeStorageOptions = {}, discovered: readonly StorageOwner[] = []): Promise<void> {
   const { SessionScheduler } = await import('./session-scheduler.js');
@@ -279,7 +279,8 @@ export async function pruneOpenCheckoutObjects(supervisorRoot: string, states: r
   const owners = [...new Map([...(await readStorageOwners(supervisorRoot)), ...discovered].map(owner => [`${owner.kind}/${owner.itemId}`, owner])).values()];
   for (const owner of owners) {
     await options.progress?.();
-    if (byId.get(owner.roomId)?.archived !== false) continue;
+    const state = byId.get(owner.roomId);
+    if (state?.archived !== false && state?.archived !== true && !owner.ended) continue;
     const root = resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId);
     const work = async () => {
       const inUse = options.inUse ?? (async (path: string) => (await capturePrivateProcessUse(options.progress))(path));
@@ -288,7 +289,7 @@ export async function pruneOpenCheckoutObjects(supervisorRoot: string, states: r
         { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 16 * 1024 * 1024 }).then(result => result.stdout.split('\0'), () => []);
       for (const name of ignored) {
         const relative = name.replace(/\/$/, '');
-        if (!/(?:^|\/)(?:node_modules|\.beeline-cargo-target|target|dist|build|\.next|\.turbo)$/.test(relative)) continue;
+        if (!/(?:^|\/)(?:node_modules|\.codegraph|\.beeline-cargo-target|target|dist|build|\.next|\.turbo)$/.test(relative)) continue;
         const path = resolve(root, relative);
         if (!path.startsWith(`${root}/`) || await inUse(root)) continue;
         await reclaimWholeStorageObject(path, false, { ...options,
@@ -303,6 +304,7 @@ export async function pruneOpenCheckoutObjects(supervisorRoot: string, states: r
 
 /** Persisted archive authority outlives Room access and agent credentials. */
 export async function pruneArchivedCheckoutStorage(supervisorRoot: string, options: WholeStorageOptions = {}): Promise<void> {
+  await pruneOpenCheckoutObjects(supervisorRoot, [], options);
   const { SessionScheduler } = await import('./session-scheduler.js');
   for (const owner of await readStorageOwners(supervisorRoot)) {
     if (!owner.ended) continue;

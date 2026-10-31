@@ -138,19 +138,30 @@ it('retires a stopped agent only on terminal agent_removed, preserving it on fai
   expect(await exists(runtime)).toBe(false);
 });
 
-it('reclaims whole unused ignored build directories while preserving tracked files and recent artifacts', async () => {
+it.each([false, true])('reclaims unused ignored build output without deleting dirty checkouts (archived=%s)', async (archived) => {
   const { pruneOpenCheckoutObjects } = await import('./storage-owners.js');
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-open-build-')); roots.push(root);
   const checkout = resolve(root, 'beeline/room-checkouts', 'a'.repeat(24));
   await exec('git', ['init', checkout]);
-  await file(resolve(checkout, '.gitignore'), 'build/\ndist/\n');
+  await file(resolve(checkout, '.gitignore'), 'build/\ndist/\n.codegraph/\ntarget/\n');
   await file(resolve(checkout, 'build/stale')); await file(resolve(checkout, 'dist/recent'));
   await file(resolve(checkout, 'source'), 'keep source');
+  await file(resolve(checkout, 'target/tracked'), 'tracked');
+  await exec('git', ['-C', checkout, 'add', '-f', 'target/tracked']);
+  await age(resolve(checkout, 'target'));
+  await file(resolve(checkout, '.codegraph/index.db'));
+  await age(resolve(checkout, '.codegraph'));
   const owner = { workspaceId: 'workspace', roomId: 'room', kind: 'room-checkouts' as const, itemId: 'a'.repeat(24) };
   await rememberStorageOwner(root, owner);
   await age(resolve(checkout, 'build'));
-  await pruneOpenCheckoutObjects(root, [{ roomId: 'room', archived: false }], { inUse: async () => false });
+  await pruneOpenCheckoutObjects(root, [], { inUse: async () => false });
+  expect(await exists(resolve(checkout, 'build'))).toBe(true);
+  await pruneOpenCheckoutObjects(root, [{ roomId: 'room', archived }], { inUse: async () => true });
+  expect(await exists(resolve(checkout, 'build'))).toBe(true);
+  await pruneOpenCheckoutObjects(root, [{ roomId: 'room', archived }], { inUse: async () => false });
   expect(await exists(resolve(checkout, 'build'))).toBe(false);
+  expect(await exists(resolve(checkout, '.codegraph'))).toBe(false);
+  expect(await readFile(resolve(checkout, 'target/tracked'), 'utf8')).toBe('tracked');
   expect(await exists(resolve(checkout, 'dist/recent'))).toBe(true);
   expect(await readFile(resolve(checkout, 'source'), 'utf8')).toBe('keep source');
 });

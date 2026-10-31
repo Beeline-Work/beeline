@@ -373,6 +373,13 @@ jobs:
           git fetch --no-tags --depth=1 origin "$UI_POLICY_BASE"
           node --test scripts/mobile-ui-policy.test.mjs
           node scripts/check-mobile-ui-components.mjs --base "$UI_POLICY_BASE"
+      - name: Allow no phone network channel besides the main live socket
+        env:
+          CHANNEL_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
+          node --test scripts/phone-network-channels.test.mjs
+          node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
       # `npx turbo run typecheck` misses two of the three legs the root script
       # runs: the isolated mobile app (its own tsconfig and node_modules, which
       # turbo does not see) and tsconfig.scripts.json. This gate is unfiltered

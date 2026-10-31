@@ -4,6 +4,7 @@
   "components": {
     "components/StoreUpdateGate.tsx": ["StoreUpdateGate", "StoreUpdateScreen"],
     "components/buzz/ConnectProgress.tsx": ["ConnectStepBar", "ConnectStepDot", "LoadingBar", "RingSpinner", "SweepTrack"],
+    "components/buzz/ConnectionStatus.tsx": ["ConnectionStatus"],
     "components/buzz/VaultSaveCard.tsx": ["VaultSaveCard"],
     "components/buzz/PersonInviteSheet.tsx": ["PersonInviteSheet"],
     "components/buzz/ChoiceVideoPreview.tsx": ["ChoiceVideoPreview"],

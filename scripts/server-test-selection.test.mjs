@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  buildMap, changedFunctions, describeChange, MAP_VERSION, parseHunks, readsSourceText, scriptsOnlyChange, selectTests,
+  buildMap, changedFunctions, describeChange, exportUsers, MAP_VERSION, parseHunks, readsSourceText, scriptsOnlyChange, selectTests,
   sourcePath, sourceTextTests, staleMapReason, unscannedSourceReaders,
 } from '../apps/server/scripts/test-selection.mjs';
 
@@ -143,15 +143,73 @@ test('changed functions come from both sides of the diff and use the names V8 re
   assert.deepEqual(names([7, 8, 9]), { fileLevel: false, moduleLevel: false, names: ['Store', 'get size', 'load'] });
   assert.deepEqual(names([13]), { fileLevel: false, moduleLevel: false, names: ['listRooms'] });
   assert.deepEqual(names([1, 12]), { fileLevel: false, moduleLevel: false, names: [] });
-  // A private constant is seen only through this file's functions; an
-  // exported declaration line is seen by importers.
-  assert.deepEqual(names([2]), { fileLevel: false, moduleLevel: true, names: [] });
-  assert.deepEqual(names([6]), { fileLevel: true, moduleLevel: false, names: [] });
+  // A private constant counts as a change to the functions that use it; an
+  // exported declaration is also a change to its importers.
+  assert.deepEqual(names([2]), { fileLevel: false, moduleLevel: false, names: ['listRooms'] });
+  assert.deepEqual(names([6]), { fileLevel: false, moduleLevel: false, names: [], exports: ['Store'] });
   const after = before.replace('\nexport function removed() { return 0; }', '').replace('x + 1', 'x + 2');
   const diff = '@@ -4 +4 @@\n-  return [1].map((x) => x + 1);\n+  return [1].map((x) => x + 2);\n@@ -15 +14,0 @@\n-export function removed() { return 0; }';
   assert.deepEqual(parseHunks(diff), [{ oldStart: 4, oldCount: 1, newStart: 4, newCount: 1 }, { oldStart: 15, oldCount: 1, newStart: 14, newCount: 0 }]);
   assert.deepEqual(describeChange(ts, { path: 'apps/server/src/rooms.ts', status: 'M', before, after, hunks: parseHunks(diff) }),
     { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: false, moduleLevel: false, names: ['createRoom', 'removed'] });
+});
+
+test('a changed import or private constant selects the functions that use it, through other constants', () => {
+  const text = [
+    "import { format } from './format.js';",
+    "import { LIMIT as RAW } from './limits.js';",
+    'const LIMIT = RAW * 2;',
+    'const LABELS = { limit: LIMIT };',
+    'function label() { return LABELS.limit; }',
+    'export function show(value: number) { return format(value); }',
+    "register('ping', () => LIMIT);",
+    'const unused = 3;',
+  ].join('\n');
+  const names = (lines) => changedFunctions(ts, 'rooms.ts', text, lines);
+  assert.deepEqual(names([1]), { fileLevel: false, moduleLevel: false, names: ['show'] });
+  // RAW feeds LIMIT, which the label() constant and a top-level callback use.
+  assert.deepEqual(names([2]), { fileLevel: false, moduleLevel: false, names: ['(anonymous)', 'label'] });
+  const onImport = changedFunctions(ts, 'rooms.ts', 'const LIMIT = 2;\nregister(LIMIT);', [1]);
+  assert.deepEqual(onImport, { fileLevel: true, moduleLevel: false, names: [] });
+  assert.deepEqual(names([4]), { fileLevel: false, moduleLevel: false, names: ['label'] });
+  assert.deepEqual(names([8]), { fileLevel: false, moduleLevel: false, names: [] });
+  const callback = changedFunctions(ts, 'rooms.ts', "const LIMIT = 2;\nrouter.get('/', () => LIMIT);\nexport const ok = 1;", [1]);
+  assert.deepEqual(callback, { fileLevel: false, moduleLevel: false, names: ['(anonymous)'] });
+});
+
+test('new functions and declarations select nothing; code added inside an old function selects it', () => {
+  const before = 'export function show() {\n  return 1;\n}\n';
+  const after = 'export const STEP = 2;\nexport function added() { return STEP; }\nexport function show() {\n  const twice = () => STEP * 2;\n  return twice();\n}\n';
+  const diff = '@@ -0,0 +1,2 @@\n+export const STEP = 2;\n+export function added() { return STEP; }\n@@ -2 +4,2 @@\n-  return 1;\n+  const twice = () => STEP * 2;\n+  return twice();';
+  assert.deepEqual(describeChange(ts, { path: 'apps/server/src/rooms.ts', status: 'M', before, after, hunks: parseHunks(diff) }),
+    { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: false, moduleLevel: false, names: ['show'] });
+});
+
+test('a changed export selects the importer functions that use it, and gives up on untraceable importers', () => {
+  const files = {
+    'apps/server/src/schema.ts': 'export const SCHEMA = 1;',
+    'apps/server/src/database.ts': "import { SCHEMA as S } from './schema.js';\nexport async function migrate() { return S; }\nexport function other() {}",
+    'apps/server/src/schema.test.ts': "import { SCHEMA } from './schema.js';\nit('x', () => SCHEMA);",
+    'apps/server/src/unrelated.ts': 'const SCHEMA = 2;',
+  };
+  const read = (file) => files[file];
+  const list = () => Object.keys(files);
+  assert.deepEqual(exportUsers(ts, { path: 'apps/server/src/schema.ts', names: ['SCHEMA'], read, list }), [
+    { path: 'apps/server/src/database.ts', names: ['migrate'] },
+    { path: 'apps/server/src/schema.test.ts', test: true },
+  ]);
+  files['apps/server/src/mocked.test.ts'] = "import { SCHEMA } from './schema.js';\nvi.mock('./schema.js');";
+  assert.equal(exportUsers(ts, { path: 'apps/server/src/schema.ts', names: ['SCHEMA'], read, list }), undefined);
+  delete files['apps/server/src/mocked.test.ts'];
+  files['apps/server/src/index.ts'] = "export { SCHEMA } from './schema.js';";
+  assert.equal(exportUsers(ts, { path: 'apps/server/src/schema.ts', names: ['SCHEMA'], read, list }), undefined);
+  assert.equal(exportUsers(ts, { path: 'packages/nostr/src/relay.ts', names: ['SCHEMA'], read, list }), undefined);
+
+  const change = { path: 'apps/server/src/wallet.ts', status: 'M', fileLevel: false, names: [], exports: ['SCHEMA'],
+    exportUsers: [{ path: 'apps/server/src/rooms.ts', names: ['listRooms'] }] };
+  assert.deepEqual(select([change]).files, ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', guard]);
+  assert.deepEqual(select([{ ...change, path: 'apps/server/src/rooms.ts', exportUsers: undefined }]).files,
+    ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', 'apps/server/src/d.test.ts', guard]);
 });
 
 test('the source-text scan finds guards that read code and ignores tests that read data', () => {

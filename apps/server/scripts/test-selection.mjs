@@ -236,15 +236,114 @@ function loadLevel(ts, statement) {
     || ts.isFunctionDeclaration(statement) || ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement));
 }
 
-// Returns the runtime names of changed functions. A change outside every
-// named function is moduleLevel when only this file's own code can observe it
-// (imports, private constants, class fields), else fileLevel.
-export function changedFunctions(ts, fileName, text, lines) {
+const ANONYMOUS = '(anonymous)';
+
+// `export const|function|class|enum`, whose importers see the new value.
+function exportedDeclaration(ts, statement) {
+  return (ts.isVariableStatement(statement) || ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)
+    || ts.isEnumDeclaration(statement))
+    && Boolean(ts.getModifiers?.(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword))
+    && !ts.getModifiers?.(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword);
+}
+
+// Local names a private top-level statement declares.
+function declaredNames(ts, statement) {
+  const names = [];
+  const bind = (name) => {
+    if (!name) return;
+    if (ts.isIdentifier(name)) names.push(name.text);
+    else for (const element of name.elements ?? []) if (!ts.isOmittedExpression(element)) bind(element.name);
+  };
+  if (ts.isVariableStatement(statement)) for (const declaration of statement.declarationList.declarations) bind(declaration.name);
+  else if (ts.isImportDeclaration(statement)) {
+    const clause = statement.importClause;
+    bind(clause?.name);
+    const bindings = clause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) bind(bindings.name);
+    else for (const element of bindings?.elements ?? []) bind(element.name);
+  } else bind(statement.name);
+  return names;
+}
+
+function insideType(ts, node) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isTypeNode(parent) || ts.isInterfaceDeclaration(parent) || ts.isTypeAliasDeclaration(parent)) return true;
+    if (ts.isStatement(parent)) return false;
+  }
+  return false;
+}
+
+// The functions that use top-level bindings, following bindings that other
+// top-level declarations build from them, and the exported bindings among
+// those. Undefined when module code that runs on import uses one, since any
+// test that loads the file sees that.
+function bindingUsers(ts, source, bindings, nameOf, hasBody) {
+  const pending = [...bindings];
+  const seen = new Set(pending);
+  const users = new Set();
+  const exported = new Set(source.statements.filter((statement) => exportedDeclaration(ts, statement))
+    .flatMap((statement) => declaredNames(ts, statement)).filter((name) => seen.has(name)));
+  while (pending.length) {
+    const binding = pending.pop();
+    let loadTime = false;
+    const visit = (node) => {
+      if (loadTime) return;
+      if (ts.isIdentifier(node) && node.text === binding && !insideType(ts, node)) {
+        const parent = node.parent;
+        const declares = (ts.isVariableDeclaration(parent) || ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent)
+          || ts.isEnumDeclaration(parent) || ts.isImportSpecifier(parent) || ts.isImportClause(parent)
+          || ts.isNamespaceImport(parent) || ts.isBindingElement(parent)) && parent.name === node;
+        // `other.name`, `{ name: 1 }` and `import { name as alias }` name no binding.
+        const property = (ts.isPropertyAccessExpression(parent) && parent.name === node)
+          || ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent)
+            || ts.isImportSpecifier(parent)) && parent.name !== node && parent.propertyName === node)
+          || ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent)
+            || ts.isGetAccessorDeclaration(parent) || ts.isSetAccessorDeclaration(parent)) && parent.name === node);
+        if (!declares && !property) {
+          let fn;
+          for (let up = parent; up; up = up.parent) if (hasBody(up)) { fn = up; break; }
+          if (fn) users.add(nameOf(fn) ?? ANONYMOUS);
+          else {
+            const statement = source.statements.find((top) => node.pos >= top.pos && node.end <= top.end);
+            const declaration = statement && (exportedDeclaration(ts, statement) || (!loadLevel(ts, statement)
+              && (ts.isVariableStatement(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement))));
+            if (!declaration) loadTime = true;
+            else for (const name of declaredNames(ts, statement)) {
+              if (exportedDeclaration(ts, statement)) exported.add(name);
+              if (!seen.has(name)) { seen.add(name); pending.push(name); }
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    if (loadTime) return undefined;
+  }
+  return { users: [...users], exported: [...exported] };
+}
+
+// Returns the runtime names of changed functions. A change to a private
+// top-level declaration or import counts as a change to the functions that
+// use it. Other changes outside functions (exports, code that runs on import)
+// are fileLevel.
+export function changedFunctions(ts, fileName, text, lines, { existing, existingFunctions } = {}) {
   const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
   const starts = source.getLineStarts();
   const names = new Set();
   let fileLevel = false;
   let moduleLevel = false;
+  const hasBody = (node) => ts.isFunctionLike(node) && 'body' in node && node.body;
+  // The nearest named function around fn; with existingFunctions, the
+  // nearest one the old file had, so code added inside it counts for it.
+  const nameOf = (fn) => {
+    for (let node = fn; node; node = node.parent) {
+      const name = hasBody(node) && runtimeName(ts, node);
+      if (name && (!existingFunctions || existingFunctions.has(name))) return name;
+    }
+    return undefined;
+  };
+  const bindings = new Set();
   for (const line of lines) {
     if (line < 1 || line > starts.length) continue;
     const lineText = text.slice(starts[line - 1], starts[line] ?? text.length);
@@ -252,7 +351,6 @@ export function changedFunctions(ts, fileName, text, lines) {
     if (!trimmed || /^(?:\/\/|\/\*|\*)/.test(trimmed)) continue;
     const position = starts[line - 1] + lineText.indexOf(trimmed[0]);
     const lineEnd = starts[line] ?? text.length;
-    const hasBody = (node) => ts.isFunctionLike(node) && 'body' in node && node.body;
     // The innermost function around the line, else functions the line opens
     // (`load = () => 2`, `const listRooms = async () => {`).
     let innermost;
@@ -268,10 +366,6 @@ export function changedFunctions(ts, fileName, text, lines) {
       ts.forEachChild(node, visit);
     };
     visit(source);
-    const nameOf = (fn) => {
-      for (let node = fn; node; node = node.parent) if (hasBody(node) && runtimeName(ts, node)) return runtimeName(ts, node);
-      return undefined;
-    };
     const found = (innermost ? [innermost] : opened).map(nameOf);
     if (found.length && found.every(Boolean)) {
       for (const name of found) names.add(name);
@@ -279,23 +373,59 @@ export function changedFunctions(ts, fileName, text, lines) {
     }
     const statement = source.statements.find((node) => position >= node.getStart(source) && position < node.end);
     if (!statement || typeOnly(ts, statement)) continue;
-    if (loadLevel(ts, statement)) fileLevel = true;
-    else moduleLevel = true;
+    // A declaration the old file did not have: only changed code can use it.
+    const declared = declaredNames(ts, statement);
+    if (existing && declared.length && declared.every((name) => !existing.has(name))) continue;
+    if (exportedDeclaration(ts, statement) && declared.length) for (const name of declared) bindings.add(name);
+    else if (loadLevel(ts, statement)) fileLevel = true;
+    else {
+      if (declared.length) for (const name of declared) bindings.add(name);
+      else moduleLevel = true;
+    }
   }
-  return { fileLevel, moduleLevel, names: [...names].sort() };
+  const exports = [];
+  if (bindings.size && !fileLevel) {
+    const found = bindingUsers(ts, source, bindings, nameOf, hasBody);
+    if (found) {
+      for (const name of found.users) names.add(name);
+      exports.push(...found.exported);
+    } else fileLevel = true;
+  }
+  return { fileLevel, moduleLevel, names: [...names].sort(), ...(exports.length ? { exports: exports.sort() } : {}) };
 }
 
 function changedLines(start, count) {
   return Array.from({ length: count }, (_, offset) => start + offset);
 }
 
+// Top-level declared names and every function's runtime name in a file.
+function fileNames(ts, fileName, text) {
+  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
+  const declarations = new Set(source.statements.flatMap((statement) => declaredNames(ts, statement)));
+  const functions = new Set();
+  const visit = (node) => {
+    if (ts.isFunctionLike(node) && 'body' in node && node.body) {
+      const name = runtimeName(ts, node);
+      if (name) functions.add(name);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return { declarations, functions };
+}
+
 // One entry per changed path: status, and for code, the changed functions.
+// Functions and declarations new in this diff ran in no test on main, and
+// whatever calls them changed too, so they add nothing to select.
 export function describeChange(ts, { path, status, before, after, hunks }) {
   if (status !== 'M' || !codePattern.test(path)) return { path, status, fileLevel: true, names: [] };
+  const previous = fileNames(ts, path, before);
   const old = changedFunctions(ts, path, before, hunks.flatMap((hunk) => changedLines(hunk.oldStart, hunk.oldCount)));
-  const next = changedFunctions(ts, path, after, hunks.flatMap((hunk) => changedLines(hunk.newStart, hunk.newCount)));
+  const next = changedFunctions(ts, path, after, hunks.flatMap((hunk) => changedLines(hunk.newStart, hunk.newCount)),
+    { existing: previous.declarations, existingFunctions: previous.functions });
+  const exports = [...new Set([...old.exports ?? [], ...next.exports ?? []])].sort();
   return { path, status, fileLevel: old.fileLevel || next.fileLevel, moduleLevel: old.moduleLevel || next.moduleLevel,
-    names: [...new Set([...old.names, ...next.names])].sort() };
+    names: [...new Set([...old.names, ...next.names])].sort(), ...(exports.length ? { exports } : {}) };
 }
 
 // ---- Selection --------------------------------------------------------------
@@ -340,7 +470,25 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
       return full(`${path} is not in the coverage map`);
     }
     // Only types or comments changed: nothing that runs is different.
-    if (status === 'M' && !change.fileLevel && !change.moduleLevel && !change.names.length) continue;
+    if (status === 'M' && !change.fileLevel && !change.moduleLevel && !change.names.length && !change.exports) continue;
+    // Changed exported values: the importers' functions that use them.
+    if (status === 'M' && !change.fileLevel && change.exports) {
+      if (!change.exportUsers) {
+        pick(source.tests.map((id) => map.tests[id]), `loads ${path}`);
+        continue;
+      }
+      for (const user of change.exportUsers) {
+        if (user.test) { pick([user.path], `uses ${change.exports.join(', ')} from ${path}`); continue; }
+        const importer = map.sources[user.path];
+        if (!importer) continue;
+        const ran = (user.names ?? []).filter((name) => importer.functions[name]);
+        if (user.load || ran.length < (user.names ?? []).length) {
+          pick(importer.tests.map((id) => map.tests[id]), `loads ${user.path}, which uses ${path}`);
+          continue;
+        }
+        for (const name of ran) pick(importer.functions[name].map((id) => map.tests[id]), `runs ${name} in ${user.path}, which uses ${path}`);
+      }
+    }
     const ran = change.names.filter((name) => source.functions[name]);
     // A name no test ran may be a name V8 reports differently; use the file.
     if (change.fileLevel || status !== 'M' || ran.length < change.names.length) {
@@ -366,6 +514,58 @@ function git(args) {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 }
 
+function resolveImport(from, specifier, exists) {
+  if (!specifier.startsWith('.')) return undefined;
+  const target = join(from.split('/').slice(0, -1).join('/'), specifier).replace(/\.(?:[cm]?js)$/, '');
+  return ['.ts', '.tsx', '.mts', '.js', '.mjs', '/index.ts'].map((extension) => target + extension).find(exists);
+}
+
+// Files at head that import the changed exports of path, with the functions
+// that use them, following exports those files build from them. Undefined
+// when an importer cannot be traced statically (namespace or dynamic imports,
+// re-exports, package-name imports), so the caller falls back to the file.
+export function exportUsers(ts, { path, names, read, list, depth = 0 }) {
+  if (depth > 3 || !path.startsWith(serverRoot)) return undefined;
+  const base = path.split('/').pop().replace(/\.[^.]+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const users = [];
+  for (const file of list(names)) {
+    if (file === path || !codePattern.test(file)) continue;
+    const text = read(file);
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const locals = new Set();
+    let staticImports = 0;
+    for (const statement of source.statements) {
+      if (!(ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) || !statement.moduleSpecifier) continue;
+      if (resolveImport(file, statement.moduleSpecifier.text, (candidate) => candidate === path) !== path) continue;
+      staticImports += 1;
+      if (ts.isExportDeclaration(statement)) return undefined;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) return undefined;
+      for (const element of bindings?.elements ?? []) if (names.includes((element.propertyName ?? element.name).text)) locals.add(element.name.text);
+    }
+    // The module named any other way (import(), vi.mock, require) may hand
+    // over every export.
+    const mentions = (text.match(new RegExp(`['"\`][^'"\`]*\\b${base}(?:\\.[cm]?[jt]sx?)?['"\`]`, 'g')) ?? []).length;
+    if (mentions > staticImports) return undefined;
+    if (!locals.size) continue;
+    if (testPattern.test(file)) { users.push({ path: file, test: true }); continue; }
+    const hasBody = (node) => ts.isFunctionLike(node) && 'body' in node && node.body;
+    const nameOf = (fn) => {
+      for (let node = fn; node; node = node.parent) if (hasBody(node) && runtimeName(ts, node)) return runtimeName(ts, node);
+      return undefined;
+    };
+    const found = bindingUsers(ts, source, locals, nameOf, hasBody);
+    if (!found) { users.push({ path: file, load: true }); continue; }
+    users.push({ path: file, names: found.users.sort() });
+    if (found.exported.length) {
+      const next = exportUsers(ts, { path: file, names: found.exported, read, list, depth: depth + 1 });
+      if (!next) return undefined;
+      users.push(...next);
+    }
+  }
+  return users;
+}
+
 export function gitChanges(ts, base, head = 'HEAD') {
   const changes = [];
   for (const line of git(['diff', '--name-status', '--no-renames', base, head]).trim().split('\n').filter(Boolean)) {
@@ -381,7 +581,23 @@ export function gitChanges(ts, base, head = 'HEAD') {
       change.after = git(['show', `${head}:${path}`]);
       change.hunks = parseHunks(git(['diff', '-U0', '--no-renames', '--no-ext-diff', base, head, '--', path]));
     }
-    changes.push(describeChange(ts, change));
+    const described = describeChange(ts, change);
+    if (described.exports && !described.fileLevel) {
+      described.exportUsers = exportUsers(ts, {
+        path, names: described.exports,
+        read: (file) => git(['show', `${head}:${file}`]),
+        list: (words) => {
+          try {
+            return git(['grep', '-l', '-w', ...words.flatMap((word) => ['-e', word]), head, '--', '*.ts', '*.tsx', '*.mts', '*.js', '*.mjs'])
+              .trim().split('\n').filter(Boolean).map((line) => line.slice(head.length + 1));
+          } catch (error) {
+            if (error.status === 1) return [];
+            throw error;
+          }
+        },
+      });
+    }
+    changes.push(described);
   }
   return changes;
 }

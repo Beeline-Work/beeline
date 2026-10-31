@@ -91,7 +91,10 @@ async function loadMigratedSnapshot(): Promise<Blob> {
 /** A new database with the current schema; each call is an independent copy. */
 export async function migratedDatabase(): Promise<PgliteDatabase> {
   migratedSnapshot ??= loadMigratedSnapshot();
-  return PgliteDatabase.fromSnapshot(await migratedSnapshot);
+  const database = PgliteDatabase.fromSnapshot(await migratedSnapshot);
+  // Some callers snapshot or close it before any query; both need it loaded.
+  await (database.client as PGlite).waitReady;
+  return database;
 }
 
 /**

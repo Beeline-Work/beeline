@@ -1503,6 +1503,7 @@ export class MonolithCornerTurnLoop {
       }
     }
     this.sessionModel = appliedModel ?? selection?.model ?? null;
+    this.client?.rememberSessionProcesses?.();
     return opened.sessionId;
   }
 
@@ -1750,10 +1751,13 @@ export class MonolithCornerTurnLoop {
         // Its pushed completion (or session teardown) releases ownership.
         await Promise.all([...this.retiredClients.values()].map(retired => retired.done));
         const client = this.client;
-        if (client?.hasBackgroundTools) {
+        const backgroundLive = () => client?.hasLiveBackgroundProcess?.() !== false;
+        if (client?.hasBackgroundTools && backgroundLive()) {
           let finished!: () => void;
           const cap = setTimeout(() => { void client.stop().finally(() => finished()); }, 2 * 60 * 60 * 1000);
           cap.unref();
+          const poll = setInterval(() => { if (!backgroundLive()) finished(); }, 1000);
+          poll.unref();
           try {
             await new Promise<void>(done => {
               finished = done;
@@ -1762,6 +1766,7 @@ export class MonolithCornerTurnLoop {
             });
           } finally {
             clearTimeout(cap);
+            clearInterval(poll);
             client.off('exit', finished);
             this.checkoutBackgroundDone = undefined;
           }

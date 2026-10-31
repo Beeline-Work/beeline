@@ -44,6 +44,20 @@ describe('server-owned corner display state', () => {
     expect(cornerDisplayState(item('waiting', reason)).status).toBe('waiting');
   });
 
+  it('says a queued order is waiting, and an offline helper has to come back', () => {
+    expect(cornerDisplayState({ ...item('working'), queue: 'queued' }).queueNote).toBe('queued');
+    expect(cornerDisplayState({ ...item('working'), queue: 'offline' }).queueNote)
+      .toBe('waiting for the agent to come back');
+    expect(cornerDisplayState({
+      ...item('working'), queue: 'queued', queueBehind: 'codex-dot-connect',
+    }).queueNote).toBe('queued behind codex-dot-connect');
+    expect(cornerHeaderAgent({
+      status: 'working',
+      queueNote: 'waiting for the agent to come back',
+      activeTurnPubkeys: [],
+    }).stateWord).toBe('working · waiting for the agent to come back');
+  });
+
   it('uses lifecycle only for PR/check narration', () => {
     const display = cornerDisplayState({
       state: 'waiting',

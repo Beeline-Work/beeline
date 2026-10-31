@@ -791,6 +791,34 @@ function asyncTaskCall(update: Record<string, unknown>): ToolCallEntry | undefin
   };
 }
 
+/** Pids of `root` and everything listed under it in `/proc`. A missing proc file stops that branch. */
+export function descendantPids(root: number): number[] {
+  const found: number[] = [];
+  const seen = new Set<number>();
+  const walk = (pid: number) => {
+    if (!pid || seen.has(pid)) return;
+    seen.add(pid);
+    found.push(pid);
+    let raw = '';
+    try {
+      raw = readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8');
+    } catch {
+      return;
+    }
+    for (const part of raw.trim().split(/\s+/)) {
+      const child = Number(part);
+      if (Number.isInteger(child) && child > 0) walk(child);
+    }
+  };
+  walk(root);
+  return found;
+}
+
+/** A background tool is a process that was not already in the session when the turn started. */
+export function backgroundProcessStillLive(current: readonly number[], baseline: ReadonlySet<number>): boolean {
+  return current.some((pid) => !baseline.has(pid));
+}
+
 export class AcpClient extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
   private buf = '';
@@ -1387,6 +1415,27 @@ export class AcpClient extends EventEmitter {
    */
   get hasBackgroundTools(): boolean {
     return this.detachedTools.size > 0;
+  }
+
+  /** Pids under the session process after MCP and the harness have started. */
+  private sessionProcessIds = new Set<number>();
+
+  /** Call once the session exists, before a turn can spawn a background tool. */
+  rememberSessionProcesses(): void {
+    const pid = this.child?.pid;
+    if (!pid) return;
+    this.sessionProcessIds = new Set(descendantPids(pid));
+  }
+
+  /**
+   * True when a process appeared after the session baseline. No child, or no
+   * baseline, keeps the checkout: a test double and a harness we cannot see
+   * must not drop a lock that a real tool still needs.
+   */
+  hasLiveBackgroundProcess(): boolean {
+    const pid = this.child?.pid;
+    if (!pid || this.sessionProcessIds.size === 0) return true;
+    return backgroundProcessStillLive(descendantPids(pid), this.sessionProcessIds);
   }
 
   get lastPromptBytes(): number | undefined {

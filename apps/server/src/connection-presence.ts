@@ -441,6 +441,17 @@ export class ConnectionPresence {
           )))
     )
       return;
+    // The helper's own connection is the presence fact. No turn within 90s
+    // means the order is waiting (checkout busy, or queued behind another
+    // turn), which corner state already names. Do not call that offline.
+    const helperLive = await this.database.query(
+      `SELECT 1 FROM agent_connections connection
+       JOIN live_server_instances server ON server.instance_id=connection.instance_id
+       WHERE connection.agent_id=$1 AND connection.released_at IS NULL
+         AND server.renewed_at>now()-interval '90 seconds'`,
+      [delivery.agent_id],
+    );
+    if (helperLive.rowCount) return;
     const changed = await this.database.query(
       `UPDATE live_outputs p SET body=p.body || jsonb_build_object(
          'status','offline','observedAt',GREATEST($4::bigint,(p.body->>'observedAt')::bigint+1)),updated_at=clock_timestamp()
@@ -586,6 +597,9 @@ export class ConnectionPresence {
       );
       if (removed.rowCount) {
         this.live.publish({ type: 'invalidate', roomId: turn.room_id, reason: 'turn' });
+        // The command is still pending. A connected helper that missed the
+        // insert gets another push; an offline helper is picked up on reconnect.
+        await renudgeStrandedPendingCommands(this.database, turn.agent_id);
         if ((await this.database.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [turn.room_id])).rowCount)
           await noteFirstSilence(this.database, this.live, {
             roomId: turn.room_id, requestId: turn.request_id, agentId: turn.agent_id,

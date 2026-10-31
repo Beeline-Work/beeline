@@ -2666,6 +2666,7 @@ export function BuzzChatSurface({
     ownerPubkey: cornerAgentPubkey,
     ...(cornerHeaderDisplay ? { status: cornerHeaderDisplay.status } : {}),
     ...(cornerHeaderDisplay?.headerSuffix ? { headerSuffix: cornerHeaderDisplay.headerSuffix } : {}),
+    ...(cornerHeaderDisplay?.queueNote ? { queueNote: cornerHeaderDisplay.queueNote } : {}),
     activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey),
   });
   const cornerOwnerPubkey = cornerHeaderAgentView.pubkey;

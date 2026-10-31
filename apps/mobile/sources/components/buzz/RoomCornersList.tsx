@@ -180,7 +180,9 @@ export function RoomCornersList({
     router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name, 'corners'));
   };
 
-  const stateWord = (display: ReturnType<typeof cornerDisplayState>) => (
+  const stateWord = (display: ReturnType<typeof cornerDisplayState>) => {
+    const shown = display.queueNote ? `${display.word} · ${display.queueNote}` : display.word;
+    return (
     <CornerWaitingPulse state={display.word}>
       <Text
         style={[
@@ -192,10 +194,11 @@ export function RoomCornersList({
               : styles.stateQuiet,
         ]}
       >
-        {display.word}
+        {shown}
       </Text>
     </CornerWaitingPulse>
-  );
+    );
+  };
 
   const ownerMark = (item: CornerListItem) => {
     const owner = item.agent ?? item.initiator;
@@ -220,7 +223,7 @@ export function RoomCornersList({
     const runs = liveRuns?.(item.corner.id) ?? [];
     return (
       <Pressable
-        accessibilityLabel={`${label}. ${display.word}${objective ? `. ${objective}` : ''}`}
+        accessibilityLabel={`${label}. ${display.queueNote ? `${display.word}. ${display.queueNote}` : display.word}${objective ? `. ${objective}` : ''}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
         style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]}
@@ -258,7 +261,7 @@ export function RoomCornersList({
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
     return (
       <Pressable
-        accessibilityLabel={`${label}. ${display.word}. ${line}`}
+        accessibilityLabel={`${label}. ${display.queueNote ? `${display.word}. ${display.queueNote}` : display.word}. ${line}`}
         accessibilityRole="button"
         onPress={() => openCorner(item)}
         style={styles.row}

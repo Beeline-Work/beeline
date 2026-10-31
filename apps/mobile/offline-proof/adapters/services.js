@@ -154,6 +154,8 @@ const live = {
   reconnectNow: noop,
 };
 export const sharedLiveConnection = () => live;
+export const useConnectionState = () => 'connected';
+export const reconnectNow = noop;
 export const liveChatList = () => null;
 export const useChatList = () => null;
 export const refreshChatList = noop;

@@ -79,6 +79,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  actions: read
 
 concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
@@ -395,7 +396,7 @@ jobs:
       # Runs on every pull request, after npm ci, so a filter that opens
       # every suite again fails here even when the diff is not a workflow.
       - name: Check path filters skip untouched suites
-        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs
+        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS
@@ -567,6 +568,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+      - uses: ./.github/actions/server-test-selection
       # Server tests import these workspaces from dist. The production corpus
       # test has its own scaled-data gate below; Vitest discovers every other
       # server test except the large integration file, which runs below.

@@ -1,0 +1,40 @@
+name: Select server tests
+description: Restore only a successful main coverage map for the exact PR base; otherwise run everything
+runs:
+  using: composite
+  steps:
+    - id: map
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      with:
+        script: |
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { execFileSync } = require('node:child_process');
+          const base = process.env.BASE_SHA;
+          try {
+            execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', base]);
+            const { data } = await github.rest.actions.listArtifactsForRepo({
+              ...context.repo, name: `server-function-coverage-${base}`, per_page: 100,
+            });
+            for (const artifact of data.artifacts) {
+              if (artifact.expired) continue;
+              const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: artifact.workflow_run.id });
+              if (run.head_sha !== base || run.head_branch !== 'main' || run.conclusion !== 'success' ||
+                  !['push', 'workflow_dispatch'].includes(run.event) || run.path !== '.github/workflows/server-function-coverage.yml') continue;
+              const response = await github.rest.actions.downloadArtifact({ ...context.repo, artifact_id: artifact.id, archive_format: 'zip' });
+              const directory = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'server-coverage-'));
+              const archive = path.join(directory, 'map.zip');
+              fs.writeFileSync(archive, Buffer.from(response.data));
+              execFileSync('unzip', ['-q', archive, '-d', directory]);
+              core.exportVariable('BEELINE_TEST_COVERAGE_MAP', path.join(directory, 'coverage-index.json'));
+              break;
+            }
+          } catch (error) {
+            core.notice(`Full server suite: coverage unavailable (${error.message})`);
+          }
+          core.exportVariable('BEELINE_TEST_BASE', base);
+    - shell: bash
+      run: node apps/server/scripts/select-ci-tests.mjs

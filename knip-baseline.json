@@ -6,22 +6,11 @@
     "exports",
     "types"
   ],
-  "reasons": {
-    "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:HullLivePulse": "Proof shim: render-identity-axis-proof aliases this file over production modules.",
-    "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:useUnistyles": "Proof shim: render-identity-axis-proof aliases this file over react-native-unistyles.",
-    "exports:apps/mobile/sources/components/buzz/decorative-glyph.web.ts:DECORATIVE_GLYPH_PROPS": "Web platform entry; Metro/webpack resolve decorative-glyph.web.ts instead of decorative-glyph.ts.",
-    "exports:apps/mobile/sources/sync/transport/live-connection.ts:reconnectNow": "Public Retry entry point for the connection status UI.",
-    "exports:apps/mobile/sources/sync/transport/live-connection.ts:reportRequestDeadlineMissed": "Public request/reply deadline hook for the phone socket layer.",
-    "exports:apps/mobile/sources/sync/transport/live-connection.ts:useConnectionState": "Public connection state hook for the connection status UI.",
-    "exports:apps/mobile/sources/utils/readFileBytes.web.ts:readFileBytes": "Web platform entry; Metro/webpack resolve readFileBytes.web.ts instead of readFileBytes.ts."
-  },
   "findings": [
     "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:HullLivePulse",
     "exports:apps/mobile/scripts/identity-axis-proof-shims.tsx:useUnistyles",
     "exports:apps/mobile/sources/components/buzz/decorative-glyph.web.ts:DECORATIVE_GLYPH_PROPS",
-    "exports:apps/mobile/sources/sync/transport/live-connection.ts:reconnectNow",
     "exports:apps/mobile/sources/sync/transport/live-connection.ts:reportRequestDeadlineMissed",
-    "exports:apps/mobile/sources/sync/transport/live-connection.ts:useConnectionState",
     "exports:apps/mobile/sources/utils/readFileBytes.web.ts:readFileBytes"
   ]
 }

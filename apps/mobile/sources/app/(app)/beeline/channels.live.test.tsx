@@ -21,6 +21,7 @@ const deck = vi.hoisted(() => ({
   socketRequest: vi.fn(),
   selectedWorkspace: 'workspace' as string | null,
   chatsResponse: null as unknown,
+  connectionState: 'connected' as 'connected' | 'connecting' | 'disconnected',
   reconnects: 0,
   createRepository: vi.fn(
     async (_input: { installationId: number; name: string; private?: boolean }) => ({
@@ -220,7 +221,14 @@ vi.mock('@/sync/transport', () => ({
 }));
 // The app-level Room list store watches through the shared live connection.
 vi.mock('@/sync/transport/live-connection', () => ({
+  useConnectionState: () => deck.connectionState,
+  reconnectNow: () => { deck.reconnects += 1; },
   sharedLiveConnection: () => ({
+    connectionStatus: () => deck.connectionState,
+    subscribeConnectionStatus: () => () => undefined,
+    reconnectNow: () => {
+      deck.reconnects += 1;
+    },
     request: deck.socketRequest,
     register: async (
       filters: readonly { readonly '#h'?: readonly string[] }[],
@@ -381,6 +389,7 @@ beforeEach(() => {
   deck.socketRequest.mockReset();
   deck.selectedWorkspace = 'workspace';
   deck.reconnects = 0;
+  deck.connectionState = 'connected';
   deck.storedInvite = null;
   vi.mocked(router.replace).mockClear();
   vi.mocked(router.push).mockClear();
@@ -438,7 +447,8 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     }
   });
 
-  it('keeps a persistent startup timeout visible and lets Retry recover', async () => {
+  it('replaces a persistent startup timeout with the shared connection status', async () => {
+    deck.connectionState = 'disconnected';
     deck.selectedWorkspace = null;
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout'), new RoomViewHttpError(0, 'timeout')];
@@ -447,11 +457,24 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     await quiet();
     expect(deck.workspaceReads).toBe(2);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
-    const retry = renderer.root.findByProps({ action: 'Retry' });
-    expect(retry.props.title).toBe('Couldn’t reach Beeline');
-    await act(async () => retry.props.onPress());
+    expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }).length).toBeGreaterThan(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps startup failure recovery visible while the socket is connected', async () => {
+    deck.selectedWorkspace = null;
+    deck.connectionState = 'connected';
+    deck.workspaceFailures = [new RoomViewHttpError(503, 'unavailable')];
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
     await quiet();
-    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+    expect(renderer.root.findAllByType('Text').length).toBeGreaterThan(0);
+    const retry = renderer.root.findByProps({ action: 'Retry' });
+    await act(async () => { retry.props.onPress(); });
+    await quiet();
+    expect(deck.workspaceReads).toBe(2);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
 

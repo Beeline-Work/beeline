@@ -31,6 +31,7 @@ type TestSocket = {
   open: () => void;
   emit: (data: unknown) => void;
   drop: () => void;
+  error: () => void;
 };
 
 function stubSockets(): TestSocket[] {
@@ -44,6 +45,7 @@ function stubSockets(): TestSocket[] {
     onopen?: () => void;
     onmessage?: (event: { data: string }) => void;
     onclose?: () => void;
+    onerror?: () => void;
     constructor(
       readonly url: string,
       readonly protocols: string[],
@@ -68,6 +70,9 @@ function stubSockets(): TestSocket[] {
     drop() {
       this.readyState = 3;
       this.onclose?.();
+    }
+    error() {
+      this.onerror?.();
     }
   }
   vi.stubGlobal('WebSocket', TestWebSocket);
@@ -176,6 +181,35 @@ describe('LiveConnection', () => {
     expect(authorization).toHaveBeenCalledTimes(5);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(authorization).toHaveBeenCalledTimes(5);
+    connection.dispose();
+  });
+
+  it('backs off and stops after repeated WebSocket handshake errors until an external event', async () => {
+    vi.useFakeTimers();
+    const { connection, networkChanged } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+
+    sockets[0]!.error();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.error();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(3);
+    sockets[2]!.error();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(sockets).toHaveLength(4);
+    sockets[3]!.error();
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(sockets).toHaveLength(5);
+    sockets[4]!.error();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(5);
+
+    networkChanged();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(6);
     connection.dispose();
   });
 

@@ -517,7 +517,9 @@ export class LiveConnection {
         this.socket = undefined;
         this.dropSocketState();
         setConnectionState('disconnected');
-        this.scheduleReconnect(true);
+        // Only the first recovery skips the backoff. A handshake that keeps
+        // failing must consume the same finite retry budget as a close.
+        this.scheduleReconnect(this.reconnectAttempt === 0);
         next.close();
       };
     } catch {

@@ -81,15 +81,27 @@ function scan(files: Map<string, string>): Entry[] {
     });
   const program = ts.createProgram([...files.keys()], options, host);
   const checker = program.getTypeChecker();
+  // Semantic lookups belong to this checker: a reused syntax tree can resolve
+  // differently when another file in the program changes.
+  const symbols = new Map<ts.Node, ts.Symbol | undefined>();
   const symbol = (node: ts.Node): ts.Symbol | undefined => {
+    if (symbols.has(node)) return symbols.get(node);
     let value =
       ts.isIdentifier(node) && ts.isShorthandPropertyAssignment(node.parent)
         ? checker.getShorthandAssignmentValueSymbol(node.parent)
         : checker.getSymbolAtLocation(ts.isPropertyAccessExpression(node) ? node.name : node);
     if (value && value.flags & ts.SymbolFlags.Alias) value = checker.getAliasedSymbol(value);
+    symbols.set(node, value);
     return value;
   };
-  const declarations = (node: ts.Node) => symbol(node)?.declarations ?? [];
+  const declarationCache = new Map<ts.Node, readonly ts.Declaration[]>();
+  const declarations = (node: ts.Node): readonly ts.Declaration[] => {
+    const cached = declarationCache.get(node);
+    if (cached) return cached;
+    const value = symbol(node)?.declarations ?? [];
+    declarationCache.set(node, value);
+    return value;
+  };
   const functions = new Map<ts.Node, ts.Node>();
   const calls: ts.CallExpression[] = [];
   const cards: ts.ObjectLiteralExpression[] = [];

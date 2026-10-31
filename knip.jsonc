@@ -143,6 +143,8 @@
         "scripts/emoji-clip-proof.tsx",
         // member-sheets.browser.test.ts bundles this browser entry by path through esbuild.
         "scripts/member-sheets-browser-proof.tsx",
+        // ConnectionStatus.browser.test.tsx bundles this disconnected-state entry by path.
+        "scripts/connection-status-browser-proof.tsx",
         // label-sweep-proof.browser.test.ts bundles this browser entry by path through esbuild.
         "scripts/label-sweep-components-proof.tsx",
         "scripts/ui-repair-audit/prepare.mjs",

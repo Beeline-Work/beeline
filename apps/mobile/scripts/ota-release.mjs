@@ -1,236 +1,49 @@
 #!/usr/bin/env node
+// Phone OTA delivery by channel pointer (Expo's branch promotion pattern).
+//
+// Every release publishes one EAS branch, `release-<version>`, holding one
+// update per live store runtime. The `beta` channel points at that branch
+// first; promotion points the `production` channel at the SAME branch, so
+// production serves the exact bundles beta tested. Rollback points production
+// back at the previous release's branch.
+//
+// Nothing here reads or writes a file that carries state between jobs or
+// runs. Every decision asks EAS itself: which updates the branch already has
+// (a rerun publishes only what is missing) and which branch a channel points
+// at (a rerun that already promoted does nothing).
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
 import { queueSentrySourcemaps } from './upload-sentry-sourcemaps.mjs';
 import { storeRuntimeTargets, runtimeKey } from './store-runtime-targets.mjs';
-import {
-  RELEASE_PLATFORMS,
-  classifyFailure,
-  confirmDelivery,
-  groupIdList,
-  groupMapFrom,
-  initDelivery,
-  isoNow,
-  joinGroupIds,
-  latestPublishedDelivery,
-  listUndelivered,
-  markBuilt,
-  markPublished,
-  mergeReconciliation,
-  readJson,
-  readDeliveryIndex,
-  writeDeliveryIndex,
-  recordFailure,
-  sameGroupSet,
-  writeJson,
-} from './ota-delivery-index.mjs';
 
+export const RELEASE_PLATFORMS = ['android', 'ios'];
 const EAS_CLI_VERSION = '22.2.0';
-// During a compatibility rollout the production branch carries more than one
-// runtime, and one promotion publishes one update group per target. A FIXED
-// page therefore stops resolving every target the moment the target list grows
-// past it: `--limit 10` against eleven targets can never show the newest group
-// for all eleven, so a promotion that fully succeeded still fails its own
-// read-back. A page sized from THIS release's targets is not enough either:
-// the branch still carries groups from earlier, wider target sets, so a
-// runtime's newest group can sit far down the page (v0.1.20: android@33 was
-// 17th behind sixteen groups of a 17-target release while six targets asked
-// for 12, and the rollback-anchor check refused a runtime that has one).
-// Always read the full page `eas update:list` allows (1..50); a target list
-// too long for one page fails with that stated as the reason rather than as a
-// target mismatch.
-const PRODUCTION_LOOKUP_CEILING = 50;
+// `eas update:list` pages at most 50 update groups. One release branch holds
+// one group per target, so a page always covers it.
+const BRANCH_LOOKUP_LIMIT = '50';
+const RELEASE_BRANCH = /^release-(?:proof-)?[A-Za-z0-9._-]+$/;
+const SHA = /^[0-9a-f]{40}$/;
 
-function productionLookupLimit() {
-  return String(PRODUCTION_LOOKUP_CEILING);
+export class OtaReleaseError extends Error {}
+function fail(message) {
+  throw new OtaReleaseError(message);
 }
-// Legacy native upload receipts provide embedded rollback anchors only.
-// They never admit an OTA target or establish store publication.
-export const SHIPPED_NATIVE_RUNTIMES = [
-  {
-    platform: 'android',
-    runtimeVersion: '38',
-    evidence:
-      'store binary built on the android@38 pin (923d7a17) and uploaded by successful unified release run 38662034119 (mobile_native_android step "Upload Android to the selected Play track")',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '35',
-    evidence:
-      'store binary built on the ios@35 pin (923d7a17) and submitted by successful unified release run 38662034119 (mobile_native_ios step "Submit iOS build to TestFlight for a selected store track")',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '23',
-    evidence:
-      'store binaries shipped on the 2026-09-12 runtime-23 pin (29049b9b) and served by the android@23 compat target through #1323/#1383',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '24',
-    evidence:
-      'store binaries built on the android@24 pin (128ffd47, #1228) and submitted by successful unified release run 34894012548 (head 01127118)',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '25',
-    evidence:
-      'store binaries built and submitted by unified release run 35250884374 (v0.0.109, head e30fdfdf on the #1353 android@25 pin 427c5f5c)',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '26',
-    evidence:
-      'store binaries shipped on the android@26 pin (v0.0.118, head 227b74c95dbc) whose splash still resolved to the adaptive icon in light mode',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '28',
-    evidence:
-      'store binaries shipped on the android@28 pin and served as the android@28 production target by successful unified release run 35605942517 (v0.0.120, head d6db385f)',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '29',
-    evidence:
-      'store binaries shipped on the android@29 pin (c095ca34, v0.2.20) and uploaded to the Play production track by successful unified release run 35802330273 (mobile_native_android step "Upload Android to the selected Play track")',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '31',
-    evidence:
-      'store binary built on the android@31 pin (895bb8eb, #1765) and uploaded by successful unified release run 36277001426 (mobile_native_android step "Upload Android to the selected Play track")',
-  },
-  {
-    platform: 'android',
-    runtimeVersion: '32',
-    evidence:
-      'store binary built on the android@32 pin (885f7b90, v0.2.21) and uploaded by successful unified release run 36593389428 (mobile_native_android step "Upload Android to the selected Play track")',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '23',
-    evidence:
-      'store binaries shipped on the 2026-09-12 runtime-23 pin (29049b9b) and served by the ios@23 compat target through #1383',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '24',
-    evidence:
-      'store binaries built on the #1185 ios@24 pin (e509ad14) and submitted by successful unified release run 34779452653 (head 77823615)',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '25',
-    evidence:
-      'store binaries built on the ios@25 pin (128ffd47) and submitted by successful unified release run 35141982984 (head 63b1ef08); #1373 briefly dropped ios@25 coverage and #1382 reverted that',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '26',
-    evidence:
-      'store binaries built and submitted by unified release run 35250884374 (v0.0.109, head e30fdfdf on the #1353 ios@26 pin 427c5f5c)',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '27',
-    evidence:
-      'store binaries shipped on the ios@27 pin contemporaneous with android@26 (v0.0.118, head 227b74c95dbc)',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '29',
-    evidence:
-      'store binaries submitted on the ios@29 pin (c095ca34, v0.2.20) by successful unified release run 35802330273 (mobile_native_ios step "Submit iOS build to TestFlight for a selected store track")',
-  },
-  {
-    platform: 'ios',
-    runtimeVersion: '31',
-    evidence:
-      'store binary submitted on the ios@31 pin (885f7b90, v0.2.21) by successful unified release run 36593389428 (mobile_native_ios step "Submit iOS build to TestFlight for a selected store track")',
-  },
-];
 
-function targetKey(target) {
+export function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
 }
 
-function previousReleaseTargets(history) {
-  const updates = collectUpdates(history).updates;
-  // EAS returns newest first. A promotion message records the release source
-  // on every target; older releases on this branch are not the fallback set.
-  const source = updates[0]?.message?.match(/\(([a-f0-9]{12})\)/)?.[1];
-  return source ? updates.filter(t => t.message?.includes(`(${source})`)) : updates;
+export function releaseBranchName(version) {
+  if (!/^v\d+\.\d+\.\d+$/.test(version ?? '')) fail(`invalid release version: ${version}`);
+  return `release-${version}`;
 }
 
-// The same computed set feeds publish and coverage. An offline plan without
-// store evidence preserves prior targets instead of inventing store history.
-export function releaseUpdateTargets(
-  projectDir = process.cwd(),
-  pins,
-  history = null,
-  storeState = {},
-) {
-  if (process.env.EXPO_RUNTIME_OVERRIDE) {
-    throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
-  }
-  const resolvedPins = pins ?? readPinnedRuntimeVersion(projectDir);
-  return storeRuntimeTargets({
-    pins: resolvedPins,
-    stores: storeState.stores,
-    previouslyLive: storeState.previouslyLive,
-    // Migration from ledgers that predate store evidence is conservative. OTA
-    // history is a fallback target set, never evidence of store publication.
-    previousTargets: storeState.previousTargets ?? previousReleaseTargets(history),
-  });
-}
-
-// Missing targets inside the retention window still fail closed. Older shipped
-// runtimes intentionally fall outside the window and no longer block releases.
-export function planCoverageErrors(
-  pins,
-  targets,
-  history = null,
-  storeState = {},
-) {
-  const planned = new Set(targets.map(targetKey));
-  return releaseUpdateTargets(process.cwd(), pins, history, storeState)
-    .filter((target) => !planned.has(targetKey(target)))
-    .map((target) => `${targetKey(target)} is missing from the store-runtime release plan.`);
-}
-
-function fail(message) {
-  console.error(message);
-  process.exit(1);
-}
-
-function parseArgs(argv) {
-  const [command, ...rest] = argv;
-  const options = { command, dryRun: false, embedded: false };
-  for (let index = 0; index < rest.length; index += 1) {
-    const token = rest[index];
-    if (token === '--dry-run') {
-      options.dryRun = true;
-      continue;
-    }
-    if (token === '--embedded') {
-      options.embedded = true;
-      continue;
-    }
-    if (!token.startsWith('--')) fail(`Unexpected argument: ${token}`);
-    const key = token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-    const value = rest[index + 1];
-    if (value === undefined || value.startsWith('--') || (!value && token !== '--before')) {
-      fail(`Missing value for ${token}`);
-    }
-    options[key] = value;
-    index += 1;
-  }
-  return options;
+export function updateMessage(sha, target) {
+  return `release ${sha.slice(0, 12)} ${targetKey(target)}`;
 }
 
 function shellQuote(value) {
@@ -242,7 +55,10 @@ function commandParts(args) {
   return ['npx', '--yes', `eas-cli@${EAS_CLI_VERSION}`, ...args];
 }
 
-function runEas(args, { allowFailure = false, dryRun = false, env = {} } = {}) {
+// Runs one eas-cli command and returns its parsed JSON. `missing` names a
+// stderr pattern that means "this does not exist yet"; that case returns
+// null, and every other failure stops the release.
+export function runEas(args, { dryRun = false, env = {}, missing } = {}) {
   const parts = commandParts(args);
   if (dryRun) {
     const prefix = Object.entries(env).map(([key, value]) => `${key}=${shellQuote(value)}`);
@@ -252,16 +68,18 @@ function runEas(args, { allowFailure = false, dryRun = false, env = {} } = {}) {
   const result = spawnSync(parts[0], parts.slice(1), {
     encoding: 'utf8',
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024 * 1024,
   });
-  const output = result.stdout.trim();
+  const output = (result.stdout ?? '').trim();
+  const errors = result.stderr ?? '';
   if (result.status !== 0) {
-    if (allowFailure) return null;
+    if (missing && missing.test(`${errors}\n${output}`)) return null;
+    if (errors) console.error(errors.trim());
     if (output) console.error(output);
-    fail(
-      `EAS command failed (${result.status ?? 'signal'}; captured EAS stdout printed above): ${parts.map(shellQuote).join(' ')}`,
-    );
+    fail(`EAS command failed (${result.status ?? 'signal'}): ${parts.map(shellQuote).join(' ')}`);
   }
+  if (errors.trim()) console.error(errors.trim());
   if (!output) return null;
   try {
     return JSON.parse(output);
@@ -283,998 +101,397 @@ function runtimeVersionOf(value) {
   return null;
 }
 
-// Every EAS update belongs to exactly one update group, named either on the
-// update itself or on the group object enclosing it. Anything update-shaped
-// (an id plus a platform) that resolves to no group is an unusable publish
-// proof, so collect those separately instead of silently dropping them.
-function collectUpdates(payload) {
+// `update:list --json` returns update-group descriptions (comma-separated
+// `platforms`, no update ids); `update --json` returns individual updates.
+// Both resolve to (platform, runtime, group, message) rows, newest first.
+export function collectUpdates(payload) {
   const updates = [];
-  const groupless = [];
   const seen = new Set();
-  const walk = (value, inherited, inheritedMessage = null) => {
+  const walk = (value, inheritedGroup = null, inheritedMessage = null) => {
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, inherited, inheritedMessage);
+      for (const item of value) walk(item, inheritedGroup, inheritedMessage);
       return;
     }
     if (!value || typeof value !== 'object') return;
-    const group = groupIdOf(value) ?? inherited;
+    const group = groupIdOf(value) ?? inheritedGroup;
     const message = typeof value.message === 'string' ? value.message : inheritedMessage;
-    const id = typeof value.id === 'string' ? value.id : null;
-    const platform = typeof value.platform === 'string' ? value.platform : null;
     const runtimeVersion = runtimeVersionOf(value);
-    if (id && platform && !seen.has(id)) {
-      seen.add(id);
-      if (group) {
+    const platforms = typeof value.platform === 'string'
+      ? [value.platform]
+      : typeof value.platforms === 'string' ? value.platforms.split(',').map((item) => item.trim()) : [];
+    if (group && runtimeVersion) {
+      for (const platform of platforms) {
+        if (!RELEASE_PLATFORMS.includes(platform)) continue;
+        const id = typeof value.id === 'string' ? value.id : `${group}:${platform}:${runtimeVersion}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
         updates.push({
-          id,
-          platform,
-          group,
-          runtimeVersion,
-          message,
-        });
-      } else {
-        groupless.push({ id, platform });
-      }
-    }
-    // eas-cli@22.2.0 renders `update:list --json` as update-group
-    // descriptions. Those rows deliberately omit individual update IDs and
-    // use a comma-separated `platforms` field, but still prove the exact
-    // (platform, runtime, group) tuple needed by the rollout governor.
-    if (group && runtimeVersion && typeof value.platforms === 'string') {
-      for (const listedPlatform of value.platforms.split(',').map((item) => item.trim())) {
-        if (!RELEASE_PLATFORMS.includes(listedPlatform)) continue;
-        const syntheticId = `${group}:${listedPlatform}:${runtimeVersion}`;
-        if (seen.has(syntheticId)) continue;
-        seen.add(syntheticId);
-        updates.push({
-          id: syntheticId,
-          platform: listedPlatform,
-          group,
-          runtimeVersion,
-          message,
+          id, platform, runtimeVersion, group, message,
+          rollBackToEmbedded: value.isRollBackToEmbedded === true,
         });
       }
     }
-    for (const child of Object.values(value)) walk(child, group, message);
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'group' && typeof child === 'string') continue;
+      walk(child, group, message);
+    }
   };
-  walk(payload, null);
-  return { updates, groupless };
+  walk(payload);
+  return updates;
 }
 
-function groupByPlatform(updates, label) {
-  const map = {};
-  for (const update of updates) {
-    const existing = map[update.platform];
-    if (existing && existing !== update.group) {
-      fail(
-        `${label} returned two update groups for ${update.platform}: ${existing} and ${update.group}.`,
-      );
-    }
-    map[update.platform] = update.group;
-  }
-  return map;
+// eas-cli prints a list message as `"<message>" (5 minutes ago by <actor>)`.
+export function messageText(message) {
+  const display = /^"([^"\r\n]*)" \([^\r\n]*\)$/.exec(message ?? '');
+  return display ? display[1] : message ?? '';
 }
 
-function describePlatforms(platforms) {
-  return platforms.length > 0 ? [...platforms].sort().join(', ') : 'no platform';
-}
-
-// One publish/republish call returns at most one update group per platform it
-// covered: platforms on the same runtime version (the hand-pinned runtime in
-// `app.config.js`) share a single group, platforms on different runtime
-// versions get one each. Both shapes satisfy this check.
-function requirePublishedGroups(payload, label, expectedPlatforms) {
-  const { updates, groupless } = collectUpdates(payload);
-  if (groupless.length > 0) {
-    const orphans = groupless.map((update) => `${update.platform}/${update.id}`).join(', ');
-    fail(`${label} returned updates that belong to no update group: ${orphans}.`);
-  }
-  const map = groupByPlatform(updates, label);
-  const platforms = Object.keys(map);
-  const expected = expectedPlatforms ? [...new Set(expectedPlatforms)] : null;
-  const groups = [...new Set(updates.map((update) => update.group))];
-  const ceiling = expected ? expected.length : RELEASE_PLATFORMS.length;
-  if (groups.length < 1 || groups.length > ceiling) {
-    fail(
-      `${label} must return between one and ${ceiling} update groups (one per platform in ${describePlatforms(expected ?? RELEASE_PLATFORMS)}); received ${groups.length} for ${describePlatforms(platforms)}.`,
-    );
-  }
-  if (expected && describePlatforms(platforms) !== describePlatforms(expected)) {
-    fail(
-      `${label} must cover exactly ${describePlatforms(expected)}; received ${describePlatforms(platforms)}.`,
-    );
-  }
-  return { groupIds: groups, groupByPlatform: map, updates };
-}
-
-// `eas update:list` returns the branch newest-first, so the first group seen
-// for a platform is that platform's current group.
-function newestGroupByPlatform(payload) {
-  const map = {};
-  for (const update of collectUpdates(payload).updates) {
-    map[update.platform] ??= update.group;
-  }
-  return map;
-}
-
-function newestTargets(payload, expectedTargets) {
-  const expected = new Set(expectedTargets.map(targetKey));
+// The newest update per runtime on a branch, with the source it came from.
+export function branchState(payload) {
   const newest = new Map();
-  for (const update of collectUpdates(payload).updates) {
+  for (const update of collectUpdates(payload)) {
     const key = targetKey(update);
-    if (!expected.has(key) || newest.has(key)) continue;
-    newest.set(key, {
-      platform: update.platform,
-      runtimeVersion: update.runtimeVersion,
-      group: update.group,
-      updateId: update.id,
-      message: update.message,
-    });
+    if (!newest.has(key)) newest.set(key, { ...update, message: messageText(update.message) });
   }
-  return expectedTargets.flatMap((target) => {
-    const found = newest.get(targetKey(target));
-    return found ? [found] : [];
+  return [...newest.values()];
+}
+
+// Which targets this release still owes the branch. A branch holding updates
+// from any other source is refused: one version is one source commit.
+export function planBranchPublish({ targets, branchUpdates, sha }) {
+  if (!SHA.test(sha ?? '')) fail(`invalid release sha: ${sha}`);
+  const marker = ` ${sha.slice(0, 12)} `;
+  const foreign = branchUpdates.filter((update) => !`${update.message} `.includes(marker));
+  if (foreign.length > 0) {
+    fail(
+      `branch already holds updates from another source (${foreign.map((update) => `${targetKey(update)}: ${update.message}`).join('; ')}); ` +
+        'refusing to mix two source commits in one release branch',
+    );
+  }
+  const present = new Set(branchUpdates.map(targetKey));
+  return {
+    present: targets.filter((target) => present.has(targetKey(target))),
+    missing: targets.filter((target) => !present.has(targetKey(target))),
+  };
+}
+
+export function assertBranchCovers({ branch, targets, branchUpdates, sha }) {
+  const { missing } = planBranchPublish({ targets, branchUpdates, sha });
+  if (missing.length > 0) {
+    fail(`${branch} is missing ${missing.map(targetKey).join(', ')}; phones on those runtimes would get no update`);
+  }
+  return targets.map((target) => branchUpdates.find((update) => targetKey(update) === targetKey(target)));
+}
+
+// `channel:view --json` prints the channel with its branch mapping. Only a
+// plain one-branch mapping is a pointer this pipeline may read or move.
+export function channelBranchName(payload) {
+  const channel = payload?.currentPage ?? payload;
+  if (!channel || typeof channel !== 'object') fail('channel view returned no channel');
+  let mapping;
+  try {
+    mapping = typeof channel.branchMapping === 'string' ? JSON.parse(channel.branchMapping) : channel.branchMapping;
+  } catch {
+    fail(`channel ${channel.name} has an unreadable branch mapping`);
+  }
+  const entries = mapping?.data ?? [];
+  if (entries.length !== 1 || entries[0].branchMappingLogic !== 'true') {
+    fail(`channel ${channel.name} is not a plain one-branch pointer (rollout in progress?)`);
+  }
+  const branch = (channel.updateBranches ?? []).find((candidate) => candidate.id === entries[0].branchId);
+  if (!branch?.name) fail(`channel ${channel.name} points at a branch the view did not name`);
+  return branch.name;
+}
+
+// Runtimes the current branch serves that the rollback branch does not.
+// Phones on those runtimes would keep the bad update, so each one gets a
+// roll-back-to-embedded directive on the rollback branch first.
+export function rollbackGaps({ currentUpdates, targetUpdates }) {
+  const covered = new Set(targetUpdates.map(targetKey));
+  return currentUpdates
+    .filter((update) => !covered.has(targetKey(update)))
+    .map(({ platform, runtimeVersion }) => ({ platform, runtimeVersion }));
+}
+
+function parseArgs(argv) {
+  const [command, ...rest] = argv;
+  const options = { command, dryRun: false };
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
+    if (token === '--dry-run') {
+      options.dryRun = true;
+      continue;
+    }
+    if (!token.startsWith('--')) fail(`Unexpected argument: ${token}`);
+    const key = token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+    const value = rest[index + 1];
+    if (value === undefined || value.startsWith('--')) fail(`Missing value for ${token}`);
+    options[key] = value;
+    index += 1;
+  }
+  return options;
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+function writeJson(path, value) {
+  if (path) writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function listBranch(branch, { dryRun } = {}) {
+  if (!RELEASE_BRANCH.test(branch) && branch !== 'production') fail(`refusing to read unexpected branch ${branch}`);
+  const payload = runEas(
+    ['update:list', '--branch', branch, '--limit', BRANCH_LOOKUP_LIMIT, '--json', '--non-interactive'],
+    { dryRun, missing: /Could not find (?:a )?branch/i },
+  );
+  return payload ? branchState(payload) : [];
+}
+
+export function readChannelBranch(channel, { dryRun } = {}) {
+  const payload = runEas(['channel:view', channel, '--json', '--non-interactive'], {
+    dryRun, missing: /Could not find (?:a )?channel/i,
   });
-}
-
-function requireTargetUpdate(payload, label, target) {
-  const published = requirePublishedGroups(payload, label, [target.platform]);
-  const matches = published.updates.filter(
-    (update) =>
-      update.platform === target.platform && update.runtimeVersion === target.runtimeVersion,
-  );
-  if (matches.length !== 1 || published.updates.length !== 1) {
-    fail(
-      `${label} must return exactly ${targetKey(target)}; received ${
-        published.updates.map((update) => targetKey(update)).join(', ') || 'no target'
-      }.`,
-    );
-  }
-  return {
-    ...target,
-    group: matches[0].group,
-    updateId: matches[0].id,
-    update: matches[0],
-  };
-}
-
-function platformGroupSummary(targets, configuredPins) {
-  return Object.fromEntries(
-    RELEASE_PLATFORMS.flatMap((platform) => {
-      const exact = targets.find(
-        (target) =>
-          target.platform === platform && target.runtimeVersion === configuredPins[platform],
-      );
-      const fallback = targets.find((target) => target.platform === platform);
-      const selected = exact ?? fallback;
-      return selected?.group ? [[platform, selected.group]] : [];
-    }),
-  );
-}
-
-// Republish each distinct source group once, carrying only the platforms that
-// group owns, then prove the combined result covers every expected platform.
-// `platforms: null` means the caller knows the group but not its platforms (a
-// rollback anchor), so only the combined coverage is checked.
-function republishGroups(entries, { label, describe, dryRun, expectedPlatforms }) {
-  if (entries.length === 0) fail(`${label} has no source update group to republish.`);
-
-  const updates = [];
-  const map = {};
-  for (const [group, platforms] of entries) {
-    const result = runEas(
-      [
-        'update:republish',
-        '--group',
-        group,
-        '--destination-branch',
-        'production',
-        '--platform',
-        'all',
-        '--message',
-        describe(group),
-        '--json',
-        '--non-interactive',
-      ],
-      { dryRun },
-    );
-    if (dryRun) continue;
-    const republished = requirePublishedGroups(result, `${label} of ${group}`, platforms);
-    updates.push(...republished.updates);
-    Object.assign(map, republished.groupByPlatform);
-  }
   if (dryRun) return null;
-  const covered = Object.keys(map);
-  if (describePlatforms(covered) !== describePlatforms(expectedPlatforms)) {
-    fail(
-      `${label} must restore ${describePlatforms(expectedPlatforms)}; production received ${describePlatforms(covered)}.`,
-    );
+  return payload ? channelBranchName(payload) : null;
+}
+
+function pointChannel(channel, branch, { dryRun } = {}) {
+  const current = readChannelBranch(channel, { dryRun });
+  if (!dryRun && current === branch) {
+    console.log(`${channel} already points at ${branch}`);
+    return { channel, branch, previousBranch: current, changed: false };
   }
-  return {
-    groupByPlatform: map,
-    groupIds: [...new Set(updates.map((update) => update.group))],
-    updates,
-  };
-}
-
-// A ledger that names one candidate group covering every published platform
-// (the shape a shared runtime version produces) reads as that group for each.
-function candidateGroupMap(ledger) {
-  const published = Array.isArray(ledger.candidateUpdates)
-    ? [...new Set(ledger.candidateUpdates.map((update) => update.platform).filter(Boolean))]
-    : [];
-  const map = groupMapFrom(
-    ledger.candidateGroupIds ?? ledger.candidateGroupId,
-    published.length > 0 ? published : RELEASE_PLATFORMS,
-  );
-  if (Object.keys(map).length === 0) {
-    fail('Ledger names no beta candidate update group to promote.');
+  if (!dryRun && current === null) {
+    // channel:create also creates (or reuses) a branch of the channel's name;
+    // the edit below moves the new pointer to the release branch at once.
+    runEas(['channel:create', channel, '--json', '--non-interactive']);
   }
-  return map;
+  runEas(['channel:edit', channel, '--branch', branch, '--json', '--non-interactive'], { dryRun });
+  if (dryRun) return { channel, branch, previousBranch: null, changed: true };
+  const observed = readChannelBranch(channel);
+  if (observed !== branch) fail(`${channel} reads back ${observed} after pointing it at ${branch}`);
+  console.log(`${channel}: ${current ?? '(new channel)'} -> ${branch}`);
+  return { channel, branch, previousBranch: current, changed: true };
 }
 
-function republishEntries(groupMap) {
-  const byGroup = new Map();
-  for (const [platform, group] of Object.entries(groupMap)) {
-    byGroup.set(group, [...(byGroup.get(group) ?? []), platform]);
+// Live store runtimes are read from Google Play and App Store Connect. The
+// previous release record supplies identities of store builds this pipeline
+// uploaded and the runtimes it last served (used only if a store is
+// unreadable). No guess replaces a store answer.
+export function computeTargets({ memory = {}, stores, pins }) {
+  const observedLive = RELEASE_PLATFORMS.flatMap((platform) =>
+    stores?.[platform]?.status === 'readable'
+      ? [...stores[platform].live, ...(stores[platform].historical ?? [])]
+      : []);
+  const previouslyLive = [...new Map(
+    [...(memory.previouslyLive ?? []), ...observedLive].map((target) => [runtimeKey(target), target]),
+  ).values()];
+  const targets = storeRuntimeTargets({
+    pins,
+    stores,
+    previouslyLive,
+    previousTargets: memory.previousTargets ?? [],
+  });
+  if (targets.length === 0) fail('no live store runtime is known; refusing to publish an OTA nobody can receive');
+  for (const platform of RELEASE_PLATFORMS) {
+    if (!targets.some((target) => target.platform === platform)) fail(`no live ${platform} runtime is known; refusing a one-platform release`);
   }
-  return [...byGroup];
+  return { targets, previouslyLive };
 }
 
-function writeLedger(path, ledger) {
-  if (!path) fail('--ledger is required');
-  writeJson(path, ledger);
+function readStoreState(memory) {
+  const input = join(mkdtempSync(join(tmpdir(), 'beeline-store-status-')), 'memory.json');
+  writeJson(input, memory);
+  const observed = spawnSync(process.execPath, [
+    fileURLToPath(new URL('../../../scripts/read-store-runtimes.mjs', import.meta.url)), input,
+  ], { encoding: 'utf8', timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+  if (observed.status !== 0) {
+    console.log(`store runtime lookup failed; using the previous release's targets: ${observed.stderr?.trim()}`);
+    return { stores: {}, builds: memory.builds ?? [] };
+  }
+  try {
+    return JSON.parse(observed.stdout);
+  } catch {
+    return { stores: {}, builds: memory.builds ?? [] };
+  }
 }
 
-function readLedger(path) {
-  if (!path) fail('--ledger is required');
-  return readJson(path);
+// The runtimes the newest release on a branch served: every update carrying
+// the same 12-hex source marker as the branch's newest update.
+export function latestSourceTargets(branchUpdates) {
+  const source = branchUpdates[0]?.message?.match(/\b([0-9a-f]{12})\b/)?.[1];
+  return branchUpdates
+    .filter((update) => !source || update.message?.includes(source))
+    .map(({ platform, runtimeVersion }) => ({ platform, runtimeVersion }));
 }
 
-function recordStoreRuntimeState(indexPath, ledger) {
-  if (!indexPath || !ledger.storeRuntimeState) return;
-  const index = readDeliveryIndex(indexPath);
-  index.storeRuntimeState = ledger.storeRuntimeState;
-  writeDeliveryIndex(indexPath, index);
+function targetsCommand(options) {
+  const memory = options.memory ? readJson(options.memory) : {};
+  const status = options.storeStatus ? readJson(options.storeStatus) : readStoreState(memory);
+  const unreadable = RELEASE_PLATFORMS.filter((platform) => status.stores?.[platform]?.status !== 'readable');
+  for (const platform of unreadable) {
+    console.log(`${platform} store status unavailable (${status.stores?.[platform]?.reason ?? 'not read'}); keeping the previous release's ${platform} targets`);
+  }
+  if (unreadable.length > 0 && !(memory.previousTargets?.length > 0) && !options.storeStatus) {
+    // First release on this scheme: what production serves now is the
+    // previous release's target set.
+    const current = readChannelBranch('production');
+    memory.previousTargets = current ? latestSourceTargets(listBranch(current)) : [];
+  }
+  memory.previouslyLive = [...(memory.previouslyLive ?? []), ...(status.previouslyLive ?? [])];
+  const { targets, previouslyLive } = computeTargets({
+    memory, stores: status.stores, pins: readPinnedRuntimeVersion(process.cwd()),
+  });
+  console.log(`ota_targets=${targets.map(targetKey).join(',')}`);
+  const result = { targets, storeRuntime: { builds: status.builds ?? memory.builds ?? [], previouslyLive } };
+  writeJson(options.output, result);
+  return result;
 }
 
 function publish(options) {
-  if (!options.sha || !options.ref) fail('publish requires --sha and --ref');
-  const configuredPins = readPinnedRuntimeVersion(process.cwd());
-  if (options.productionHistory && !options.dryRun) {
-    fail('--production-history is only allowed with --dry-run; live releases query EAS.');
-  }
-  const previous = options.productionHistory ? readJson(options.productionHistory) : runEas(
-    ['update:list', '--branch', 'production', '--limit', productionLookupLimit(),
-      '--json', '--non-interactive'],
-    { dryRun: options.dryRun },
-  );
-  if (!options.dryRun && !previous) fail('Production history is unreadable; refusing to plan OTA.');
-  if (options.storeStatus && !options.dryRun) fail('--store-status is only allowed with --dry-run.');
-  const priorStoreState = options.index ? readDeliveryIndex(options.index).storeRuntimeState ?? {} : {};
-  let storeStatus = options.storeStatus ? readJson(options.storeStatus) : {};
-  if (!options.dryRun) {
-    const input = join(mkdtempSync(join(tmpdir(), 'beeline-store-status-')), 'previous.json');
-    writeJson(input, priorStoreState);
-    const observed = spawnSync(process.execPath, [fileURLToPath(new URL('../../../scripts/read-store-runtimes.mjs', import.meta.url)), input], {
-      encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
-    });
-    if (observed.status === 0) {
-      try { storeStatus = JSON.parse(observed.stdout); } catch { /* Keep all previous targets. */ }
-    }
-  }
-  const storeState = {
-    ...storeStatus,
-    previouslyLive: priorStoreState.previouslyLive ?? storeStatus.previouslyLive ?? [],
-    previousTargets: priorStoreState.previousTargets ?? storeStatus.previousTargets,
-  };
-  for (const platform of RELEASE_PLATFORMS) {
-    if (storeState.stores?.[platform]?.status !== 'readable') {
-      console.log(`${platform} store status unavailable; preserving the previous target set.`);
-    }
-  }
-  const targets = releaseUpdateTargets(process.cwd(), configuredPins, previous, storeState);
-  console.log(`ota_plan_targets=${targets.map(targetKey).join(',')}`);
-  const coverageErrors = planCoverageErrors(configuredPins, targets, previous, storeState);
-  if (coverageErrors.length) fail(coverageErrors.join('\n'));
-  console.log(`release_plan_targets=${targets.map(targetKey).join(',')}`);
-  const dropped = [...new Set(collectUpdates(previous).updates
-    .filter((target) => RELEASE_PLATFORMS.includes(target.platform) &&
-      /^\d+$/.test(target.runtimeVersion) &&
-      BigInt(target.runtimeVersion) < BigInt(configuredPins[target.platform]) &&
-      !targets.some((planned) => targetKey(planned) === targetKey(target)))
-    .map(targetKey))].sort();
-  if (dropped.length) console.log(`store-runtime retention: dropping non-live production runtimes ${dropped.join(', ')}`);
-  if (options.dryRun && !options.productionHistory) {
-    console.log('Offline dry-run: --production-history and --store-status supply read-only snapshots.');
-  }
-
-  const channel = runEas(['channel:view', 'beta', '--json', '--non-interactive'], {
-    allowFailure: true,
-    dryRun: options.dryRun,
-  });
-  if (!channel) {
-    runEas(['channel:create', 'beta', '--json', '--non-interactive'], {
-      dryRun: options.dryRun,
-    });
-  }
-  runEas(['channel:edit', 'beta', '--branch', 'beta', '--json', '--non-interactive'], {
-    dryRun: options.dryRun,
-  });
-
-  const previousProductionTargets = newestTargets(previous, targets);
-  const requiredRollbackTargets = targets;
-  const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
-  // A runtime's FIRST production release has no earlier update to roll back to,
-  // but the store binary built for it in this same release carries an embedded
-  // bundle, and `rollback` already falls back to update:roll-back-to-embedded
-  // for such targets. The release leg names those platforms in
-  // OTA_EMBEDDED_ANCHOR_PLATFORMS (only when its native build succeeded), so the
-  // embedded update counts as the anchor for the current pin of that platform.
-  const embeddedAnchorPlatforms = new Set(
-    (process.env.OTA_EMBEDDED_ANCHOR_PLATFORMS ?? '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean),
-  );
-  const pins = readPinnedRuntimeVersion(process.cwd());
-  // Shipped-native ledger entries may use their store binary's embedded update
-  // when no earlier production OTA exists. History-only targets use that OTA.
-  const shippedBinaryKeys = new Set([
-    ...SHIPPED_NATIVE_RUNTIMES,
-    ...(storeStatus.builds ?? []),
-    ...(priorStoreState.builds ?? []),
-  ].map(target => targetKey({ ...target, platform: target.platform.toLowerCase() })));
-  const embeddedAnchorTargets = requiredRollbackTargets.filter(
-    (target) =>
-      !previousTargetKeys.has(targetKey(target)) &&
-      ((embeddedAnchorPlatforms.has(target.platform) &&
-        target.runtimeVersion === pins[target.platform]) ||
-        shippedBinaryKeys.has(targetKey(target))),
-  );
-  for (const target of embeddedAnchorTargets)
-    console.log(
-      `${targetKey(target)}: first production release on this runtime; rollback anchor = embedded update of ${
-        shippedBinaryKeys.has(targetKey(target)) && target.runtimeVersion !== pins[target.platform]
-          ? 'its already-shipped store binary'
-          : "this release's store binary"
-      }`,
-    );
-  const embeddedAnchorKeys = new Set(embeddedAnchorTargets.map(targetKey));
-  const missingRollbackTargets = requiredRollbackTargets.filter(
-    (target) =>
-      !previousTargetKeys.has(targetKey(target)) && !embeddedAnchorKeys.has(targetKey(target)),
-  );
-  if (!options.dryRun && missingRollbackTargets.length > 0) {
-    fail(
-      'Production has no rollback anchor for ' +
-        missingRollbackTargets.map(targetKey).join(', ') +
-        '; refusing to publish rollout candidates.',
-    );
-  }
-  // The JS bundle does not depend on the runtime: EXPO_RUNTIME_OVERRIDE only
-  // changes the runtimeVersion that eas-cli reads from the app config when it
-  // builds each update's manifest, and it reads that config even with
-  // --skip-bundler. So the first target of each platform exports into its own
-  // directory and every later target of that platform uploads the same export
-  // under its own runtimeVersion. requireTargetUpdate still checks the runtime
-  // EAS reports for every target.
+  if (!SHA.test(options.sha ?? '')) fail('publish requires --sha <40-hex release sha>');
+  const branch = options.branch ?? releaseBranchName(options.releaseVersion);
+  const channel = options.channel ?? 'beta';
+  const plan = options.targets ? readJson(options.targets) : targetsCommand({ memory: options.memory });
+  const targets = plan.targets;
+  const before = listBranch(branch, options);
+  const { present, missing } = planBranchPublish({ targets, branchUpdates: before, sha: options.sha });
+  if (present.length > 0) console.log(`${branch} already has ${present.map(targetKey).join(', ')} from this source; not republishing them`);
+  // One JS export per platform. EXPO_RUNTIME_OVERRIDE only changes the
+  // runtimeVersion eas-cli writes into each manifest, so later targets of a
+  // platform upload the same export with --skip-bundler.
   const exportRoot = mkdtempSync(join(tmpdir(), 'beeline-ota-export-'));
-  const exportedPlatforms = new Set();
-  const publishedTargets = targets.map((target) => {
-    const message = `ota candidate: ${options.sha.slice(0, 12)} ${options.ref} ${targetKey(target)}`;
-    const reuseExport = exportedPlatforms.has(target.platform);
-    exportedPlatforms.add(target.platform);
-    console.log(
-      `${targetKey(target)}: ${reuseExport ? 'uploading the existing' : 'bundling the'} ${target.platform} export`,
-    );
-    const candidate = runEas(
-      [
-        'update',
-        '--branch',
-        'beta',
-        '--environment',
-        'production',
-        '--platform',
-        target.platform,
-        '--message',
-        message,
-        '--input-dir',
-        join(exportRoot, target.platform),
-        '--source-maps',
-        ...(reuseExport ? ['--skip-bundler'] : []),
-        '--json',
-        '--non-interactive',
-      ],
-      {
-        dryRun: options.dryRun,
-        env: {
-          EXPO_RUNTIME_OVERRIDE: target.runtimeVersion,
-          EXPO_PUBLIC_BEELINE_RELEASE_SHA: options.sha,
-        },
+  const exported = new Set();
+  for (const target of missing) {
+    const reuse = exported.has(target.platform);
+    exported.add(target.platform);
+    console.log(`${targetKey(target)}: ${reuse ? 'uploading the existing' : 'bundling the'} ${target.platform} export to ${branch}`);
+    const result = runEas([
+      'update', '--branch', branch, '--environment', 'production', '--platform', target.platform,
+      '--message', updateMessage(options.sha, target), '--input-dir', join(exportRoot, target.platform),
+      '--source-maps', ...(reuse ? ['--skip-bundler'] : []), '--json', '--non-interactive',
+    ], {
+      dryRun: options.dryRun,
+      env: {
+        EXPO_RUNTIME_OVERRIDE: target.runtimeVersion,
+        EXPO_PUBLIC_BEELINE_RELEASE_SHA: options.sha,
+        ...(options.releaseVersion ? { EXPO_PUBLIC_BEELINE_RELEASE_VERSION: options.releaseVersion } : {}),
       },
-    );
-    if (!options.dryRun && !reuseExport) {
-      queueSentrySourcemaps(join(exportRoot, target.platform), options.sha);
+    });
+    if (options.dryRun) continue;
+    const published = collectUpdates(result);
+    if (published.length !== 1 || targetKey(published[0]) !== targetKey(target)) {
+      fail(`publish of ${targetKey(target)} returned ${published.map(targetKey).join(', ') || 'no update'}`);
     }
-    return options.dryRun
-      ? null
-      : requireTargetUpdate(candidate, `Beta publish ${targetKey(target)}`, target);
-  });
-
-  if (options.dryRun) return;
-  const candidateTargets = publishedTargets.filter(Boolean);
-  const candidateUpdates = candidateTargets.map((target) => target.update);
-  const candidateGroups = [...new Set(candidateTargets.map((target) => target.group))];
-  const candidateGroupIds = platformGroupSummary(candidateTargets, configuredPins);
-  const android = candidateUpdates.find((update) => update.platform === 'android');
-  if (!android) fail('Beta publish did not return an Android update.');
-  const previousProduction = platformGroupSummary(previousProductionTargets, configuredPins);
-  const existing = existsSync(options.ledger) ? readLedger(options.ledger) : {};
-  const ledger = {
-    ...existing,
-    schemaVersion: 4,
-    status: 'beta',
-    sourceSha: options.sha,
-    ...(options.releaseVersion ? { releaseVersion: options.releaseVersion } : {}),
-    sourceRef: options.ref,
-    updateTargets: targets,
-    storeRuntimeState: {
-      builds: storeStatus.builds ?? priorStoreState.builds ?? [],
-      stores: storeStatus.stores ?? {},
-      observedAt: storeStatus.observedAt ?? null,
-      previousTargets: targets,
-      previouslyLive: [...new Map([
-        ...RELEASE_PLATFORMS.flatMap(p => storeStatus.stores?.[p]?.status === 'readable'
-          ? [...storeStatus.stores[p].live, ...(storeStatus.stores[p].historical ?? [])] : []),
-        // Preserve the first publication observation, including seeded dates.
-        ...(storeState.previouslyLive ?? []),
-      ].map(t => [runtimeKey(t), t])).values()],
-    },
-    candidateTargets: candidateTargets.map(({ update: _update, ...target }) => target),
-    candidateGroupIds,
-    candidateGroupId: joinGroupIds(candidateGroups),
-    candidateUpdates,
-    androidUpdateId: android.id,
-    runtimeVersions: [
-      ...new Set(candidateUpdates.map((update) => update.runtimeVersion).filter(Boolean)),
-    ],
-    previousProductionTargets,
-    previousProductionGroupIds: previousProduction,
-    previousProductionGroupId:
-      joinGroupIds(previousProductionTargets.map((target) => target.group)) || null,
-    createdAt: existing.createdAt ?? isoNow(),
-    delivery: { ...existing.delivery, state: 'built', builtAt: isoNow() },
-    canary: { status: 'pending' },
-    production: null,
+    if (!reuse) queueSentrySourcemaps(join(exportRoot, target.platform), options.sha);
+  }
+  if (options.dryRun) return null;
+  const after = listBranch(branch);
+  const updates = assertBranchCovers({ branch, targets, branchUpdates: after, sha: options.sha });
+  console.log(`branch_targets=${updates.map((update) => `${targetKey(update)}:${update.group}`).join(',')}`);
+  // Every live runtime is on the branch before any channel moves.
+  const pointer = pointChannel(channel, branch);
+  const facts = {
+    branch, channel, sourceSha: options.sha, targets,
+    groups: Object.fromEntries(updates.map((update) => [targetKey(update), update.group])),
+    published: missing.map(targetKey), alreadyPresent: present.map(targetKey),
+    storeRuntime: plan.storeRuntime, previousChannelBranch: pointer.previousBranch,
   };
-  writeLedger(options.ledger, ledger);
-  if (options.index) {
-    markBuilt(options.index, options.sha);
-  }
-}
-
-function markCanary(options) {
-  if (!['passed', 'post-promote', 'blocked'].includes(options.status)) {
-    fail('mark-canary --status must be passed, post-promote, or blocked');
-  }
-  const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
-  if (options.status === 'blocked' && !reason) {
-    fail('mark-canary --status blocked requires --reason naming why promotion is parked');
-  }
-  const ledger = readLedger(options.ledger);
-  if (ledger.status !== 'beta') fail(`Cannot mark canary from ledger status ${ledger.status}.`);
-  ledger.canary = {
-    status: options.status,
-    recordedAt: isoNow(),
-    ...(reason ? { reason } : {}),
-  };
-  writeLedger(options.ledger, ledger);
-}
-
-// A timed-out job may have finished every EAS republish while losing its
-// runner-local ledger. Recover only when the newest production group for
-// EVERY target names this candidate group and SHA in the message written by
-// promote(). A partial or superseded production rollout is never republished
-// by a retry: that would silently create a different OTA.
-function promotionMessageMatches(observed, expected) {
-  if (observed === expected) return true;
-  // eas-cli update:list --json returns a display line rather than the raw
-  // message: `"<message>" (55 minutes ago by <actor>)`. Compare only the
-  // quoted message, without accepting a prefix or extra words inside it.
-  const display = /^"([^"\r\n]+)" \([^\r\n]*\)$/.exec(observed ?? '');
-  return display?.[1] === expected;
-}
-
-function recoverPromotion(options) {
-  const ledger = readLedger(options.ledger);
-  if (ledger.status !== 'beta') fail(`Cannot recover ledger status ${ledger.status}.`);
-  const candidates = ledger.candidateTargets;
-  if (!Array.isArray(candidates) || candidates.length === 0) {
-    fail('Recovery requires an exact target-aware OTA candidate ledger.');
-  }
-  const listed = runEas([
-    'update:list', '--branch', 'production', '--limit',
-    productionLookupLimit(candidates), '--json', '--non-interactive',
-  ]);
-  const observed = newestTargets(listed, candidates);
-  const byKey = new Map(observed.map((target) => [targetKey(target), target]));
-  const matched = candidates.flatMap((candidate) => {
-    const target = byKey.get(targetKey(candidate));
-    const message = `promote beta ${candidate.group} (${ledger.sourceSha.slice(0, 12)})`;
-    return promotionMessageMatches(target?.message, message) ? [target] : [];
-  });
-  if (matched.length === 0) {
-    if (Number(options.retryAttempt ?? 1) > 1) {
-      fail('No complete exact OTA promotion is visible; refusing to republish on a retry.');
-    }
-    writeFileSync(options.result, 'new\n');
-    return;
-  }
-  if (matched.length !== candidates.length) {
-    fail(`Only ${matched.length}/${candidates.length} exact OTA targets are current; refusing to republish.`);
-  }
-  const pins = readPinnedRuntimeVersion(process.cwd());
-  const promotedAt = isoNow();
-  const targets = matched.map(({ message: _message, ...target }) => ({
-    ...target, update: {
-      id: target.updateId, platform: target.platform, runtimeVersion: target.runtimeVersion,
-      group: target.group,
-    },
-  }));
-  const groups = [...new Set(targets.map((target) => target.group))];
-  ledger.status = 'production';
-  ledger.production = {
-    sourceTargets: candidates,
-    sourceGroupIds: platformGroupSummary(candidates, pins),
-    sourceGroupId: joinGroupIds(candidates.map((target) => target.group)),
-    targets: targets.map(({ update: _update, ...target }) => target),
-    groupIds: platformGroupSummary(targets, pins),
-    groupId: joinGroupIds(groups),
-    updates: targets.map((target) => target.update),
-    promotedAt,
-  };
-  ledger.delivery = {
-    ...ledger.delivery, state: 'published', groupIds: groups,
-    groupId: joinGroupIds(groups), publishedAt: promotedAt,
-  };
-  writeLedger(options.ledger, ledger);
-  markPublished(options.index, {
-    groupIds: groups, updateIds: targets.map((target) => target.updateId),
-    headSha: ledger.sourceSha, releaseVersion: ledger.releaseVersion,
-    publishedAt: promotedAt, runId: String(options.runId ?? ledger.delivery?.runId ?? 'unknown'),
-    attempt: Number(options.retryAttempt ?? ledger.delivery?.attempt ?? 1),
-  });
-  recordStoreRuntimeState(options.index, ledger);
-  writeFileSync(options.result, 'recovered\n');
+  writeJson(options.output, facts);
+  return facts;
 }
 
 function promote(options) {
-  const ledger = readLedger(options.ledger);
-  if (ledger.status !== 'beta') fail(`Cannot promote ledger status ${ledger.status}.`);
-  if (!['passed', 'post-promote'].includes(ledger.canary?.status)) {
-    const parked =
-      ledger.canary?.status === 'blocked' && ledger.canary.reason
-        ? ` Promotion is parked: ${ledger.canary.reason}`
-        : '';
-    fail(
-      `Refusing production promotion without a passed or explicitly post-promote canary.${parked}`,
-    );
-  }
-  const configuredPins = readPinnedRuntimeVersion(process.cwd());
-  const targetCandidates = Array.isArray(ledger.candidateTargets) ? ledger.candidateTargets : null;
-  let candidates;
-  let promoted;
-  let productionTargets;
-  if (targetCandidates) {
-    const promotedTargets = targetCandidates.map((target) => {
-      const result = runEas(
-        [
-          'update:republish',
-          '--group',
-          target.group,
-          '--destination-branch',
-          'production',
-          '--platform',
-          target.platform,
-          '--message',
-          `promote beta ${target.group} (${ledger.sourceSha.slice(0, 12)})`,
-          '--json',
-          '--non-interactive',
-        ],
-        { dryRun: options.dryRun },
-      );
-      return options.dryRun
-        ? null
-        : requireTargetUpdate(result, `Production promotion of ${targetKey(target)}`, target);
-    });
-    if (options.dryRun) return;
-    productionTargets = promotedTargets.filter(Boolean);
-    const updates = productionTargets.map((target) => target.update);
-    promoted = {
-      groupByPlatform: platformGroupSummary(productionTargets, configuredPins),
-      groupIds: [...new Set(productionTargets.map((target) => target.group))],
-      updates,
-    };
-    candidates = targetCandidates.map((target) => target.group);
-  } else {
-    candidates = candidateGroupMap(ledger);
-    promoted = republishGroups(republishEntries(candidates), {
-      label: 'Production promotion',
-      describe: (group) => `promote beta ${group} (${ledger.sourceSha.slice(0, 12)})`,
-      dryRun: options.dryRun,
-      expectedPlatforms: Object.keys(candidates),
-    });
-  }
-  if (options.dryRun) return;
-  ledger.status = 'production';
-  ledger.production = {
-    ...(targetCandidates ? { sourceTargets: targetCandidates } : {}),
-    sourceGroupIds: targetCandidates
-      ? platformGroupSummary(targetCandidates, configuredPins)
-      : candidates,
-    sourceGroupId: joinGroupIds(candidates),
-    ...(productionTargets
-      ? { targets: productionTargets.map(({ update: _update, ...target }) => target) }
-      : {}),
-    groupIds: promoted.groupByPlatform,
-    groupId: joinGroupIds(promoted.groupIds),
-    updates: promoted.updates,
-    promotedAt: isoNow(),
+  if (!SHA.test(options.sha ?? '')) fail('promote requires --sha <40-hex release sha>');
+  const branch = options.branch ?? releaseBranchName(options.releaseVersion);
+  const channel = options.channel ?? 'production';
+  const targets = options.targets ? readJson(options.targets).targets : null;
+  if (!Array.isArray(targets) || targets.length === 0) fail('promote requires --targets naming every runtime the branch must serve');
+  const updates = assertBranchCovers({ branch, targets, branchUpdates: listBranch(branch), sha: options.sha });
+  const pointer = pointChannel(channel, branch, options);
+  const facts = {
+    branch, channel, sourceSha: options.sha, targets,
+    groups: Object.fromEntries(updates.map((update) => [targetKey(update), update.group])),
+    changed: pointer.changed, observedPreviousBranch: pointer.previousBranch, promotedAt: new Date().toISOString(),
   };
-  ledger.delivery = {
-    ...ledger.delivery,
-    state: 'published',
-    groupIds: promoted.groupIds,
-    groupId: joinGroupIds(promoted.groupIds),
-    publishedAt: ledger.production.promotedAt,
-  };
-  writeLedger(options.ledger, ledger);
-  if (options.index) {
-    markPublished(options.index, {
-      groupIds: promoted.groupIds,
-      updateIds: promoted.updates.map((update) => update.id),
-      headSha: ledger.sourceSha,
-      releaseVersion: ledger.releaseVersion,
-      publishedAt: ledger.production.promotedAt,
-      runId: String(ledger.delivery?.runId ?? options.runId ?? 'unknown'),
-      attempt: Number(ledger.delivery?.attempt ?? options.attempt ?? 1),
-    });
-    recordStoreRuntimeState(options.index, ledger);
-  }
-}
-
-function assertPromotion(options) {
-  const ledger = readLedger(options.ledger);
-  if (ledger.status !== 'production') {
-    fail(`Production promotion did not complete; ledger status is ${ledger.status}.`);
-  }
-  const candidates =
-    ledger.candidateTargets?.map((target) => target.group) ??
-    groupMapFrom(ledger.candidateGroupIds ?? ledger.candidateGroupId);
-  const sources =
-    ledger.production?.sourceTargets?.map((target) => target.group) ??
-    groupMapFrom(ledger.production?.sourceGroupIds ?? ledger.production?.sourceGroupId);
-  const producedTargets = ledger.production?.targets;
-  const produced =
-    producedTargets?.map((target) => target.group) ??
-    groupMapFrom(ledger.production?.groupIds ?? ledger.production?.groupId);
-  const producedByPlatform = groupMapFrom(
-    ledger.production?.groupIds ?? ledger.production?.groupId,
-  );
-  if (
-    groupIdList(candidates).length === 0 ||
-    groupIdList(produced).length === 0 ||
-    !sameGroupSet(sources, candidates) ||
-    !Array.isArray(ledger.production.updates) ||
-    ledger.production.updates.length === 0
-  ) {
-    fail('Production promotion proof is incomplete or does not name the exact beta source group.');
-  }
-  const platforms = new Set(ledger.production.updates.map((update) => update.platform));
-  for (const platform of RELEASE_PLATFORMS) {
-    if (!platforms.has(platform)) {
-      fail('Production promotion proof must contain both Android and iOS updates.');
-    }
-    if (!producedByPlatform[platform]) {
-      fail(`Production promotion proof names no ${platform} production update group.`);
-    }
-  }
-  if (Array.isArray(ledger.updateTargets)) {
-    console.log(`release_targets=${ledger.updateTargets.map(targetKey).join(',')}`);
-    const expected = ledger.updateTargets.map(targetKey).sort();
-    const actual = (producedTargets ?? []).map(targetKey).sort();
-    if (
-      expected.length !== actual.length ||
-      expected.some((target, index) => target !== actual[index])
-    ) {
-      fail(`Production promotion targets do not match the release target list.`);
-    }
-  }
-
-  if (options.index) {
-    const index = readJson(options.index);
-    const head = index.merges?.find((merge) => merge.sha === ledger.sourceSha);
-    if (
-      !head ||
-      !['published', 'confirmed'].includes(head.state) ||
-      !sameGroupSet(head.published?.groupIds ?? head.published?.groupId, produced)
-    ) {
-      fail('Delivery index does not prove that the current main head was published to production.');
-    }
-  }
-
-  console.log(`production_group_id=${joinGroupIds(produced)}`);
-  console.log(`source_group_id=${joinGroupIds(sources)}`);
-  console.log(
-    `production_groups=${RELEASE_PLATFORMS.map((platform) => `${platform}=${ledger.production.groupIds?.[platform] ?? ''}`).join(',')}`,
-  );
-  if (producedTargets)
-    console.log(`production_targets=${producedTargets.map(targetKey).join(',')}`);
-  console.log(`source_sha=${ledger.sourceSha}`);
-  if (ledger.releaseVersion) console.log(`release_version=${ledger.releaseVersion}`);
-}
-
-function assertProductionList(options) {
-  const ledger = readLedger(options.ledger);
-  if (!Array.isArray(ledger.updateTargets) || !Array.isArray(ledger.production?.targets)) {
-    fail('Production target-list proof requires a target-aware release ledger.');
-  }
-  const limit = productionLookupLimit(ledger.production.targets);
-  const listed = runEas(
-    [
-      'update:list',
-      '--branch',
-      'production',
-      '--limit',
-      limit,
-      '--json',
-      '--non-interactive',
-    ],
-    { dryRun: options.dryRun },
-  );
-  if (options.dryRun) return;
-  const observed = newestTargets(listed, ledger.updateTargets);
-  const expected = new Map(
-    ledger.production.targets.map((target) => [targetKey(target), target.group]),
-  );
-  if (
-    observed.length !== expected.size ||
-    observed.some((target) => expected.get(targetKey(target)) !== target.group)
-  ) {
-    const seen = new Map(observed.map((target) => [targetKey(target), target.group]));
-    const absent = [...expected.keys()].filter((key) => !seen.has(key));
-    const wrong = [...expected.entries()]
-      .filter(([key, group]) => seen.has(key) && seen.get(key) !== group)
-      .map(([key, group]) => key + ' expected ' + group + ', listed ' + seen.get(key));
-    const pageFull = Number(limit) === PRODUCTION_LOOKUP_CEILING && absent.length > 0;
-    fail(
-      'eas update:list does not show the exact production targets.' +
-        (absent.length ? ' Not listed: ' + absent.join(', ') + '.' : '') +
-        (wrong.length ? ' Wrong group: ' + wrong.join('; ') + '.' : '') +
-        (pageFull
-          ? ' The lookup already read the largest page eas allows (' +
-            PRODUCTION_LOOKUP_CEILING +
-            ' update groups) for ' +
-            expected.size +
-            ' release targets, so this may be the page and not the promotion.'
-          : ''),
-    );
-  }
-  console.log('listed_production_targets=' + observed.map(targetKey).join(','));
-  console.log('listed_production_groups=' + observed.map((target) => target.group).join(','));
-}
-
-function deliveryTarget(options) {
-  const delivery = latestPublishedDelivery(options.index) ?? {
-    groupId: '',
-    updateIds: [],
-    releaseVersion: '',
-    sourceSha: '',
-  };
-  const lines = [
-    `group_id=${delivery.groupId}`,
-    `update_ids=${delivery.updateIds.join(',')}`,
-    `release_version=${delivery.releaseVersion}`,
-    `source_sha=${delivery.sourceSha}`,
-  ];
-  console.log(lines.join('\n'));
+  console.log(`promoted ${channel} -> ${branch} (${targets.map(targetKey).join(', ')})`);
+  writeJson(options.output, facts);
+  return facts;
 }
 
 function rollback(options) {
-  // Embedded-only mode serves the runtime's FIRST production release: its
-  // ledger carries no previousProductionGroupId because no earlier update
-  // group exists to republish, and the only known-good bundle is the one
-  // embedded in that release's store binary. Every current production target
-  // is rolled back through update:roll-back-to-embedded instead.
-  const embeddedOnly = options.embedded === true;
-  const sourceIds = groupIdList(options.group);
-  let currentTargets = [];
-  if (embeddedOnly && sourceIds.length > 0) {
-    fail('rollback --embedded rolls back to the embedded update and takes no --group');
+  const channel = options.channel ?? 'production';
+  const target = options.toBranch;
+  if (!target) fail('rollback requires --to-branch');
+  const current = readChannelBranch(channel);
+  if (!current) fail(`channel ${channel} does not exist`);
+  if (options.expectedCurrent && current !== options.expectedCurrent) {
+    fail(`${channel} points at ${current}, not ${options.expectedCurrent}; refusing to roll back a release that is no longer current`);
   }
-  if (!embeddedOnly && sourceIds.length === 0) fail('rollback requires --group');
-  if (embeddedOnly && !options.expectedCurrentGroup) {
-    fail(
-      'rollback --embedded requires --expected-current-group naming the production group being rolled back',
-    );
+  if (current === target) {
+    console.log(`${channel} already points at ${target}; nothing to roll back`);
+    writeJson(options.output, { channel, branch: target, changed: false });
+    return;
   }
-  if (!embeddedOnly && sourceIds.length > PRODUCTION_LOOKUP_CEILING) {
-    fail(
-      `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
-    );
+  const currentUpdates = listBranch(current);
+  const targetUpdates = listBranch(target);
+  if (targetUpdates.length === 0) fail(`${target} has no updates; refusing to point ${channel} at an empty branch`);
+  const gaps = rollbackGaps({ currentUpdates, targetUpdates });
+  for (const gap of gaps) {
+    console.log(`${targetKey(gap)} is not on ${target}; phones on it roll back to their embedded update`);
+    runEas([
+      'update:roll-back-to-embedded', '--branch', target, '--runtime-version', gap.runtimeVersion,
+      '--platform', gap.platform, '--message', `rollback ${targetKey(gap)} to embedded update`,
+      '--json', '--non-interactive',
+    ], { dryRun: options.dryRun, env: { EXPO_RUNTIME_OVERRIDE: gap.runtimeVersion } });
   }
-  if (options.expectedCurrentGroup) {
-    const current = runEas(
-      [
-        'update:list',
-        '--branch',
-        'production',
-        '--limit',
-        productionLookupLimit(),
-        '--json',
-        '--non-interactive',
-      ],
-      { dryRun: options.dryRun },
-    );
-    if (!options.dryRun) {
-      const expectedCurrentIds = groupIdList(options.expectedCurrentGroup);
-      currentTargets =
-        expectedCurrentIds.length > RELEASE_PLATFORMS.length
-          ? newestTargets(current, releaseUpdateTargets(process.cwd(), undefined, current))
-          : [];
-      const observed =
-        currentTargets.length > 0
-          ? currentTargets.map((target) => target.group)
-          : newestGroupByPlatform(current);
-      if (!sameGroupSet(observed, options.expectedCurrentGroup)) {
-        writeLedger(options.ledger, {
-          schemaVersion: 2,
-          status: 'rollback-skipped-superseded',
-          sourceGroupIds: sourceIds,
-          sourceGroupId: joinGroupIds(sourceIds),
-          expectedCurrentGroupId: joinGroupIds(options.expectedCurrentGroup),
-          observedCurrentGroupIds: observed,
-          observedCurrentGroupId: joinGroupIds(observed) || null,
-          recordedAt: isoNow(),
-        });
-        console.log(
-          `Rollback skipped: production moved from ${joinGroupIds(options.expectedCurrentGroup)} to ${joinGroupIds(observed) || 'unknown'}.`,
-        );
-        return;
-      }
-    } else if (embeddedOnly && options.dryRun) {
-      // A dry run has no production payload to read; name the configured
-      // release targets so the printed plan shows one embedded rollback per
-      // target, mirroring what a real run would query from production.
-      currentTargets = releaseUpdateTargets(process.cwd());
-    }
-  }
-  const rolledBack = embeddedOnly
-    ? { updates: [] }
-    : republishGroups(
-        sourceIds.map((group) => [group, null]),
-        {
-          label: 'Production rollback',
-          describe: (group) => `rollback production to ${group}`,
-          dryRun: options.dryRun,
-          expectedPlatforms: RELEASE_PLATFORMS,
-        },
-      );
-  if (options.dryRun && !embeddedOnly) return;
-  const restoredTargetKeys = new Set(rolledBack.updates.map(targetKey));
-  const missingTargets = currentTargets.filter(
-    (target) => !restoredTargetKeys.has(targetKey(target)),
-  );
-  const embeddedRollbackTargets = missingTargets.map((target) => {
-    const result = runEas(
-      [
-        'update:roll-back-to-embedded',
-        '--branch',
-        'production',
-        '--runtime-version',
-        target.runtimeVersion,
-        '--platform',
-        target.platform,
-        '--message',
-        `rollback ${targetKey(target)} to embedded update`,
-        '--json',
-        '--non-interactive',
-      ],
-      { env: { EXPO_RUNTIME_OVERRIDE: target.runtimeVersion }, dryRun: options.dryRun },
-    );
-    if (options.dryRun) return { ...target, update: null };
-    return requireTargetUpdate(result, `Embedded rollback of ${targetKey(target)}`, target);
+  const pointer = pointChannel(channel, target, options);
+  writeJson(options.output, {
+    channel, branch: target, previousBranch: current, embeddedRollbacks: gaps.map(targetKey),
+    changed: pointer.changed, dryRun: options.dryRun, at: new Date().toISOString(),
   });
-  if (options.dryRun) return;
-  const restoredTargets = [
-    ...rolledBack.updates.map((update) => ({ ...update, update })),
-    ...embeddedRollbackTargets,
-  ];
-  const restoredKeys = new Set(restoredTargets.map(targetKey));
-  const stillMissing = currentTargets.filter((target) => !restoredKeys.has(targetKey(target)));
-  if (stillMissing.length > 0) {
-    fail(
-      `Rollback did not contain ${stillMissing.map(targetKey).join(', ')}; refusing to record success.`,
-    );
-  }
-  const productionUpdates = restoredTargets.map((target) => target.update);
-  const productionGroups = [...new Set(productionUpdates.map((update) => update.group))];
-  const configuredPins = readPinnedRuntimeVersion(process.cwd());
-  writeLedger(options.ledger, {
-    schemaVersion: 2,
-    status: 'rolled-back',
-    ...(embeddedOnly ? { embeddedOnly: true } : {}),
-    sourceGroupIds: sourceIds,
-    sourceGroupId: joinGroupIds(sourceIds),
-    productionGroupIds: platformGroupSummary(restoredTargets, configuredPins),
-    productionGroupId: joinGroupIds(productionGroups),
-    productionUpdates,
-    ...(embeddedRollbackTargets.length > 0
-      ? {
-          embeddedRollbackTargets: embeddedRollbackTargets.map(
-            ({ platform, runtimeVersion, group }) => ({ platform, runtimeVersion, group }),
-          ),
-        }
-      : {}),
-    rolledBackAt: isoNow(),
-  });
+}
+
+function verifyBranch(options) {
+  const branch = options.branch;
+  const targets = options.targets ? readJson(options.targets).targets : null;
+  if (!branch || !Array.isArray(targets)) fail('verify-branch requires --branch and --targets');
+  const updates = assertBranchCovers({ branch, targets, branchUpdates: listBranch(branch), sha: options.sha });
+  for (const update of updates) console.log(`${targetKey(update)} group=${update.group} message="${update.message}"`);
 }
 
 export function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
-  try {
-    switch (options.command) {
-      case 'init-delivery':
-        initDelivery(options);
-        break;
-      case 'publish':
-        publish(options);
-        break;
-      case 'mark-canary':
-        markCanary(options);
-        break;
-      case 'promote':
-        promote(options);
-        break;
-      case 'recover-promotion':
-        recoverPromotion(options);
-        break;
-      case 'assert-promotion':
-        assertPromotion(options);
-        break;
-      case 'assert-production-list':
-        assertProductionList(options);
-        break;
-      case 'rollback':
-        rollback(options);
-        break;
-      case 'record-failure':
-        recordFailure(options);
-        break;
-      case 'confirm':
-        console.log(JSON.stringify(confirmDelivery(options)));
-        break;
-      case 'list-undelivered':
-        listUndelivered(options);
-        break;
-      case 'classify-failure':
-        console.log(classifyFailure(options.exitCode, options.reason));
-        break;
-      case 'delivery-target':
-        deliveryTarget(options);
-        break;
-      case 'merge-reconciliation':
-        mergeReconciliation(options);
-        break;
-      default:
-        fail(
-          'Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|recover-promotion|assert-promotion|assert-production-list|rollback|record-failure|confirm|list-undelivered|classify-failure|delivery-target|merge-reconciliation> [options]',
-        );
-    }
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
+  if (process.env.EXPO_RUNTIME_OVERRIDE) {
+    fail('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
   }
+  switch (options.command) {
+    case 'targets':
+      return targetsCommand(options);
+    case 'publish':
+      return publish(options);
+    case 'promote':
+      return promote(options);
+    case 'rollback':
+      return rollback(options);
+    case 'verify-branch':
+      return verifyBranch(options);
+    case 'channel-branch':
+      console.log(readChannelBranch(options.channel ?? 'production') ?? '');
+      return undefined;
+    default:
+      fail('Usage: ota-release.mjs <targets|publish|promote|rollback|verify-branch|channel-branch> [options]');
+  }
+  return undefined;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}

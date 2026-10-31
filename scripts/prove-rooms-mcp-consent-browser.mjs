@@ -16,7 +16,7 @@ try {
   const page = await browser.newPage();
   page.on('console', (m) => console.log('Browser:', m.text()));
   page.on('requestfailed', (r) => console.log('Failed navigation:', r.failure()));
-  for (const decision of process.argv.includes('--before') ? ['allow'] : ['allow', 'deny']) {
+  for (const decision of process.argv.includes('--before') ? ['allow'] : ['allow', 'allow-wake', 'deny']) {
     const verifier = randomBytes(32).toString('base64url');
     const reg = await fetch(origin + '/mcp/oauth/register', {
       method: 'POST',
@@ -69,11 +69,15 @@ try {
       assert.equal((await saved).status(), 302);
       console.log('Edit/Save passed');
     }
+    if (decision === 'allow-wake') {
+      await page.getByLabel('Wake link (optional)', { exact: true }).fill('https://hooks.example/browser');
+      await page.getByLabel('Wake key (optional)', { exact: true }).fill('synthetic-browser-wake-key');
+    }
     const posted = page.waitForResponse(
       (r) => r.request().method() === 'POST' && r.url().endsWith('/consent'),
     );
     await page
-      .getByRole('button', { name: decision === 'allow' ? 'Allow' : 'Cancel', exact: true })
+      .getByRole('button', { name: decision.startsWith('allow') ? 'Allow' : 'Cancel', exact: true })
       .click();
     const response = await posted;
     console.log(

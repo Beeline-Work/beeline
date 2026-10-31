@@ -1,26 +1,22 @@
-# App leg of the unified release (was .github/workflows/mobile-ota.yml).
-# unified-release.yml calls it twice from the self-hosted production host:
-# phase=build publishes the immutable `beta` export and stores the exact
-# candidate ledger; phase=promote republishes that exact beta group to
-# `production` and records the owner device receipt when one already exists.
-# Typecheck and tests already ran in CI on the merged commit. The caller checks
-# out the release SHA (fetch-depth 0), installs Node 22 and the pinned eas-cli,
-# and owns runner and timeout.
+# Phone OTA leg of the unified release, by channel pointer (Expo's branch
+# promotion pattern). It publishes this release to its own EAS branch,
+# `release-<version>`, with one update per runtime live in the stores, points
+# the `beta` channel at it, and (promote=true) points `production` at the same
+# branch, so production serves the exact bundles beta got.
+#
+# Nothing is handed between steps, jobs or runs through a file: every step
+# asks EAS. A rerun publishes only the runtimes the branch still lacks and
+# skips a channel that already points at the branch. The caller checks out
+# the release SHA, installs Node 22 and the pinned eas-cli (EAS_CLI_PATH), and
+# provides the Play/App Store read credentials in the job env.
 name: Mobile OTA release leg
-description: Build the exact app candidate or promote it to production
+description: Publish this release's OTA branch for every live store runtime and move the channel pointers
 
 inputs:
-  phase:
-    description: build | promote
-    required: true
   release_sha:
     required: true
   release_version:
     required: true
-  retry_attempt:
-    description: 1 for a first attempt; above 1 when this release identity ran before, so promotion never republishes blindly
-    default: '1'
-    required: false
   expo_token:
     description: EXPO_TOKEN secret (composite actions cannot read secrets themselves)
     required: true
@@ -28,127 +24,65 @@ inputs:
     description: Sentry release upload token; never exposed to the app
     required: false
     default: ''
-  embedded_anchor_platforms:
-    description: comma list of platforms whose store binary was built in this release (their current runtime pin may use the embedded update as its rollback anchor)
+  ota_memory:
+    description: JSON from the initialize job — store build identities and the runtimes the previous release served
+    required: false
+    default: '{}'
+  branch:
+    description: EAS branch for this release; empty means release-<release_version>
     required: false
     default: ''
-  owner_pubkey:
-    description: MOBILE_OTA_OWNER_PUBKEY secret; empty skips the receipt check
+  beta_channel:
     required: false
-    default: ''
-  receipt_token:
-    description: MOBILE_OTA_RECEIPT_TOKEN secret; empty skips the receipt check
+    default: beta
+  production_channel:
     required: false
-    default: ''
-  receipt_origin:
-    description: Owner receipt origin (MOBILE_OTA_RECEIPT_ORIGIN variable)
+    default: production
+  promote:
+    description: true moves the production channel to the branch after beta
     required: false
-    default: https://usebeeline.app/push
+    default: 'true'
 
 outputs:
-  production_group_id:
-    description: The production group republished by phase=promote
-    value: ${{ steps.promotion.outputs.production_group_id }}
+  ota_branch:
+    description: The EAS branch this release published
+    value: ${{ steps.publish.outputs.branch }}
+  ota_targets:
+    description: Comma-separated platform@runtime targets on the branch
+    value: ${{ steps.publish.outputs.targets }}
+  store_runtime:
+    description: Store runtime observations for the release record (JSON)
+    value: ${{ steps.publish.outputs.store_runtime }}
   completed_at:
-    description: Epoch seconds when phase=promote proved the rollback ledger
-    value: ${{ steps.ledger.outputs.completed_at }}
+    description: Epoch seconds when production pointed at the branch
+    value: ${{ steps.promote.outputs.completed_at }}
 
 runs:
   using: composite
   steps:
-    - name: Initialize run clock and runner-local paths
+    - name: Install mobile dependencies and build SDKs
       shell: bash
+      working-directory: apps/mobile
       run: |
-        if [ '${{ inputs.phase }}' = build ]; then
-          echo "OTA_LEG_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-        fi
-        {
-          echo "DELIVERY_INDEX=$RUNNER_TEMP/mobile-ota-delivery-index.json"
-          echo "RUN_LEDGER=$RUNNER_TEMP/mobile-ota-ledger.json"
-          echo "TIMINGS_FILE=$RUNNER_TEMP/mobile-ota-stage-timings.tsv"
-        } >> "$GITHUB_ENV"
-
-    # ---- build -------------------------------------------------------------
-    - name: Find a downloadable mobile candidate for this exact release SHA
-      if: inputs.phase == 'build' || inputs.phase == 'promote'
-      id: reuse
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const name = `mobile-ota-candidate-${{ inputs.release_version }}-${{ inputs.release_sha }}`;
-          const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-            owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-          });
-          const artifact = artifacts
-            .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
-            .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-          if (artifact) {
-            try {
-              await github.rest.actions.downloadArtifact({
-                owner: context.repo.owner, repo: context.repo.repo,
-                artifact_id: artifact.id, archive_format: 'zip',
-              });
-              core.setOutput('run_id', String(artifact.workflow_run.id));
-            } catch (error) {
-              core.info(`Artifact ${artifact.id} is no longer downloadable: ${error.message}`);
-            }
-          }
-    - name: Reuse the exact mobile candidate, including its delivery sidecars
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id != ''
-      uses: actions/download-artifact@v4
-      with:
-        name: mobile-ota-candidate-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: ${{ runner.temp }}
-        run-id: ${{ steps.reuse.outputs.run_id }}
-        github-token: ${{ github.token }}
-    - name: Locate the latest cumulative delivery index
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
-      id: previous_index
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const artifacts = await github.rest.actions.listArtifactsForRepo({
-            owner: context.repo.owner, repo: context.repo.repo,
-            name: 'mobile-ota-delivery-index', per_page: 100,
-          });
-          const latest = artifacts.data.artifacts
-            .filter((artifact) => !artifact.expired)
-            .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-          if (latest?.workflow_run?.id) core.setOutput('run_id', String(latest.workflow_run.id));
-    - name: Download previous delivery index
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == '' && steps.previous_index.outputs.run_id != ''
-      uses: actions/download-artifact@v4
-      with:
-        name: mobile-ota-delivery-index
-        path: ${{ runner.temp }}/previous-index
-        run-id: ${{ steps.previous_index.outputs.run_id }}
-        github-token: ${{ github.token }}
-    - name: Initialize every merge before setup
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
+        echo "OTA_LEG_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+        bash ../../scripts/npm-ci-timed.sh
+        npm run eas-build-post-install
+    - name: Read the live store runtimes
       shell: bash
       working-directory: apps/mobile
       env:
-        CURRENT_ATTEMPT: ${{ inputs.retry_attempt }}
-        RELEASE_SHA: ${{ inputs.release_sha }}
-        RELEASE_VERSION: ${{ inputs.release_version }}
-        PUSH_BEFORE: ${{ github.event.before }}
+        EXPO_TOKEN_SECRET: ${{ inputs.expo_token }}
+        OTA_MEMORY: ${{ inputs.ota_memory }}
       run: |
         set -euo pipefail
-        previous="$RUNNER_TEMP/previous-index/mobile-ota-delivery-index.json"
-        if [ -f "$previous" ]; then cp "$previous" "$DELIVERY_INDEX"; fi
-        node scripts/ota-release.mjs init-delivery \
-          --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --ref main \
-          --run-id "$GITHUB_RUN_ID" --attempt "$CURRENT_ATTEMPT" --before "${PUSH_BEFORE:-}" \
-          --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
-    - name: Install mobile dependencies and build SDKs
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
-      shell: bash
-      working-directory: apps/mobile
-      run: |
-        bash ../../scripts/npm-ci-timed.sh
-        npm run eas-build-post-install
-    - name: Export and publish the beta candidate
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
+        if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+        mkdir -p "$RUNNER_TEMP/ota"
+        memory="${OTA_MEMORY:-}"
+        [ -n "$memory" ] || memory='{}'
+        printf '%s' "$memory" > "$RUNNER_TEMP/ota/memory.json"
+        node scripts/ota-release.mjs targets --memory "$RUNNER_TEMP/ota/memory.json" --output "$RUNNER_TEMP/ota/targets.json"
+    - name: Publish every live runtime to the release branch and point beta at it
+      id: publish
       shell: bash
       working-directory: apps/mobile
       env:
@@ -156,9 +90,8 @@ runs:
         SENTRY_AUTH_TOKEN: ${{ inputs.sentry_auth_token }}
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
-        EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
-        EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
-        OTA_EMBEDDED_ANCHOR_PLATFORMS: ${{ inputs.embedded_anchor_platforms }}
+        BRANCH: ${{ inputs.branch || format('release-{0}', inputs.release_version) }}
+        BETA_CHANNEL: ${{ inputs.beta_channel }}
       run: |
         set -euo pipefail
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
@@ -166,121 +99,36 @@ runs:
         started="$(date +%s)"
         OTA_TMPDIR="$(mktemp -d)"
         TMPDIR="$OTA_TMPDIR" node scripts/ota-release.mjs publish \
-          --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --ref main \
-          --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" 2>&1
-        printf 'candidate_publish\t%s\n' "$(( $(date +%s) - started ))" > "$TIMINGS_FILE"
-    - name: Store the exact app candidate for the aligned gate
-      if: inputs.phase == 'build'
-      uses: actions/upload-artifact@v4
-      with:
-        name: mobile-ota-candidate-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: |
-          ${{ runner.temp }}/mobile-ota-delivery-index.json
-          ${{ runner.temp }}/mobile-ota-ledger.json
-          ${{ runner.temp }}/mobile-ota-stage-timings.tsv
-        if-no-files-found: error
-        retention-days: 7
-
-    # ---- promote -----------------------------------------------------------
-    - if: inputs.phase == 'promote'
-      uses: actions/download-artifact@v4
-      with:
-        name: mobile-ota-candidate-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: ${{ runner.temp }}
-        run-id: ${{ steps.reuse.outputs.run_id }}
-        github-token: ${{ github.token }}
-    # EAS loads app.config.js and its local Expo plugins before it can issue
-    # update:republish, so promotion needs the mobile dependency graph. A
-    # build phase in this job already installed it.
-    - name: Install mobile dependencies for EAS project context
-      if: inputs.phase == 'promote'
-      shell: bash
-      working-directory: apps/mobile
-      run: test -d node_modules || bash ../../scripts/npm-ci-timed.sh
-    - name: Promote the exact beta group to production
-      if: inputs.phase == 'promote'
-      id: promotion
+          --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --branch "$BRANCH" \
+          --channel "$BETA_CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
+          --output "$RUNNER_TEMP/ota/published.json"
+        node - "$RUNNER_TEMP/ota/published.json" >> "$GITHUB_OUTPUT" <<'NODE'
+        const facts = require(process.argv[2]);
+        console.log(`branch=${facts.branch}`);
+        console.log(`targets=${facts.targets.map((t) => `${t.platform}@${t.runtimeVersion}`).join(',')}`);
+        console.log(`store_runtime=${JSON.stringify({ previouslyLive: facts.storeRuntime?.previouslyLive ?? [] })}`);
+        NODE
+        echo "OTA branch publish: $(( $(date +%s) - started ))s" >> "$GITHUB_STEP_SUMMARY"
+    - name: Point production at the exact branch beta got
+      id: promote
+      if: inputs.promote == 'true'
       shell: bash
       working-directory: apps/mobile
       env:
         EXPO_TOKEN_SECRET: ${{ inputs.expo_token }}
+        RELEASE_SHA: ${{ inputs.release_sha }}
+        BRANCH: ${{ steps.publish.outputs.branch }}
+        PRODUCTION_CHANNEL: ${{ inputs.production_channel }}
       run: |
         set -euo pipefail
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
-        started="$(date +%s)"
-        node scripts/ota-release.mjs mark-canary --ledger "$RUN_LEDGER" --status post-promote
-        node scripts/ota-release.mjs recover-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" \
-          --result "$RUNNER_TEMP/mobile-ota-recovery.txt" --retry-attempt "${{ inputs.retry_attempt }}" \
-          --run-id "$GITHUB_RUN_ID"
-        if [ "$(cat "$RUNNER_TEMP/mobile-ota-recovery.txt")" = new ]; then
-          node scripts/ota-release.mjs promote --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
-        fi
-        node scripts/ota-release.mjs assert-promotion --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" \
-          | tee "$RUNNER_TEMP/mobile-ota-promotion-proof.txt"
-        node scripts/ota-release.mjs assert-production-list --ledger "$RUN_LEDGER" \
-          | tee -a "$RUNNER_TEMP/mobile-ota-promotion-proof.txt"
-        printf 'production_promotion\t%s\n' "$(( $(date +%s) - started ))" >> "$TIMINGS_FILE"
-        node - "$RUN_LEDGER" >> "$GITHUB_OUTPUT" <<'NODE'
-        const ledger = require(process.argv[2]);
-        const groups = ledger.production.groupId ?? ledger.production.groupIds;
-        const ids = typeof groups === 'string' ? groups.split(',') : Object.values(groups);
-        console.log(`production_group_id=${[...new Set(ids.filter(Boolean))].join(',')}`);
-        NODE
-    - name: Check owner device receipt
-      if: inputs.phase == 'promote'
-      shell: bash
-      working-directory: apps/mobile
-      env:
-        OWNER_PUBKEY: ${{ inputs.owner_pubkey }}
-        RECEIPT_TOKEN: ${{ inputs.receipt_token }}
-        RECEIPT_ORIGIN: ${{ inputs.receipt_origin }}
-        RELEASE_SHA: ${{ inputs.release_sha }}
-        RELEASE_VERSION: ${{ inputs.release_version }}
-      run: |
-        set -euo pipefail
-        if [ -z "$OWNER_PUBKEY" ] || [ -z "$RECEIPT_TOKEN" ]; then exit 0; fi
-        curl --fail --silent --show-error --max-time 15 \
-          -H "Authorization: Bearer $RECEIPT_TOKEN" \
-          "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
-          -o "$RUNNER_TEMP/owner-update-receipt.json" || exit 0
-        readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
-        node scripts/ota-release.mjs confirm \
-          --index "$DELIVERY_INDEX" --ledger "$RUN_LEDGER" \
-          --receipt "$RUNNER_TEMP/owner-update-receipt.json" \
-          --release-version "$RELEASE_VERSION" --sha "$RELEASE_SHA" \
-          --group "${delivery[0]#group_id=}" --update-ids "${delivery[1]#update_ids=}"
-    - name: Store cumulative delivery index
-      if: inputs.phase == 'promote'
-      uses: actions/upload-artifact@v4
-      with:
-        name: mobile-ota-delivery-index
-        path: ${{ runner.temp }}/mobile-ota-delivery-index.json
-        if-no-files-found: error
-        retention-days: 90
-        overwrite: true
-    - name: Log OTA leg duration
-      if: inputs.phase == 'promote'
-      shell: bash
-      run: |
-        elapsed="$(( $(date +%s) - OTA_LEG_STARTED_AT ))"
-        echo "ota_leg_seconds=$elapsed"
-        printf 'ota_leg_total\t%s\n' "$elapsed" >> "$TIMINGS_FILE"
-        echo "OTA leg: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
-    - name: Store release ledger, timings, and promotion proof
-      if: inputs.phase == 'promote'
-      uses: actions/upload-artifact@v4
-      with:
-        name: mobile-ota-promoted-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: |
-          ${{ runner.temp }}/mobile-ota-ledger.json
-          ${{ runner.temp }}/mobile-ota-stage-timings.tsv
-          ${{ runner.temp }}/mobile-ota-promotion-proof.txt
-        if-no-files-found: error
-        retention-days: 90
-    - name: Require the rollback ledger
-      if: inputs.phase == 'promote'
-      id: ledger
-      shell: bash
-      run: |
-        test -f "$RUN_LEDGER" || { echo 'mobile OTA promotion produced no rollback ledger' >&2; exit 1; }
+        node scripts/ota-release.mjs promote --sha "$RELEASE_SHA" --branch "$BRANCH" \
+          --channel "$PRODUCTION_CHANNEL" --targets "$RUNNER_TEMP/ota/targets.json" \
+          --output "$RUNNER_TEMP/ota/promoted.json"
         echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+        {
+          echo "## Phone OTA"
+          echo "- $PRODUCTION_CHANNEL -> $BRANCH"
+          echo "- Targets: ${{ steps.publish.outputs.targets }}"
+          echo "- OTA leg: $(( $(date +%s) - OTA_LEG_STARTED_AT ))s"
+        } >> "$GITHUB_STEP_SUMMARY"

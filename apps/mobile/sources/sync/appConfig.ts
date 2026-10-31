@@ -10,42 +10,34 @@ export interface AppConfig {
   buzzyMonolithUrl?: string;
 }
 
+let sessionConfig: AppConfig | undefined;
+
 /**
- * Loads app configuration from various manifest sources.
- * Looks for the "app" field in expoConfig.extra across different manifests
- * and merges them into a single configuration object.
+ * Loads app configuration from the embedded manifest once per app session.
+ * Later opens reuse that object. A Room open used to read and print it again
+ * from every call site.
  *
- * Priority (later overrides earlier):
- * 1. ExponentConstants native module manifest (fetches embedded manifest)
- * 2. Constants.expoConfig
+ * Priority (later overrides earlier), applied on that single read:
+ * 1. Constants.expoConfig (embedded and OTA manifests)
+ * 2. EXPO_PUBLIC_* env vars present at startup
  */
 export function loadAppConfig(): AppConfig {
+  if (sessionConfig) return sessionConfig;
   const config: Partial<AppConfig> = {};
 
   try {
-    // Expo resolves embedded and OTA manifests into this runtime view.
-    if (Constants.expoConfig?.extra?.app) {
-      const appConfig = Constants.expoConfig.extra.app;
-      if (typeof appConfig === 'object') {
-        Object.assign(config, appConfig);
-        console.log('[loadAppConfig] Loaded from Constants.expoConfig:', Object.keys(config));
-      }
-    }
+    const appConfig = Constants.expoConfig?.extra?.app;
+    if (appConfig && typeof appConfig === 'object') Object.assign(config, appConfig);
   } catch (e) {
     console.warn('[loadAppConfig] Error accessing Constants.expoConfig:', e);
   }
 
-  console.log('[loadAppConfig] Final merged config:', JSON.stringify(config, null, 2));
-
-  // Override with EXPO_PUBLIC_* env vars if present at runtime and different
-  // Why: Native config is baked at prebuild time, but EXPO_PUBLIC_* vars
-  // are available at runtime via process.env. This allows devs to change
-  // keys without rebuilding native code.
+  // Native config is baked at prebuild time. EXPO_PUBLIC_* is applied once
+  // here so a dev server can point at another monolith without a second read.
   if (
     process.env.EXPO_PUBLIC_POSTHOG_KEY &&
     config.postHogKey !== process.env.EXPO_PUBLIC_POSTHOG_KEY
   ) {
-    console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY');
     config.postHogKey = process.env.EXPO_PUBLIC_POSTHOG_KEY;
   }
   if (process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL) {
@@ -57,5 +49,6 @@ export function loadAppConfig(): AppConfig {
   if (process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA) {
     config.releaseSha = process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA;
   }
-  return config as AppConfig;
+  sessionConfig = config as AppConfig;
+  return sessionConfig;
 }

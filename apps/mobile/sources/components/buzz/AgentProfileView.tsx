@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { InlineActionRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
 import { AgentUsageSection } from './AgentUsageSection';
@@ -11,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
 import { ProfileIdentity } from './ProfileIdentity';
 import { Button } from './Button';
+import { ButtonRow } from './ButtonRow';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { SettingsRow } from './SettingsRow';
 import { PageHeader } from './PageHeader';
@@ -48,6 +50,7 @@ export function AgentProfileView({
   management,
   modelManagement,
   voiceApi,
+  saveWake,
 }: {
   detail: AgentDetailView | null;
   loading: boolean;
@@ -75,9 +78,30 @@ export function AgentProfileView({
   management: React.ReactNode;
   modelManagement?: React.ReactNode;
   voiceApi?: AgentVoiceApi;
+  saveWake?: (url: string, key?: string) => Promise<void>;
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const [wakeOpen, setWakeOpen] = useState(false);
+  const [wakeUrl, setWakeUrl] = useState('');
+  const [wakeKey, setWakeKey] = useState('');
+  const [wakeSaving, setWakeSaving] = useState(false);
+  const [wakeError, setWakeError] = useState<string | null>(null);
+  const updateWake = async (clear = false) => {
+    if (!saveWake || wakeSaving) return;
+    setWakeSaving(true);
+    setWakeError(null);
+    try {
+      await saveWake(clear ? '' : wakeUrl, clear ? undefined : wakeKey || undefined);
+      setWakeKey('');
+      setWakeOpen(false);
+    } catch (error) {
+      setWakeKey('');
+      setWakeError(appErrorCopy(error));
+    } finally {
+      setWakeSaving(false);
+    }
+  };
   const [expanded, setExpanded] = useState(false);
   const [linkError, setLinkError] = useState(false);
   const [olderWork, setOlderWork] = useState<NonNullable<AgentDetailView['recentWork']>>([]);
@@ -88,6 +112,9 @@ export function AgentProfileView({
   const workBusy = useRef(false);
   const identity = detail?.agent.identity;
   useEffect(() => {
+    setWakeKey('');
+    setWakeOpen(false);
+    setWakeError(null);
     workRequest.current += 1;
     workBusy.current = false;
     setOlderWork([]);
@@ -261,6 +288,41 @@ export function AgentProfileView({
                     },
                   ]}
                 />
+              </View>
+            )}
+            {detail.wake && (
+              <View style={styles.section}>
+                <SettingsRow
+                  title="Wake link"
+                  description={wakeError ?? detail.wake.url ?? 'For bots that only run when called.'}
+                  descriptionTone={wakeError ? 'danger' : undefined}
+                  descriptionDetail={detail.wake.keySet ? 'Wake key: set' : 'Wake key: not set'}
+                  actionControl={{
+                    label: detail.wake.url ? 'Replace' : 'Set', disabled: wakeSaving,
+                    onPress: () => { setWakeUrl(detail.wake?.url ?? ''); setWakeKey(''); setWakeOpen(true); },
+                  }}
+                />
+                {wakeOpen && (
+                  <>
+                    <HullDialogInput accessibilityLabel="Wake link" value={wakeUrl}
+                      onChangeText={setWakeUrl} autoCapitalize="none" autoCorrect={false}
+                      keyboardType="url" maxLength={2048} editable={!wakeSaving} />
+                    <HullDialogInput accessibilityLabel="Wake key" value={wakeKey}
+                      onChangeText={setWakeKey} secureTextEntry autoCapitalize="none" autoCorrect={false}
+                      autoComplete="off" placeholder={detail.wake.keySet ? 'Set — enter a replacement' : 'Not set'}
+                      maxLength={512} editable={!wakeSaving} />
+                    <ButtonRow actions={[
+                      { label: 'Cancel', variant: 'quiet', disabled: wakeSaving,
+                        onPress: () => { setWakeKey(''); setWakeOpen(false); } },
+                      { label: wakeSaving ? 'Saving…' : 'Save', disabled: wakeSaving || !wakeUrl.trim() || Boolean(detail.wake?.keySet && !wakeKey),
+                        onPress: () => void updateWake() },
+                    ]} />
+                  </>
+                )}
+                {detail.wake.url && (
+                  <Button size="inline" label="Clear wake link" variant="quiet" disabled={wakeSaving}
+                    onPress={() => void updateWake(true)} />
+                )}
               </View>
             )}
             <View style={styles.section}>

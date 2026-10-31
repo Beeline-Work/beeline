@@ -10,6 +10,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
+import { beginNetworkResponseTiming, type NetworkResponseTiming } from './network-response-timing';
+import { isOptionalRoomRequest, waitForRoomDraw } from '@/buzz/room-draw-barrier';
 
 // Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
 loadXPixel(readWebXAttribution());
@@ -28,11 +30,11 @@ async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Prom
   return desktopFetch(input, init);
 }
 
-/** Monotonic timing of the winning HTTP attempt, ending when response headers arrive. */
-const responseTimings = new WeakMap<Response, { requestStartMs: number; firstByteMs: number }>();
+/** Native arrival and JS handling times for the winning Room HTTP attempt. */
+const responseTimings = new WeakMap<Response, NetworkResponseTiming>();
 
 export function monolithResponseTiming(response: Response):
-  { requestStartMs: number; firstByteMs: number } | null {
+  NetworkResponseTiming | null {
   return responseTimings.get(response) ?? null;
 }
 
@@ -423,9 +425,14 @@ export class MonolithSession {
   async fetch(
     input: string,
     init: RequestInit = {},
-    options: { timeoutMs?: number; idempotent?: boolean; fetchImpl?: typeof fetch } = {},
+    options: { timeoutMs?: number; idempotent?: boolean; fetchImpl?: typeof fetch; afterRoomDraw?: boolean } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
+    if (options.afterRoomDraw ?? isOptionalRoomRequest(input)) {
+      const draw = waitForRoomDraw(init.signal);
+      if (draw) await draw;
+      if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
+    }
     const dispatch = () => options.fetchImpl
       ? this.perform(input, init, options.timeoutMs, options.fetchImpl)
       : this.dispatch(input, init, options);
@@ -561,18 +568,25 @@ export class MonolithSession {
       const authorized = available && !controller.signal.aborted
         ? available
         : await untilAborted(this.authorization(fetchImpl), controller.signal);
-      const requestStartMs = performance.now();
+      const finishTiming = tracingRoom ? beginNetworkResponseTiming(input) : undefined;
       if (tracingRoom) markRoomOpen('wire-dispatch');
-      const response = await fetchImpl(input, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          ...Object.fromEntries(new Headers(init.headers).entries()),
-          authorization: `Bearer ${authorized}`,
-        },
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(input, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            ...Object.fromEntries(new Headers(init.headers).entries()),
+            authorization: `Bearer ${authorized}`,
+          },
+        });
+      } catch (error) {
+        finishTiming?.();
+        throw error;
+      }
+      const timing = finishTiming?.();
       if (tracingRoom) markRoomOpen('wire-headers');
-      responseTimings.set(response, { requestStartMs, firstByteMs: performance.now() });
+      if (timing) responseTimings.set(response, timing);
       return response;
     } catch (error) {
       if (timedOut) throw new MonolithRequestTimeoutError();

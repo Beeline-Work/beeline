@@ -1,3 +1,4 @@
+import { queueMcpMentionEvents, deliverMcpEvents } from './rooms-mcp-events.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -193,11 +194,14 @@ export const MCP_TAG_INSTRUCTION = 'A Room member tagged you. Your owner\'s Allo
 export async function recordMcpMention(
   db: SqlDatabase, memberId: string, roomId: string, messageId: string,
 ): Promise<void> {
-  await db.query(
-    `INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES($1,$2,$3)
-     ON CONFLICT(member_id,message_id) DO NOTHING`,
-    [memberId, roomId, messageId],
-  );
+  await db.transaction(async tx => {
+    const inserted = await tx.query(
+      `INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES($1,$2,$3)
+       ON CONFLICT(member_id,message_id) DO NOTHING RETURNING seq`,
+      [memberId, roomId, messageId],
+    );
+    if (inserted.rowCount) await queueMcpMentionEvents(tx, memberId, roomId, messageId);
+  });
 }
 
 /**
@@ -205,7 +209,7 @@ export async function recordMcpMention(
  * answer must be public, and the TLS socket is pinned to the checked address;
  * redirects are not followed.
  */
-export async function postMcpWebhook(target: string, init: { headers: Record<string, string>; body: string }): Promise<Response> {
+export async function postMcpWebhook(target: string, init: { headers: Record<string, string>; body: string; readResponse?: boolean }): Promise<Response> {
   const url = new URL(target);
   if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid webhook');
   const signal = AbortSignal.timeout(5_000);
@@ -217,13 +221,25 @@ export async function postMcpWebhook(target: string, init: { headers: Record<str
     callback(null, address.address, address.family);
   } });
   try {
-    const status = await new Promise<number>((resolve, reject) => {
+    const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
       const req = httpsRequest(url, { method: 'POST', agent, signal, headers: { ...init.headers, 'content-length': String(Buffer.byteLength(init.body)) } }, res => {
-        res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); res.on('error', reject);
+        if (!init.readResponse) {
+          res.resume(); res.on('end', () => resolve({ status: res.statusCode ?? 0, body: '' })); res.on('error', reject);
+          return;
+        }
+        const chunks: Buffer[] = []; let size = 0;
+        res.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > 16_384) { res.destroy(new Error('Webhook response too large')); return; }
+          chunks.push(chunk);
+        });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }));
+        res.on('error', reject);
       });
       req.on('error', reject); req.end(init.body);
     });
-    return new Response(null, { status: status >= 200 && status <= 599 ? status : 502 });
+    return new Response([204, 205, 304].includes(result.status) ? null : result.body,
+      { status: result.status >= 200 && result.status <= 599 ? result.status : 502 });
   } finally { agent.destroy(); }
 }
 
@@ -344,7 +360,7 @@ export async function deliverMcpMemberWebhooks(
       await db.query(`UPDATE subscription_webhook_calls SET outcome='refused',reason='delivery failed' WHERE id=$1`, [row.call_id]);
     else delivered++;
   }
-  return delivered;
+  return delivered + await deliverMcpEvents(db, transport, limit);
 }
 
 /**

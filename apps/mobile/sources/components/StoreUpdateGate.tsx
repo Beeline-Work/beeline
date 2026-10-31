@@ -4,10 +4,13 @@ import * as Application from 'expo-application';
 import { StyleSheet } from 'react-native-unistyles';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { MobileMinimum, StorePlatform } from '@beeline/api-contract/mobile-minimum';
-import { fetchStoreUpdate, STORE_LISTINGS } from '@/buzz/store-update';
+import { fetchStoreUpdate, hourlyStoreUpdateCheck, STORE_LISTINGS } from '@/buzz/store-update';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Button } from '@/components/buzz/Button';
 import { BeelineGlyphPaint } from '@/components/buzz/BeelineGlyphPaint';
+
+const checkStoreUpdate = hourlyStoreUpdateCheck(() =>
+  fetchStoreUpdate(getBuzzRuntimeConfig().monolithUrl, Platform.OS, Application.nativeApplicationVersion));
 
 export function StoreUpdateScreen({ minimum, installed, platform }: {
   minimum: MobileMinimum; installed: string; platform: StorePlatform;
@@ -43,7 +46,7 @@ export function StoreUpdateGate({ children, fontsReady = true }: { children: Rea
     let generation = 0;
     const check = () => {
       const current = ++generation;
-      void fetchStoreUpdate(getBuzzRuntimeConfig().monolithUrl, Platform.OS, Application.nativeApplicationVersion)
+      void checkStoreUpdate()
         .then(result => { if (active && current === generation) setMinimum(result); });
     };
     check();

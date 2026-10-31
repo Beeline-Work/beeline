@@ -1,7 +1,7 @@
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   platform: 'android', openURL: vi.fn(async () => {}), back: vi.fn(),
@@ -21,7 +21,17 @@ vi.mock('@/components/buzz/Button', () => ({ Button: (props: unknown) => React.c
 vi.mock('@/components/buzz/BeelineGlyphPaint', () => ({ BeelineGlyphPaint: () => null }));
 import { StoreUpdateGate, StoreUpdateScreen } from './StoreUpdateGate';
 
-afterEach(() => { vi.unstubAllGlobals(); state.platform = 'android'; state.openURL.mockClear(); });
+let testNow = Date.now();
+beforeEach(() => {
+  testNow += 60 * 60 * 1000;
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(testNow);
+});
+afterEach(() => {
+  testNow = Date.now();
+  vi.useRealTimers();
+  vi.unstubAllGlobals(); state.platform = 'android'; state.openURL.mockClear();
+});
 const minimum = { minVersion: '0.2.24', reason: 'This version can no longer sign in.' };
 
 it.each(['android', 'ios'] as const)('renders the approved copy and one store action on %s', async platform => {
@@ -48,11 +58,21 @@ it('replaces navigation below the minimum, consumes Back and opens normally at e
   expect(tree!.root.findAllByProps({ testID: 'store-update-required' })).toHaveLength(1);
   expect(tree!.root.findAllByType('div')).toHaveLength(0);
   expect(state.back()).toBe(true);
+  await act(async () => { state.foreground?.('active'); state.foreground?.('active'); });
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(tree!.root.findAllByProps({ testID: 'store-update-required' })).toHaveLength(1);
   request.mockResolvedValueOnce(new Response(JSON.stringify({ android: { ...minimum, minVersion: '0.2.22' } })));
+  vi.setSystemTime(Date.now() + 60 * 60 * 1000 - 1);
   await act(async () => { state.foreground?.('active'); });
+  expect(request).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(Date.now() + 1);
+  await act(async () => { state.foreground?.('active'); });
+  expect(request).toHaveBeenCalledTimes(2);
   expect(tree!.root.findAllByType('div')).toHaveLength(1);
   request.mockResolvedValueOnce(new Response('{}'));
+  vi.setSystemTime(Date.now() + 60 * 60 * 1000);
   await act(async () => { state.foreground?.('active'); });
+  expect(request).toHaveBeenCalledTimes(3);
   expect(tree!.root.findAllByType('div')).toHaveLength(1);
   await act(async () => tree!.unmount());
 });

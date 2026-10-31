@@ -2049,9 +2049,12 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
         }
       : undefined;
   const owner = readIdentity(item.owner);
+  const wake = record(item.wake);
   return {
     workspaceId: item.workspaceId,
     agent,
+    ...field('wake', wake && (wake.url === null || httpUrl(wake.url)) && typeof wake.keySet === 'boolean'
+      ? { url: wake.url as string | null, keySet: wake.keySet } : undefined),
     ...field('usage', readAgentUsage(item.usage)),
     ...field('harness', typeof item.harness === 'string' ? item.harness : undefined),
     ...field(

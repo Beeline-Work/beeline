@@ -17,32 +17,30 @@ production OTA channels.
 
 ## OTA release governor
 
-Every `main` commit enters the cumulative delivery ledger. The one release
-button is [`unified-release.yml`](../../.github/workflows/unified-release.yml);
-its app leg is the composite action
-[`mobile-ota-leg`](../../.github/actions/mobile-ota-leg/action.yml), called
-once to build and once to promote. The self-hosted leg installs and builds the
-SDKs, validates the app beside the immutable `beta` export, and republishes
-that exact group to `production`. The release is delivered when the
-server and daemon health record and the OTA promotion ledger agree on the same
-version and source SHA; an owner receipt is incorporated when it is available.
-No emulator or device rehearsal runs in GitHub Actions.
+The one release button is
+[`unified-release.yml`](../../.github/workflows/unified-release.yml); its app
+leg is the composite action
+[`mobile-ota-leg`](../../.github/actions/mobile-ota-leg/action.yml). It reads
+the runtimes live in Google Play and App Store Connect, publishes this release
+to its own EAS branch `release-<version>` with one update per live runtime,
+points the `beta` channel at it, then points `production` at the same branch.
+No emulator or device rehearsal runs in GitHub Actions unless the release
+explicitly requests the device proof.
 
-Every successful release stores `candidateGroupId`, the republished production
-group, and `previousProductionGroupId` in the `mobile-ota-promoted-<sha>`
-workflow artifact. Manual recovery lives in the clearly named
-[`mobile-ota-rollback.yml`](../../.github/workflows/mobile-ota-rollback.yml);
-`rollback_group` can override the recorded predecessor. The owner device
-receipt is recorded by a bounded step of the release's own delivery report; it
-never changes the delivery verdict, and a receipt that has not arrived yet is
-confirmed by the next release's promote step.
+The published GitHub Release's `release.json` records the branch, its targets
+and the branch before it. Manual recovery lives in the clearly named
+[`mobile-ota-rollback.yml`](../../.github/workflows/mobile-ota-rollback.yml),
+which points `production` back at the previous release's branch; its `branch`
+input can name another one. See
+[docs/release-pipeline.md](../../docs/release-pipeline.md#phone-ota-by-channel-pointer).
 The runtime version is pinned by hand per platform in `app.config.js`
 (`runtimeVersion` under the `ios` and `android` Expo config sections — see the
 file for the current values). It has to be: an installed binary keeps the stamp it was built with, so
 a stamp that recomputes itself per commit — the fingerprint policy v0.0.42
 shipped — silently orphans every app already on a phone, which then reports
-`NoUpdatesAvailable` forever. Bumping the pin is a deliberate act that says a
-new native build is shipping, and it must be paired with one.
+`NoUpdatesAvailable` forever. Bumping the pin says a new native build will
+ship. Until a store release puts that build live, OTAs keep going to the
+runtimes already live in the stores.
 
 The compatibility check that a computed stamp did give is enforced at review
 time instead, by the `NATIVE FINGERPRINT` gate

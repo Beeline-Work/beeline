@@ -1,4 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { Webhook } from 'standardwebhooks';
+import { RoomsMcpEvents } from './rooms-mcp-events.js';
+import { postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -32,6 +36,7 @@ const opaque = () => randomBytes(32).toString('base64url');
 describe('Rooms connector HTTP OAuth and MCP', () => {
   let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, origin: string, phone: PhoneService, daemon: DaemonService;
   const clients: Client[] = [];
+  let eventTransport: typeof postMcpWebhook = postMcpWebhook;
   beforeAll(async () => {
     db = new PgliteDatabase(); await migrate(db);
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Demo','demo'),($2,'human','Other','other'),($3,'agent','Demo Agent','demo-agent')`, [USER, OTHER, AGENT]);
@@ -55,7 +60,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     server = createBeelineServer(options);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth), phone, live, daemon);
+    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth), phone, live, daemon, undefined,
+      new RoomsMcpEvents(db, (url, init) => eventTransport(url, init)));
   }, 60_000);
   beforeEach(async () => {
     // Each independent HTTP scenario starts with its own admission budget.
@@ -69,7 +75,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   async function post(path: string, input: Record<string, unknown>, headers: Record<string, string> = {}) {
     return fetch(origin + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
   }
-  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback') {
+  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', wake: Record<string, string> = {}) {
     const registered = await post('/mcp/oauth/register', { client_name: 'Local MCP reviewer', redirect_uris: ['http://127.0.0.1:9876/callback'], token_endpoint_auth_method: 'none' });
     expect(registered.status).toBe(201);
     const client = clientId ? { client_id: clientId } : await registered.json() as { client_id: string };
@@ -92,7 +98,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page.headers.get('content-security-policy')).not.toContain('form-action');
     expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     expect(await page.text()).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
-    const result = await post('/mcp/oauth/consent', { flow, decision }, { cookie, origin });
+    const result = await post('/mcp/oauth/consent', { flow, decision, ...wake }, { cookie, origin });
     expect(result.status).toBe(302);
     const target = new URL(result.headers.get('location')!);
     expect(target.href.startsWith(redirectUri + '?')).toBe(true);
@@ -120,6 +126,244 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
     return { client, token: tokens.access_token, grant, member };
   }
+  async function eventCall(token: string, method: string, params: Record<string, unknown> = {}) {
+    const response = await post('/mcp', { jsonrpc: '2.0', id: 1, method, params },
+      { authorization: 'Bearer ' + token, accept: 'application/json, text/event-stream' });
+    expect(response.status).toBe(200);
+    return response.json() as Promise<{ result?: any; error?: { code: number; data?: { reason: string } } }>;
+  }
+  async function eventFixture() {
+    vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-events-sealing-key');
+    const connectedMember = await connected();
+    const secret = 'whsec_' + randomBytes(32).toString('base64');
+    const url = 'https://hooks.example/events/' + opaque();
+    const params = { name: 'mention', arguments: {}, delivery: { mode: 'webhook', url, secret }, cursor: null };
+    const posts: Array<{ body: any; headers: Record<string, string> }> = [];
+    eventTransport = async (_url, init) => {
+      const body = new Webhook(secret).verify(init.body, init.headers);
+      posts.push({ body, headers: init.headers });
+      return Response.json({ challenge: (body as { challenge?: string }).challenge });
+    };
+    return { ...connectedMember, secret, url, params, posts };
+  }
+  afterEach(async () => {
+    eventTransport = postMcpWebhook; vi.unstubAllEnvs();
+    await db.query('DELETE FROM rooms_mcp_event_subscriptions');
+  });
+  it('MCP-EVENTS-1: discovers, verifies, refreshes and unsubscribes on the authenticated MCP endpoint', async () => {
+    const fixture = await eventFixture();
+    const { token, params, posts, member } = fixture;
+    const initialized = await eventCall(token, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'events-test', version: '1' } });
+    expect(initialized.result.capabilities.events).toEqual({});
+    expect((await eventCall(token, 'server/discover')).result.capabilities.events).toEqual({});
+    expect((await eventCall(token, 'events/list')).result.events).toMatchObject([{ name: 'mention', delivery: ['webhook'] }]);
+    expect((await eventCall(token, 'events/list', { cursor: 'invalid' })).error?.code).toBe(-32602);
+    const first = await eventCall(token, 'events/subscribe', params);
+    expect(first.error).toBeUndefined();
+    expect(first.result).toMatchObject({ cursor: null, truncated: false });
+    expect(posts.map(p => p.body.type)).toEqual(['verification']);
+    expect(posts[0]!.headers['X-MCP-Subscription-Id']).toBe(first.result.id);
+    const saved = (await db.query<{ secret: string }>('SELECT secret FROM rooms_mcp_event_subscriptions WHERE id=$1', [first.result.id])).rows[0]!;
+    expect(saved.secret).not.toContain(fixture.secret);
+    const refresh = await eventCall(token, 'events/subscribe', { ...params, ttlMs: 60_000 });
+    expect(refresh.result.id).toBe(first.result.id);
+    expect(Date.parse(refresh.result.refreshBefore) - Date.now()).toBeLessThanOrEqual(60_000);
+    expect(posts).toHaveLength(1);
+    const noExpiry = await eventCall(token, 'events/subscribe', { ...params, ttlMs: null });
+    expect(noExpiry.result.refreshBefore).toEqual(expect.any(String));
+    expect((await db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(1);
+    const { secret: _secret, ...delivery } = params.delivery;
+    expect((await eventCall(token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery })).result).toEqual({});
+    expect((await eventCall(token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery })).result).toEqual({});
+    expect((await db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
+  });
+  it('MCP-EVENTS-1: a human tag reaches a local receiver once, and the connected member replies under its own byline', async () => {
+    const fixture = await eventFixture();
+    const { token, params, member, secret, url, client } = fixture;
+    const received: any[] = [];
+    const receiver = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks).toString('utf8');
+      const headers = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k, String(v)]));
+      const event = new Webhook(secret).verify(body, headers) as any;
+      received.push(event);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(event.type === 'verification' ? { challenge: event.challenge } : {}));
+    });
+    await new Promise<void>(resolve => receiver.listen(0, '127.0.0.1', resolve));
+    // Local receiver stand-in only: production retains HTTPS + public DNS pinning.
+    eventTransport = async (target, init) => {
+      expect(target).toBe(url);
+      return fetch(`http://127.0.0.1:${(receiver.address() as AddressInfo).port}`, { method: 'POST', ...init });
+    };
+    try {
+      const subscription = (await eventCall(token, 'events/subscribe', params)).result;
+      const other = await connected();
+      const otherSecret = 'whsec_' + randomBytes(32).toString('base64');
+      eventTransport = async (_target, init) => Response.json({ challenge: JSON.parse(init.body).challenge });
+      expect((await eventCall(other.token, 'events/subscribe', { ...params,
+        delivery: { ...params.delivery, url: 'https://hooks.example/other', secret: otherSecret } })).error).toBeUndefined();
+      expect((await eventCall(other.token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery: { mode: 'webhook', url } })).result).toEqual({});
+      expect((await db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE id=$1', [subscription.id])).rowCount).toBe(1);
+      await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/bearer', secret: 'legacy-bearer' } });
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' reply here' }, USER);
+      await routeHumanMessage(db, sent.messageId);
+      expect((await db.query('SELECT subscription_id FROM rooms_mcp_event_deliveries WHERE message_id=$1', [sent.messageId])).rows).toEqual([{ subscription_id: subscription.id }]);
+      let bearerCalls = 0;
+      const deliveryTransport: typeof postMcpWebhook = async (target, init) => {
+        if (target === 'https://hooks.example/bearer') {
+          bearerCalls++; expect(init.headers.authorization).toBe('Bearer legacy-bearer'); return new Response(null, { status: 204 });
+        }
+        expect(target).toBe(url);
+        expect(init.headers['X-MCP-Subscription-Id']).toBe(subscription.id);
+        return fetch(`http://127.0.0.1:${(receiver.address() as AddressInfo).port}`, { method: 'POST', ...init });
+      };
+      expect(await deliverMcpMemberWebhooks(db, deliveryTransport)).toBe(2);
+      expect(bearerCalls).toBe(1);
+      expect(received).toHaveLength(2);
+      expect(received[1]).toMatchObject({ name: 'mention', cursor: null,
+        data: { roomId: ROOM, messageId: sent.messageId, author: { id: USER }, text: '@' + handle + ' reply here' } });
+      expect(await deliverMcpMemberWebhooks(db, deliveryTransport)).toBe(0);
+      const reply = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'Event received.', replyTo: sent.messageId } });
+      expect(reply.isError).not.toBe(true);
+      const view = await phone.readRoom(ROOM, USER);
+      expect(JSON.stringify(view)).toContain('Event received.');
+      expect((await db.query('SELECT author_id FROM messages WHERE room_id=$1 AND text=$2', [ROOM, 'Event received.'])).rows).toEqual([{ author_id: member }]);
+    } finally { receiver.closeAllConnections(); await new Promise<void>(resolve => receiver.close(() => resolve())); }
+  });
+  it.each(['challenge', 'private HTTPS', 'url', 'secret', 'member', 'cursor', 'ttl'])('MCP-EVENTS-1: refuses invalid %s before activation', async kind => {
+    const { token, params, member } = await eventFixture();
+    let input: Record<string, unknown> = params;
+    if (kind === 'challenge') eventTransport = async () => Response.json({ challenge: 'wrong' });
+    if (kind === 'private HTTPS') {
+      eventTransport = postMcpWebhook;
+      input = { ...params, delivery: { ...params.delivery, url: 'https://127.0.0.1/private' } };
+    }
+    if (kind === 'url') input = { ...params, delivery: { ...params.delivery, url: 'http://127.0.0.1/private' } };
+    if (kind === 'secret') input = { ...params, delivery: { ...params.delivery, secret: 'whsec_c2hvcnQ=' } };
+    if (kind === 'member') input = { ...params, arguments: { memberId: OTHER } };
+    if (kind === 'cursor') input = { ...params, cursor: '1000' };
+    if (kind === 'ttl') input = { ...params, ttlMs: -1 };
+    const result = await eventCall(token, 'events/subscribe', input);
+    expect(result.error?.code).toBe(['challenge', 'private HTTPS'].includes(kind) ? -32015 : -32602);
+    if (kind === 'challenge') expect(result.error?.data?.reason).toBe('challenge_failed');
+    expect((await db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
+  });
+  it.each(['expiration', 'removal', 'disconnect', 'unsubscribe', 'deleted message'])('MCP-EVENTS-1: queued text stays private after %s', async kind => {
+    const { token, params, member, grant } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' private after revocation' }, USER);
+    if (kind === 'expiration') await db.query("UPDATE rooms_mcp_event_subscriptions SET expires_at=now()-interval '1 second' WHERE member_id=$1", [member]);
+    if (kind === 'removal') await phone.execute('removeRoomMember', { roomId: ROOM, memberId: member }, USER);
+    if (kind === 'disconnect') await phone.execute('disconnectAiClient', { clientId: grant.clientId }, USER);
+    if (kind === 'unsubscribe') await eventCall(token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery: { mode: 'webhook', url: params.delivery.url } });
+    if (kind === 'deleted message') await db.query('UPDATE messages SET deleted_at=now() WHERE id=$1', [sent.messageId]);
+    const deliver = vi.fn(async () => new Response(null, { status: 204 }));
+    await deliverMcpMemberWebhooks(db, deliver);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+  it.each([410, 413])('MCP-EVENTS-1: terminal callback response %s retires the delivery', async status => {
+    const { token, params, member } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' terminal response' }, USER);
+    const transport = vi.fn(async () => new Response(null, { status }));
+    await deliverMcpMemberWebhooks(db, transport);
+    await db.query('UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now()');
+    await deliverMcpMemberWebhooks(db, transport);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('MCP-EVENTS-1: a concurrent drain cannot redeliver an in-flight event', async () => {
+    const { token, params, member } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' concurrent drain' }, USER);
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const transport = vi.fn(async () => { entered(); await ready; return new Response(null, { status: 204 }); });
+    const first = deliverMcpMemberWebhooks(db, transport);
+    await started;
+    try {
+      expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
+    } finally { release(); }
+    expect(await first).toBe(1);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('MCP-EVENTS-1: secret rotation keeps both signatures briefly; retries preserve event identity', async () => {
+    const { token, params, member, secret } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const replacement = 'whsec_' + randomBytes(32).toString('base64');
+    eventTransport = async (_url, init) => {
+      const body = new Webhook(replacement).verify(init.body, init.headers) as any;
+      return Response.json({ challenge: body.challenge });
+    };
+    await eventCall(token, 'events/subscribe', { ...params, delivery: { ...params.delivery, secret: replacement } });
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' retry me' }, USER);
+    const attempts: string[] = [];
+    const transport: typeof postMcpWebhook = async (_url, init) => {
+      expect(() => new Webhook(secret).verify(init.body, init.headers)).not.toThrow();
+      expect(() => new Webhook(replacement).verify(init.body, init.headers)).not.toThrow();
+      attempts.push(init.body);
+      return new Response(null, { status: attempts.length === 1 ? 503 : 204 });
+    };
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
+    await db.query('UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now() WHERE delivered_at IS NULL');
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(1);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
+  });
+  it.each(['consent', 'profile'])('MCP-WAKE-SETUP: %s saves once, delivers tags and never reads the key back', async path => {
+    vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-wake-test-key');
+    const secret = 'wake-key-sentinel-' + opaque();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const grant = await authorize(undefined, 'allow', undefined, undefined,
+        path === 'consent' ? { wake_url: 'https://hooks.example/wake', wake_key: secret } : {});
+      expect((await exchange(grant)).status).toBe(200);
+      const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.member_id;
+      const operation = async (viewer: string, key?: string, url = 'https://hooks.example/wake') => {
+        const token = opaque();
+        await db.query(`INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at)
+          VALUES($1,$2,$3,now()+interval '1 hour')`, [tokenHash(token), viewer, randomUUID()]);
+        return post('/v1/phone/operations/updateAgentWake', { workspaceId: WORKSPACE, agentId: member, url, ...(key ? { key } : {}) },
+          { authorization: 'Bearer ' + token });
+      };
+      expect((await operation(OTHER, 'attacker-key')).status).toBe(403);
+      if (path === 'profile') {
+        const saved = await operation(USER, secret);
+        expect(saved.status).toBe(200);
+        expect(JSON.stringify(await saved.json())).not.toContain(secret);
+      }
+      const profile = await phone.readAgent(WORKSPACE, member, USER);
+      expect(profile?.wake).toEqual({ url: 'https://hooks.example/wake', keySet: true });
+      expect(JSON.stringify(profile)).not.toContain(secret);
+      expect((await phone.readAgent(WORKSPACE, member, OTHER))?.wake).toBeUndefined();
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' hello' }, USER);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rowCount).toBe(1);
+      const received: Array<{ url: string; authorization: string | null }> = [];
+      await deliverMcpMemberWebhooks(db, async (url, init) => {
+        if (url === 'https://hooks.example/wake') received.push({ url, authorization: new Headers(init.headers).get('authorization') });
+        return new Response('', { status: 200 });
+      });
+      expect(received).toEqual([{ url: 'https://hooks.example/wake', authorization: 'Bearer ' + secret }]);
+      expect(JSON.stringify([...warn.mock.calls, ...log.mock.calls])).not.toContain(secret);
+      const cleared = await operation(USER, undefined, '');
+      expect(cleared.status).toBe(200);
+      expect((await cleared.json() as { wake: unknown }).wake).toEqual({ url: null, keySet: false });
+      expect((await operation(USER, secret, 'http://localhost/wake')).status).toBe(400);
+      expect(JSON.stringify([...warn.mock.calls, ...log.mock.calls, ...errors.mock.calls])).not.toContain(secret);
+    } finally { warn.mockRestore(); log.mockRestore(); errors.mockRestore(); vi.unstubAllEnvs(); }
+  });
   it('R-MCP-SIGNIN-LEDGER: records an exchanged ticket when browser sign-in reaches MCP consent', async () => {
     const flowHash = tokenHash(opaque());
     const at = new Date(), expiresAt = new Date(at.getTime() + 120_000);
@@ -398,7 +642,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         expect(body).toContain(`<p class="head">${label}</p>`);
         expect(body).toContain(BROWSER_REFUSALS[reason]!.replace(/'/g, '&#39;'));
         expect(body).toMatch(new RegExp(`Reference: ${step} · ${reason} · \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ`));
-        for (const value of [registered.client_id, challenge, 'state-sentinel-123', 'client.example', 'evil.example', 'flow-sentinel-123', 'cookie-sentinel-123', 'ticket-sentinel-123', 'Bad Handle!'])
+        for (const value of [registered.client_id, challenge, 'state-sentinel-123', 'client.example', 'evil.example', 'flow-sentinel-123', 'cookie-sentinel-123', 'ticket-sentinel-123', 'Bad Handle!', 'private-wake-sentinel'])
           expect(body).not.toContain(value);
         shown.add(reason);
       };
@@ -444,6 +688,18 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await page('Signing in with Google', 'callback', 'flow_already_signed_in', await callback('google', 'local-demo-ticket'));
       await page('Saving your choice', 'consent submit', 'joiner_invalid', await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: 'Bad Handle!' }, { cookie, origin }));
       await page('Saving your choice', 'consent submit', 'decision_invalid', await post('/mcp/oauth/consent', { flow, decision: 'maybe' }, { cookie, origin }));
+      await page('Saving your choice', 'consent submit', 'wake_invalid',
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', wake_url: 'http://localhost', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
+      const previousKey = process.env.BEELINE_MCP_WEBHOOK_KEY;
+      delete process.env.BEELINE_MCP_WEBHOOK_KEY;
+      try {
+        await page('Saving your choice', 'consent submit', 'wake_unavailable',
+          await post('/mcp/oauth/consent', { flow, decision: 'allow', wake_url: 'https://hooks.example/wake', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
+        expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [registered.client_id])).rowCount).toBe(0);
+      } finally {
+        if (previousKey === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY;
+        else process.env.BEELINE_MCP_WEBHOOK_KEY = previousKey;
+      }
       // Every sentence is driven by a real refusal, and each reason reads differently.
       expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
       expect(new Set(Object.values(BROWSER_REFUSALS)).size).toBe(Object.keys(BROWSER_REFUSALS).length);

@@ -7,7 +7,7 @@ import type { ChatDisplayMessage } from './room-view-presentation';
  * rows it sweeps past were never read, so the boundary follows where the
  * reader STOPPED, not every row that crossed the fold on the way there.
  */
-export const READ_CURSOR_DEBOUNCE_MS = 400;
+export const READ_CURSOR_DEBOUNCE_MS = 200;
 
 /** A provisional row is painted from an unsettled turn, not stored mail. */
 function isProvisional(
@@ -130,10 +130,11 @@ export class ReadCursorAdvancer {
   constructor(
     private readonly publish: (messageId: string) => void,
     private readonly delayMs: number = READ_CURSOR_DEBOUNCE_MS,
+    private readonly readyToPublish: () => boolean = () => true,
   ) {}
 
   /**
-   * One viewability report. Restarts the debounce; publishes nothing yet.
+   * One viewability report. A changed boundary restarts the debounce.
    * `chronological` is the oldest-first transcript, never the inverted list.
    */
   observe(
@@ -143,16 +144,15 @@ export class ReadCursorAdvancer {
     if (this.#suspended) return;
     const candidate = newestVisibleMessageId(chronological, visible);
     if (!candidate || !this.#advances(chronological, candidate)) return;
+    // Metadata arriving after draw can repeat the same viewport report. The
+    // reader has held that row still; do not postpone its read mark again.
+    if (candidate === this.#pending) {
+      this.retry();
+      return;
+    }
     this.#pending = candidate;
     if (this.#timer !== null) clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => {
-      this.#timer = null;
-      const target = this.#pending;
-      this.#pending = null;
-      if (target === null) return;
-      this.#published = target;
-      this.publish(target);
-    }, this.delayMs);
+    this.#timer = setTimeout(() => this.flush(), this.delayMs);
   }
 
   /**
@@ -161,14 +161,18 @@ export class ReadCursorAdvancer {
    * no less read for it.
    */
   flush(): void {
-    if (this.#timer === null) return;
-    clearTimeout(this.#timer);
+    if (this.#timer !== null) clearTimeout(this.#timer);
     this.#timer = null;
     const target = this.#pending;
+    if (target === null || !this.readyToPublish()) return;
     this.#pending = null;
-    if (target === null) return;
     this.#published = target;
     this.publish(target);
+  }
+
+  /** A client becoming available must not shorten an active viewport debounce. */
+  retry(): void {
+    if (this.#timer === null) this.flush();
   }
 
   /**

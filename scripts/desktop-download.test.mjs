@@ -153,7 +153,7 @@ test('the unified release publishes every stable website installer name', () => 
   assert.match(desktopWorkflow, /workflow_call:/);
   assert.match(desktopWorkflow, /if: inputs\.variant == 'production'/);
   assert.match(releaseWorkflow, /desktop_installers:/);
-  assert.match(releaseWorkflow, /needs: \[initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_native, mobile_native_android, mobile_native_ios, desktop_installers/);
+  assert.match(releaseWorkflow, /needs: \[initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers/);
   for (const { asset } of DESKTOP_INSTALLERS) {
     assert.match(desktopWorkflow, new RegExp(asset.replace('.', '\\.')));
   }

@@ -26,9 +26,10 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
   ])('$label sends, persists and clears the submitted draft', async ({ isDirectMessage, accessIssue }) => {
     const text = '@ruby Open a corner for issue 4';
     const event = { id: 'signed-message', created_at: 123 };
+    const order: string[] = [];
     const transport = {
-      composeMessage: vi.fn().mockResolvedValue(event),
-      publishPreparedMessage: vi.fn().mockResolvedValue({}),
+      composeMessage: vi.fn(async () => { order.push('compose'); return event; }),
+      publishPreparedMessage: vi.fn(async () => { order.push('publish'); return {}; }),
     };
     const enqueue = vi.fn();
     const attempted = vi.fn();
@@ -49,7 +50,10 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
       selectedMentionAgentPubkey: noop, selectedAgentMentionsRef: { current: [] },
       roomAgents: [{ pubkey: 'ruby-key' }], mentionedAgentPubkey: () => 'ruby-key',
       setReceivedSteer: noop, setTagMenuOpen: noop, setPendingAck: noop, setSending: noop,
-      desktopExperience: false, addMessages: noop, landAtOwnSend: noop,
+      desktopExperience: false,
+      addMessages: () => { order.push('row'); },
+      landAtOwnSend: noop,
+      yieldToNextPaint: async () => { order.push('paint'); },
       roomSurface: null, userPubkey: 'human-key', fallbackMemberName: () => 'Person',
       decodedId: 'conversation', reconcileOptimistic: noop,
       outbox: { current: () => ({ enqueue, attempted }) },
@@ -61,6 +65,7 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
     };
     const send = runInNewContext(executable, context);
     expect(await send()).toBe(true);
+    expect(order).toEqual(['row', 'paint', 'compose', 'publish']);
     expect(transport.composeMessage).toHaveBeenCalledWith(
       { sessionId: 'conversation', text, attachments: [] },
       { mentionAgent: 'ruby-key', mentionPubkeys: ['ruby-key'] },

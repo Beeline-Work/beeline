@@ -25,3 +25,17 @@ export const STORE_LISTINGS = {
   android: 'https://play.google.com/store/apps/details?id=app.usebeeline',
   ios: 'https://apps.apple.com/app/id6803948500',
 } as const;
+
+/** Share the pending result too, so repeated foreground events cannot race. */
+export function hourlyStoreUpdateCheck(check: () => Promise<MobileMinimum | null>) {
+  let checkedAt = -Infinity;
+  let result: Promise<MobileMinimum | null>;
+  return () => {
+    const now = Date.now();
+    if (now - checkedAt >= 60 * 60 * 1000) {
+      checkedAt = now;
+      result = check();
+    }
+    return result;
+  };
+}

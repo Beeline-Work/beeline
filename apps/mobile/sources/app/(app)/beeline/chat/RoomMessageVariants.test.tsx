@@ -14,6 +14,7 @@ import {
   conversationIdentityByPubkey,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
+import { archiveActionPresentation, liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
 import { beginReplyTarget } from '@/buzz/message-reply';
@@ -186,6 +187,8 @@ vi.mock('@/components/buzz/Ledger', async () => {
     LedgerUntaggedHint: (props: any) => ReactModule.createElement('LedgerUntaggedHint', props),
     LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
     LedgerSteer: (props: any) => ReactModule.createElement('LedgerSteer', props),
+    withLedgerDayCaption: (node: unknown, label: string | null) =>
+      label ? ReactModule.createElement('day-caption-wrap', { label }, node as React.ReactNode) : node,
   };
 });
 
@@ -491,6 +494,159 @@ describe('Room message variant components', () => {
     );
     act(() => allowed.root.findByProps({ testID: 'write-permission-open-corner' }).props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('corner');
+  });
+
+  it('updates approval loading and disabled permission through the row memo', () => {
+    const counts = new Map<string, number>();
+    const kept = message({ id: 'kept', text: 'Cached' });
+    const permission = message({
+      id: 'permission-row',
+      writePermission: {
+        permissionId: 'permission',
+        requestId: 'request',
+        agentPubkey: 'agent',
+        requesterPubkey: 'requester',
+        tool: 'edit_file',
+        repository: 'owner/repo',
+        status: 'pending',
+      },
+    });
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const grant = message({
+      id: 'grant-row',
+      grantRequest: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Terra' },
+        owner,
+        requester: owner,
+        grants: [{
+          grantId: 'g-1',
+          kind: 'repository',
+          target: 'owner/repo',
+          reason: 'edit the repository',
+          status: 'pending',
+          requestedBy: owner,
+          roomId: '22222222-2222-4222-8222-222222222222',
+          createdAt: 1,
+          auto: false,
+        }],
+      },
+    });
+    const rows = [kept, permission, grant];
+    function Harness({
+      permissionActionId,
+      grantActionId,
+      canManageWorkspace,
+    }: {
+      permissionActionId: string | null;
+      grantActionId: string | null;
+      canManageWorkspace: boolean;
+    }) {
+      const renderItem = useRoomMessageRenderItem({
+        render: (item, context) => {
+          counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+          if (item.writePermission) {
+            return (
+              <WritePermissionCard
+                message={item}
+                viewerIsAgent={context.viewerIsAgent === true}
+                viewerPubkey="admin"
+                viewerCanManage={context.canManageWorkspace === true}
+                actionId={context.permissionActionId ?? null}
+                onDecision={() => undefined}
+                onOpenCorner={() => undefined}
+              />
+            );
+          }
+          if (item.grantRequest) {
+            return (
+              <GrantRequestCard
+                message={item}
+                viewerIsAgent={context.viewerIsAgent === true}
+                viewerPubkey="admin"
+                viewerCanManageWorkspace={context.canManageWorkspace === true}
+                actionId={context.grantActionId ?? null}
+                onDecision={() => undefined}
+              />
+            );
+          }
+          return React.createElement('message-row', { id: item.id, text: item.text });
+        },
+        presentationForMessage: (item) => liveCardPresentation(item, {
+          permissionActionId,
+          grantActionId,
+          choiceActionId: null,
+          connectorOfferActionId: null,
+          appSignInActionId: null,
+          targetBranchActionId: null,
+          targetBranchNotice: null,
+          canManageWorkspace,
+          viewerIsAgent: false,
+        }),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return (
+        <>
+          {rows.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </>
+      );
+    }
+    const shown = render(
+      <Harness permissionActionId={null} grantActionId={null} canManageWorkspace />,
+    );
+    const allow = () => shown.root.findByProps({ testID: 'write-permission-allow' });
+    const always = () => shown.root.findByProps({ testID: 'grant-g-1-always' });
+    expect(allow().props).toMatchObject({ disabled: false, accessibilityState: { busy: false } });
+    expect(allow().props.loading).toBeFalsy();
+    expect(always().props).toMatchObject({ disabled: false, accessibilityState: { busy: false } });
+    expect(always().props.loading).toBeFalsy();
+    expect(counts.get('kept')).toBe(1);
+    expect(conversationSource).toContain('liveCardPresentation');
+    expect(conversationSource).toContain('actionId={rowPermission}');
+    expect(conversationSource).toContain('actionId={rowGrant}');
+    expect(conversationSource).toContain('viewerCanManage={rowManage}');
+
+    act(() => {
+      shown.update(
+        <Harness permissionActionId="permission" grantActionId={null} canManageWorkspace />,
+      );
+    });
+    expect(allow().props).toMatchObject({
+      disabled: true,
+      loading: true,
+      accessibilityState: { busy: true },
+    });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('grant-row')).toBe(1);
+
+    act(() => {
+      shown.update(
+        <Harness permissionActionId="permission" grantActionId="g-1" canManageWorkspace />,
+      );
+    });
+    expect(always().props).toMatchObject({
+      disabled: true,
+      loading: true,
+      accessibilityState: { busy: true },
+    });
+    expect(counts.get('kept')).toBe(1);
+    expect(counts.get('permission-row')).toBe(2);
+
+    act(() => {
+      shown.update(
+        <Harness permissionActionId={null} grantActionId={null} canManageWorkspace={false} />,
+      );
+    });
+    expect(shown.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
+    expect(shown.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+    expect(shown.root.findAllByProps({ testID: 'grant-g-1-always' })).toHaveLength(0);
+    const waiting = JSON.stringify(shown.toJSON());
+    expect(waiting).toContain('waiting for the requester or a workspace admin');
+    expect(waiting).toContain('waiting for a Workspace admin');
+    expect(counts.get('kept')).toBe(1);
   });
 
   it('renders target-branch applied, manager-confirm, and denied states', () => {
@@ -907,6 +1063,51 @@ describe('Room message variant components', () => {
     ).toHaveLength(0);
   });
 
+  it('replaces a cached Unknown label with the hydrated name, avatar, and role', () => {
+    const props = {
+      participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
+      continued: false, participantHandles: [] as [], channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false, onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
+      onRetry: vi.fn(), onDismiss: vi.fn(),
+    };
+    const person = message({ id: 'hydrated-person', pubkey: 'ada' });
+    const renderer = render(<OrdinaryLedgerMessage {...props} message={person} />);
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline.name).not.toBe('Hydrated member');
+    act(() => renderer.update(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={person}
+        personName="Hydrated member"
+        personAvatar="https://cdn.example/ada.png"
+        personFace="fox"
+      />,
+    ));
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
+      name: 'Hydrated member',
+      mark: { avatarUrl: 'https://cdn.example/ada.png', face: 'fox', kind: 'human' },
+    });
+
+    const agent = message({ id: 'hydrated-agent', pubkey: 'agent', isAgentAuthor: true });
+    act(() => renderer.update(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={agent}
+        agent={{
+          pubkey: 'agent',
+          displayName: 'Hydrated member',
+          avatar: 'https://cdn.example/agent.png',
+          face: 'fox',
+        }}
+        agentModel="Opus"
+      />,
+    ));
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
+      name: 'Hydrated member',
+      role: 'Opus',
+      mark: { avatarUrl: 'https://cdn.example/agent.png', face: 'fox', kind: 'agent' },
+    });
+  });
+
   it('keeps a connector app in the model slot and groups continued human messages', () => {
     const props = {
       participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
@@ -1297,6 +1498,113 @@ describe('Room message variant components', () => {
     const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
     act(() => { vi.useFakeTimers(); swipe.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onReply).toHaveBeenCalledWith(proposal);
+  });
+
+  it('disables cached proposal buttons and turns corner swipe off when the Room is archived', () => {
+    const kept = message({
+      id: 'kept-card',
+      text: 'Allow this edit',
+      writePermission: {
+        permissionId: 'permission',
+        requestId: 'request',
+        agentPubkey: 'agent',
+        requesterPubkey: 'requester',
+        tool: 'edit_file',
+        status: 'pending',
+      },
+    });
+    const proposal = message({
+      id: 'proposal',
+      text: 'Proposed corner: Faster reads — Bound query latency under load',
+      pubkey: 'agent-sol',
+      isAgentAuthor: true,
+    });
+    const swipeRow = message({ id: 'swipe', text: 'Move this work', pubkey: 'ada' });
+    const rows = [kept, proposal, swipeRow];
+    const counts = new Map<string, number>();
+    function Harness({ archived }: { archived: boolean }) {
+      const renderItem = useRoomMessageRenderItem({
+        render: (item, context) => {
+          counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+          if (item.writePermission) {
+            return React.createElement('message-row', { id: item.id });
+          }
+          return (
+            <OrdinaryLedgerMessage
+              message={item}
+              {...(item.isAgentAuthor
+                ? { agent: { pubkey: 'agent-sol', displayName: 'Sol' } }
+                : { personName: 'Ada' })}
+              desktopLayout={false}
+              participantsHydrated
+              viewerPubkey="viewer"
+              speakerWorking={false}
+              continued={false}
+              participantHandles={[]}
+              channelIndex={{ rooms: [], corners: [] }}
+              deliveryFailed={false}
+              onChannelReference={() => undefined}
+              onReply={() => undefined}
+              onCopy={() => undefined}
+              onRetry={() => undefined}
+              onDismiss={() => undefined}
+              {...(context.cornerSwipeEnabled
+                ? { onForwardToNewCorner: () => undefined }
+                : {})}
+              {...(context.cornerProposalEnabled
+                ? { onCornerProposalDecision: () => undefined }
+                : {})}
+            />
+          );
+        },
+        presentationForMessage: (item) => archiveActionPresentation(item, {
+          roomArchived: archived,
+          cornerSwipeOffered: true,
+          cornerProposalOffered: true,
+        }),
+        continuedIds: new Set(),
+        precedingMessageById: new Map(),
+        messageById: new Map(rows.map((row) => [row.id, row])),
+      });
+      return (
+        <>
+          {rows.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </>
+      );
+    }
+    const shown = render(<Harness archived={false} />);
+    const choice = (decision: string) =>
+      shown.root.findByProps({
+        testID: `transcript-card-choice-corner-proposal-${decision}-proposal`,
+      });
+    const swipe = (id: string) => shown.root.findByProps({ testID: `swipe-reply-${id}` });
+    expect(choice('open').props.onPress).toEqual(expect.any(Function));
+    expect(choice('open').props.accessibilityState).toMatchObject({ disabled: false });
+    expect(choice('cancel').props.onPress).toEqual(expect.any(Function));
+    expect(swipe('proposal').props.renderLeftActions).toEqual(expect.any(Function));
+    expect(swipe('swipe').props.renderLeftActions).toEqual(expect.any(Function));
+    expect(swipe('swipe').props.renderRightActions).toEqual(expect.any(Function));
+    expect(counts.get('kept-card')).toBe(1);
+
+    act(() => {
+      shown.update(<Harness archived />);
+    });
+    expect(choice('open').props.onPress).toBeUndefined();
+    expect(choice('open').props.accessibilityState).toBeUndefined();
+    expect(choice('cancel').props.onPress).toBeUndefined();
+    expect(shown.root.findByProps({ testID: 'corner-proposal-proposal' }).props.tier).toBe('record');
+    expect(swipe('proposal').props.renderLeftActions).toBeUndefined();
+    expect(swipe('swipe').props.renderLeftActions).toBeUndefined();
+    expect(swipe('swipe').props.renderRightActions).toEqual(expect.any(Function));
+    expect(counts.get('kept-card')).toBe(1);
+    expect(counts.get('proposal')).toBe(2);
+    expect(counts.get('swipe')).toBe(2);
+    expect(conversationSource).toContain('archiveActionPresentation');
+    expect(conversationSource).toContain('rowCornerSwipeEnabled');
+    expect(conversationSource).toContain('rowCornerProposalEnabled');
+    expect(conversationSource).toContain('rowRoomArchived');
   });
 
   it('shows the pick and who opened it once a corner proposal is answered', () => {
@@ -2092,9 +2400,8 @@ describe('Room message variant components', () => {
   });
 
   it("labels an agent's step row with the model from its profile, not a per-message stamp", () => {
-    expect(conversationSource).toContain(
-      'agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}',
-    );
+    expect(conversationSource).toContain('agentModel={modelForRow}');
+    expect(conversationSource).toContain('agentModelByPubkey: agentProfileModelByPubkey');
     expect(conversationSource).not.toContain('agentModel={item.agentModel}');
     const stepRow = message({
       id: 'monarch-step',

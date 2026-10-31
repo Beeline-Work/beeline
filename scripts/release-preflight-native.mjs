@@ -25,21 +25,14 @@ export function enforceReleasedRuntime(results, { reportOnly = false, warn = con
 export function run() {
   const repository = process.env.GITHUB_REPOSITORY;
   if (!repository) throw new Error('GITHUB_REPOSITORY is required');
-  const gh = args => execFileSync('gh', args, { encoding: 'utf8' });
-  const pages = JSON.parse(gh(['api', '--paginate', '--slurp', `repos/${repository}/actions/artifacts?name=unified-release-index&per_page=100`]));
-  const candidates = pages.flatMap(page => page.artifacts).filter(a => !a.expired && a.workflow_run?.id).sort((a,b) => b.created_at.localeCompare(a.created_at));
-  let last;
-  for (const artifact of candidates) {
-    const result = JSON.parse(gh(['api', `repos/${repository}/actions/runs/${artifact.workflow_run.id}`]));
-    if (result.conclusion === 'success') { last = artifact; break; }
-  }
-  if (!last) throw new Error('No successful release index is available; cannot establish shipped native runtime.');
   const temp = mkdtempSync(join(tmpdir(), 'release-preflight-'));
   try {
-    gh(['run', 'download', String(last.workflow_run.id), '--repo', repository, '--name', 'unified-release-index', '--dir', temp]);
-    const index = JSON.parse(readFileSync(join(temp, 'release-attempt.json'), 'utf8'));
+    // The newest published GitHub Release's record names the commit the
+    // live store binaries were built from.
+    execFileSync(process.execPath, [new URL('./release-record.mjs', import.meta.url).pathname, 'previous', '--output', join(temp, 'release.json')], { encoding: 'utf8' });
+    const index = JSON.parse(readFileSync(join(temp, 'release.json'), 'utf8'));
     const sha = index.components?.['mobile-native']?.sourceSha;
-    if (!/^[a-f0-9]{40}$/.test(sha ?? '')) throw new Error('Release index has no immutable mobile-native source SHA.');
+    if (!/^[a-f0-9]{40}$/.test(sha ?? '')) throw new Error('Release record has no immutable mobile-native source SHA.');
     const released = JSON.parse(execFileSync('git', ['show', `${sha}:apps/mobile/native-fingerprint.json`], { encoding: 'utf8' }));
     const current = JSON.parse(readFileSync('apps/mobile/native-fingerprint.json', 'utf8'));
     const results = compareReleasedRuntime(current, released);

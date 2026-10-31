@@ -43,6 +43,8 @@
         // The background latency runbook invokes these isolated database proofs by path.
         "scripts/prove-background-waste.mjs",
         "scripts/prove-webhook-burst.mjs",
+        // Reproduction CHECK-DEADLOCK-1 invokes the isolated PostgreSQL HTTP proof by path.
+        "scripts/prove-check-rollup-deadlock.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/prove-corner-startup.mjs",
@@ -74,6 +76,8 @@
         "scripts/prove-helper-migration-update.mjs",
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
+        // store-shipped.test.mjs runs the release scripts with this fake App Store Connect preloaded.
+        "scripts/fixtures/fake-app-store-connect.mjs",
         // The transcript benchmark README invokes these measurement CLIs by path.
         "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile,list-engine-report,list-visual-audit,prepare-list-engines}.mjs",
       ],

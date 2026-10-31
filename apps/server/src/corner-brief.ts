@@ -222,6 +222,10 @@ type StoredCornerBriefApproval = {
   approvedBy: string;
   briefHash: string;
   repositoryWork?: boolean;
+  replyToMessageId?: string | null;
+  replyToAttachmentIds?: readonly string[];
+  replyToCreatedAt?: string | null;
+  approvedAt?: string;
 };
 
 type ApprovingMessage = { text: string; author_id: string; kind: string; room_id: string };
@@ -401,9 +405,27 @@ export async function resolveCornerBriefApproval(
   }
   if (!message || message.kind !== 'human' && !commanderOrder)
     throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
+  // Evidence only: retain the reply's file provenance without exposing the DM
+  // or participating in merge authorization.
+  const evidence = message.kind === 'human' ? (await db.query<{
+    replyToMessageId: string | null; replyToAttachmentIds: string[];
+    replyToCreatedAt: string | null; approvedAt: string;
+  }>(
+    `SELECT approval.reply_to_message_id AS "replyToMessageId",
+            COALESCE((SELECT jsonb_agg(DISTINCT file_id) FROM (
+              SELECT COALESCE(file->>'mediaId',
+                substring(file->>'url' FROM '/v1/media/([0-9a-fA-F-]{36})')) file_id
+              FROM jsonb_array_elements(COALESCE(mock.attachments,'[]'::jsonb)) file
+            ) files WHERE file_id IS NOT NULL), '[]'::jsonb) AS "replyToAttachmentIds",
+            mock.created_at::text AS "replyToCreatedAt", approval.created_at::text AS "approvedAt"
+     FROM messages approval LEFT JOIN messages mock
+       ON mock.id=approval.reply_to_message_id AND mock.room_id=approval.room_id
+     WHERE approval.id=$1`, [sourceMessageId],
+  )).rows[0] : undefined;
   const revisionHash = cornerBriefRevisionHash(draft, attachments);
   return {
     approvalBasis: {
+      ...evidence,
       kind:
         message.kind === 'agent' ? 'commander-order' : initiating ? 'initiating-command' : 'explicit-human-answer',
       sourceMessageId,
@@ -506,6 +528,11 @@ export function projectCornerBrief(cornerId: string, row: CornerBriefRow): Corne
     ...((basis?.sourceMessageId || basis?.kind === 'commander-direct') && basis.approvedBy
       ? {
           approval: {
+            ...(basis.kind ? { kind: basis.kind } : {}),
+            ...(basis.replyToMessageId !== undefined ? { replyToMessageId: basis.replyToMessageId } : {}),
+            ...(basis.replyToAttachmentIds !== undefined ? { replyToAttachmentIds: basis.replyToAttachmentIds } : {}),
+            ...(basis.replyToCreatedAt !== undefined ? { replyToCreatedAt: basis.replyToCreatedAt } : {}),
+            ...(basis.approvedAt !== undefined ? { approvedAt: basis.approvedAt } : {}),
             sourceMessageId: basis.sourceMessageId ?? '',
             text: basis.snapshot ?? '',
             approvedBy: basis.approvedBy,

@@ -1,6 +1,6 @@
 // Isolated HTTP proof against the built service. No production state is changed.
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { createAgentCommand, claimAgentCommand } from '../apps/server/dist/agent-command.js';
@@ -65,9 +65,37 @@ try {
   const approved = await revise(approval, baseline ? 1 : 2);
   assert.equal(approved.status, 200, JSON.stringify(approved));
   const restored = await request(worker, 'getCornerRestoreState', { cornerId: corner });
-  assert.deepEqual(restored.body.brief.approval, { sourceMessageId: approval, text: 'Approved endpoint revision', approvedBy: human, approverName: 'Owner' });
-  if (!baseline) assert.deepEqual(ordered.body.approval, { sourceMessageId: card.id, text: 'Use the revised endpoint.', approvedBy: commander, approverName: 'Commander' });
+  assert.equal(restored.body.brief.approval.sourceMessageId, approval);
+  assert.equal(restored.body.brief.approval.text, 'Approved endpoint revision');
+  assert.equal(restored.body.brief.approval.approvedBy, human);
+  assert.equal(restored.body.brief.approval.approverName, 'Owner');
+  if (!baseline) {
+    assert.equal(restored.body.brief.approval.replyToMessageId, null);
+    assert.equal(restored.body.brief.approval.replyToCreatedAt, null);
+    assert.deepEqual(restored.body.brief.approval.replyToAttachmentIds, []);
+  }
+  if (!baseline) assert.deepEqual(ordered.body.approval, { kind: 'commander-order', sourceMessageId: card.id, text: 'Use the revised endpoint.', approvedBy: commander, approverName: 'Commander' });
   console.log(`APPROVAL-CITATIONS parent Room: HTTP ${approved.status}; restored exact human text and author`);
+  if (!baseline) {
+    const mock = randomBytes(32).toString('hex'), reply = randomBytes(32).toString('hex');
+    const objectId = randomUUID();
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments,created_at)
+      VALUES($1,$2,$3,'Mock',$4::jsonb,'2026-01-01T00:00:00Z')`,
+      [mock, parent, commander, JSON.stringify([{mediaId: objectId}])]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,reply_to_message_id,created_at)
+      VALUES($1,$2,$3,'Use this mock',$4,'2026-01-01T00:01:00Z')`, [reply,parent,human,mock]);
+    const changed = await revise(reply, 3);
+    assert.equal(changed.status, 200, JSON.stringify(changed));
+    const read = await request(worker, 'listCornerBriefRevisions', {cornerId: corner});
+    assert.equal(read.status, 200, JSON.stringify(read));
+    const evidence = read.body.revisions[0].approval;
+    assert.equal(evidence.kind, 'explicit-human-answer');
+    assert.equal(evidence.replyToMessageId, mock);
+    assert.deepEqual(evidence.replyToAttachmentIds, [objectId]);
+    assert.ok(Date.parse(evidence.approvedAt) > Date.parse(evidence.replyToCreatedAt));
+    console.log(`MOCK-PROVENANCE: HTTP brief read retains exact reply, mock objectId and ordered timestamps; non-reply retains null`);
+  }
+
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));
   await db.close();

@@ -1999,3 +1999,27 @@ it('Reproduction SELF-2: own brief revision and background shell completion can 
   await daemon.execute('markAgentTurnSilent', authority(revision), RUBY);
   console.info('Demonstrated SELF-2: completion and revision continuations accept silence without filler');
 });
+
+it.each([true, false])('records mock reply evidence through brief reads (reply=%s)', async (reply) => {
+  const opened = await open();
+  const mock = randomBytes(32).toString('hex'), approval = randomBytes(32).toString('hex');
+  const objectId = randomUUID(), urlObjectId = randomUUID();
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments,created_at)
+    VALUES($1,$2,$3,'Mock', $4::jsonb,'2026-01-01T00:00:00Z')`,
+    [mock, DM, RUBY, JSON.stringify([{mediaId: objectId}, {url: 'https://test/v1/media/' + urlObjectId}])]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,reply_to_message_id,created_at)
+    VALUES($1,$2,$3,'Use this mock',$4,'2026-01-01T00:01:00Z')`, [approval, DM, HUMAN, reply ? mock : null]);
+  const revised = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'Build the approved widget', change: 'Record mock approval', approval: {sourceMessageId: approval} } }, RUBY);
+  const restored = await daemon.execute('getCornerRestoreState', {cornerId: opened.cornerId}, WORKER);
+  const revisions = await daemon.execute('listCornerBriefRevisions', {cornerId: opened.cornerId}, WORKER);
+  for (const brief of [revised, restored.brief, revisions.revisions[0]]) {
+    expect(brief?.approval).toMatchObject({kind: 'explicit-human-answer', sourceMessageId: approval,
+      text: 'Use this mock', approvedBy: HUMAN, replyToMessageId: reply ? mock : null,
+      replyToAttachmentIds: reply ? expect.arrayContaining([objectId, urlObjectId]) : [],
+      replyToCreatedAt: reply ? expect.any(String) : null, approvedAt: expect.any(String)});
+    if (reply) expect(Date.parse(brief!.approval!.approvedAt!)).toBeGreaterThan(Date.parse(brief!.approval!.replyToCreatedAt!));
+  }
+  // The worker can verify stored evidence without gaining access to the private DM.
+  await expect(daemon.execute('getRoomMessage', {roomId: DM, messageId: approval}, WORKER)).rejects.toThrow();
+});

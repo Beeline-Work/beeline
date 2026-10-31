@@ -7,7 +7,7 @@ import { request as httpRequest } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
@@ -102,11 +102,22 @@ describe('monolith integration', () => {
   };
   let githubRollupState: 'pending' | 'passed' | 'failed';
   let roomTokenFailure: Error | undefined;
+  // Export only migrated schema; every test owns a new database and fresh seed rows.
+  let databaseSnapshot: Blob | File;
+  beforeAll(async () => {
+    const template = new PgliteDatabase();
+    try {
+      await migrate(template);
+      await new AuthStore(template as unknown as TransactionalDatabase).migrate();
+      databaseSnapshot = await template.snapshot();
+    } finally {
+      await template.close();
+    }
+  });
+
   beforeEach(async () => {
     roomTokenFailure = undefined;
-    database = new PgliteDatabase();
-    await migrate(database);
-    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    database = PgliteDatabase.fromSnapshot(databaseSnapshot);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
       [HUMAN, AGENT],

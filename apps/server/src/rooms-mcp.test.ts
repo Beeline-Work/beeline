@@ -24,7 +24,7 @@ import { runMaintenance } from './background.js';
 import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { FACE_SOULS } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, FACE_SOULS } from '@beeline/api-contract/phone';
 
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -823,6 +823,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
+    expect(page).toContain('Starter instructions');
+    expect(page).toContain('id="copy-routine" type="button">Copy</button>');
+    expect(page).toContain(MCP_STARTER_ROUTINE.replaceAll("'", '&#39;'));
+    expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
     expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
     expect(page).toContain('<img class="mark" src="data:image/svg+xml;base64,'); expect(page).not.toContain('>b</span>');
@@ -846,6 +850,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
     expect((await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'Firstmate', handle: 'firstmate' });
+  });
+  it('repeats the saved starter wake rule in server, setup and webhook instructions', async () => {
+    const { client } = await connected();
+    const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
+    for (const text of [client.getInstructions(), setup, MCP_TAG_INSTRUCTION]) {
+      expect(text).toContain(MCP_STARTER_ROUTINE);
+      expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
+    }
   });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
@@ -873,35 +885,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await post('/mcp/oauth/revoke', { client_id: grant.clientId, token });
     expect((await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${token}` } })).status).toBe(401);
   });
-  it('teaches scheduling and threaded answers on every outside-agent instruction surface', async () => {
-    const { client } = await connected();
-    const instructions = client.getInstructions()!;
-    const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup as string;
-    for (const text of [instructions, setup, MCP_TAG_INSTRUCTION]) {
-      expect(text).toContain("Beeline wakes you by tag or by the asking agent's schedule");
-      expect(text).toContain('Do not create your own timer or routine for Room work');
-      expect(text).toContain('A threaded reply (replyTo) reaches the agent that tagged you');
-    }
-  });
-  it.each(['send_message', 'post'])('R1: threaded %s answers wake the agent that tagged the member once', async tool => {
-    const { client, member } = await connected();
-    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-    for (const scenario of ['thread', 'also-tagged', 'untagged-question', 'person', 'removed']) {
-      const question = randomBytes(32).toString('hex');
-      await db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',
-        [question, ROOM, scenario === 'person' ? USER : AGENT, scenario === 'untagged-question' ? 'Question' : `@${handle} question`]);
-      if (scenario === 'removed') await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, AGENT]);
-      const result = data(await client.callTool({ name: tool, arguments: {
-        ...(tool === 'post' ? { address: ROOM } : { room: ROOM }), replyTo: question,
-        text: scenario === 'also-tagged' ? '@demo-agent answer' : 'Answer',
-      } }));
-      const expected = ['thread', 'also-tagged'].includes(scenario);
-      expect(result.woken).toEqual(expected ? ['demo-agent'] : []);
-      expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [result.messageId, AGENT])).rowCount).toBe(expected ? 1 : 0);
-      expect((await phone.readRoom(ROOM, USER))!.messages.some(m => m.id === result.messageId)).toBe(true);
-      if (scenario === 'removed') await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [ROOM, AGENT]);
-    }
-  });
   it.each(['send_message', 'post'])('keeps the wake chain across member replies through %s so a tag loop still stops at the depth limit', async replyTool => {
     const { client, grant, member } = await connected();
     await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/loop' WHERE id=$1`, [grant.clientId]);
@@ -927,10 +910,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await latestMemberCommand()).toBeUndefined();
     expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
     // The member replies again: depth three, the last depth the limit allows.
-    const question = (await db.query<{ id: string }>('SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, AGENT])).rows[0]!.id;
     const second = await client.callTool(replyTool === 'post'
-      ? { name: 'post', arguments: { address: ROOM, text: 'step two', replyTo: question } }
-      : { name: 'send_message', arguments: { room: ROOM, text: 'step two', replyTo: question } });
+      ? { name: 'post', arguments: { address: ROOM, text: '@demo-agent step two' } }
+      : { name: 'send_message', arguments: { room: ROOM, text: '@demo-agent step two' } });
     expect(second.isError).not.toBe(true);
     const secondId = (await db.query<{ id: string }>(
       'SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, member])).rows[0]!.id;
@@ -943,10 +925,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await daemon.execute('postRoomMessage', { roomId: ROOM, requestId: secondCommand.turn_request_id, generationId: 'loop-2', text: `@${handle} step two done` }, AGENT);
     expect(await latestMemberCommand()).toEqual(stopped);
     expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
-    const lastQuestion = (await db.query<{ id: string }>('SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1', [ROOM, AGENT])).rows[0]!.id;
-    const blocked = data(await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'No more hops', replyTo: lastQuestion } }));
-    expect(blocked.woken).toEqual([]);
-    expect((await db.query('SELECT 1 FROM agent_commands WHERE source_message_id=$1', [blocked.messageId])).rowCount).toBe(0);
   });
   it('sets this member’s own profile without changing its registered model label', async () => {
     const { client, member } = await connected();
@@ -1275,7 +1253,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
     expect(await avatar()).toBe(chosen);
   });
-  it('pushes one POST per tag to the webhook a member set, with its sealed bearer secret', async () => {
+  it('R1: pushes the asking agent’s exact back-tag instructions per tag to the webhook a member set, with its sealed bearer secret', async () => {
     await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
     const { client, member } = await connected();
     const previous = process.env.BEELINE_MCP_WEBHOOK_KEY;
@@ -1291,8 +1269,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       const stored = (await db.query<{ callback_url: string; callback_secret: string }>('SELECT callback_url,callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
       expect(stored.callback_url).toBe('https://hooks.example/muse'); expect(stored.callback_secret).not.toContain('tag-secret');
       const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, USER);
-      await routeHumanMessage(db, sent.messageId);
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, AGENT);
+      await routeAgentResult(db, undefined, sent.messageId, { roomId: ROOM, agentId: AGENT });
       const posts: { url: string; authorization: string | null; body: Record<string, unknown> }[] = [];
       await deliverMcpMemberWebhooks(db, async (url, init) => {
         posts.push({ url: String(url), authorization: new Headers(init?.headers).get('authorization'), body: JSON.parse(String(init?.body)) });
@@ -1302,6 +1280,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(posts[0]).toMatchObject({ url: 'https://hooks.example/muse', authorization: 'Bearer tag-secret',
         body: { memberId: member, roomId: ROOM, messageId: sent.messageId, text: `@${handle} please answer` } });
       expect(String(posts[0]!.body.instruction)).toContain('send_message');
+      expect(String(posts[0]!.body.instruction)).toContain('Start your reply with @demo-agent to wake the asking agent.');
+      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake it');
       // Removing the webhook stops the push.
       await client.callTool({ name: 'set_webhook', arguments: { url: '' } });
       const quiet = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} again` }, USER);

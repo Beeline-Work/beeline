@@ -10,6 +10,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
+import { McpStarterRoutine } from './McpStarterRoutine';
 import { ProfileIdentity } from './ProfileIdentity';
 import { Button } from './Button';
 import { ButtonRow } from './ButtonRow';
@@ -290,6 +291,7 @@ export function AgentProfileView({
                 />
               </View>
             )}
+            {detail.wake && <McpStarterRoutine key={identity.pubkey} />}
             {detail.wake && (
               <View style={styles.section}>
                 <SettingsRow

@@ -1539,3 +1539,71 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 });
+
+describe('phone socket request/reply', () => {
+  beforeEach(() => { appStateListeners.clear(); AppState.currentState = 'active'; vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  it('waits for open and matches reversed replies once, without live fanout', async () => {
+    const sockets = stubSockets(), { connection } = createConnection(), listener = vi.fn();
+    await connection.register([], listener);
+    const first = connection.request('readWorkspaces', {}), second = connection.request('voiceCurrent', { roomId: 'r' });
+    expect(sockets[0]!.sent).toEqual([]); sockets[0]!.open();
+    const frames = sockets[0]!.sent.map(v => JSON.parse(v)).filter(v => v.t === 'req');
+    expect(frames).toHaveLength(2); expect(frames[0].id).not.toBe(frames[1].id);
+    sockets[0]!.emit({ t: 'res', id: 'unknown', ok: true, result: 0 });
+    sockets[0]!.emit({ t: 'res', id: frames[1].id, ok: true, result: null });
+    sockets[0]!.emit({ t: 'res', id: frames[1].id, ok: true, result: 'duplicate' });
+    sockets[0]!.emit({ t: 'res', id: frames[0].id, ok: true, result: { workspaces: [] } });
+    expect(await second).toBeNull(); expect(await first).toEqual({ workspaces: [] });
+    expect(listener).not.toHaveBeenCalled(); connection.dispose(); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('expires an unanswered request at its deadline and never replays it', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open();
+    const missed = vi.spyOn(connection, 'reportRequestDeadlineMissed');
+    const result = connection.request('readRoom', { roomId: 'r' }, { timeoutMs: 15_000 }).catch(e => e);
+    await vi.advanceTimersByTimeAsync(14_999); expect(missed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await result).name).toBe('MonolithRequestTimeoutError'); expect(missed).toHaveBeenCalledOnce();
+    expect(sockets[0]!.closed).toBe(true); sockets[1]!.open();
+    expect(sockets[1]!.sent.some(v => JSON.parse(v).t === 'req')).toBe(false); connection.dispose();
+  });
+  it('cleans up cancellation and ignores its late answer without a deadline miss', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open();
+    const missed = vi.spyOn(connection, 'reportRequestDeadlineMissed'), controller = new AbortController();
+    const result = connection.request('readWorkspaces', {}, { signal: controller.signal }).catch(e => e);
+    controller.abort(); expect((await result).name).toBe('AbortError');
+    sockets[0]!.emit({ t: 'res', id: JSON.parse(sockets[0]!.sent.at(-1)!).id, ok: true, result: {} });
+    await vi.advanceTimersByTimeAsync(20_000); expect(missed).not.toHaveBeenCalled(); connection.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('rejects in-flight sends on close and queued reads on identity change', async () => {
+    const sockets = stubSockets(), { connection, changeIdentity } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open();
+    const first = connection.request('sendRoomMessage', { roomId: 'r', messageId: 'm', text: 'hello' }).catch(e => e);
+    sockets[0]!.drop(); expect((await first).name).toBe('PhoneSocketDisconnectedError');
+    await vi.advanceTimersByTimeAsync(0); sockets[1]!.open();
+    expect(sockets[1]!.sent.some(v => JSON.parse(v).t === 'req')).toBe(false);
+    const second = connection.request('readWorkspaces', {}).catch(e => e);
+    changeIdentity(); expect((await second).name).toBe('PhoneSocketDisconnectedError'); connection.dispose();
+  });
+  it('bounds pending calls, validates reply shape and frees a slot after refusal', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open();
+    const pending = Array.from({ length: 32 }, () => connection.request('readWorkspaces', {}).catch(e => e));
+    await expect(connection.request('readWorkspaces', {})).rejects.toMatchObject({ code: 'busy', retryable: true });
+    const id = sockets[0]!.sent.map(v => JSON.parse(v)).find(v => v.t === 'req').id;
+    sockets[0]!.emit({ t: 'res', id, ok: true });
+    await expect(connection.request('readWorkspaces', {})).rejects.toMatchObject({ code: 'busy' });
+    sockets[0]!.emit({ t: 'res', id, ok: false, error: { code: 'access_denied', message: 'Owner only', retryable: false } });
+    expect(await pending[0]).toMatchObject({ status: 403, message: 'Owner only' });
+    const next = connection.request('readWorkspaces', {}).catch(e => e);
+    connection.dispose(); await Promise.all([...pending, next]); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('rejects oversized UTF-8 frames before opening a socket', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await expect(connection.request('sendRoomMessage', { roomId: 'r', messageId: 'm', text: '🐝'.repeat(20_000) })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(sockets).toHaveLength(0); connection.dispose();
+  });
+});

@@ -1,0 +1,19 @@
+{
+  "reproduction": "R1",
+  "baseline": "a5da6eade",
+  "limitation": "Android emulator failed: /dev/kvm permission denied. This is a Node-hosted phone transport/service proof, not a native paint or radio test.",
+  "before": {
+    "result": "Room opening fails at the existing deadline while HTTP is silent",
+    "error": "timeout",
+    "elapsedMs": 15003,
+    "httpRequests": 1,
+    "socketRequests": 0
+  },
+  "after": {
+    "result": "Room open, Room refresh, history, lists, read mark and deduplicated send pass while HTTP stays silent; optional list waits for Room draw",
+    "httpRequests": 0,
+    "socketRequests": 8,
+    "socketsOpened": 1,
+    "messageCount": 1
+  }
+}

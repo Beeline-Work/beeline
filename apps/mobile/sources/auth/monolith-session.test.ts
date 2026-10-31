@@ -13,9 +13,7 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
-vi.mock('@/sync/transport/room-fetch', () => ({
-  fetchOpeningRoom: vi.fn((...args: Parameters<typeof fetch>) => globalThis.fetch(...args)),
-}));
+
 
 import {
   MONOLITH_REQUEST_TIMEOUT_MS,
@@ -29,7 +27,6 @@ import {
 import { TokenAuth } from '../../../server/src/auth';
 import { migrate } from '../../../server/src/database';
 import { PgliteDatabase } from '../../../server/src/test-support';
-import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import {
   abandonRoomDraw,
@@ -139,56 +136,16 @@ describe('monolith phone session', () => {
     expect(secure.size).toBe(0);
   });
 
-  it('uses the Room body transport with authentication on its configured origin', async () => {
+  it('keeps HTTP authentication for uploads on the configured origin', async () => {
     const fetcher = vi.fn(async () => Response.json(tokens(1)));
     vi.stubGlobal('fetch', fetcher);
     try {
-      const session = new MonolithSession('https://server.example', undefined, undefined, [
-        'https://server.example',
-        'https://alternate.example',
-      ]);
-      await session.exchangeGitHubTicket('ticket');
-      fetcher.mockClear();
-      vi.mocked(fetchOpeningRoom).mockClear();
-      session.noteStalled('https://server.example');
-
-      await session.fetch(
-        'https://server.example/v1/phone/rooms/room-a',
-        {},
-        {
-          timeoutMs: 1000,
-          idempotent: true,
-        },
-      );
-
-      expect(fetchOpeningRoom).toHaveBeenCalledWith(
-        'https://server.example/v1/phone/rooms/room-a',
-        expect.objectContaining({
-          headers: expect.objectContaining({ authorization: 'Bearer access-1' }),
-        }),
-      );
-      await session.fetch(
-        'https://server.example/v1/phone/workspaces',
-        {},
-        {
-          timeoutMs: 1000,
-          idempotent: true,
-        },
-      );
-      expect(fetchOpeningRoom).toHaveBeenCalledTimes(1);
-      expect(fetcher).toHaveBeenLastCalledWith(
-        'https://server.example/v1/phone/workspaces',
-        expect.any(Object),
-      );
-      await session.fetch('https://server.example/v1/phone/rooms/room-a', { method: 'POST' });
-      expect(fetchOpeningRoom).toHaveBeenCalledTimes(1);
-      expect(fetcher).toHaveBeenLastCalledWith(
-        'https://server.example/v1/phone/rooms/room-a',
-        expect.objectContaining({ method: 'POST' }),
-      );
-    } finally {
-      vi.unstubAllGlobals();
-    }
+      const session = new MonolithSession('https://server.example');
+      await session.exchangeGitHubTicket('ticket'); fetcher.mockClear();
+      await session.fetch('https://server.example/v1/media', { method: 'POST', body: 'upload' });
+      expect(fetcher).toHaveBeenCalledExactlyOnceWith('https://server.example/v1/media',
+        expect.objectContaining({ method: 'POST', body: 'upload', headers: expect.objectContaining({ authorization: 'Bearer access-1' }) }));
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('dispatches a warm read before navigation can occupy the next microtask', async () => {

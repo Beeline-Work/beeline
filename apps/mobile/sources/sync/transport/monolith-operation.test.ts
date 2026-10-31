@@ -1,98 +1,38 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PhoneSocketError } from './phone-socket-error';
+const request = vi.hoisted(() => vi.fn());
+vi.mock('./live-connection', () => ({ sharedLiveConnection: () => ({ request }) }));
+vi.mock('@/auth/monolith-session', () => ({ MONOLITH_REQUEST_TIMEOUT_MS: 15_000 }));
+vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: vi.fn() }));
+import { monolithPhoneOperation, phoneOperationFailureReason, phoneOperationRequestOptions } from './monolith-operation';
 
-const controls = vi.hoisted(() => ({ fetch: vi.fn() }));
-
-vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
-}));
-vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: { fetch: controls.fetch },
-  MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
-  MonolithRequestTimeoutError: class extends Error { constructor() { super('The result is unknown. Refresh to check before trying again.'); } },
-}));
-
-import { monolithPhoneOperation, phoneOperationFailureReason } from './monolith-operation';
-
-describe('monolith phone operation', () => {
-  beforeEach(() => controls.fetch.mockReset());
-
-  it('treats a successful no-content response as a void operation result', async () => {
-    controls.fetch.mockResolvedValue(new Response(null, { status: 204 }));
-
-    await expect(monolithPhoneOperation('sendPushTest', {})).resolves.toBeUndefined();
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/sendPushTest',
-      expect.objectContaining({ method: 'POST', body: '{}' }),
-      expect.objectContaining({ timeoutMs: 20_000 }),
-    );
+beforeEach(() => { request.mockReset(); });
+describe('phone operations over the shared socket', () => {
+  it('sends the operation and input once with the existing deadline', async () => {
+    request.mockResolvedValueOnce({ messageId: 'm' });
+    const input = { roomId: 'r', messageId: 'm', text: 'Hello' };
+    await expect(monolithPhoneOperation('sendRoomMessage', input)).resolves.toEqual({ messageId: 'm' });
+    expect(request).toHaveBeenCalledExactlyOnceWith('sendRoomMessage', input, { timeoutMs: 15_000 });
   });
-
-  it("carries a refusal's own reason out to the caller that has to show it", async () => {
-    controls.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({ error: 'host MCP is only for an agent that answers its owner' }),
-        {
-          status: 403,
-          headers: { 'content-type': 'application/json' },
-        },
-      ),
-    );
-
-    const failure = await monolithPhoneOperation('decideAgentGrant', {
-      grantId: 'grant-1',
-      decision: 'always',
-    }).catch((error: unknown) => error);
-
-    expect(phoneOperationFailureReason(failure)).toBe(
-      'host MCP is only for an agent that answers its owner',
-    );
+  it('keeps the server refusal readable and never retries it', async () => {
+    request.mockRejectedValueOnce(new PhoneSocketError('access_denied', 'Only an owner may approve this', false));
+    const error = await monolithPhoneOperation('decideAgentGrant', { grantId: 'g', decision: 'always' }).catch(e => e);
+    expect(phoneOperationFailureReason(error)).toBe('Only an owner may approve this');
+    expect(request).toHaveBeenCalledOnce();
   });
-});
-
-// Read the server's actual registry, so adding an operation automatically adds
-// a stalled-transport case without maintaining a second list.
-import { readFileSync } from 'node:fs';
-import ts from 'typescript';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { phoneOperationRequestOptions } from './monolith-operation';
-const serviceSource = ts.createSourceFile('phone-service.ts', readFileSync(
-  new URL('../../../../server/src/phone-service.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
-const registry = serviceSource.statements.find((node) => ts.isVariableStatement(node) &&
-  node.declarationList.declarations.some((item) => item.name.getText(serviceSource) === 'PHONE_OPERATION_NAMES')) as ts.VariableStatement;
-const initializer = registry.declarationList.declarations[0]!.initializer as ts.NewExpression;
-const operationNames = (initializer.arguments![0] as ts.ArrayLiteralExpression).elements.map(
-  (node) => (node as ts.StringLiteral).text as keyof PhoneOperationMap);
-
-describe('every registered phone operation has a complete deadline', () => {
-  afterEach(() => vi.useRealTimers());
-  it('discovers the registry rather than testing a hand list', () => expect(operationNames.length).toBeGreaterThan(100));
-  it.each(operationNames)('%s leaves a transport that never answers', async (name) => {
-    vi.useFakeTimers();
-    controls.fetch.mockImplementation(() => new Promise(() => {}));
-    const result = monolithPhoneOperation(name, {} as never).catch((error: unknown) => error);
-    const limit = phoneOperationRequestOptions(name, {})?.timeoutMs;
-    expect(limit).toBeGreaterThan(0);
-    expect(limit).toBeLessThanOrEqual(name === 'approveCornerMerge' ? 540_000 : ['actOnRepositoryCard', 'createGitHubRepository'].includes(name) ? 60_000 : 20_000);
-    await vi.advanceTimersByTimeAsync(limit!);
-    expect(await result).toBeInstanceOf(Error);
-    expect(vi.getTimerCount()).toBe(0);
+  it('keeps empty operation results and explicit deadlines', async () => {
+    request.mockResolvedValueOnce(undefined);
+    await expect(monolithPhoneOperation('sendPushTest', {}, { timeoutMs: 40_000 })).resolves.toBeUndefined();
+    expect(request).toHaveBeenCalledWith('sendPushTest', {}, { timeoutMs: 40_000 });
   });
-  it('preserves an explicit longer deadline for a slow transaction', async () => {
-    vi.useFakeTimers();
-    controls.fetch.mockImplementation(() => new Promise(() => {}));
-    let settled = false;
-    const result = monolithPhoneOperation('deleteWorkspace', { workspaceId: 'w' }, { timeoutMs: 40_000 })
-      .catch((error: unknown) => { settled = true; return error; });
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(await result).toBeInstanceOf(Error);
+  it('adds the local time zone when creating a Workspace', async () => {
+    await monolithPhoneOperation('createWorkspace', { name: 'Example' });
+    expect(request.mock.calls[0]?.[1]).toMatchObject({ name: 'Example', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   });
-  it('also bounds a body that never arrives after successful headers', async () => {
-    vi.useFakeTimers();
-    controls.fetch.mockResolvedValue({ok: true, status: 200, json: () => new Promise(() => {})});
-    const result = monolithPhoneOperation('resolveDirectMessage', { workspaceId: 'w', participantId: 'p' }).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(await result).toBeInstanceOf(Error);
+  it('preserves the special deadlines for external transactions', () => {
+    expect(phoneOperationRequestOptions('actOnRepositoryCard', {})).toMatchObject({ timeoutMs: 60_000 });
+    expect(phoneOperationRequestOptions('createGitHubRepository', {})).toMatchObject({ timeoutMs: 60_000 });
+    expect(phoneOperationRequestOptions('approveCornerMerge', {})).toMatchObject({ timeoutMs: 540_000 });
+    expect(phoneOperationRequestOptions('deleteWorkspace', {})).toMatchObject({ timeoutMs: 20_000 });
   });
 });

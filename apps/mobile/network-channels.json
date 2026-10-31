@@ -12,71 +12,15 @@
       "file": "apps/mobile/sources/auth/monolith-session.ts",
       "kind": "fetch",
       "count": 1,
-      "fate": "moves-to-socket",
-      "why": "monolithFetch, the raw HTTP behind MonolithSession.fetch and its hedged backup origin. Only the sign-in and refresh calls below survive the migration."
+      "fate": "exception",
+      "why": "HTTP implementation shared by sign-in, token refresh, uploads/downloads and the approved vault secret submission exception."
     },
     {
       "file": "apps/mobile/sources/auth/monolith-session.ts",
       "kind": "import:@tauri-apps/plugin-http",
       "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Desktop-shell HTTP behind monolithFetch; goes with it."
-    },
-    {
-      "file": "apps/mobile/sources/auth/monolith-session.ts",
-      "kind": "origin:beeline-server.fly.dev",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "The hedged backup origin, a second HTTP connection added in #2272. Removed by the socket migration."
-    },
-    {
-      "file": "apps/mobile/sources/auth/monolith-session.ts",
-      "kind": "origin:server.usebeeline.app",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Primary origin key of the hedged backup-origin map; the map goes with monolithFetch."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/client-error-report.ts",
-      "kind": "session-fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Client error report POST; queued in the outbox while offline."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/room-page-observation.ts",
-      "kind": "session-fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Page-load timing observation POST."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
-      "kind": "fetch",
-      "count": 2,
-      "fate": "moves-to-socket",
-      "why": "expo/fetch handed to MonolithSession for voice requests; goes with them."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
-      "kind": "import:expo/fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "expo/fetch for voice requests; goes with them."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
-      "kind": "session-fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Voice call join, leave, current and state requests (native)."
-    },
-    {
-      "file": "apps/mobile/sources/buzz/voice-transport.ts",
-      "kind": "session-fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Voice call join, leave, current and state requests (web)."
+      "fate": "exception",
+      "why": "HTTP implementation shared by sign-in, token refresh, uploads/downloads and the approved vault secret submission exception."
     },
     {
       "file": "apps/mobile/sources/components/buzz/VaultSaveCard.tsx",
@@ -84,41 +28,6 @@
       "count": 1,
       "fate": "exception",
       "why": "Must reach the server holding the target helper socket via Fly replay; secrets never transit PostgreSQL; no approved cross-server private relay exists."
-    },
-    {
-      "file": "apps/mobile/sources/sync/transport/monolith-operation.ts",
-      "kind": "session-fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Every /v1/phone/operations/<name> read and write, including message sends. Becomes a request/reply frame on the live socket."
-    },
-    {
-      "file": "apps/mobile/sources/sync/transport/room-fetch.native.ts",
-      "kind": "fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Room-open GET helper used by monolithFetch; goes with the Room reads."
-    },
-    {
-      "file": "apps/mobile/sources/sync/transport/room-fetch.native.ts",
-      "kind": "xhr",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Room-open GET kept in memory through XMLHttpRequest; goes with the Room reads."
-    },
-    {
-      "file": "apps/mobile/sources/sync/transport/room-fetch.ts",
-      "kind": "fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Web twin of the Room-open GET helper; goes with the Room reads."
-    },
-    {
-      "file": "apps/mobile/sources/sync/transport/room-view-client.ts",
-      "kind": "session-fetch",
-      "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Room, history, workspace, chat-list and read-mark REST reads. Become request/reply frames on the live socket."
     },
     {
       "file": "apps/mobile/modules/voice-background-audio/android/src/main/java/app/usebeeline/voicebackgroundaudio/VoiceStopRequests.kt",

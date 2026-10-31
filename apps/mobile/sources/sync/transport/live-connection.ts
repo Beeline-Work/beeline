@@ -1,3 +1,9 @@
+import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
+import { waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-error';
+import { markRoomOpen } from '@/buzz/room-open-trace';
 import { readSidebarPreview } from '@beeline/api-contract/phone';
 import { useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
@@ -15,6 +21,19 @@ import {
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
 import { setRequestDeadlineHandler } from './request-deadline';
+
+type PendingRequest = {
+  frame: string;
+  socket?: WebSocket;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+};
+
+export type SocketRequestOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  afterRoomDraw?: boolean;
+};
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -139,6 +158,8 @@ export class LiveConnection {
   private readonly workspaceCursors = new Map<string, RoomCursor>();
   private readonly traceOwners = new Map<string, Registration>();
   private readonly connectedListeners = new Set<() => void>();
+  private readonly requests = new Map<string, PendingRequest>();
+  private nextRequestId = 0;
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -199,6 +220,89 @@ export class LiveConnection {
     // must not hold the deck on its loading view.
     void this.ensureSocket();
     return Promise.resolve(() => this.stop(registration));
+  }
+
+  /** Each call owns one deadline and one reply; reconnect never resends it. */
+  request<Name extends keyof PhoneOperationMap>(
+    op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
+  ): Promise<PhoneOperationMap[Name]['output']> {
+    const generation = this.generation;
+    const start = () => {
+      if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
+      return this.startRequest(op, args, options) as Promise<PhoneOperationMap[Name]['output']>;
+    };
+    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad'].includes(op);
+    const draw = (options.afterRoomDraw ?? optional) ? waitForRoomDraw(options.signal) : undefined;
+    return draw ? draw.then(start) : start();
+  }
+
+  private startRequest(op: string, args: unknown, options: SocketRequestOptions): Promise<unknown> {
+    if (options.signal?.aborted) return Promise.reject(this.requestAbortError());
+    if (this.requests.size >= PHONE_SOCKET_MAX_IN_FLIGHT)
+      return Promise.reject(new PhoneSocketError('busy', 'Too many phone requests in flight', true));
+    const id = `phone-${++this.nextRequestId}`;
+    let frame: string;
+    try {
+      frame = JSON.stringify({ t: 'req', id, op, args });
+      if (utf8ToBytes(frame).length > PHONE_SOCKET_MAX_FRAME_BYTES)
+        return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
+    } catch (error) { return Promise.reject(error); }
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
+        this.requests.delete(id);
+      };
+      const request: PendingRequest = { frame,
+        resolve: value => { finish(); resolve(value); },
+        reject: error => { finish(); reject(error); },
+      };
+      const abort = () => request.reject(this.requestAbortError());
+      const timer = setTimeout(() => {
+        request.reject(new MonolithRequestTimeoutError());
+        this.reportRequestDeadlineMissed();
+      }, options.timeoutMs ?? 20_000);
+      this.requests.set(id, request);
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (op === 'readRoom') markRoomOpen('wire-authorizing');
+      if (this.socket && isSocketOpen(this.socket)) this.sendRequests(this.socket);
+      else void this.ensureSocket();
+    });
+  }
+
+  private requestAbortError(): Error {
+    const error = new Error('The request was aborted.');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  private sendRequests(socket: WebSocket): void {
+    for (const request of this.requests.values()) {
+      if (request.socket) continue;
+      request.socket = socket;
+      try {
+        if (JSON.parse(request.frame).op === 'readRoom') markRoomOpen('wire-dispatch');
+        socket.send(request.frame);
+      } catch (error) { request.reject(error); }
+    }
+  }
+
+  private receiveReply(value: unknown, socket: WebSocket): boolean {
+    if (!value || typeof value !== 'object' || (value as { t?: unknown }).t !== 'res') return false;
+    const frame = value as { id?: unknown; ok?: unknown; result?: unknown;
+      error?: { code?: unknown; message?: unknown; retryable?: unknown } };
+    if (typeof frame.id !== 'string') return true;
+    const request = this.requests.get(frame.id);
+    if (!request || request.socket !== socket) return true;
+    if (frame.ok === true && Object.hasOwn(frame, 'result')) request.resolve(frame.result);
+    else if (frame.ok === false && typeof frame.error?.code === 'string' &&
+      typeof frame.error.message === 'string' && typeof frame.error.retryable === 'boolean')
+      request.reject(new PhoneSocketError(frame.error.code, frame.error.message, frame.error.retryable));
+    return true;
+  }
+
+  private rejectRequests(): void {
+    for (const request of this.requests.values()) request.reject(new PhoneSocketDisconnectedError());
   }
 
   /** Safe transport metadata for a recovery receipt; no URL or authorization. */
@@ -412,6 +516,7 @@ export class LiveConnection {
   }
 
   private dropConnection(): void {
+    this.rejectRequests();
     setConnectionState('disconnected');
     this.generation += 1;
     this.connectInFlight = undefined;
@@ -493,6 +598,7 @@ export class LiveConnection {
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
         this.sendWorkspaceSync();
+        this.sendRequests(next);
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
@@ -504,6 +610,7 @@ export class LiveConnection {
         } catch {
           return;
         }
+        if (this.receiveReply(live, next)) return;
         if (live.type === 'sync-ok') {
           if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
           this.foregroundSyncTimer = undefined;
@@ -545,6 +652,7 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
+    this.rejectRequests();
     if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
     this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();

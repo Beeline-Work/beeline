@@ -1,6 +1,6 @@
-vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: vi.fn(async (input: string, init: unknown, options: any) => options.fetchImpl(input, init)) } }));
+const socketRequest = vi.hoisted(() => vi.fn(async () => ({ ended: true })));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ request: socketRequest }) }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
-vi.mock('expo/fetch', () => ({ fetch: async () => new Response('locked response') }));
 import { expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({ roomFailure: null as Error | null, registerGlobals: vi.fn(),
   roomOptions: undefined as any,
@@ -85,12 +85,13 @@ it('keeps audio live without a per-person idle event or deadline', async () => {
   } finally { vi.useRealTimers(); }
 });
 
-it('delivers native voice HTTP while JavaScript timers remain paused', async () => {
+it('sends native voice control through the shared socket', async () => {
   vi.useFakeTimers();
   try {
     const { voiceFetch } = await import('./voice-transport.native');
-    const response = await voiceFetch('https://proof/idle', { method: 'POST' });
-    expect(await response.text()).toBe('locked response');
+    const response = await voiceFetch('https://proof/v1/phone/voice/call/idle', { method: 'POST' });
+    expect(await response.json()).toEqual({ ended: true });
+    expect(socketRequest).toHaveBeenCalledWith('voiceIdle', { callId: 'call' }, { timeoutMs: 20_000, signal: undefined });
     expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });

@@ -9,8 +9,7 @@ import { resetClientState } from '@/sync/client-reset';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
-import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
-import { beginNetworkResponseTiming, type NetworkResponseTiming } from './network-response-timing';
+import { beginNetworkResponseTiming } from './network-response-timing';
 import { isOptionalRoomRequest, waitForRoomDraw } from '@/buzz/room-draw-barrier';
 import { reportRequestDeadlineMissed } from '@/sync/transport/request-deadline';
 
@@ -23,20 +22,10 @@ const ACCESS_KEY = 'buzzy.monolith.access.v1';
 
 async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isDesktopShell()) {
-    return (init?.method ?? 'GET').toUpperCase() === 'GET' &&
-      /\/v1\/phone\/rooms\/[^/?]+$/.test(String(input))
-      ? fetchOpeningRoom(input, init)
-      : fetch(input, init);
+    return fetch(input, init);
   }
   const { fetch: desktopFetch } = await import('@tauri-apps/plugin-http');
   return desktopFetch(input, init);
-}
-
-/** Native arrival and JS handling times for the winning Room HTTP attempt. */
-const responseTimings = new WeakMap<Response, NetworkResponseTiming>();
-
-export function monolithResponseTiming(response: Response): NetworkResponseTiming | null {
-  return responseTimings.get(response) ?? null;
 }
 
 export interface MonolithTokens {
@@ -486,9 +475,9 @@ export class MonolithSession {
         finishTiming?.();
         throw error;
       }
-      const timing = finishTiming?.();
+      finishTiming?.();
       if (tracingRoom) markRoomOpen('wire-headers');
-      if (timing) responseTimings.set(response, timing);
+
       return response;
     } catch (error) {
       if (timedOut) throw new MonolithRequestTimeoutError();
@@ -618,4 +607,4 @@ monolithSession.subscribeIdentityChange(resetClientState);
 
 const sharedSessionStorage = isDesktopShell() ? undefined : webRuntimeStorage()?.storage;
 if (sharedSessionStorage && typeof window.addEventListener === 'function')
-  monolithSession.watchOtherTabs(window, sharedSessionStorage);
+  monolithSession.watchOtherTabs({ addEventListener: ((type: string, listener: EventListenerOrEventListenerObject) => window.addEventListener(type, listener)) as Window['addEventListener'] }, sharedSessionStorage);

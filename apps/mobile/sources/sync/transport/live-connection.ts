@@ -70,8 +70,6 @@ type LiveConnectionDeps = {
   liveUrl: () => string;
   /** Fires on an identity or relay change. */
   subscribeIdentityChange: (listener: () => void) => () => void;
-  /** Fires when the app returns to the foreground from the background. */
-  subscribeForeground: (listener: () => void) => () => void;
   /** Optional native reachability event; absent on older OTA runtimes. */
   subscribeNetworkChange?: (listener: () => void) => () => void;
 };
@@ -178,7 +176,6 @@ export class LiveConnection {
   /** Bumped only by `dispose`; a held view survives an identity change. */
   private viewEpoch = 0;
   private readonly unsubscribeIdentity: () => void;
-  private readonly unsubscribeForeground: () => void;
 
   constructor(private readonly deps: LiveConnectionDeps) {
     setRequestDeadlineHandler(() => this.reportRequestDeadlineMissed());
@@ -188,7 +185,6 @@ export class LiveConnection {
     });
     this.unsubscribeAppState = () => appState.remove();
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
-    this.unsubscribeForeground = deps.subscribeForeground(() => this.handleForeground());
     this.unsubscribeNetworkChange =
       deps.subscribeNetworkChange?.(() => this.handleNetworkChange()) ?? (() => undefined);
   }
@@ -322,7 +318,6 @@ export class LiveConnection {
     this.viewEpoch += 1;
     this.viewing.clear();
     this.unsubscribeIdentity();
-    this.unsubscribeForeground();
     this.unsubscribeNetworkChange();
     this.unsubscribeAppState();
     setRequestDeadlineHandler(undefined);
@@ -1001,17 +996,6 @@ export function sharedLiveConnection(): LiveConnection {
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: subscribeClientReset,
-    subscribeForeground: (listener) => {
-      let backgrounded = AppState.currentState === 'background';
-      const subscription = AppState.addEventListener('change', (state) => {
-        if (state === 'background') backgrounded = true;
-        else if (state === 'active' && backgrounded) {
-          backgrounded = false;
-          listener();
-        }
-      });
-      return () => subscription.remove();
-    },
     subscribeNetworkChange: (listener) => {
       let unsubscribe: (() => void) | undefined;
       // Older native runtimes do not contain this optional module. Loading it

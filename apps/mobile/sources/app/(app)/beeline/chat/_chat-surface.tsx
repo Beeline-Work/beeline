@@ -4284,14 +4284,8 @@ export function BuzzChatSurface({
         // A publish failure already gets its own explicit modal below; the
         // local ack has nothing left to guess at and must not keep buzzing.
         setPendingAck(null);
+        if (preparedEvent) await markOutboxFailed(preparedEvent.id);
         const failure = publishFailurePresentation(err);
-        const outcome = preparedEvent
-          ? await markOutboxFailed(preparedEvent.id, failure.retryable)
-          : 'failed';
-        // The server's copy arrived while this answer was lost: it was sent.
-        if (outcome === 'confirmed') return true;
-        // The person left this Room; its outbox resends the message on return.
-        if (outcome === 'away') return false;
         Modal.alert(
           'Message not sent',
           failure.message,

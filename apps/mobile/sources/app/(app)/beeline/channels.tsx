@@ -224,8 +224,6 @@ export default function BuzzChannels() {
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
-  /** The load stopped before its readers started, so forcing them reads nothing. */
-  const loadFailedRef = useRef(false);
   // A deck under a pushed Room, or in a backgrounded app, reads nothing; its
   // focus and the foreground socket's resubscribe are the covering reads.
   const deckFocusedRef = useRef(true);
@@ -333,13 +331,6 @@ export default function BuzzChannels() {
     chatStore.current?.force();
   }, []);
 
-  /** Retry shows the list refreshing until a read answers, and restarts a failed load. */
-  const retryConnection = useCallback(() => {
-    setRefreshing(true);
-    if (loadFailedRef.current) setRetryGeneration((value) => value + 1);
-    else refreshNow();
-  }, [refreshNow]);
-
   /**
    * Returning to the deck reads only what it skipped while hidden: a change
    * its socket heard but did not read. Coming back to the foreground needs
@@ -405,7 +396,6 @@ export default function BuzzChannels() {
     let unsubscribeChats: (() => void) | undefined;
     let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView | null> | undefined;
     let releaseChats: (() => void) | undefined;
-    loadFailedRef.current = false;
     void (async () => {
       setError(null);
       const [nextIdentity, pendingInvite, nextRelayUrl] = await Promise.all([
@@ -456,9 +446,6 @@ export default function BuzzChannels() {
           if (!value) return;
           deckMissedRef.current.workspaces = false;
           workspaceReadConfirmed = true;
-          // Any answer proves Beeline is reachable again.
-          setRefreshing(false);
-          setError(null);
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -493,7 +480,6 @@ export default function BuzzChannels() {
             workspaceRefresh?.force();
             return;
           }
-          setRefreshing(false);
           setError(appErrorCopy(reason));
         },
       });
@@ -557,10 +543,7 @@ export default function BuzzChannels() {
         });
       await workspaceRefresh.startAfter(workspaceListenReady);
     })().catch((reason) => {
-      if (cancelled) return;
-      loadFailedRef.current = true;
-      setRefreshing(false);
-      setError(appErrorCopy(reason));
+      if (!cancelled) setError(appErrorCopy(reason));
     });
     return () => {
       cancelled = true;
@@ -982,7 +965,7 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && <View style={styles.failureInset}><IndexRow inset="flush" title={error!} description={connectionErrorDescription} action="Retry" disabled={refreshing} onPress={retryConnection} /></View>}
+        {!!error && <View style={styles.failureInset}><IndexRow inset="flush" title={error!} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions

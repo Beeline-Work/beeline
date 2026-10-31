@@ -47,7 +47,6 @@ import {
   type LiveDraftDrainStore,
 } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { IdentitySelection, identityScope, useIdentityRecords } from '@/buzz/identity-records';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { liveChatList } from '@/buzz/chat-list-store';
@@ -196,16 +195,6 @@ function readFoundUnheardMessage(previous: RoomView | null, next: RoomView): boo
 
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
-/** The first send plus this many automatic resends after a lost connection. */
-const AUTOMATIC_SEND_ATTEMPTS = 4;
-
-/**
- * What a send failure means here. `confirmed`: the server's copy already
- * retired the outbox record, so the message was sent. `away`: the Room is no
- * longer open; its outbox keeps the send pending for the next visit.
- */
-export type OutboxFailure = 'failed' | 'confirmed' | 'away';
-
 /**
  * Clear the reader's dismissal of this Room, unless the live Room list shows
  * it open. A stored copy can predate a dismissal, so without a live list the
@@ -237,7 +226,7 @@ export interface RoomSurfaceSessionBindings {
 export interface RoomSurfaceOutboxHandle {
   current(): RoomOutbox | null;
   failedIds: ReadonlySet<string>;
-  markFailed(eventId: string, retryable?: boolean): Promise<OutboxFailure>;
+  markFailed(eventId: string): Promise<void>;
   retry(eventId: string, transport?: BuzzRigTransport | null): void;
   dismiss(eventId: string): void;
 }
@@ -576,19 +565,9 @@ export function useRoomSurfaceSession({
     setPresenceNow(Date.now());
   }, []);
 
-  /** Failed sends that a lost connection explains; a later fresh Room read resends them. */
-  const resendOnRecoveryRef = useRef(new Set<string>());
-  const markFailed = useCallback(async (eventId: string, retryable = false): Promise<OutboxFailure> => {
-    const confirmed = () => Boolean(reconciledViewRef.current?.messages.some((row) => row.id === eventId));
-    const outbox = outboxRef.current;
-    if (!outbox) return 'away';
-    if (confirmed()) return 'confirmed';
-    await outbox.fail(eventId);
-    if (outboxRef.current !== outbox) return 'away';
-    if (confirmed()) return 'confirmed';
-    if (retryable) resendOnRecoveryRef.current.add(eventId);
+  const markFailed = useCallback(async (eventId: string) => {
+    await outboxRef.current?.fail(eventId);
     setFailedIds((current) => new Set(current).add(eventId));
-    return 'failed';
   }, []);
 
   const retryOutbox = useCallback(
@@ -607,15 +586,13 @@ export function useRoomSurfaceSession({
         try {
           const result = await activeTransport.publishPreparedMessage(record.event);
           if (result.message) applyRoomMessageResult(result.message);
-        } catch (error) {
-          await markFailed(eventId, publishFailurePresentation(error).retryable);
+        } catch {
+          await markFailed(eventId);
         }
       })();
     },
     [applyRoomMessageResult, markFailed, transport],
   );
-  const retryOutboxRef = useRef(retryOutbox);
-  retryOutboxRef.current = retryOutbox;
 
   const dismissOutbox = useCallback(
     (eventId: string) => {
@@ -775,18 +752,6 @@ export function useRoomSurfaceSession({
       return stableView;
     };
 
-    // The server answered again (a fresh read, a reconnected socket): a send
-    // that failed for want of a connection goes again, with the same id the
-    // server deduplicates.
-    const resendAfterRecovery = () => {
-      const outbox = outboxRef.current;
-      if (cancelled || !outbox) return;
-      for (const record of outbox.list()) {
-        if (record.status !== 'failed' || !resendOnRecoveryRef.current.delete(record.event.id)) continue;
-        if (record.attempts < AUTOMATIC_SEND_ATTEMPTS) retryOutboxRef.current(record.event.id, transportForEffect);
-      }
-    };
-
     const enrichView = (
       stableView: RoomView,
       identityPubkey: string,
@@ -849,7 +814,6 @@ export function useRoomSurfaceSession({
         const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
         return next.size === current.size ? current : next;
       });
-      if (fresh) resendAfterRecovery();
       cacheAddress = surfaceAddress(relayUrl, identityPubkey, `/room/${channelId}`);
       if (fresh) {
         void mobileSurfaceCache.write(cacheAddress, stableView, isRoomView);
@@ -1191,7 +1155,6 @@ export function useRoomSurfaceSession({
     }
 
     let transportForEffect: BuzzRigTransport | undefined;
-    let stopRecoveryWatch: (() => void) | undefined;
     void (async () => {
       try {
         if (openingFrame) {
@@ -1262,19 +1225,19 @@ export function useRoomSurfaceSession({
           .list()
           .map((record) => displayRoomMessages([record.row], identity.publicKey)[0]!);
         if (restored.length) bindingsRef.current.restoreOutboxMessages(restored);
-        stopRecoveryWatch = nextTransport.subscribeConnected?.(resendAfterRecovery);
-        const restoredFailures = outbox
-          .list()
-          .filter((record) => record.status === 'failed')
-          .map((record) => record.event.id);
-        // An earlier visit's failure goes again once this visit reads the Room.
-        for (const id of restoredFailures) resendOnRecoveryRef.current.add(id);
-        setFailedIds(new Set(restoredFailures));
+        setFailedIds(
+          new Set(
+            outbox
+              .list()
+              .filter((record) => record.status === 'failed')
+              .map((record) => record.event.id),
+          ),
+        );
         for (const record of outbox.list().filter((record) => record.status === 'pending')) {
           await outbox.attempted(record.event.id);
           void nextTransport.publishPreparedMessage(record.event).then(
             (result) => { if (result.message) applyRoomMessageResult(result.message); },
-            (error: unknown) => void markFailed(record.event.id, publishFailurePresentation(error).retryable),
+            () => void markFailed(record.event.id),
           );
         }
         if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
@@ -1450,7 +1413,6 @@ export function useRoomSurfaceSession({
       abandonHandshakeWait?.();
       scheduler?.dispose();
       unsubscribe?.();
-      stopRecoveryWatch?.();
       outboxRef.current = null;
       schedulerRef.current = null;
       reconciledViewRef.current = null;

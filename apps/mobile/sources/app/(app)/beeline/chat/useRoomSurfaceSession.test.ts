@@ -54,10 +54,6 @@ const controls = vi.hoisted(() => ({
   viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
-  /** Held records for cases that exercise the outbox itself. */
-  outboxRecords: null as null | { event: { id: string }; status: 'pending' | 'failed'; attempts: number }[],
-  publish: vi.fn(async (_event: { id: string }): Promise<object> => ({})),
-  socketConnected: new Set<() => void>(),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
   roomResponse: null as RoomView | null,
   roomReads: 0,
@@ -175,25 +171,7 @@ vi.mock('@/buzz/surface-storage', () => ({
     remove: vi.fn(async () => undefined),
   },
   surfaceAddress: vi.fn((_relay: string, _viewer: string, path: string) => path),
-  createRoomOutbox: vi.fn(() => controls.outboxRecords ? {
-    restore: vi.fn(async () => undefined),
-    list: () => controls.outboxRecords!,
-    get: (id: string) => controls.outboxRecords!.find((record) => record.event.id === id),
-    reconcile: async (ids: ReadonlySet<string>) => {
-      controls.outboxRecords = controls.outboxRecords!.filter((record) => !ids.has(record.event.id));
-    },
-    fail: async (id: string) => {
-      await controls.outboxFail(id);
-      controls.outboxRecords = controls.outboxRecords!.map((record) =>
-        record.event.id === id ? { ...record, status: 'failed' as const } : record);
-    },
-    retry: async (id: string) => {
-      controls.outboxRecords = controls.outboxRecords!.map((record) =>
-        record.event.id === id ? { ...record, status: 'pending' as const, attempts: record.attempts + 1 } : record);
-    },
-    attempted: async () => undefined,
-    remove: async () => undefined,
-  } : {
+  createRoomOutbox: vi.fn(() => ({
     restore: vi.fn(async () => { await controls.outboxRestore; }),
     list: vi.fn(() => []),
     reconcile: vi.fn(async () => undefined),
@@ -201,7 +179,7 @@ vi.mock('@/buzz/surface-storage', () => ({
     retry: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
     get: controls.outboxGet,
-  }),
+  })),
 }));
 
 vi.mock('@/buzz/chat-list-store', () => ({
@@ -227,15 +205,9 @@ vi.mock('@/sync/transport', () => ({
         },
       };
     }
-    async publishPreparedMessage(event: { id: string }) {
-      return controls.publish(event);
-    }
+    async publishPreparedMessage() {}
     reconnectLive() {
       controls.reconnects += 1;
-    }
-    subscribeConnected(listener: () => void) {
-      controls.socketConnected.add(listener);
-      return () => controls.socketConnected.delete(listener);
     }
     async reopenChat(roomId: string) {
       return controls.reopenChat(roomId);
@@ -486,10 +458,7 @@ beforeEach(() => {
   controls.liveListKeys.length = 0;
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
-  controls.outboxRecords = null;
-  controls.socketConnected.clear();
   vi.clearAllMocks();
-  controls.publish.mockImplementation(async () => ({}));
 });
 
 describe('reopening a dismissed Room', () => {
@@ -974,104 +943,6 @@ describe('useRoomSurfaceSession', () => {
     expect(current.outbox.failedIds).not.toContain('accepted-message');
     await act(async () => renderer.unmount());
     vi.useRealTimers();
-  });
-
-  describe('outbox recovery (Reproduction R2)', () => {
-    const own = (id: string): RoomViewMessage => ({
-      id, text: 'sent', createdAt: 3,
-      author: { pubkey: 'viewer', kind: 'human', name: 'Captain' }, presentation: 'message',
-    });
-    /** Open the Room, then queue one send the way the composer does. */
-    async function openRoom(id: string, attempts = 1) {
-      controls.outboxRecords = [];
-      controls.cached = roomView('room-a');
-      let current!: UseRoomSurfaceSessionResult;
-      let renderer!: ReactTestRenderer;
-      await act(async () => {
-        renderer = create(React.createElement(Harness, {
-          channelId: 'room-a', capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }));
-      });
-      await flushEffects();
-      controls.outboxRecords.push({ event: { id }, status: 'pending', attempts });
-      return { current: () => current, renderer };
-    }
-
-    it('never shows a send the server stored as not sent', async () => {
-      const room = await openRoom('stored');
-      // The server's copy arrives live while the send's own answer is lost.
-      await act(async () => controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'message-delta', roomId: 'room-a', message: own('stored') },
-      }));
-      let outcome: unknown;
-      await act(async () => { outcome = await room.current().outbox.markFailed('stored', true); });
-      expect(outcome).toBe('confirmed');
-      expect(controls.outboxFail).not.toHaveBeenCalled();
-      expect(room.current().outbox.failedIds).not.toContain('stored');
-      await act(async () => room.renderer.unmount());
-    });
-
-    it('leaves a send pending, without a failure, once the Room is left', async () => {
-      const room = await openRoom('left');
-      const markFailed = room.current().outbox.markFailed;
-      await act(async () => room.renderer.unmount());
-      expect(await markFailed('left', true)).toBe('away');
-      expect(controls.outboxRecords[0]!.status).toBe('pending');
-    });
-
-    it('resends a send that failed for a lost connection once a Room read answers, once', async () => {
-      const room = await openRoom('lost');
-      let outcome: unknown;
-      await act(async () => { outcome = await room.current().outbox.markFailed('lost', true); });
-      expect(outcome).toBe('failed');
-      expect(room.current().outbox.failedIds).toContain('lost');
-      expect(controls.publish).not.toHaveBeenCalled();
-      // A cached repaint proves nothing about the connection.
-      await act(async () => controls.cacheListeners.forEach((listener) => listener()));
-      expect(controls.publish).not.toHaveBeenCalled();
-      // A fresh read without the message proves the server is reachable again.
-      controls.publish.mockImplementationOnce(async () => ({ message: own('lost') }));
-      await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
-      await flushEffects();
-      expect(controls.publish).toHaveBeenCalledTimes(1);
-      expect(controls.publish.mock.calls[0]![0]).toEqual({ id: 'lost' });
-      expect(room.current().outbox.failedIds).not.toContain('lost');
-      expect(controls.outboxRecords).toEqual([]);
-      await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
-      await flushEffects();
-      expect(controls.publish).toHaveBeenCalledTimes(1);
-      await act(async () => room.renderer.unmount());
-    });
-
-    it('resends a send that failed for a lost connection once the live socket reconnects', async () => {
-      const room = await openRoom('offline');
-      await act(async () => { await room.current().outbox.markFailed('offline', true); });
-      expect(controls.publish).not.toHaveBeenCalled();
-      await act(async () => controls.socketConnected.forEach((listener) => listener()));
-      await flushEffects();
-      expect(controls.publish).toHaveBeenCalledTimes(1);
-      await act(async () => room.renderer.unmount());
-      expect(controls.socketConnected.size).toBe(0);
-    });
-
-    it('does not resend a send the server refused', async () => {
-      const room = await openRoom('refused');
-      await act(async () => { await room.current().outbox.markFailed('refused', false); });
-      await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
-      await flushEffects();
-      expect(controls.publish).not.toHaveBeenCalled();
-      expect(room.current().outbox.failedIds).toContain('refused');
-      await act(async () => room.renderer.unmount());
-    });
-
-    it('stops resending after its automatic attempts', async () => {
-      const room = await openRoom('stubborn', 4);
-      await act(async () => { await room.current().outbox.markFailed('stubborn', true); });
-      await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
-      await flushEffects();
-      expect(controls.publish).not.toHaveBeenCalled();
-      await act(async () => room.renderer.unmount());
-    });
   });
 
   it('paints a committed turn delta without a follow-up Room read', async () => {

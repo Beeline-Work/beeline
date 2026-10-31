@@ -449,6 +449,10 @@ async function github(pathname, options, value) {
   }
   return { ok: true, status: response.status, data };
 }
+function readBodyFile(path) {
+  // gh reads standard input when the body file is "-".
+  return path === '-' ? readFileSync(0, 'utf8') : readFileSync(path, 'utf8');
+}
 async function runRest(args, value) {
   const slug = repoSlug(args);
   const action = args[0] === 'pr' ? args[1] : undefined;
@@ -461,7 +465,7 @@ async function runRest(args, value) {
     let body = flagValue(args, ['--body', '-b']);
     const bodyFile = flagValue(args, ['--body-file', '-F']);
     if (bodyFile !== undefined && body === undefined) {
-      try { body = readFileSync(bodyFile, 'utf8'); } catch {
+      try { body = readBodyFile(bodyFile); } catch {
         process.stderr.write('gh: could not read body file ' + bodyFile + '\\n');
         return { status: 1, authenticationFailed: false };
       }
@@ -542,7 +546,7 @@ async function runRest(args, value) {
     const bodyFile = flagValue(args, ['--body-file', '-F']);
     const title = flagValue(args, ['--title', '-t']);
     if (bodyFile !== undefined && body === undefined) {
-      try { body = readFileSync(bodyFile, 'utf8'); } catch {
+      try { body = readBodyFile(bodyFile); } catch {
         process.stderr.write('gh: could not read body file ' + bodyFile + '\\n');
         return { status: 1, authenticationFailed: false };
       }

@@ -681,6 +681,58 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     }
   });
 
+  it('reads standard input when gh pr edit --body-file is -', async () => {
+    const requests: Array<{ method: string; url: string; body: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push({ method: request.method, url: request.url, body: request.body });
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/12' }));
+    });
+    try {
+      const { gh } = await fixture(
+        '/usr/bin/git',
+        `process.stderr.write('GraphQL: Projects (classic) is being deprecated (repository.pullRequest.projectCards)\\n'); process.exit(1);`,
+      );
+      const env = { ...process.env, GITHUB_API_URL: api.url };
+      const stdinBody = 'stdin body\n';
+      const invocations = [
+        ['--body-file', '-'],
+        ['-F', '-'],
+        ['--body-file=-'],
+      ];
+      for (const args of invocations) {
+        const edited = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+          const child = spawn(gh, ['pr', 'edit', '12', '--repo', 'acme/widget', ...args], {
+            env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          const stdout: Buffer[] = [];
+          const stderr: Buffer[] = [];
+          child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+          child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+          child.on('error', reject);
+          child.on('close', (code) => {
+            const result = {
+              stdout: Buffer.concat(stdout).toString('utf8'),
+              stderr: Buffer.concat(stderr).toString('utf8'),
+            };
+            if (code === 0) resolve(result);
+            else reject(Object.assign(new Error(`gh exited ${code}: ${result.stderr}`), result));
+          });
+          child.stdin.end(stdinBody);
+        });
+        expect(edited.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+        expect(edited.stderr).toBe('');
+      }
+      const patches = requests.filter((request) => request.method === 'PATCH');
+      expect(patches.map((request) => request.url)).toEqual(invocations.map(() => '/repos/acme/widget/pulls/12'));
+      expect(patches.map((request) => JSON.parse(request.body))).toEqual(invocations.map(() => ({ body: stdinBody })));
+      console.log('gh pr edit --body-file -: PATCH body is stdin');
+    } finally {
+      await api.close();
+    }
+  });
+
   it.each([
     { flags: ['--body', '123'], number: 12 },
     { flags: ['--title', '456'], number: 12 },

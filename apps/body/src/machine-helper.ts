@@ -56,6 +56,7 @@ import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from
 import { SessionScheduler } from './session-scheduler.js';
 import { refreshSystemdHelperUnit } from './native-helper.js';
 import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage, pruneArchivedCheckoutStorage, pruneUnusedCheckoutStorage } from './storage-owners.js';
+import { monitorHelperUsage } from './helper-usage.js';
 import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
@@ -135,6 +136,8 @@ async function serveMachineHelper(
   const signals = options.signals ?? process;
   const disposeSignals = lifecycle.installSignals(signals);
   const stopReserveMonitor = monitorPrivateRecoveryReserve(supervisorRoot);
+  const usage = !options.freeAgentIdle && managedBy !== 'lab' && process.platform === 'linux'
+    ? monitorHelperUsage(supervisorRoot) : undefined;
   const notifier = new SystemdNotifier();
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
@@ -159,6 +162,7 @@ async function serveMachineHelper(
   const archiveStoragePending = new Map<string, import('./helper-storage.js').StorageRoomState>();
   let archiveStorageRunning = false;
   const stopStorageFacts = watchStorageFacts(supervisorRoot, states => {
+    usage?.observe(states);
     for (const state of states) if (state.archived) archiveStoragePending.set(state.roomId, state);
     if (archiveStorageRunning || !archiveStoragePending.size) return;
     archiveStorageRunning = true;
@@ -168,7 +172,7 @@ async function serveMachineHelper(
           const batch = [...archiveStoragePending.values()];
           archiveStoragePending.clear();
           await reclaimArchivedMemberStorage(supervisorRoot, batch, {
-            log: entry => console.log(`[helper] Room ${entry.roomId} private storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+            log: entry => { usage?.cleanup(entry); console.log(`[helper] Room ${entry.roomId} private storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`); },
           });
         }
       } catch (error) { console.warn('[helper] archived member cleanup deferred:', error); }
@@ -184,8 +188,10 @@ async function serveMachineHelper(
         now - lastRetentionSweepAt < 6 * 60 * 60_000) return;
     diskSweepRunning = true;
     try {
-      const log = (entry: import('./helper-storage.js').StorageReclaimEntry) =>
+      const log = (entry: import('./helper-storage.js').StorageReclaimEntry) => {
+        usage?.cleanup(entry);
         console.log(`[helper] storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`);
+      };
       const options = { log };
       await pruneStoppedAgentStorage(supervisorRoot, options);
       await pruneEndedOwnerStorage(supervisorRoot, options);
@@ -236,6 +242,7 @@ async function serveMachineHelper(
     clearTimeout(startupDeadline);
     disposeSignals();
     stopReserveMonitor();
+    usage?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     if (!options.configPaths) await clearHelperPidRecordIfPid(supervisorRoot, process.pid);
     return { reason, lifecycle };

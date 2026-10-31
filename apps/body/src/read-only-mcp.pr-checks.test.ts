@@ -11,6 +11,7 @@ let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
 let checkTally: Record<string, unknown>;
 beforeEach(() => {
+  vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', '');
   for (const [key, value] of Object.entries({
     BEELINE_DAEMON_CORNER_ID: 'corner',
     BEELINE_DAEMON_WORKSPACE_ID: 'workspace',

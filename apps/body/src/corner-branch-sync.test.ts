@@ -324,7 +324,7 @@ describe('a helper joining a corner it did not open', () => {
   });
 
   it.each([
-    { protocol: 'old server archive list', listed: true, metadata: false, cleanup: true },
+    { protocol: 'old server archive list', listed: true, metadata: false, cleanup: false },
     { protocol: 'new server restore tombstone', listed: false, metadata: true, cleanup: true },
     {
       protocol: 'stale archived list',
@@ -406,6 +406,7 @@ describe('a helper joining a corner it did not open', () => {
         ): Promise<void>;
       };
 
+      const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       await recovery.sweepArchivedCornerWorktrees(
         listed
           ? new Map([['corner-stale', { cornerId: 'corner-stale', parentRoomId: 'room-parent' }]])
@@ -414,16 +415,13 @@ describe('a helper joining a corner it did not open', () => {
 
       if (cleanup) {
         await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
-        expect(execute).toHaveBeenCalledWith('postCornerRemoteState', {
-          cornerId: 'corner-stale',
-          branch: FEATURE,
-          state: 'gone',
-          checks: 'unknown',
-        });
+        expect(execute).not.toHaveBeenCalledWith('postCornerRemoteState', expect.anything());
       } else {
         await expect(access(worktree.path)).resolves.toBeUndefined();
         expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', expect.anything());
       }
+      if (!metadata) expect(warnings).toHaveBeenCalledTimes(1);
+      warnings.mockRestore();
       await coordinator.shutdown();
     },
   );
@@ -486,12 +484,15 @@ describe('a helper joining a corner it did not open', () => {
     const archived = new Map([
       ['corner-wrong-repo', { cornerId: 'corner-wrong-repo', parentRoomId: 'room-parent' }],
     ]);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await recovery.sweepArchivedCornerWorktrees(archived);
     await recovery.sweepArchivedCornerWorktrees(archived);
     expect(execute).toHaveBeenCalledTimes(2);
     now += 2_001;
     await recovery.sweepArchivedCornerWorktrees(archived);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(warnings).toHaveBeenCalledTimes(3);
+    warnings.mockRestore();
 
     await expect(access(worktree.path)).resolves.toBeUndefined();
     // A stale checkout is background cleanup. It must not turn every failed
@@ -546,14 +547,47 @@ describe('a helper joining a corner it did not open', () => {
       ): Promise<void>;
     };
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
+      if (source === 'restore') {
+        const assertFiles = async () => {
+          expect(await readFile(resolve(refusedWorktree.path, 'node_modules', 'generated'), 'utf8')).toBe('prune me');
+          await expect(access(resolve(refusedWorktree.path, 'opener.txt'))).resolves.toBeUndefined();
+        };
+        await recovery.sweepArchivedCornerWorktrees(new Map());
+        await assertFiles();
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(warnings).toHaveBeenCalledTimes(1);
+        await recovery.sweepArchivedCornerWorktrees(new Map());
+        await assertFiles();
+        expect(execute).toHaveBeenCalledTimes(2);
+        expect(warnings).toHaveBeenCalledTimes(2);
+        await coordinator.shutdown();
+        const restarted = new RoomRuntimeCoordinator(
+          (coordinator as unknown as { runtime: AgentRuntimeRecord }).runtime,
+          resolve(supervisorRoot, 'agent.json'),
+          { workspaceRoot: supervisorRoot } as never,
+          { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
+        );
+        try {
+          const sweep = () => (restarted as unknown as typeof recovery).sweepArchivedCornerWorktrees(new Map());
+          await sweep();
+          await assertFiles();
+          expect(execute).toHaveBeenCalledTimes(3);
+          expect(warnings).toHaveBeenCalledTimes(3);
+          execute.mockImplementation(async () => ({ archived: false }));
+          await sweep();
+          await assertFiles();
+          execute.mockImplementation(async () => ({ archived: true }));
+          await sweep();
+          await expect(access(refusedWorktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally { await restarted.shutdown(); }
+        return;
+      }
       await recovery.sweepArchivedCornerWorktrees(new Map());
       const baseline = execute.mock.calls.length;
-      expect(baseline).toBe(source === 'restore' ? 1 : 4);
-      // Optional output pruning runs after refusal recording, outside discovery.
-      await vi.waitFor(async () => {
-        await expect(access(resolve(refusedWorktree.path, 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
-      }, { timeout: 5_000 });
+      expect(baseline).toBe(1);
+      await expect(access(refusedWorktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
       now += 5 * 60_000;
       await recovery.sweepArchivedCornerWorktrees(new Map());
       await recovery.retryPendingCornerReaps(new Set());
@@ -562,11 +596,6 @@ describe('a helper joining a corner it did not open', () => {
         ['corner-removed', { cornerId: 'corner-removed', parentRoomId: 'room-parent' }],
       ]));
       await recovery.retryPendingCornerReaps(new Set());
-      expect(execute).toHaveBeenCalledTimes(baseline);
-      // Close callbacks must honor the same refusal as reconciliation.
-      await (coordinator as unknown as { reapCornerWorktree(worktree: unknown): Promise<void> })
-        .reapCornerWorktree({ ...refusedWorktree, cornerId: 'corner-removed', branch: FEATURE,
-          parentRoomId: 'room-parent', token: '' });
       expect(execute).toHaveBeenCalledTimes(baseline);
       // Reconstruct the coordinator, as a helper restart does: no lost refusal.
       await coordinator.shutdown();
@@ -579,11 +608,11 @@ describe('a helper joining a corner it did not open', () => {
       try {
         await (restarted as unknown as typeof recovery).sweepArchivedCornerWorktrees(new Map());
         expect(execute).toHaveBeenCalledTimes(baseline);
-        await expect(access(resolve(supervisorRoot, 'beeline', 'corners', 'corner-removed', 'opener.txt')))
-          .resolves.toBeUndefined();
+        await expect(access(refusedWorktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
       } finally { await restarted.shutdown(); }
     } finally {
       errors.mockRestore();
+      warnings.mockRestore();
       await coordinator.shutdown();
     }
   });

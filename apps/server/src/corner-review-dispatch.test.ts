@@ -1,10 +1,16 @@
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AcpClient } from '../../body/src/acp.js';
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
+import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
@@ -96,6 +102,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
+  await db.query(`DELETE FROM live_outputs`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
   await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [C]);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
@@ -257,6 +264,8 @@ describe('corner message attribution', () => {
 
   it.each([
     {reason:'ACP error -32000: Authentication required',free:false},
+    {reason:'ACP error -32602: Invalid params',reasonKind:'hiccup' as const,free:false},
+    {reason:'ACP error -32602: Invalid params',free:true},
     {reason:'model selection unavailable',free:false},
     {reason:'provider refused the selected configuration',reasonKind:'model-selection-unavailable' as const,free:false},
     {reason:'ACP error -32000: Authentication required',free:true},
@@ -264,6 +273,8 @@ describe('corner message attribution', () => {
     if (free) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'{}')`, [B,W,H]);
     await db.query('UPDATE agents SET selected_model=NULL WHERE agent_id=$1', [B]);
     await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R, B]);
+    if (reason.includes('-32602')) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+      VALUES($1,$2,'presence','presence','{"releaseVersion":"v0.1.113"}')`, [R,B]);
     await greenHead(7, 'a'.repeat(40));
     const [review] = await commands(B, C);
     expect(review).toBeDefined();
@@ -280,8 +291,17 @@ describe('corner message attribution', () => {
     await greenHead(8, 'b'.repeat(40));
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(0);
-    // A model selection change is a concrete recovery signal.
-    await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
+    if (reason.includes('-32602')) {
+      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'reconnect', releaseVersion: 'v0.1.113' });
+      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'missing-version' });
+      await reconcileConfiguredCornerReviewers(db, R);
+      expect(await commands(B, C)).toHaveLength(0);
+    }
+    // A helper upgrade repairs an adapter rejection; model selection repairs
+    // the other standing provider conditions. A reconnect alone repairs neither.
+    if (reason.includes('-32602')) await announceAgentLifecycle(db, new LiveHub(), R, B,
+      { lifecycleId: 'upgraded-helper', releaseVersion: 'v0.1.114' });
+    else await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(1);
   });
@@ -439,6 +459,17 @@ describe('corner message attribution', () => {
       generationId: 'g1', status: 'done', text: 'done: FAIL on the reviewed head.' }, B);
     await greenHead(84, '2'.repeat(40));
     expect((await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('FAIL on the reviewed head'))).toEqual([]);
+  });
+
+  it('WAKE-STORM: repeated restores use committed PR state without reading GitHub', async () => {
+    await greenHead(83, '1'.repeat(40));
+    const refresh = vi.fn(async () => { throw new Error('GitHub rate limit'); });
+    Object.assign(daemon, { github: { refreshCornerReviewHead: refresh } });
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const restored = await daemon.execute('getCornerRestoreState', { cornerId: C }, A);
+      expect(restored.lifecycle?.pr?.headSha).toBe('1'.repeat(40));
+    }
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it('Reproduction REVIEW-HEAD-1: a worker that pushes while repairing hands off the new head', async () => {
@@ -1722,6 +1753,61 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
   await reconcileConfiguredCornerReviewers(db,R);
   expect(await commands(B,C)).toEqual([]);
 });
+it('model-capacity-no-retry: ACP provider diagnostic reaches durable recovery and retains the original work', async () => {
+  const directory = await mkdtemp(join(tmpdir(),'beeline-capacity-'));
+  const script = join(directory,'provider.cjs');
+  // Codex reports this incident as final text with end_turn, not a failed RPC.
+  await writeFile(script, `
+const lines = require('node:readline').createInterface({input:process.stdin});
+let attempts=0;
+lines.on('line', line => {
+  const m=JSON.parse(line);
+  const send=result=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
+  if(m.method==='initialize') send({protocolVersion:1});
+  else if(m.method==='session/new') send({sessionId:'capacity-session'});
+  else if(m.method==='session/prompt') {
+    attempts++;
+    const text=attempts===1?'Selected model is at capacity. Please try a different model.':'PASS: '+m.params.prompt[0].text;
+    process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'capacity-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})+'\\n');
+    send({stopReason:'end_turn'});
+  }
+});
+`);
+  const adapter = new AcpClient({agentCommand:process.execPath,agentArgs:[script],agentLabel:'codex-acp',agentEnv:{},resourceScope:'none'});
+  try {
+    await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
+    await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');
+    const [review] = await commands(B,C);
+    expect(review).toBeDefined();
+    await adapter.start();
+    const {sessionId} = await adapter.sessionNew({cwd:directory});
+    for (const attempt of [1,2]) {
+      const generation = `adapter-${attempt}`;
+      await claim(review!,generation);
+      const output = await adapter.sessionPrompt(sessionId,review!.source.body);
+      expect(output.stopReason).toBe('end_turn');
+      await result(review!,output.agentText,generation);
+      const receipt = await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,
+        generationId:generation,status:'complete'},B);
+      const saved = (await db.query(`SELECT state,hiccup_attempts,wake_after FROM agent_commands WHERE id=$1`,[review!.id])).rows[0]!;
+      if(attempt===1) {
+        expect(output.agentText).toBe('Selected model is at capacity. Please try a different model.');
+        expect(receipt.hiccupRestart).toBe(true);
+        expect(saved).toMatchObject({state:'pending',hiccup_attempts:1});
+        expect(saved.wake_after).not.toBeNull();
+        // Advance the durable deadline; no sleep or alternate retry mechanism.
+        await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[review!.id]);
+        await flushDueCommanderWakes(db);
+        const retried = (await commands(B,C)).find(c=>c.id===review!.id);
+        expect(retried).toMatchObject({turnRequestId:review!.turnRequestId,source:{body:review!.source.body}});
+      } else {
+        expect(output.agentText).toBe('PASS: '+review!.source.body);
+        expect(saved).toMatchObject({state:'complete',hiccup_attempts:1});
+      }
+    }
+  } finally { await adapter.stop(); await rm(directory,{recursive:true,force:true}); }
+});
+
 it('Reproduction capacity-1: capacity returned as final text and a complete receipt retries the original review', async () => {
   await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
   await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');

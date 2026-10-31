@@ -1,0 +1,16 @@
+{
+  "name": "r2-boundary",
+  "mode": "deferred",
+  "core": [
+    "Bash",
+    "report",
+    "read",
+    "app_tool",
+    "open_corner",
+    "no_reply_needed",
+    "order"
+  ],
+  "indexWords": 14,
+  "promptEdits": [],
+  "appendRules": "After an assignment, report, merge, or no_reply_needed operation returns a terminal boundary, end the turn immediately. Do not make another tool call."
+}

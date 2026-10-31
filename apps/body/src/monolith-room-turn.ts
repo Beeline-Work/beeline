@@ -578,6 +578,12 @@ export class MonolithRoomTurnLoop {
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
+  private recoverIntake?: () => void;
+
+  configurationChanged(): void {
+    this.recoverIntake?.();
+  }
+
 
   /** Wake the intake after reconciliation or a storage lease release. */
   requestReconciliation(): void {
@@ -2417,6 +2423,7 @@ export class MonolithRoomTurnLoop {
         onWake: (wake) => {
           this.wakeIntake = wake;
         },
+        onRecovery: (recover) => { this.recoverIntake = recover; },
         onPoll: () => {
           progress();
           this.options.health.poll();

@@ -1081,6 +1081,7 @@ async function reviewerStandingFailure(db: SqlDatabase, agentId: string): Promis
      JOIN agent_turns turn ON turn.room_id=command.room_id AND turn.agent_id=command.agent_id
        AND turn.request_id=command.turn_request_id
      WHERE command.agent_id=$1 AND command.review_context IS NOT NULL AND turn.status='failed'
+       AND NOT command.review_context ? 'helperRecoveredAt'
        AND (command.review_context->'reviewerConfiguration' IS NULL
          OR command.review_context->'reviewerConfiguration'=(${reviewerConfigurationSql('$1')}))
        AND NOT EXISTS (SELECT 1 FROM agent_turns recovered WHERE recovered.agent_id=$1
@@ -1094,7 +1095,7 @@ async function reviewerStandingFailure(db: SqlDatabase, agentId: string): Promis
     jsonb_build_object('reviewerConfiguration',(${reviewerConfigurationSql('$2')}))
     WHERE id=$1 AND NOT review_context ? 'reviewerConfiguration'`, [failed.id,agentId]);
   return isAuthShapedFault(failed.reason ?? '') ||
-    ['wrong-model','allowance-spent','not-signed-in'].includes(failed.kind ?? classifyTurnSilence(failed.reason).kind);
+    ['wrong-model','allowance-spent','not-signed-in','helper-out-of-date'].includes(failed.kind ?? classifyTurnSilence(failed.reason).kind);
 }
 
 /**

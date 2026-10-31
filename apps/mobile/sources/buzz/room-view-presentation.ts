@@ -301,6 +301,8 @@ export type ChatDisplayMessage = {
   };
   /** Repository activity is a typed surface, never a transcript speaker. */
   foldedIds?: string[];
+  /** Original server ordering for each durable message in a folded row. */
+  foldedReadBoundaries?: { id: string; orderAtMs: number }[];
   notificationLifecycleRun?: import('./pr-lifecycle').NotificationLifecycleRun;
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
   /** Daemon lifecycle facts are server-projected cards, never prose rows. */

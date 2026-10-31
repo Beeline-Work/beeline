@@ -39,6 +39,16 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 const get = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
 const row = (id: string) => get(`system-line-text-${id}`);
 const toggle = (id: string) => get(`system-line-toggle-${id}`);
+// React's overflow measurement and cut search finish across multiple commits.
+// Virtual time can advance a timer before those commits under CI contention.
+const waitForCollapsed = async (ids: string[]) => {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (ids.every((id) => row(id)?.textContent?.endsWith('…\u00A0more'))) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const pending = ids.filter((id) => !row(id)?.textContent?.endsWith('…\u00A0more'));
+  throw new Error(`Collapsed previews did not settle: ${pending.join(', ')}`);
+};
 const checkCollapsed = (id: string) => {
   const element = row(id);
   assert(getComputedStyle(element).webkitLineClamp === '2', `${id} not capped at two lines`);
@@ -132,7 +142,7 @@ async function measure() {
       <LedgerSystemLine id="legacy" text={'Legacy notice\nSecond line\nThird line'} stamp="4" />
     </>,
   );
-  await settle();
+  await waitForCollapsed(['first', 'second', 'legacy', ...sweep.map((width) => `sweep-${width}`)]);
   const callerLabel = get('system-line-caller-label-caller');
   const callerQuote = get('system-line-caller-message-caller');
   assert(callerLabel.textContent === "Caller's message:", 'caller label missing');

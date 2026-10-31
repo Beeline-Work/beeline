@@ -47,6 +47,7 @@ import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
+import { DurableLiveReplay } from './durable-live.js';
 import { objectStorageFromEnv } from './object-storage.js';
 import { ObjectService } from './object-service.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -404,6 +405,7 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
+    replay: new DurableLiveReplay(database, live),
     roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService),
     sentryWakeAgentId,
     database,

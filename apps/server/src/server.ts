@@ -25,6 +25,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
+import { DurableLiveReplay, readLiveCursor } from './durable-live.js';
 import type { FreeAgentService } from './free-agents.js';
 import { handleFreeAgentModelRequest, type FreeAgentModelProxyOptions } from './free-agent-model-proxy.js';
 import { isAppSignInLink } from './composio-apps.js';
@@ -137,6 +138,7 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
+  replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
   sentryWakeSecret?: string;
   sentryWakeAgentId?: string;
@@ -630,6 +632,8 @@ export function createBeelineServer(options: ServerOptions): Server {
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status = requestErrorStatus(error);
+      if (error instanceof GitHubHttpError && error.rateLimited && error.retryAfter)
+        response.setHeader('retry-after', error.retryAfter);
       // A failing Telegram delivery must not create another alert to itself.
       if (status >= 500 && !['/api/webhooks/sentry', '/v1/sentry/webhook'].includes(url.pathname)) captureServerError(error);
       console.error(
@@ -853,6 +857,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const viewedRooms = new Set<string>();
       const previewRooms = new Set<string>();
       const releases = new Map<string, () => void>();
+      const workspaceReleases = new Map<string, () => void>();
       let phoneViewClosed = false;
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
@@ -1081,6 +1086,54 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (item.type === 'sync' && options.replay) {
+            const workspaces = await options.database.query<{ workspace_id: string }>(
+              `SELECT workspace_id FROM memberships WHERE identity_id=$1
+               AND room_id IS NULL AND removed_at IS NULL`, [principal.identityId]);
+            const cursors = item.workspaceCursors && typeof item.workspaceCursors === 'object'
+              ? item.workspaceCursors as Record<string, unknown> : {};
+            const currentWorkspaces = new Set(workspaces.rows.map(row => row.workspace_id));
+            for (const workspaceId of Object.keys(cursors)) {
+              if (!currentWorkspaces.has(workspaceId)) {
+                workspaceReleases.get(workspaceId)?.();
+                workspaceReleases.delete(workspaceId);
+                sendLive(JSON.stringify({ type: 'workspace-cursor', roomId: '',
+                  workspaceId, sequence: 0, epoch: '', reload: true }));
+              }
+            }
+            for (const { workspace_id: workspaceId } of workspaces.rows) {
+              if (workspaceReleases.has(workspaceId)) continue;
+              const cursor = readLiveCursor(cursors[workspaceId]);
+              const checkpoint = (sequence: number, epoch: string, reload: boolean) => {
+                sendLive(JSON.stringify({ type: 'workspace-cursor', roomId: '',
+                  workspaceId, sequence, epoch, reload }));
+                if (!epoch) client.close(1013, 'live replay unavailable');
+              };
+              const subscription = await options.replay.subscribe(
+                `workspace:${workspaceId}`, '', cursor,
+                (event, sequence, epoch) => {
+                  if (event.type === 'invalidate' && event.sourceRoomId && releases.has(event.sourceRoomId)) return;
+                  sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
+                    reason: 'workspace-replay', workspaceId, sequence, epoch }));
+                }, checkpoint, async () => (await options.database.query(
+                  `SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
+                   AND room_id IS NULL AND removed_at IS NULL`, [workspaceId, principal.identityId])).rowCount > 0);
+              if (client.readyState !== client.OPEN) { subscription.release(); return; }
+              workspaceReleases.set(workspaceId, subscription.release);
+              checkpoint(subscription.resumed ? cursor!.base : subscription.sequence,
+                subscription.epoch, !subscription.resumed);
+              for (const entry of subscription.replay) {
+                if (entry.event.type === 'invalidate' && entry.event.sourceRoomId &&
+                    releases.has(entry.event.sourceRoomId)) continue;
+                sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'workspace-replay',
+                  workspaceId, sequence: entry.sequence, epoch: subscription.epoch }));
+              }
+              if (subscription.resumed) checkpoint(subscription.sequence, subscription.epoch, false);
+              subscription.start();
+            }
+            sendLive('{"type":"sync-ok"}');
+            return;
+          }
           if (item.type === 'trace-paint' && typeof item.id === 'string') {
             const trace = pendingPaintTraces.get(item.id);
             if (!trace || client.readyState !== client.OPEN) return;
@@ -1221,7 +1274,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                         typeof options.phone.liveChatCornerStatus === 'function') {
                       const statusKey = `${roomId}:corner-status`;
                       beginRowRead(statusKey);
-                      void readCornerStatusForViewer(event, roomId, principal.identityId)
+                      return readCornerStatusForViewer(event, roomId, principal.identityId)
                         .then((status) => {
                           if (client.readyState !== client.OPEN || !currentEpoch()) return;
                           if (!status) { sendFrame(wireEvent); return; }
@@ -1234,7 +1287,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                           if (client.readyState === client.OPEN) sendFrame(wireEvent);
                         })
                         .finally(() => endRowRead(statusKey));
-                      return;
                     }
                     if (client.readyState === client.OPEN)
                       sendFrame({ ...wireEvent,
@@ -1273,7 +1325,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     (delta) => ({ delta }) as const,
                     (error: unknown) => ({ error }) as const,
                   );
-                  void pendingDelta
+                  return pendingDelta
                     .then(async (result) => {
                       if (client.readyState !== client.OPEN) return;
                       if ('error' in result) throw result.error;
@@ -1334,7 +1386,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                     })
                     .finally(() => endRowRead(rowKey));
               };
-              const subscription = options.live.subscribeReplay(roomId, resume, forwardEvent);
+              const subscription = options.replay
+                ? await options.replay.subscribe(`room:${roomId}`, roomId, readLiveCursor(cursor), forwardEvent,
+                    (sequence, epoch, reload) => {
+                      sendLive(JSON.stringify({ type: reload ? 'reload' : 'cursor', roomId, sequence, epoch }));
+                      if (!epoch) client.close(1013, 'live replay unavailable');
+                    },
+                    async () => (await options.phone.canReadRooms([roomId], principal.identityId)).has(roomId))
+                : options.live.subscribeReplay(roomId, resume, forwardEvent);
+              if (client.readyState !== client.OPEN) { subscription.release(); return; }
               releases.set(roomId, subscription.release);
               sendLive(JSON.stringify({ type: 'subscribed', roomId,
                 epoch: subscription.epoch,
@@ -1342,9 +1402,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                 resumed: subscription.resumed }));
               if (subscription.resumed) {
                 for (const { event, sequence } of subscription.replay)
-                  forwardEvent(event, sequence, subscription.epoch);
-                continue;
+                  await forwardEvent(event, sequence, subscription.epoch);
+                // Filtered or unchanged rows still advance the durable cursor.
+                if ('start' in subscription) sendLive(JSON.stringify({ type: 'cursor', roomId,
+                  sequence: subscription.sequence, epoch: subscription.epoch }));
               }
+              if ('start' in subscription && typeof subscription.start === 'function') subscription.start();
+              else if (subscription.resumed) continue;
               // A live lane carries only what is written after this point, so a
               // reader who joins a turn already in progress has missed the draft
               // it is writing. Hand over the running one now; every later delta
@@ -1431,6 +1495,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         releasePersonalResync();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
+        for (const release of workspaceReleases.values()) release();
+        workspaceReleases.clear();
         releases.clear();
         draftWire.clear();
         sentRows.clear();

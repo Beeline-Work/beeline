@@ -13,6 +13,8 @@ export type SystemLineMessage = {
   id: string;
   text: string;
   timestamp: number;
+  orderAtMs?: number;
+  foldedReadBoundaries?: { id: string; orderAtMs: number }[];
   isSystemNotice?: boolean;
   /** A deleted message's line; it holds that message's place, so it never folds. */
   deleted?: boolean;

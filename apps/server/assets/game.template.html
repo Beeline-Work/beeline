@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tic-tac-toe</title>
+<style>
+:root{
+  --bg:#F3EEE4;--raised:#ECE4D5;--hi:#E4D9C4;--press:#E0D5BE;
+  --text:#171310;--text2:#4A4038;--quiet:#6F6455;--ghost:#A79C89;
+  --border:#DED2BC;--strong:#C9BBA0;--accent:#8a6323;--wash:rgba(138,99,35,.18);--r:3px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.4}
+body{display:flex;justify-content:center;overflow:hidden;user-select:none;-webkit-user-select:none}
+main{width:100%;max-width:420px;min-height:100%;padding:18px 18px 20px;display:flex;flex-direction:column;justify-content:center;gap:14px}
+.teams{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.team{display:flex;align-items:center;gap:10px;min-width:0}
+.team.right{justify-content:flex-end;text-align:right}
+.faces{display:flex}
+.faces img{width:36px;height:36px;border-radius:var(--r);display:block}
+.faces img+img{margin-left:-8px;box-shadow:-2px 0 0 var(--bg)}
+.who{min-width:0}
+.name{font-weight:500;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.role{font-family:ui-monospace,'Roboto Mono',Menlo,monospace;font-size:11px;color:var(--quiet);letter-spacing:.02em}
+.score{font-family:ui-monospace,'Roboto Mono',Menlo,monospace;font-size:12px;color:var(--quiet);text-align:center;font-variant-numeric:tabular-nums;letter-spacing:.04em;margin-top:-8px}
+.team.turn .name{color:var(--accent)}
+.status{font-weight:500;font-size:18px;min-height:25px;text-align:center}
+.board{position:relative;flex:none;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:6px;aspect-ratio:1;width:100%}
+@media (max-height:480px){main{justify-content:flex-start}}
+.cell{position:relative;border:1px solid var(--strong);border-radius:var(--r);background:var(--raised);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;touch-action:manipulation}
+.cell:active:not(:disabled){background:var(--press)}
+.cell:disabled{cursor:default}
+.cell img{width:68%;height:68%;border-radius:var(--r);animation:drop .22s cubic-bezier(.2,.9,.3,1.2) both}
+.cell.hint{border-color:var(--accent);background:var(--wash)}
+.cell.hint::after{content:"";position:absolute;inset:-1px;border-radius:var(--r);border:1px solid var(--accent);animation:pulse 1.2s ease-in-out infinite}
+.cell.win{border-color:var(--accent);background:var(--wash)}
+.cell.dim{opacity:.4}
+@keyframes drop{from{transform:scale(.55);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.coach{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:var(--r);background:var(--raised);padding:10px 12px;min-height:58px}
+.coach img{width:28px;height:28px;border-radius:var(--r);flex:none}
+.coach .who{flex:1}
+.coach .line{color:var(--text2);font-size:14px}
+.coach .name{font-size:13px}
+.actions{display:flex;gap:8px}
+button.btn{flex:1;font:500 15px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:var(--text);background:var(--hi);border:1px solid var(--strong);border-radius:var(--r);min-height:46px;padding:0 14px;cursor:pointer}
+button.btn:active{background:var(--press)}
+button.btn.primary{background:var(--text);color:var(--bg);border-color:var(--text)}
+button.btn:disabled{color:var(--ghost);border-color:var(--border);background:transparent}
+</style>
+</head>
+<body>
+<script id="beeline-game-data" type="application/json">__GAME_DATA__</script>
+<main>
+  <div class="teams">
+    <div class="team" id="teamUs">
+      <div class="faces"><img id="faceUser" alt="" src="__USER_FACE__"><img id="faceAlly" alt="" src="__ALLY_FACE__"></div>
+      <div class="who"><div class="name" id="usName">You &amp; __ALLY_NAME__</div><div class="role">your team</div></div>
+    </div>
+    <div class="team right" id="teamThem">
+      <div class="who"><div class="name" id="themName">__RIVAL_NAME__</div><div class="role" id="themRole">rival</div></div>
+      <div class="faces"><img id="faceRival" alt="" src="__RIVAL_FACE__"></div>
+    </div>
+  </div>
+  <div class="status" id="status" aria-live="polite">Your move</div>
+  <div class="score" id="score">ROUND 1 · 0–0</div>
+  <div class="board" id="board" role="grid" aria-label="Board"><button class="cell" aria-label="Square 1"></button><button class="cell" aria-label="Square 2"></button><button class="cell" aria-label="Square 3"></button><button class="cell" aria-label="Square 4"></button><button class="cell" aria-label="Square 5"></button><button class="cell" aria-label="Square 6"></button><button class="cell" aria-label="Square 7"></button><button class="cell" aria-label="Square 8"></button><button class="cell" aria-label="Square 9"></button></div>
+  <div class="coach" id="coach">
+    <img id="coachFace" alt="" src="__ALLY_FACE__">
+    <div class="who"><div class="name" id="coachName">__ALLY_NAME__</div><div class="line" id="coachLine">Tap a square. Stuck? Ask me for a tip.</div></div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="hintBtn">Ask __ALLY_NAME__</button>
+    <button class="btn primary" id="againBtn" hidden>Play again</button>
+  </div>
+</main>
+<script>
+(function(){
+  var data = JSON.parse(document.getElementById('beeline-game-data').textContent);
+  var user = data.user, ally = data.ally, rival = data.rival;
+  var $ = function(id){ return document.getElementById(id); };
+
+  var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  var board, turn, over, wins = 0, losses = 0, round = 0, firstUser = true, hintAt = -1;
+  var cells = Array.prototype.slice.call(document.querySelectorAll('.cell'));
+  cells.forEach(function(c, n){ c.addEventListener('click', function(){ userMove(n); }); });
+
+  function winner(s){
+    for (var i = 0; i < LINES.length; i++) {
+      var l = LINES[i];
+      if (s[l[0]] && s[l[0]] === s[l[1]] && s[l[0]] === s[l[2]]) return { who: s[l[0]], line: l };
+    }
+    return s.indexOf(null) < 0 ? { who: 'draw', line: [] } : null;
+  }
+  function empties(s){ var r = []; for (var i = 0; i < 9; i++) if (!s[i]) r.push(i); return r; }
+  function minimax(s, me, foe, mover){
+    var w = winner(s);
+    if (w) return w.who === me ? 10 : w.who === foe ? -10 : 0;
+    var best = mover === me ? -99 : 99;
+    empties(s).forEach(function(m){
+      s[m] = mover;
+      var v = minimax(s, me, foe, mover === me ? foe : me);
+      s[m] = null;
+      v = v > 0 ? v - 1 : v < 0 ? v + 1 : 0;
+      best = mover === me ? Math.max(best, v) : Math.min(best, v);
+    });
+    return best;
+  }
+  function scored(s, me, foe){
+    return empties(s).map(function(m){
+      s[m] = me; var v = minimax(s, me, foe, foe); s[m] = null;
+      return { m: m, v: v };
+    });
+  }
+  function finishing(s, who){
+    for (var i = 0; i < 9; i++) if (!s[i]) { s[i] = who; var w = winner(s); s[i] = null; if (w && w.who === who) return i; }
+    return -1;
+  }
+  function pick(a){ return a[Math.floor(Math.random() * a.length)]; }
+
+  // __RIVAL_NAME__: always takes a win, usually blocks, otherwise mixes best play with
+  // ordinary moves so a team that listens to its coach can beat her.
+  function rivalMove(){
+    var win = finishing(board, 'R'); if (win >= 0) return win;
+    var block = finishing(board, 'U'); if (block >= 0 && Math.random() < 0.8) return block;
+    var options = scored(board, 'R', 'U');
+    if (Math.random() < 0.55) {
+      var top = Math.max.apply(null, options.map(function(o){ return o.v; }));
+      return pick(options.filter(function(o){ return o.v === top; })).m;
+    }
+    return pick(options).m;
+  }
+  function coachAdvice(){
+    var win = finishing(board, 'U');
+    if (win >= 0) return { m: win, line: 'That square wins it. Take it.' };
+    var block = finishing(board, 'R');
+    if (block >= 0) return { m: block, line: rival.name + ' is one away. Block here.' };
+    var options = scored(board, 'U', 'R');
+    var top = Math.max.apply(null, options.map(function(o){ return o.v; }));
+    var best = options.filter(function(o){ return o.v === top; }).map(function(o){ return o.m; });
+    var forks = best.filter(function(m){ board[m] = 'U'; var n = 0; LINES.forEach(function(l){ var a = l.map(function(i){ return board[i]; }); if (a.indexOf('R') < 0 && a.filter(function(x){ return x === 'U'; }).length === 2) n++; }); board[m] = null; return n >= 2; });
+    if (forks.length) return { m: forks[0], line: 'This sets up two threats. ' + rival.name + ' can only block one.' };
+    if (best.indexOf(4) >= 0) return { m: 4, line: 'Take the center. It sits on four lines.' };
+    var corners = best.filter(function(m){ return m % 2 === 0; });
+    if (corners.length) return { m: corners[0], line: 'Go for a corner. It keeps your options open.' };
+    return { m: best[0], line: 'This is the safest square left.' };
+  }
+
+  function setCoach(text){ $('coachLine').textContent = text; }
+  function render(){
+    for (var i = 0; i < 9; i++) {
+      var c = cells[i], v = board[i];
+      c.disabled = over || turn !== 'U' || !!v;
+      c.classList.toggle('hint', i === hintAt && !v && !over);
+      if (v && !c.firstChild) { var img = document.createElement('img'); img.alt = v === 'U' ? 'you' : rival.name; img.src = v === 'U' ? user.face : rival.face; c.appendChild(img); }
+      if (!v && c.firstChild) c.removeChild(c.firstChild);
+    }
+    $('teamUs').classList.toggle('turn', !over && turn === 'U');
+    $('teamThem').classList.toggle('turn', !over && turn === 'R');
+    $('score').textContent = 'ROUND ' + round + ' · ' + wins + '–' + losses;
+    $('hintBtn').disabled = turn !== 'U'; $('hintBtn').hidden = over;
+    $('againBtn').hidden = !over;
+  }
+  function settle(){
+    var w = winner(board);
+    if (!w) return false;
+    over = true;
+    if (w.who === 'U') { wins++; $('status').textContent = 'You and ' + ally.name + ' win'; setCoach('Nice. ' + rival.name + ' wants a rematch.'); }
+    else if (w.who === 'R') { losses++; $('status').textContent = rival.name + ' wins'; setCoach('She got us. Ask me sooner next round.'); }
+    else { $('status').textContent = 'Draw'; setCoach('A draw against ' + rival.name + ' is respectable. Go again?'); }
+    cells.forEach(function(c, i){ c.classList.toggle('win', w.line.indexOf(i) >= 0); c.classList.toggle('dim', w.line.length > 0 && w.line.indexOf(i) < 0); });
+    render();
+    return true;
+  }
+  function userMove(n){
+    if (over || turn !== 'U' || board[n]) return;
+    board[n] = 'U'; hintAt = -1; setCoach('');
+    if (settle()) return;
+    turn = 'R'; $('status').textContent = rival.name + ' is thinking…'; render();
+    setTimeout(function(){
+      var m = rivalMove(); board[m] = 'R';
+      if (settle()) return;
+      turn = 'U'; $('status').textContent = 'Your move'; setCoach(finishing(board, 'R') >= 0 ? 'Careful. Want a tip?' : 'Your turn. Ask me if you are unsure.'); render();
+    }, 650 + Math.random() * 350);
+  }
+  function start(){
+    board = [null,null,null,null,null,null,null,null,null]; over = false; hintAt = -1; round++;
+    cells.forEach(function(c){ c.classList.remove('win','dim','hint'); });
+    if (firstUser) { turn = 'U'; $('status').textContent = 'Your move'; setCoach('Tap a square. Stuck? Ask me for a tip.'); render(); }
+    else {
+      turn = 'R'; $('status').textContent = rival.name + ' goes first'; setCoach('Her turn first this round. Watch the corners.'); render();
+      setTimeout(function(){ board[rivalMove()] = 'R'; turn = 'U'; $('status').textContent = 'Your move'; render(); }, 700);
+    }
+    firstUser = !firstUser;
+  }
+  $('hintBtn').addEventListener('click', function(){
+    if (over || turn !== 'U') return;
+    var a = coachAdvice(); hintAt = a.m; setCoach(a.line); render();
+  });
+  $('againBtn').addEventListener('click', start);
+  start();
+})();
+</script>
+</body>
+</html>

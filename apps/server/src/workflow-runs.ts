@@ -1,3 +1,4 @@
+import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -185,6 +186,17 @@ async function loadRunRoleAgents(
   return (await loadRunStart(db, roomId, runId)).card.roleAgents ?? {};
 }
 
+async function pickWorkflowAgent(db: SqlDatabase, roomId: string, list: string[], exclude: string[], slug?: string): Promise<string | null> {
+  if (slug !== WELCOME_VIDEO_SLUG) return firstHealthyAgent(db, roomId, list, exclude);
+  const health = await roomAgentHealth(db, roomId, list);
+  const free = (await db.query<{ agent_id: string }>(
+    `SELECT agent_id FROM free_agents WHERE agent_id=ANY($1::text[]) AND removed_at IS NULL`, [list])).rows;
+  const hosted = new Set(free.map(row => row.agent_id));
+  // A hosted starter can be asleep before its first job; dispatch wakes its machine.
+  return list.find(id => !exclude.includes(id) && (health.get(id)?.healthy ||
+    (health.get(id)?.reason === 'offline' && hosted.has(id)))) ?? null;
+}
+
 /**
  * Resolve `role`'s binding to a concrete agent id, picking the first healthy
  * agent on its list only the FIRST time a list-bound role is dispatched —
@@ -199,11 +211,17 @@ async function resolveRoleBinding(
     roleBindings: Record<string, string>;
     roleAgents: Record<string, string[]>;
     role: string;
+    workflowSlug?: string;
+    runId?: string;
   },
 ): Promise<{ agentId: string } | { exhausted: true }> {
+  const otherRole = input.role === 'checker' ? 'maker' : input.role === 'maker' ? 'checker' : undefined;
+  const excluded = input.workflowSlug === WELCOME_VIDEO_SLUG && otherRole
+    ? await welcomeVideoRoleHolders(db, input.roomId, input.runId, otherRole, input.roleBindings[otherRole]) : [];
   const current = input.roleBindings[input.role];
-  if (current) return { agentId: current };
-  const picked = await firstHealthyAgent(db, input.roomId, input.roleAgents[input.role] ?? []);
+  if (current && excluded.includes(current)) delete input.roleBindings[input.role];
+  if (current && !excluded.includes(current)) return { agentId: current };
+  const picked = await pickWorkflowAgent(db, input.roomId, input.roleAgents[input.role] ?? [], excluded, input.workflowSlug);
   if (!picked) return { exhausted: true };
   input.roleBindings[input.role] = picked;
   return { agentId: picked };
@@ -943,7 +961,7 @@ async function enterState(
   const roleAgents = await loadRunRoleAgents(db, roomId, runId);
   const nextRole = isTerminal ? undefined : (nextState as WorkflowHandoffState | WorkflowGateState).role;
   const nextResolution = nextRole
-    ? await resolveRoleBinding(db, { roomId, roleBindings, roleAgents, role: nextRole })
+    ? await resolveRoleBinding(db, { roomId, roleBindings, roleAgents, role: nextRole, workflowSlug: run.workflowSlug, runId })
     : undefined;
   const exhausted = Boolean(nextResolution && 'exhausted' in nextResolution);
   const nextAgentId = nextResolution && !exhausted ? (nextResolution as { agentId: string }).agentId : null;
@@ -1012,6 +1030,10 @@ async function moveRole(
 ): Promise<{ state: string; attempt: number }> {
   const { run, roomId, runId, stateName } = scope;
   const state = scope.state as WorkflowHandoffState | WorkflowGateState;
+  const otherRole = input.role === 'checker' ? 'maker' : input.role === 'maker' ? 'checker' : undefined;
+  if (run.workflowSlug === WELCOME_VIDEO_SLUG && otherRole &&
+    (await welcomeVideoRoleHolders(db, roomId, runId, otherRole, run.roleBindings[otherRole])).includes(input.picked))
+    throw new Error('The welcome video maker and checker must not be the same agent in a run.');
   const roleBindings = { ...run.roleBindings, [input.role]: input.picked };
   const from = run.roleBindings[input.role];
   const names = await mentionsFor(db, [input.picked, ...(from ? [from] : [])]);
@@ -1105,10 +1127,26 @@ async function closeRun(
   await saveRunStatus(db, scope, stateName, input.status);
 }
 
+/** Every agent that has held this role in the run, including earlier failovers. */
+async function welcomeVideoRoleHolders(db: SqlDatabase, roomId: string, runId: string | undefined, role: 'maker' | 'checker', current?: string): Promise<string[]> {
+  const rows = runId ? (await db.query<{ holder: string | null }>(
+    `SELECT DISTINCT card->'roleBindings'->>$4 holder FROM messages
+     WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3`,
+    [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId, role])).rows : [];
+  return [...new Set([...rows.map(row => row.holder), current].filter((id): id is string => Boolean(id)))];
+}
+
 /** The agents a step's role may walk: its ordered list, or its one bound agent. */
 async function roleList(db: SqlDatabase, scope: RunScope, role: string): Promise<string[]> {
   const agents = (await loadRunRoleAgents(db, scope.roomId, scope.runId))[role];
-  if (agents?.length) return agents;
+  if (agents?.length) {
+    const otherRole = role === 'checker' ? 'maker' : role === 'maker' ? 'checker' : undefined;
+    if (scope.run.workflowSlug === WELCOME_VIDEO_SLUG && otherRole) {
+      const excluded = await welcomeVideoRoleHolders(db, scope.roomId, scope.runId, otherRole, scope.run.roleBindings[otherRole]);
+      return agents.filter(agent => !excluded.includes(agent));
+    }
+    return agents;
+  }
   const bound = scope.run.roleBindings[role];
   return bound ? [bound] : [];
 }
@@ -1135,11 +1173,8 @@ async function failOver(
   const list = await roleList(db, scope, role);
   const cursor = input.retryRoleList ? undefined : input.leaving ?? scope.run.roleBindings[role];
   const start = cursor && list.includes(cursor) ? list.indexOf(cursor) + 1 : 0;
-  const picked = await firstHealthyAgent(
-    db,
-    scope.roomId,
-    list.slice(start),
-    tried.map((entry) => entry.agentId),
+  const picked = await pickWorkflowAgent(
+    db, scope.roomId, list.slice(start), tried.map((entry) => entry.agentId), scope.run.workflowSlug,
   );
   if (picked) return moveRole(db, scope, { role, picked, tried, why: input.why });
   const reasons = list.length ? await roleReasons(db, { roomId: scope.roomId, list, tried, cursor }) : '';
@@ -1997,6 +2032,8 @@ export async function startWorkflow(
       roleBindings,
       roleAgents,
       role: startRole,
+      workflowSlug: contract.name,
+      runId,
     });
     const exhausted = 'exhausted' in resolution;
     const deadlineSeconds = contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;

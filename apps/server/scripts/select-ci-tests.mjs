@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const hash = value => createHash('sha256').update(value).digest('hex');
-const isTest = file => /^apps\/server\/src\/.*\.test\.tsx?$/.test(file);
+const isTest = file => /^apps\/server\/src\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file);
+export { isTest as isServerTest };
 const mandatoryGuards = ['apps/server/src/system-messages-lock.test.ts'];
 
 function baseSourceHashes(base, files) {

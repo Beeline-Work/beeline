@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { balanceFiles } from './ci-shards.mjs';
-import { currentSelection } from './select-ci-tests.mjs';
+import { currentSelection, isServerTest } from './select-ci-tests.mjs';
 import { collectionGroups, recordAlwaysRun } from './collect-ci-coverage.mjs';
 
 const [position, count] = process.argv[2]?.split('/').map(Number) ?? [];
@@ -13,7 +13,7 @@ assert.ok(Number.isInteger(position) && Number.isInteger(count) && position > 0 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 const selection = currentSelection();
-const shouldRun = file => selection.tests.includes(`apps/server/${file}`);
+const shouldRun = file => selection.mode === 'full' || !isServerTest(`apps/server/${file}`) || selection.tests.includes(`apps/server/${file}`);
 // Wall-clock budgets and held voice playback must not compete with database
 // migrations in another worker. Keep their coverage in the same required job.
 const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts'];

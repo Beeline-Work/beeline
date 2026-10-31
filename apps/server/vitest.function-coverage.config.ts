@@ -10,7 +10,7 @@ export default defineConfig({
       customProviderModule: './scripts/function-coverage-provider.mjs',
       allowExternal: true,
       include: ['**/apps/*/src/**/*.ts', '**/apps/*/dist/**/*.js', '**/packages/*/src/**/*.ts', '**/packages/*/dist/**/*.js'],
-      exclude: ['**/*.test.*'],
+      exclude: ['**/*.test.*', '**/*.spec.*'],
       all: false,
       reporter: [],
     },

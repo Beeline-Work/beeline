@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { selectTests, readsOutsideCoverage } from '../apps/server/scripts/select-ci-tests.mjs';
+import { selectTests, readsOutsideCoverage, isServerTest } from '../apps/server/scripts/select-ci-tests.mjs';
 
 const [bundleArg, outputArg, checkoutArg] = process.argv.slice(2);
 assert.ok(bundleArg && outputArg && checkoutArg, 'Expected bundle, output directory and measurement checkout');
@@ -56,7 +56,7 @@ for (const fn of Object.values(index.tests).flat()) {
 const rows = [...read(baseline, 'pr-diffs.json'), ...read(fixes, 'pr-diffs.json')];
 const selections = rows.map(pr => {
   assert.ok(!pr.error, `PR ${pr.number}: ${pr.error}`);
-  const tests = git('ls-tree', '-r', '--name-only', pr.head, '--', 'apps/server/src').trim().split('\n').filter(file => /\.test\.tsx?$/.test(file));
+  const tests = git('ls-tree', '-r', '--name-only', pr.head, '--', 'apps/server/src').trim().split('\n').filter(isServerTest);
   const selection = selectTests({ index, base: pr.base, tests, changes: [], baseHashes: {} });
   // The frozen map is not historical execution coverage. The actual deployed
   // freshness gate must reject it before consulting projected function IDs.

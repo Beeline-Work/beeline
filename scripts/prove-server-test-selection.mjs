@@ -25,6 +25,8 @@ try {
     writeFileSync(join(server, `src/${name}.test.ts`),
       `import { it, expect } from 'vitest';\nimport { ${name} } from './service.js';\nit('${name}', () => expect(${name}()).toBe(${expected}));\n`);
   }
+  writeFileSync(join(server, 'src/other.spec.js'),
+    "import {it, expect} from 'vitest';\nimport {second} from './service.ts';\nit('JS spec', () => expect(second()).toBe(2));\n");
   writeFileSync(join(server, 'src/guard.test.ts'),
     "import { it, expect } from 'vitest';\nimport { sourceText } from './guard-helper.js';\nit('source guard', () => expect(sourceText()).not.toContain('return 99'));\n");
   writeFileSync(join(server, 'src/guard-helper.ts'),
@@ -62,8 +64,8 @@ try {
   stale.revision = 'stale';
   writeFileSync(map, JSON.stringify(stale));
   assert.equal(select().mode, 'full');
-  assert.equal(select().tests.length, 3);
-  console.log(JSON.stringify({ proof: 'SERVER-SELECTION-1', capturedTests: 3, selected: selected.tests,
+  assert.equal(select().tests.length, 4);
+  console.log(JSON.stringify({ proof: 'SERVER-SELECTION-1', capturedTests: 4, selected: selected.tests,
     brokenResult: 'both changed-function and source-guard failures caught', fixedResult: 'selected tests pass', staleMap: 'full suite' }, null, 2));
 } finally {
   rmSync(fixture, { recursive: true, force: true });

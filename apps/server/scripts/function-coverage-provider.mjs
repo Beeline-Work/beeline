@@ -24,7 +24,7 @@ class FunctionCoverageProvider extends V8CoverageProvider {
           let external = Boolean(packet.sourceRead);
           for (const filename of map.files()) {
             const file = relative(root, filename);
-            if ((!file.startsWith('apps/') && !file.startsWith('packages/')) || /\.test\.[cm]?[jt]sx?$/.test(file)) continue;
+            if ((!file.startsWith('apps/') && !file.startsWith('packages/')) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)) continue;
             const coverage = map.fileCoverageFor(filename).toJSON();
             const locations = Object.entries(coverage.statementMap).filter(([id]) => coverage.s[id] > 0)
               .map(([, loc]) => ({ start: loc.start.line, end: loc.end.line }));

@@ -52,3 +52,10 @@ export function readSidebarPreview(value: unknown): SidebarPreview | null {
       (item.deckPreview !== undefined && item.deckPreview !== null && !validLatest(item.deckPreview))) return null;
   return item;
 }
+
+/** At 1.6 Mbps, 2 KiB adds at most about 10 ms of serialization per frame.
+ * NET-HOL-1's 128 KiB stress payload must remain a bounded preview.
+ */
+export function offscreenMessageFits(delta: Extract<RoomLiveDelta, { type: 'message-delta' }>): boolean {
+  return new TextEncoder().encode(JSON.stringify(delta)).byteLength <= 2048;
+}

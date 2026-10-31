@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectSidebarPreview, readSidebarPreview } from './sidebar-preview.js';
+import { offscreenMessageFits, projectSidebarPreview, readSidebarPreview } from './sidebar-preview.js';
 const author = { pubkey: 'a'.repeat(64), kind: 'agent' as const, name: 'Agent' };
 const message = { id: 'b'.repeat(64), createdAt: 1, author, presentation: 'message' as const,
   text: 'B'.repeat(128 * 1024) + '@viewer', mentionPubkeys: ['viewer'] };
@@ -22,4 +22,15 @@ describe('sidebar preview boundary', () => {
     expect(readSidebarPreview({ ...preview, deckPreview: { ...preview.preview, createdAt: null } })).toBeNull();
     expect(readSidebarPreview({ ...preview, extra: 'X'.repeat(8193) })).toBeNull();
   });
+});
+
+it('bounds complete offscreen deltas by UTF-8 bytes including metadata', () => {
+  const delta = { type: 'message-delta' as const, roomId: 'room', message: { ...message, text: '' } };
+  const overhead = new TextEncoder().encode(JSON.stringify(delta)).byteLength;
+  delta.message.text = 'x'.repeat(2048 - overhead);
+  expect(offscreenMessageFits(delta)).toBe(true);
+  delta.message.text += 'x';
+  expect(offscreenMessageFits(delta)).toBe(false);
+  delta.message.text = '界'.repeat(700);
+  expect(offscreenMessageFits(delta)).toBe(false);
 });

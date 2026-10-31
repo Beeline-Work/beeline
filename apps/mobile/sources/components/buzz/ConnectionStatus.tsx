@@ -1,6 +1,6 @@
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { reconnectNow, useConnectionState } from '@/sync/transport/live-connection';
 import { Ionicons } from '@expo/vector-icons';
-import { type ReactNode, useSyncExternalStore } from 'react';
+import { type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Button } from './Button';
@@ -14,12 +14,7 @@ type ConnectionStatusProps = {
 };
 
 export function ConnectionStatus({ connectedFallback }: ConnectionStatusProps) {
-  const connection = sharedLiveConnection();
-  const state = useSyncExternalStore(
-    (listener) => connection.subscribeConnectionStatus(listener),
-    () => connection.connectionStatus(),
-    () => 'disconnected',
-  );
+  const state = useConnectionState();
   if (state === 'connected') return connectedFallback ?? null;
   if (state === 'connecting') {
     return <InlineRow accessibilityLiveRegion="polite" style={styles.line} testID="connection-status-connecting">
@@ -34,7 +29,7 @@ export function ConnectionStatus({ connectedFallback }: ConnectionStatusProps) {
       <Text style={styles.copy}>Beeline isn't connected</Text>
       <Text style={styles.saved}>Showing saved messages</Text>
     </View>
-    <Button label="Reconnect" size="inline" variant="quiet" onPress={() => connection.reconnectNow()} testID="connection-status-reconnect" />
+    <Button label="Reconnect" size="inline" variant="quiet" onPress={reconnectNow} testID="connection-status-reconnect" />
   </InlineRow>;
 }
 

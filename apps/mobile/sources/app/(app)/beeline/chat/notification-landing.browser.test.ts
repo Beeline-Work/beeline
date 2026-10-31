@@ -238,10 +238,7 @@ function shims(mobile: string): Record<string, string> {
     }`,
     // The proof exercises a healthy Room landing. Keep the new shared status
     // line out of its measured viewport, as production does while connected.
-    '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
-      connectionStatus: () => 'connected',
-      subscribeConnectionStatus: () => () => undefined,
-      reconnectNow() {},
+    '@/sync/transport/live-connection': `export const useConnectionState = () => 'connected'; export const reconnectNow = () => undefined; export const sharedLiveConnection = () => ({
       view: () => () => undefined,
       register: async () => () => undefined,
     });`,

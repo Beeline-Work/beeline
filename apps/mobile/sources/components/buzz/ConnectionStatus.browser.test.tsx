@@ -10,9 +10,7 @@ describe.skipIf(!existsSync(CHROME))('ConnectionStatus rendered stand-in', () =>
     mkdirSync(output, { recursive: true });
     const shims = webProofShims(mobile);
     shims['react-native-unistyles'] = shims['react-native-unistyles'].replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
-    shims['@/sync/transport/live-connection'] = `export const sharedLiveConnection = () => ({
-      connectionStatus: () => 'disconnected', subscribeConnectionStatus: () => () => undefined, reconnectNow: () => undefined,
-    });`;
+    shims['@/sync/transport/live-connection'] = `export const useConnectionState = () => 'disconnected'; export const reconnectNow = () => undefined;`;
     shims['@expo/vector-icons'] = `import React from 'react'; export const Ionicons = (props) => <svg data-testid={props.testID} aria-label={props.accessibilityLabel} width={props.size} height={props.size} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth="2"><circle cx="12" cy="12" r="8"/><path d="M6.5 17.5 17.5 6.5"/></svg>;`;
     shims['./IndexRow'] = `import { View } from 'react-native'; export const InlineRow = ({ children, style, ...props }) => <View {...props} style={[{ alignItems: 'center', flexDirection: 'row' }, style]}>{children}</View>;`;
     shims['./Button'] = `export const Button = ({ label, testID }) => <button data-testid={testID}>{label}</button>;`;

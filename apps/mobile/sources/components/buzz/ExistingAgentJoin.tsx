@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Image, Pressable, Text, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
+import { Image, Text, View, type ImageSourcePropType } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import grokLogo from '@/assets/images/agent-logos/grok.png';
@@ -11,6 +11,8 @@ import opencodeLogo from '@/assets/images/agent-logos/opencode.png';
 import piLogo from '@/assets/images/agent-logos/pi.png';
 import hermesLogo from '@/assets/images/agent-logos/hermes.png';
 import zcodeLogo from '@/assets/images/agent-logos/zcode.png';
+import { Button } from './Button';
+import { InlineRow } from './IndexRow';
 
 const CONNECTOR_LINE = 'Join my Beeline workspace using the MCP connector https://server.usebeeline.app/mcp';
 /** Meta Muse's preregistered client in apps/server/src/rooms-mcp-preregistered.ts. */
@@ -20,19 +22,20 @@ const ROOM_LINE = 'Join my Beeline Room: usebeeline.app/room';
 type ExistingAgent = {
   id: string;
   name: string;
+  /** Grok and Muse logos carry their brand tile in the image itself. */
   logo: ImageSourcePropType;
-  /** Brand tile behind a logo that is drawn smaller than its tile. */
-  tile?: 'dark' | 'white';
+  /** A white tile gets a hairline so it does not melt into the Bone sheet. */
+  outlined?: boolean;
   line: string;
 };
 
 export const EXISTING_AGENTS: readonly ExistingAgent[] = [
-  { id: 'grok', name: 'Grok Bot', logo: grokLogo, tile: 'dark', line: CONNECTOR_LINE },
+  { id: 'grok', name: 'Grok Bot', logo: grokLogo, line: CONNECTOR_LINE },
   {
     id: 'muse',
     name: 'Muse',
     logo: museLogo,
-    tile: 'white',
+    outlined: true,
     line: `${CONNECTOR_LINE}\n\nClient ID: ${MUSE_CLIENT_ID}`,
   },
   { id: 'claude', name: 'Claude', logo: claudeLogo, line: ROOM_LINE },
@@ -44,99 +47,170 @@ export const EXISTING_AGENTS: readonly ExistingAgent[] = [
   { id: 'zcode', name: 'ZCode', logo: zcodeLogo, line: ROOM_LINE },
 ];
 
-/** The "Existing agent" half of the add-agent sheet: tap a logo, copy its one join line. */
-export function ExistingAgentJoin({ onCopy }: { onCopy?: (line: string) => void }) {
+/**
+ * Display-only line breaks, matching the approved mock: a URL never splits
+ * (word joiner after each slash), and a long ID may split after its hyphen
+ * (zero-width space). Copy always copies the plain line.
+ */
+export function wrapForDisplay(line: string): string {
+  return line
+    .replace(/https?:\/\/\S+/g, (url) => url.replace(/\//g, '/⁠'))
+    .replace(/(\w)-(\w)/g, '$1-​$2');
+}
+
+/**
+ * The Members-page add-agent sheet (approved mock 3281cf69): pick an existing
+ * agent's logo and copy its one join line, or copy the new-agent command.
+ */
+export function ExistingAgentJoin({
+  pairCommand,
+  onCopy,
+}: {
+  pairCommand?: string | null;
+  onCopy?: (line: string) => void;
+}) {
   const [selectedId, setSelectedId] = useState(EXISTING_AGENTS[0].id);
   const selected = EXISTING_AGENTS.find((agent) => agent.id === selectedId) ?? EXISTING_AGENTS[0];
   return (
-    <View testID="existing-agent-join">
-      <Text accessibilityRole="header" style={styles.heading}>Existing agent</Text>
-      <Text style={styles.subheading}>Paste into existing session</Text>
-      <View style={styles.grid}>
-        {EXISTING_AGENTS.map((agent) => {
-          const on = agent.id === selected.id;
-          return (
-            <Pressable
-              accessibilityLabel={agent.name}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: on }}
-              key={agent.id}
-              onPress={() => setSelectedId(agent.id)}
-              style={styles.cell}
-              testID={`existing-agent-${agent.id}`}
-            >
-              <View style={[styles.ring, on && styles.ringOn]}>
-                <View
-                  style={[
-                    styles.tile,
-                    agent.tile === 'dark' && styles.tileDark,
-                    agent.tile === 'white' && styles.tileWhite,
-                  ]}
-                >
-                  <Image source={agent.logo} style={agent.tile ? styles.logoInset : styles.logoFull} />
-                </View>
-              </View>
-              <Text style={[styles.name, on && styles.nameOn]}>{agent.name}</Text>
-            </Pressable>
-          );
-        })}
+    <View style={styles.panel} testID="invite-agent-flow">
+      <View testID="existing-agent-join">
+        <Text accessibilityRole="header" style={styles.heading}>Existing agent</Text>
+        <Text style={styles.subheading}>Paste into existing session</Text>
+        <InlineRow accessibilityRole="radiogroup" style={styles.grid}>
+          {EXISTING_AGENTS.map((agent) => {
+            const on = agent.id === selected.id;
+            return (
+              <Button
+                accessibilityLabel={agent.name}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                appearance={{ control: styles.cell, label: [styles.name, on && styles.nameOn] }}
+                icon={
+                  <View style={styles.tile}>
+                    <Image
+                      source={agent.logo}
+                      style={[styles.logo, agent.outlined && styles.logoOutlined]}
+                    />
+                    {on && <View style={styles.ring} testID="existing-agent-ring" />}
+                  </View>
+                }
+                key={agent.id}
+                label={agent.name}
+                onPress={() => setSelectedId(agent.id)}
+                testID={`existing-agent-${agent.id}`}
+              />
+            );
+          })}
+        </InlineRow>
+        <CopyLine
+          accessibilityLabel={`Copy ${selected.name} join line`}
+          display={wrapForDisplay(selected.line)}
+          line={selected.line}
+          onCopy={onCopy}
+          testID="existing-agent-line"
+        />
       </View>
-      <TouchableOpacity
-        accessibilityLabel={`Copy ${selected.name} join line`}
-        onPress={() => onCopy?.(selected.line)}
-        style={styles.lineRow}
-      >
-        <Text selectable style={styles.line} testID="existing-agent-line">
-          {selected.line}
-        </Text>
-        <Text style={styles.copyLabel}>Copy</Text>
-      </TouchableOpacity>
+      <View style={styles.rule} />
+      <Text accessibilityRole="header" style={styles.heading}>Create new agent</Text>
+      <Text style={styles.subheading}>Run on terminal</Text>
+      {pairCommand && (
+        <CopyLine
+          accessibilityLabel="Copy connect command"
+          line={pairCommand}
+          onCopy={onCopy}
+          style={styles.commandLine}
+          testID="pair-agent-command"
+        />
+      )}
     </View>
   );
 }
 
+/** One boxed mono line with a trailing Copy; the whole box copies `line`. */
+function CopyLine({
+  accessibilityLabel,
+  display,
+  line,
+  onCopy,
+  style,
+  testID,
+}: {
+  accessibilityLabel: string;
+  /** What the box shows, when it differs from what Copy copies. */
+  display?: string;
+  line: string;
+  onCopy?: (line: string) => void;
+  style?: React.ComponentProps<typeof Button>['style'];
+  testID: string;
+}) {
+  return (
+    <Button
+      accessibilityLabel={accessibilityLabel}
+      appearance={{ control: styles.copyBox, label: styles.copyLabel }}
+      icon={
+        <Text selectable style={styles.line} testID={testID}>
+          {display ?? line}
+        </Text>
+      }
+      label="Copy"
+      onPress={() => onCopy?.(line)}
+      style={style}
+    />
+  );
+}
+
 const TILE = 40;
+/** The ring sits 2.5 outside the tile, so its radius is the tile's 10 plus 4. */
+const RING_OUTSET = 4;
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    heading: { ...hull.type.body, ...Typography.default('medium'), fontSize: 16, color: hull.textPrimary },
-    subheading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, marginTop: 3 },
-    grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 12, marginTop: 16, marginBottom: 14 },
-    cell: { width: '20%', alignItems: 'center', gap: 6 },
-    // A brass ring 2pt off the tile marks the chosen logo without moving the grid.
+    panel: {
+      paddingHorizontal: hull.space.md,
+      paddingTop: hull.space.lg,
+      paddingBottom: hull.space.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    heading: { ...hull.type.body, ...Typography.default('medium'), color: hull.textPrimary },
+    subheading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    grid: {
+      flexWrap: 'wrap',
+      alignItems: 'flex-start',
+      rowGap: hull.space.sm,
+      marginTop: hull.space.md,
+      marginBottom: hull.space.md,
+    },
+    cell: { width: '20%', flexDirection: 'column', alignItems: 'center', gap: hull.space.xs },
+    tile: { width: TILE, height: TILE },
+    logo: { width: TILE, height: TILE, borderRadius: 10, resizeMode: 'contain' },
+    logoOutlined: { borderWidth: 1, borderColor: hull.border },
     ring: {
-      margin: -3.5,
-      padding: 2,
+      position: 'absolute',
+      top: -RING_OUTSET,
+      left: -RING_OUTSET,
+      width: TILE + RING_OUTSET * 2,
+      height: TILE + RING_OUTSET * 2,
+      borderRadius: 14,
       borderWidth: 1.5,
-      borderColor: 'transparent',
-      borderRadius: 13.5,
+      borderColor: hull.accent,
     },
-    ringOn: { borderColor: hull.accent },
-    tile: {
-      width: TILE,
-      height: TILE,
-      borderRadius: 10,
-      overflow: 'hidden',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    tileDark: { backgroundColor: '#111111' },
-    tileWhite: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: hull.border },
-    logoFull: { width: TILE, height: TILE, resizeMode: 'contain' },
-    logoInset: { width: TILE * 0.78, height: TILE * 0.78, resizeMode: 'contain' },
-    name: { ...Typography.default(), fontSize: 11, lineHeight: 14, color: hull.textMuted },
+    name: { ...Typography.default(), fontSize: 12, lineHeight: 17, color: hull.textMuted },
     nameOn: { ...Typography.default('medium'), color: hull.textPrimary },
-    lineRow: {
+    copyBox: {
+      minHeight: 44,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      padding: 12,
+      gap: hull.space.sm,
+      padding: hull.space.sm,
       borderWidth: 1,
       borderColor: hull.border,
       borderRadius: hull.radius,
     },
-    line: { ...Typography.mono(), fontSize: 12, lineHeight: 17, color: hull.textPrimary, flex: 1 },
+    line: { ...Typography.mono(), ...hull.type.machine, fontSize: 12, lineHeight: 17, color: hull.textPrimary, flex: 1 },
     copyLabel: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
+    rule: { height: 1, backgroundColor: hull.border, marginVertical: hull.space.md },
+    commandLine: { marginTop: hull.space.md },
   };
 });

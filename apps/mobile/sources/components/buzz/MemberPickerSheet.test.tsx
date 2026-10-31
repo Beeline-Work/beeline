@@ -64,7 +64,10 @@ vi.mock('./MonoHull', async () => {
 });
 vi.mock('./Button', async () => {
   const ReactModule = await import('react');
-  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
+  return {
+    Button: (props: any) =>
+      ReactModule.createElement('Button', props, props.icon, props.label ? ReactModule.createElement('Text', null, props.label) : null),
+  };
 });
 vi.mock('./SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
@@ -314,16 +317,19 @@ describe('MemberPickerSheet', () => {
     };
     const connector = 'Join my Beeline workspace using the MCP connector https://server.usebeeline.app/mcp';
 
-    expect(line()).toBe(connector);
+    // The shown line only gains invisible break hints; Copy copies the plain line.
+    expect(line()).toBe(connector.replace(/\//g, '/\u2060'));
+    expect(line().replace(/[\u2060\u200B]/g, '')).toBe(connector);
     expect(copy()).toBe(connector);
     tap('muse');
+    expect(line()).toContain('Jvshy-\u200BoYTj');
     expect(copy()).toBe(`${connector}\n\nClient ID: 6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o`);
     for (const id of ['claude', 'codex', 'gemini', 'opencode', 'pi', 'hermes', 'zcode']) {
       tap(id);
       expect(copy()).toBe('Join my Beeline Room: usebeeline.app/room');
     }
     tap('grok');
-    expect(line()).toBe(connector);
+    expect(copy()).toBe(connector);
     expect(has(renderer, 'existing-agent-join')).toBe(true);
   });
 

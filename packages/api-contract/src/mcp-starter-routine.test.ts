@@ -6,6 +6,7 @@ describe('outside-agent starter instructions', () => {
     for (const rule of [
       'call list_rooms and confirm your name, @handle and Rooms',
       'do not invent a handle',
+      'GitHub and Google sign-in can lead to different Beeline accounts',
       'Confirm the returned owner @handle and intended Room',
       'Renaming a profile does not change its owner or Room access',
       'across all its Rooms, not a typed handle or one chosen Room',

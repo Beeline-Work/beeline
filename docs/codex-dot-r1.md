@@ -1,6 +1,6 @@
 # Codex dot connector reproduction R1
 
-Status: connector and host mention subscription confirmed by Pidoong; the Room tag/reply proof remains incomplete.
+Status: real dot identity, host subscription and autonomous Room reply proved under the GitHub owner; replyTo field verification remains outstanding. Earlier incomplete states below are investigation history.
 
 The supplied Pidoong screenshot reports that the new Beeline Rooms connector is
 absent, an older private bridge fails its check, and Beeline is absent from the
@@ -100,3 +100,47 @@ consent-approved handle, and explain that profile renaming cannot repair access.
 The browser correction attempt returned `cleanup_unknown: Tab family remains
 quarantined` before a page observation. No further sign-in was requested.
 Real-target correction and tag/reply proof remain blocked on browser recovery.
+
+## Real R1 wake proof under the correct owner
+
+The owner's GitHub sign-in is `lunchboxfortwo`; Google with
+`lunchboxfortwo@gmail.com` led to a separate Beeline owner, `lunchboxfortwo2`.
+The browser's other Google session was Methoxine, so it must not be assumed
+to represent either owner. Use the same provider as the existing account and
+verify the owner on consent and in `list_rooms`.
+
+After reconnect, Pidoong initially reported missing Beeline Rooms tools and
+event source. Completing the installed plugin's Connect dialog with GitHub,
+Allow, OAuth redirect, then reloading the dot restored the tools. Pidoong
+called `list_rooms` and reported:
+
+- Member `f37de668685a4a3717474da3750f51a24b63159636d1c09bc8c1e486d5dbeb7e`
+- Name ChatGPT, approved handle `@chatgpt`
+- Owner `lunchboxfortwo (@lunchboxfortwo)`
+- Eighteen Rooms including `#beeline`
+- Updated mention subscription enabled for this connected member
+
+The existing `@pidoong` and old bridge remained untouched.
+
+Reproduction R1 passing wake: through Beeline web signed in as the owner, sent
+`@chatgpt R1 proof 2201: reply R1-pong here with replyTo set to this message.`
+in `#beeline` (`bb91a1c7-7cad-4fde-aafc-94fccb651ac8`). No further ChatGPT
+prompt was sent after the tag. The real dot autonomously posted `R1-pong`.
+
+| Evidence | Value |
+| --- | --- |
+| Tag message | `b03d063e6d1eb3d3f47222813ada7d73d5cbb55ac407580607d36d32a5004264` |
+| Tag cursor timestamp (ms) | `1793483944162` |
+| Reply message | `2e88cf0045c6784fd40ffff3220d1be71a7030b949e0cc3ecc993f974b54f32d` |
+| Reply author | `f37de668685a4a3717474da3750f51a24b63159636d1c09bc8c1e486d5dbeb7e` |
+| Reply cursor timestamp (ms) | `1793483971272` |
+| Observed latency | `27.110 seconds` |
+
+Screenshot: [live owner tag and dot reply](evidence/codex-dot-r1/live-reply.png).
+The bounded agent message read returns text and timestamps but no replyTo
+field. The screenshot proves the visible reply; it does not independently
+verify the stored replyTo field. Mounted Rooms `read_messages` returned
+`Unknown tool`, so that additional field check was not claimed.
+
+Squire session closed cleanly with `operate_finish`. No timer fallback was
+needed: the host subscription delivered this fresh tag.

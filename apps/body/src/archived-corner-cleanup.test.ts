@@ -1,4 +1,21 @@
-import { it, expect } from 'vitest';
+import { promisify } from 'node:util';
+import { readlinkSync } from 'node:fs';
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const mocked = (...args: any[]) => {
+    if (args[0] === '/sbin/mount') args[0] = '/bin/mount';
+    if (args[0] === '/usr/sbin/lsof') {
+      const callback = args.at(-1);
+      try { callback(null, `p${args[1][2]}\nn${readlinkSync(`/proc/${args[1][2]}/cwd`)}\n`, ''); }
+      catch (error) { callback(error, '', ''); }
+      return;
+    }
+    return (actual.execFile as Function)(...args);
+  };
+  Object.defineProperty(mocked, promisify.custom, { value: (...args: any[]) => new Promise((resolve, reject) => mocked(...args, (error: Error | null, stdout: string, stderr: string) => error ? reject(error) : resolve({ stdout, stderr }))) });
+  return { ...actual, execFile: mocked };
+});
+import { it, expect, vi } from 'vitest';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,7 +23,7 @@ import { resolve } from 'node:path';
 import { reclaimArchivedMemberStorage, rememberStorageOwner } from './storage-owners.js';
 import { declareCornerProofOutput } from './corner-proof-output.js';
 
-it.skipIf(process.platform !== 'linux')('ARCHIVED-OUTPUT-1 deletes closed dirty/unpushed/proof data and stops its child; preserves open and unknown', async () => {
+it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCHIVED-OUTPUT-1 deletes closed dirty/unpushed/proof data and stops its child; preserves open and unknown (%s)', async (platform) => {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-closed-corner-'));
   const path = resolve(root, 'beeline/corners/closed');
   execFileSync('git', ['init', '-q', path]);
@@ -27,6 +44,11 @@ it.skipIf(process.platform !== 'linux')('ARCHIVED-OUTPUT-1 deletes closed dirty/
   const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: path, stdio: 'ignore' });
   await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
   const exited = new Promise<void>(done => child.once('exit', () => done()));
+  await writeFile(resolve(path, '.gitignore'), 'build/\n');
+  await mkdir(resolve(path, 'build'));
+  await writeFile(resolve(path, 'build/output'), 'ignored output');
+  const platformSpy = { mockRestore: () => vi.unstubAllGlobals() };
+  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
   try {
     for (const states of [[], [{ roomId: 'closed', archived: false }]]) {
       await reclaimArchivedMemberStorage(root, states);
@@ -42,5 +64,5 @@ it.skipIf(process.platform !== 'linux')('ARCHIVED-OUTPUT-1 deletes closed dirty/
     expect(openChild.exitCode).toBe(null);
     expect(openChild.signalCode).toBe(null);
     expect(await access(openRoot).then(() => true, () => false)).toBe(true);
-  } finally { broker.kill('SIGKILL'); openChild.kill('SIGKILL'); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
+  } finally { platformSpy.mockRestore(); broker.kill('SIGKILL'); openChild.kill('SIGKILL'); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
 }, 30_000);

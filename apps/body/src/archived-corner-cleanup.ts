@@ -65,6 +65,48 @@ finally:
  for fd in fds: os.close(fd)
 `;
 
+// macOS has no /proc or pidfds. Require an exact cwd attribution and
+// revalidate both the process birth stamp and cwd immediately before signalling.
+async function stopDarwinProcesses(roots: string[]): Promise<number> {
+  const snapshot = async () => {
+    const { stdout } = await exec('/bin/ps', ['-axo', 'pid=,ppid=,uid=,lstart=,command=']);
+    return stdout.split('\n').flatMap(line => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+((?:\S+\s+){4}\S+)\s+(.+)$/);
+      return match ? [{ pid: Number(match[1]), parent: Number(match[2]), uid: Number(match[3]), birth: match[4]!, command: match[5]! }] : [];
+    });
+  };
+  const cwd = async (pid: number): Promise<string | undefined> => {
+    try {
+      const { stdout } = await exec('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
+      return stdout.split('\n').find(line => line.startsWith('n'))?.slice(1);
+    } catch { return undefined; }
+  };
+  const inside = (path: string | undefined) => path !== undefined && roots.some(root => path === root || path.startsWith(`${root}/`));
+  const rows = await snapshot();
+  const protectedPids = new Set([process.pid]);
+  let parent = rows.find(row => row.pid === process.pid)?.parent;
+  while (parent && !protectedPids.has(parent)) {
+    protectedPids.add(parent); parent = rows.find(row => row.pid === parent)?.parent;
+  }
+  const brokers = new Set(rows.filter(row => row.command.split(/\s+/).slice(0, 2).some(arg => arg.includes('trusty-squire'))).map(row => row.pid));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const row of rows) if (brokers.has(row.parent) && !brokers.has(row.pid)) { brokers.add(row.pid); changed = true; }
+  }
+  let stopped = 0;
+  for (const row of rows) {
+    if (protectedPids.has(row.pid) || brokers.has(row.pid) || row.uid !== process.getuid?.() || !inside(await cwd(row.pid))) continue;
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      const current = (await snapshot()).find(candidate => candidate.pid === row.pid);
+      if (!current || current.birth !== row.birth || current.command !== row.command || !inside(await cwd(row.pid))) break;
+      try { process.kill(row.pid, signal); if (signal === 'SIGTERM') stopped++; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      if (signal === 'SIGTERM') await new Promise(done => setTimeout(done, 500));
+    }
+  }
+  return stopped;
+}
+
 export async function removeArchivedCornerData(supervisorRoot: string, cornerId: string, checkout: string, options: WholeStorageOptions = {}): Promise<StorageReclaimEntry[]> {
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(cornerId)) throw new Error('invalid archived corner id');
   const base = resolve(supervisorRoot, 'beeline');
@@ -78,10 +120,15 @@ export async function removeArchivedCornerData(supervisorRoot: string, cornerId:
   if (!options.dryRun) {
     await stopKeptCornerEmulator(supervisorRoot, cornerId, 'corner archived');
     if (existing.length) {
-      if (process.platform !== 'linux') throw new Error('archived process cleanup requires Linux process attribution');
+      if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('unsupported archived process attribution platform');
+      if (process.platform === 'darwin') {
+        const stopped = await stopDarwinProcesses(existing);
+        console.log(`[helper] archived corner ${cornerId} stopped ${stopped} attributed processes`);
+      } else {
       const result = await exec('/usr/bin/python3', ['-c', STOP, JSON.stringify(existing), String(process.pid)], { timeout: 30_000, maxBuffer: 1024 });
       const { stopped } = JSON.parse(result.stdout) as { stopped: number };
       console.log(`[helper] archived corner ${cornerId} stopped ${stopped} attributed processes`);
+      }
     }
   }
   const entries: StorageReclaimEntry[] = [];

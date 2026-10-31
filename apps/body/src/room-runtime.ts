@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { agentCornerCheckoutPaths, materializeAgentCornerCheckout } from './agent-corner-checkout.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
@@ -138,6 +139,7 @@ export function isStandingCornerStartFault(error: unknown): boolean {
  */
 export async function materializeCornerWorktree(input: {
   cornerId: string;
+  agentId?: string;
   remote: string;
   targetBranch: string;
   featureBranch: string;
@@ -151,8 +153,10 @@ export async function materializeCornerWorktree(input: {
   // the GitHub HTTPS identity, and a `file://` remote stays usable so the
   // shared-branch behaviour can be proved against a real git remote.
   const remote = roomCheckoutRemote(input.remote);
-  const gitCommonDir = cornerRepositoryCacheDir(input.supervisorRoot, remote);
-  const path = resolve(input.supervisorRoot, 'beeline', 'corners', input.cornerId);
+  let gitCommonDir = cornerRepositoryCacheDir(input.supervisorRoot, remote);
+  const path = input.agentId
+    ? agentCornerCheckoutPaths(input.supervisorRoot, input.cornerId, input.agentId).path
+    : resolve(input.supervisorRoot, 'beeline', 'corners', input.cornerId);
   await mkdir(dirname(gitCommonDir), { recursive: true, mode: 0o700 });
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   // Hosted agents share this bare repository. Git's individual ref/config
@@ -206,23 +210,38 @@ export async function materializeCornerWorktree(input: {
         throw error;
       },
     );
-    if (!existsSync(resolve(path, '.git'))) {
-      await rm(path, { recursive: true, force: true });
-      await execFileAsync(
-        'git',
-        [
-          `--git-dir=${gitCommonDir}`,
-          'worktree',
-          'add',
-          '-B',
-          input.featureBranch,
-          path,
-          restored
-            ? `refs/remotes/origin/${input.featureBranch}`
-            : `refs/remotes/origin/${input.targetBranch}`,
-        ],
-        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-      );
+    const fresh = !existsSync(resolve(path, '.git'));
+    if (input.agentId) {
+      const checkout = await materializeAgentCornerCheckout({
+        root: input.supervisorRoot,
+        cornerId: input.cornerId,
+        agentId: input.agentId,
+        sourceGitDir: gitCommonDir,
+        remote,
+        branch: input.featureBranch,
+        startRef: `refs/remotes/origin/${restored ? input.featureBranch : input.targetBranch}`,
+      });
+      gitCommonDir = checkout.gitCommonDir;
+    }
+    if (fresh) {
+      if (!input.agentId) {
+        await rm(path, { recursive: true, force: true });
+        await execFileAsync(
+          'git',
+          [
+            `--git-dir=${gitCommonDir}`,
+            'worktree',
+            'add',
+            '-B',
+            input.featureBranch,
+            path,
+            restored
+              ? `refs/remotes/origin/${input.featureBranch}`
+              : `refs/remotes/origin/${input.targetBranch}`,
+          ],
+          { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+        );
+      }
       // A worktree cut from a bare clone has no `node_modules`, so this is the
       // one moment a warm tree can be hardlinked in before anything reads it.
       // Never fatal: a cold store just means the corner installs as before.

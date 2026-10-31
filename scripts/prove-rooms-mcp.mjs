@@ -153,15 +153,6 @@ try {
     transcript(`CONNECT-1 fixture ${origin}; start ${authorizeUrl}`);
     await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });
   } else if (process.argv.includes('--serve')) {
-    await db.query("UPDATE rooms SET visibility='public' WHERE id=$1", [room]);
-    // Loopback-only synthetic member data for the real app byline proof.
-    const handler = server.listeners('request')[0];
-    server.removeAllListeners('request');
-    server.on('request', async (req, res) => {
-      if (req.url !== '/proof/avatar-members') return handler(req, res);
-      const members = (await db.query(`SELECT i.id pubkey,i.name,i.avatar FROM rooms_mcp_members m JOIN identities i ON i.id=m.member_id WHERE m.owner_id=$1 ORDER BY i.name`, [person])).rows;
-      res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(members));
-    });
     transcript(`Local demo server: ${origin}/mcp. Use GitHub in consent; the fixture supplies only the synthetic reviewer identity.`);
     transcript('This loopback fixture has no production account access. Stop with Ctrl+C.');
     await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });

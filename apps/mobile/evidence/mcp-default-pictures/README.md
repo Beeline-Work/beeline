@@ -6,18 +6,7 @@ Reproduced with the built server's real register → authorize → GitHub sign-i
 
 After Allow, the proof exchanges the grant, calls set_profile with a name only (Firstmate/Muse), sends a Room message through MCP, reads the created member, and verifies that its avatar route returns WebP. `members.json` contains only these synthetic identities. `room-bylines-after-bone-phone.png` renders those exact served pictures in the production `LedgerBylineView`/`IdentityMark` components through the app's Expo web runtime. Native Android was not used (no device attached); this is the narrow app-component stand-in, not a production Room capture.
 
-Run:
-
-```sh
-npm run build -w @beeline/server
-MCP_PROOF_PORT=19783 node --import tsx scripts/prove-rooms-mcp.mjs --serve
-# In another terminal (point MCP_BROWSER_PLAYWRIGHT at an installed playwright-core module if needed):
-node scripts/prove-mcp-default-pictures.mjs
-cd apps/mobile/mcp-avatar-proof
-../node_modules/.bin/expo start --web --port 19784
-```
-
-Open the proof at localhost:19784 with the fixture still running. Capture it with `node scripts/prove-mcp-default-pictures.mjs --room-bylines` from the repository root. The mobile proof uses production byline components and only stubs native/platform dependencies through the existing notice-style proof adapters.
+The temporary `scripts/prove-mcp-default-pictures.mjs` capture driver and `apps/mobile/mcp-avatar-proof` app were removed after capture; they were disposable proof tooling, not shipped product code. Their source remains available in the original PR commit `637013ecf`. The screenshots, synthetic member data and regression tests remain here. To repeat the server path, use the existing `scripts/prove-rooms-mcp.mjs --serve` fixture and the per-app `R-MCP-DEFAULT-PICTURES` HTTP cases in `apps/server/src/rooms-mcp.test.ts`.
 
 ## Registration evidence and dry run
 

@@ -10,7 +10,7 @@
     },
     "reviewerHandle": "@juniper",
     "brief": {
-      "id": "case-corner",
+      "id": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
       "revision": 2,
       "repositoryWork": true,
       "spec": "## Intent\nAdd the status card.\n## Visual scope\nAdd exactly the supplied status card. No other visual change.",
@@ -85,7 +85,7 @@
       "/proof/comparison.html": "Mock and built screenshot: identical Ready cards."
     },
     "brief": {
-      "id": "case-corner",
+      "id": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
       "revision": 2,
       "repositoryWork": true,
       "spec": "## Intent\nAdd the status card.\n## Visual scope\nAdd exactly the supplied status card. No other visual change.",
@@ -221,7 +221,7 @@
         "result": {
           "revisions": [
             {
-              "id": "case-corner",
+              "id": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
               "revision": 2,
               "repositoryWork": true,
               "spec": "## Intent\nAdd the status card.\n## Visual scope\nAdd exactly the supplied status card. No other visual change.",

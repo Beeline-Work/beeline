@@ -308,7 +308,13 @@ test('mock provenance cases record review operations and refuse unknown shell or
     assert.equal(JSON.parse(view.result.stdout).files[0].path, 'apps/mobile/StatusCard.tsx');
     assert.match(get('Bash', {command: 'gh pr diff 88'}).result.stdout, /StatusCard.tsx/);
     assert.equal(get('read', {facet: 'message', messageId: 'approval-1'}).result.status, 403);
-    const accepted = get('approve_merge', {address: '13dd83e5-e17f-599c-8054-c4ce8cdab974', headSha: saved.scenario.checks.headSha});
+    const address = saved.session.brief.id;
+    assert.equal(saved.scenario.brief.id, address);
+    assert.equal(get('read', {facet: 'brief'}).result.revisions[0].id, address);
+    assert.equal(get('read', {facet: 'status'}).result.address, address);
+    assert.equal(get('read', {facet: 'addresses'}).result.places[0].address, address);
+    assert.equal(get('order', {address, text: 'FAIL: apps/mobile/StatusCard.tsx:1'}).result.accepted, true);
+    const accepted = get('approve_merge', {address, headSha: saved.scenario.checks.headSha});
     assert.equal(accepted.unrecorded, undefined);
     assert.equal(accepted.result.approved, true);
     for (const [name, args] of [['Bash', {command: 'invent an operation'}], ['Read', {file_path: '/missing/file'}], ['read', {facet: 'unknown'}]] as const) {

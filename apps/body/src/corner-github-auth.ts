@@ -390,6 +390,30 @@ function flagValue(args, names) {
 function hasFlag(args, names) {
   return args.some((arg) => names.includes(arg));
 }
+function editPositionals(args) {
+  const valued = new Set([
+    '--repo', '-R', '--body', '-b', '--title', '-t', '--body-file', '-F',
+    '--base', '-B', '--add-label', '--remove-label', '--add-reviewer',
+    '--remove-reviewer', '--add-assignee', '--remove-assignee', '--milestone', '-m',
+    '--add-project', '--remove-project',
+  ]);
+  const positional = [];
+  for (let index = 2; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--') {
+      positional.push(...args.slice(index + 1));
+      break;
+    }
+    const eq = arg.indexOf('=');
+    const name = eq === -1 ? arg : arg.slice(0, eq);
+    if (valued.has(name)) {
+      if (eq === -1) index += 1;
+    } else if (!arg.startsWith('-')) {
+      positional.push(arg);
+    }
+  }
+  return positional;
+}
 function gitOutput(args) {
   const result = spawnSync(config.gitCommand, args, { encoding: 'utf8' });
   return result.status === 0 ? result.stdout.trim() : '';
@@ -527,7 +551,7 @@ async function runRest(args, value) {
       process.stderr.write('gh: a title or body is required (--title, --body, or --body-file)\\n');
       return { status: 1, authenticationFailed: false };
     }
-    let number = args.slice(2).map((arg) => arg.match(/^([0-9]+)$/)).find(Boolean);
+    let number = editPositionals(args).map((arg) => arg.match(/^([0-9]+)$/)).find(Boolean);
     number = number ? Number(number[1]) : undefined;
     if (number === undefined) {
       const owner = slug.split('/')[0];
@@ -563,6 +587,7 @@ function isPullRequestBodyEdit(args) {
   let edits = false;
   for (let index = 2; index < args.length; index += 1) {
     const arg = args[index];
+    if (arg === '--') return edits && args.slice(index + 1).every((selector) => /^[0-9]+$/.test(selector));
     if (/^[0-9]+$/.test(arg)) continue;
     const eq = arg.indexOf('=');
     const name = eq === -1 ? arg : arg.slice(0, eq);

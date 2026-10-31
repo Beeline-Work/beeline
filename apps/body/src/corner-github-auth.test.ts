@@ -681,6 +681,44 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     }
   });
 
+  it.each([
+    { flags: ['--body', '123'], number: 12 },
+    { flags: ['--title', '456'], number: 12 },
+    { flags: ['--body=123'], number: 12 },
+    { flags: ['789', '--body', '123'], number: 789 },
+    { flags: ['--body', '123', '--', '789'], number: 789 },
+    { flags: ['--body', '123', '--base', '456'], number: 12 },
+    ...[
+      '--repo', '-R', '--base', '-B', '--add-label', '--remove-label',
+      '--add-reviewer', '--remove-reviewer', '--add-assignee', '--remove-assignee',
+      '--milestone', '-m', '--add-project', '--remove-project',
+    ].flatMap((flag) => [
+      { flags: [flag, '456', '--body', 'text'], number: 12 },
+      { flags: [`${flag}=456`, '--body', 'text'], number: 12 },
+    ]),
+  ])('resolves the edit selector independently of flag values: $flags', async ({ flags, number }) => {
+    const requests: Array<{ method: string; url: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push(request);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(request.method === 'GET' ? [{ number: 12 }] : {
+        html_url: `https://github.com/acme/widget/pull/${number}`,
+      }));
+    });
+    try {
+      const { gh } = await fixture();
+      await execFileAsync(gh, ['pr', 'edit', '--repo', 'acme/widget', ...flags], {
+        env: { ...process.env, GITHUB_API_URL: api.url },
+      });
+      expect(requests.filter((request) => request.method === 'PATCH')).toEqual([
+        expect.objectContaining({ url: `/repos/acme/widget/pulls/${number}` }),
+      ]);
+      expect(requests.some((request) => request.method === 'GET')).toBe(number === 12);
+    } finally {
+      await api.close();
+    }
+  });
+
   it('still sends reviewer and label edits to the host gh binary', async () => {
     const { gh } = await fixture(
       '/usr/bin/git',

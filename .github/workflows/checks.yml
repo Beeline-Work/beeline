@@ -612,6 +612,10 @@ jobs:
         run: npm test -w @beeline/server -- --run src/database-jit.test.ts --maxWorkers=1 --minWorkers=1
         env:
           BEELINE_JIT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - name: Prove incident deadlock recovery on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/incident-deadlocks.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_INCIDENT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - name: Prove release migration lock handoff on isolated PostgreSQL
         run: npm test -w @beeline/server -- --run src/migration-retry.test.ts --maxWorkers=1 --minWorkers=1
         env:

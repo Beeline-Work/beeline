@@ -1108,6 +1108,19 @@ export class GitHubOperations {
       `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
     )).rows[0]!.started_at;
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
+    // A delayed landing wake may be the first observer of a missed merge webhook.
+    // Reconcile the recorded PR through the same idempotent archival path.
+    if (!corner.archived && pr.merged && pr.headRef && corner.author_id &&
+      corner.lifecycle.pr?.number === number) {
+      await this.mergeCorner({ ...target, corner_id: input.cornerId,
+        parent_id: corner.parent_id, author_id: corner.author_id,
+        corner_name: corner.corner_name, summary: '' }, {
+        repository: target.repository, branch: pr.headRef, title: pr.title ?? `Pull request #${number}`,
+        url: pr.url, number, targetBranch: pr.baseRef, headSha: pr.headSha,
+        mergedAt: pr.mergedAt, mergeCommitSha: pr.mergeCommitSha, mergedBy: pr.mergedBy,
+        commits: 0, files: 0,
+      }, this.database, number);
+    }
     let rollup = await this.app.readCommitCheckRollup(
       target.token,
       target.repository,
@@ -2740,7 +2753,18 @@ export class GitHubOperations {
           await this.recordClosedCornerPullRequest(target.corner_id, Number(target.pr_number), database);
           return;
         }
-        if (livePr && (livePr.merged || livePr.headSha !== checkHeadSha)) return;
+        if (livePr?.merged) {
+          // Checks can finish after the merge, before its closed webhook arrives.
+          if (livePr.headRef) await this.mergeCorner(target, {
+            repository, branch: livePr.headRef, title: livePr.title ?? `Pull request #${livePr.number}`,
+            url: livePr.url, number: livePr.number, targetBranch: livePr.baseRef,
+            headSha: livePr.headSha, mergedAt: livePr.mergedAt,
+            mergeCommitSha: livePr.mergeCommitSha, mergedBy: livePr.mergedBy,
+            commits: 0, files: 0,
+          }, database, livePr.number);
+          return;
+        }
+        if (livePr && livePr.headSha !== checkHeadSha) return;
         const beforeFetch = await this.lifecycle(target.corner_id, database);
         if (beforeFetch.pr?.headSha && beforeFetch.pr.headSha !== checkHeadSha) return;
         const oldReport = beforeFetch.checksSummary as (typeof beforeFetch.checksSummary & {

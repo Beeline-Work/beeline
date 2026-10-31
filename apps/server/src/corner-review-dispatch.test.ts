@@ -1,4 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AcpClient } from '../../body/src/acp.js';
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
@@ -1722,6 +1727,61 @@ it.each(['complete','failed'] as const)('Reproduction review-1: a delivered repa
   await reconcileConfiguredCornerReviewers(db,R);
   expect(await commands(B,C)).toEqual([]);
 });
+it('model-capacity-no-retry: ACP provider diagnostic reaches durable recovery and retains the original work', async () => {
+  const directory = await mkdtemp(join(tmpdir(),'beeline-capacity-'));
+  const script = join(directory,'provider.cjs');
+  // Codex reports this incident as final text with end_turn, not a failed RPC.
+  await writeFile(script, `
+const lines = require('node:readline').createInterface({input:process.stdin});
+let attempts=0;
+lines.on('line', line => {
+  const m=JSON.parse(line);
+  const send=result=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
+  if(m.method==='initialize') send({protocolVersion:1});
+  else if(m.method==='session/new') send({sessionId:'capacity-session'});
+  else if(m.method==='session/prompt') {
+    attempts++;
+    const text=attempts===1?'Selected model is at capacity. Please try a different model.':'PASS: '+m.params.prompt[0].text;
+    process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'capacity-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})+'\\n');
+    send({stopReason:'end_turn'});
+  }
+});
+`);
+  const adapter = new AcpClient({agentCommand:process.execPath,agentArgs:[script],agentLabel:'codex-acp',agentEnv:{},resourceScope:'none'});
+  try {
+    await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
+    await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');
+    const [review] = await commands(B,C);
+    expect(review).toBeDefined();
+    await adapter.start();
+    const {sessionId} = await adapter.sessionNew({cwd:directory});
+    for (const attempt of [1,2]) {
+      const generation = `adapter-${attempt}`;
+      await claim(review!,generation);
+      const output = await adapter.sessionPrompt(sessionId,review!.source.body);
+      expect(output.stopReason).toBe('end_turn');
+      await result(review!,output.agentText,generation);
+      const receipt = await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:review!.turnRequestId,
+        generationId:generation,status:'complete'},B);
+      const saved = (await db.query(`SELECT state,hiccup_attempts,wake_after FROM agent_commands WHERE id=$1`,[review!.id])).rows[0]!;
+      if(attempt===1) {
+        expect(output.agentText).toBe('Selected model is at capacity. Please try a different model.');
+        expect(receipt.hiccupRestart).toBe(true);
+        expect(saved).toMatchObject({state:'pending',hiccup_attempts:1});
+        expect(saved.wake_after).not.toBeNull();
+        // Advance the durable deadline; no sleep or alternate retry mechanism.
+        await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[review!.id]);
+        await flushDueCommanderWakes(db);
+        const retried = (await commands(B,C)).find(c=>c.id===review!.id);
+        expect(retried).toMatchObject({turnRequestId:review!.turnRequestId,source:{body:review!.source.body}});
+      } else {
+        expect(output.agentText).toBe('PASS: '+review!.source.body);
+        expect(saved).toMatchObject({state:'complete',hiccup_attempts:1});
+      }
+    }
+  } finally { await adapter.stop(); await rm(directory,{recursive:true,force:true}); }
+});
+
 it('Reproduction capacity-1: capacity returned as final text and a complete receipt retries the original review', async () => {
   await phone.execute('updateRoom',{roomId:R,reviewerAgentId:B},H);
   await greenHead(3095,'3b3560e14d96e58a52466785a01440846bd13394');

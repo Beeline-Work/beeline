@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { tmpdir } from 'node:os';
@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiClient, DaemonApiError, type DaemonWebSocketFactory } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake, validateServerCommand } from './server-command-intake.js';
+
+import { AcpClient } from './acp.js';
+import { leaseEmulator } from './android-emulator-lease.js';
 
 const paths: string[] = [];
 afterEach(async () => {
@@ -485,6 +488,89 @@ describe('command intake mechanics', () => {
     expect(closed).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledTimes(1);
   });
+  it('wakes-kill-running-work: ordinary wakes and a revised brief retain the server and emulator lease until explicit Stop', async () => {
+    const root = await mkdtemp(join(tmpdir(),'beeline-running-work-'));
+    paths.push(root);
+    const lease = await leaseEmulator(join(root,'leases'),join(root,'instances'));
+    const log = join(lease.root,'work.log');
+    const brief = join(root,'brief.json');
+    await writeFile(brief,JSON.stringify({revision:1,spec:'Original brief'}));
+    const script = join(root,'working-adapter.cjs');
+    // A real ACP subprocess owns the local development server. Android guest
+    // boot is not needed here: the production emulator lease and marker are real.
+    await writeFile(script, `
+const {createServer}=require('node:http');
+const {readFileSync,appendFileSync}=require('node:fs');
+const lines=require('node:readline').createInterface({input:process.stdin});
+let pending, server;
+const send=(id,result)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n');
+lines.on('line',line=>{
+  const m=JSON.parse(line);
+  if(m.method==='initialize') send(m.id,{protocolVersion:1});
+  else if(m.method==='session/new') send(m.id,{sessionId:'running'});
+  else if(m.method==='session/prompt') {
+    pending=m.id;
+    appendFileSync(${JSON.stringify(log)},'started\\n');
+    server=createServer((_req,res)=>{res.setHeader('content-type','application/json');res.end(readFileSync(${JSON.stringify(brief)}));});
+    server.listen(0,'127.0.0.1',()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'running',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:String(server.address().port)}}}})+'\\n'));
+  } else if(m.method==='session/cancel' && pending!==undefined) {
+    const id=pending; pending=undefined;
+    appendFileSync(${JSON.stringify(log)},'cancelled\\n');
+    server.close(()=>send(id,{stopReason:'cancelled'}));
+  }
+});
+`);
+    const adapter = new AcpClient({agentCommand:process.execPath,agentArgs:[script],agentLabel:'fixture-acp',agentEnv:{},resourceScope:'none'});
+    const abort = new AbortController();
+    const ctx = await context();
+    let port = '', settled = false;
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? {commandProtocol:1,commands:[command('input')]} : {id:'ok'});
+    const socket = socketApi(execute);
+    const stop = vi.fn(() => adapter.sessionCancel('running'));
+    const run = vi.fn(async () => {
+      const output = await adapter.sessionPrompt('running','Keep the development server running',10_000,chunk=>{port+=chunk;});
+      expect(output.stopReason).toBe('cancelled');
+      settled = true;
+      abort.abort();
+    });
+    let running: Promise<void> | undefined;
+    try {
+      await adapter.start();
+      await adapter.sessionNew({cwd:root});
+      running = runServerCommandIntake({api:socket.api,roomId:'room',agentId:'agent',context:ctx,signal:abort.signal,run,stop});
+      await vi.waitFor(()=>expect(port).toMatch(/^\d+$/));
+      const status = () => fetch(`http://127.0.0.1:${port}`).then(r=>r.json());
+      expect(await status()).toMatchObject({revision:1});
+      socket.push([command('ordinary-wake')]);
+      await writeFile(brief,JSON.stringify({revision:2,spec:'Latest approved brief'}));
+      socket.push([{...command('brief-revision'),reason:'corner_brief'}]);
+      // A pushed snapshot must not claim or cancel another input mid-turn.
+      await new Promise<void>(resolve=>setImmediate(resolve));
+      expect(await status()).toMatchObject({revision:2,spec:'Latest approved brief'});
+      expect(run).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      expect(stop).not.toHaveBeenCalled();
+      expect(adapter.isAlive).toBe(true);
+      expect(await readFile(lease.marker,'utf8')).toBe(lease.ownership);
+      expect(await readFile(log,'utf8')).toBe('started\n');
+      expect(ctx.current?.id).toBe('input');
+      socket.push([command('explicit-stop','stop')]);
+      await running;
+      expect(stop).toHaveBeenCalledWith('turn');
+      expect(settled).toBe(true);
+      expect(await readFile(log,'utf8')).toBe('started\ncancelled\n');
+      // A turn stop must not release a corner-owned emulator lease.
+      expect(await readFile(lease.marker,'utf8')).toBe(lease.ownership);
+    } finally {
+      abort.abort();
+      adapter.sessionCancel('running');
+      await adapter.stop();
+      await running?.catch(()=>{});
+      await lease.release();
+    }
+  });
+
   it('processes a pushed stop while an input is running', async () => {
     const abort = new AbortController();
     let release = () => {};

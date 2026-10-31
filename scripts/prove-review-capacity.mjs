@@ -63,7 +63,7 @@ try {
         [workspace, place, who],
       );
   await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,lifecycle) VALUES($1,$2,$2,$3::jsonb)`,
+    `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,feature_branch,lifecycle) VALUES($1,$2,$2,'feature/proof',$3::jsonb)`,
     [
       corner,
       worker,
@@ -102,8 +102,12 @@ try {
         headSha: head,
         url: 'https://github.com/owner/widgets/pull/1',
         merged,
+        ...(merged ? {headRef:'feature/proof',baseRef:'main',mergedAt:'2026-10-30T12:00:00Z',mergeCommitSha:'f'.repeat(40)} : {}),
       }),
       readCommitCheckRollup: async () => ({ state: 'passed', total: 1, checks: [], failing: [] }),
+      branchDeletionSafety: async () => ({defaultBranch:'main',aheadBy:0,protected:false}),
+      openPullRequestsForBranch: async () => [],
+      deleteBranch: async () => {},
     },
     'fixture',
   );
@@ -333,11 +337,19 @@ try {
   await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,[corner,head]);
   await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`,[corner,reviewer,head]);
   merged=true;
+  if (process.argv.includes('--merge-webhook')) await operations.processWebhook('check_run',{
+    action:'completed',installation:{id:77},repository:{full_name:'owner/widgets'},
+    check_run:{name:'build',status:'completed',conclusion:'success',head_sha:head,
+      check_suite:{head_branch:'feature/proof',head_sha:head}},
+  });
   const gate=await call('getPrChecksStatus',{cornerId:corner},worker);
   assert.equal(gate.status,200);
   assert.equal(gate.body.stage,'merged');
   assert.equal(gate.body.mergeAllowed,false);
-  console.log('merged-1 demonstrated: built HTTP refuses a merged PR even before corner archival.');
+  assert.equal((await db.query(`SELECT lifecycle->>'outcome' outcome FROM corner_facts WHERE corner_id=$1`,[corner])).rows[0].outcome,'landed');
+  assert.ok((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`,[corner])).rows[0].archived_at);
+  assert.equal((await call('getPrChecksStatus',{cornerId:corner},worker)).body.mergeAllowed,false);
+  console.log(`MERGE-HANDOFF-AFTER-MERGE demonstrated: built ${process.argv.includes('--merge-webhook')?'checks event':'authenticated checks read'} reconciles landed, archives the corner and refuses another merge offer.`);
 
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));

@@ -96,7 +96,7 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
-  it('MERGE-HANDOFF-AFTER-MERGE: a fresh checks event reconciles a provider-confirmed merge', async () => {
+  it.each(['checks event', 'stale landing wake'] as const)('MERGE-HANDOFF-AFTER-MERGE: %s reconciles a provider-confirmed merge', async trigger => {
     const { corners, headSha, app, payload } = await checksFixture();
     const corner = corners[0]!;
     // GitHub merged the PR, but its pull_request/closed webhook has not arrived.
@@ -108,7 +108,8 @@ describe('GitHub phone operations', () => {
     })) });
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
       app as unknown as GitHubAppClient, 'secret');
-    await operations.processWebhook('check_run', payload);
+    if (trigger === 'checks event') await operations.processWebhook('check_run', payload);
+    else expect(await operations.prChecksStatus({cornerId: corner})).toMatchObject({stage:'merged',mergeAllowed:false});
     const state = (await database.query(`SELECT fact.lifecycle, fact.workflow_state,
       room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
       WHERE fact.corner_id=$1`, [corner])).rows[0]!;

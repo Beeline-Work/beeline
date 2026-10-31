@@ -973,6 +973,8 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
     ['room_push_views', 'expires_at<now()'],
     ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'"],
     ['phone_access_tokens', 'expires_at<now()'],
+    ['rooms_mcp_event_deliveries', "delivered_at<now()-interval '7 days'"],
+    ['rooms_mcp_event_subscriptions', "expires_at<now()-interval '7 days'"],
     ['rooms_mcp_flows', 'expires_at<now()'],
     ['rooms_mcp_codes', 'expires_at<now()'],
     ['rooms_mcp_tokens', 'expires_at<now()'],

@@ -76,6 +76,7 @@
     "review:exact-head": "node scripts/review-exact-head.mjs",
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
     "prove:push-backlog": "npm run build -w @beeline/server && node --import tsx scripts/prove-push-backlog.mjs",
+    "prove:rooms-mcp-events": "npm run build -w @beeline/server && node --import tsx scripts/prove-rooms-mcp-events.mjs",
     "prove:rooms-mcp": "npm run build -w @beeline/server && node --import tsx scripts/prove-rooms-mcp.mjs",
     "prove:rooms-mcp-consent-browser": "node scripts/prove-rooms-mcp-consent-browser.mjs",
     "prove:company-mcp-discovery": "node --import tsx scripts/prove-company-mcp-discovery.mjs",

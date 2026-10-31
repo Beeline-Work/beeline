@@ -1,3 +1,4 @@
+import { RoomsMcpEvents, McpEventError } from './rooms-mcp-events.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -81,8 +82,10 @@ function roomArg(value: unknown): string {
 
 export class RoomsMcp {
   private readonly agentTools?: RoomsMcpAgentTools;
+  private readonly events: RoomsMcpEvents;
   constructor(readonly oauth: RoomsMcpOAuth, private readonly phone: PhoneService, private readonly live: LiveHub,
-    daemon?: DaemonService, objects?: ObjectService) {
+    daemon?: DaemonService, objects?: ObjectService, events?: RoomsMcpEvents) {
+    this.events = events ?? new RoomsMcpEvents(oauth.database);
     if (daemon) this.agentTools = new RoomsMcpAgentTools(oauth.database, daemon, objects);
   }
   async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
@@ -132,28 +135,61 @@ export class RoomsMcp {
     try { input = await mcpBody(request, 320_000); }
     catch { await this.oauth.audit(principal, 'http', 'invalid_request'); mcpJson(response, 400, { error: 'invalid_request' }); return true; }
     await this.oauth.audit(principal, typeof input.method === 'string' ? input.method : 'http', 'received');
-    const server = new Server({ name: 'beeline-rooms', version: '1.0.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: this.agentTools ? TOOLS : ROOM_TOOLS }));
-    server.setRequestHandler(CallToolRequestSchema, async call => {
-      // Every valid grant holds full rights, including grants stored before writes were included.
-      try {
-        const result = await this.call(principal, call.params.name, call.params.arguments ?? {});
-        await this.oauth.audit(principal, call.params.name, 'succeeded');
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ data: result }) }] };
-      } catch (error) {
-        await this.oauth.audit(principal, call.params.name, 'refused');
-        const reason = mcpRefusal(error);
-        if (!reason) console.error('[rooms-mcp] tool call failed', call.params.name, error);
-        const text = reason ? `Request refused: ${reason}.`
-          : 'Request refused. Check the tool arguments, consent scopes, and current Room membership.';
-        return { isError: true, content: [{ type: 'text' as const, text }] };
+    // The SDK supports tool transport; these extension methods share its authenticated boundary.
+    const meta = (input.params as { _meta?: Record<string, unknown> } | undefined)?._meta;
+    const mcp2 = meta?.['io.modelcontextprotocol/protocolVersion'] === '2026-07-28' || request.headers['mcp-protocol-version'] === '2026-07-28';
+    if (mcp2 || input.method === 'server/discover' || (typeof input.method === 'string' && input.method.startsWith('events/'))) {
+      if (input.jsonrpc !== '2.0' || (typeof input.id !== 'string' && typeof input.id !== 'number')) {
+        mcpJson(response, 400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }); return true;
       }
-    });
+      try {
+        let result: object;
+        if (input.method === 'server/discover') {
+          result = { resultType: 'complete', supportedVersions: ['2026-07-28'], capabilities: { tools: {}, events: {} },
+            serverInfo: { name: 'beeline-rooms', version: '1.0.0' }, instructions: INSTRUCTIONS };
+        } else if (mcp2 && input.method === 'tools/list') {
+          result = { tools: this.agentTools ? TOOLS : ROOM_TOOLS };
+        } else if (mcp2 && input.method === 'tools/call') {
+          const call = CallToolRequestSchema.safeParse(input);
+          if (!call.success) throw new McpEventError(-32602, 'Invalid tool arguments');
+          result = await this.toolResult(principal, call.data.params.name, call.data.params.arguments ?? {});
+        } else if (mcp2 && input.method === 'ping') {
+          result = {};
+        } else {
+          result = await this.events.call(principal, input.method as string, input.params);
+        }
+        mcpJson(response, 200, { jsonrpc: '2.0', id: input.id, result: mcp2 ? { resultType: 'complete', ...result } : result });
+      } catch (error) {
+        const eventError = error instanceof McpEventError ? error : new McpEventError(-32603, 'Event request failed');
+        mcpJson(response, 200, { jsonrpc: '2.0', id: input.id,
+          error: { code: eventError.code, message: eventError.message, ...(eventError.data ? { data: eventError.data } : {}) } });
+      }
+      return true;
+    }
+    const capabilities = { tools: {}, events: {} };
+    const server = new Server({ name: 'beeline-rooms', version: '1.0.0' }, { capabilities, instructions: INSTRUCTIONS });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: this.agentTools ? TOOLS : ROOM_TOOLS }));
+    server.setRequestHandler(CallToolRequestSchema, async call =>
+      this.toolResult(principal, call.params.name, call.params.arguments ?? {}));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     response.once('close', () => { void server.close(); });
     await server.connect(transport);
     await transport.handleRequest(request, response, input);
     return true;
+  }
+  private async toolResult(principal: McpPrincipal, name: string, args: Record<string, unknown>) {
+    try {
+      const result = await this.call(principal, name, args);
+      await this.oauth.audit(principal, name, 'succeeded');
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ data: result }) }] };
+    } catch (error) {
+      await this.oauth.audit(principal, name, 'refused');
+      const reason = mcpRefusal(error);
+      if (!reason) console.error('[rooms-mcp] tool call failed', name, error);
+      const text = reason ? `Request refused: ${reason}.`
+        : 'Request refused. Check the tool arguments, consent scopes, and current Room membership.';
+      return { isError: true, content: [{ type: 'text' as const, text }] };
+    }
   }
   private async setupNote(member: string): Promise<{ setup?: string }> {
     const row = (await this.oauth.database.query<{ profile_set: boolean }>(

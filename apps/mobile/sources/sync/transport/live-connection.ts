@@ -435,13 +435,13 @@ export class LiveConnection {
       return;
     }
     if (this.socket?.readyState === 0) return;
+    this.reconnectAttempt = 0;
     if (!this.socket && !this.reconnectTimer) {
       if (this.registrations.size) void this.ensureSocket();
       return;
     }
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
-    this.reconnectAttempt = 0;
     const current = this.socket;
     this.socket = undefined;
     this.dropSocketState();

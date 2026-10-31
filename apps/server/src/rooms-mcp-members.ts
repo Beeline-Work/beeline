@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Agent, request as httpsRequest } from 'node:https';
-import { uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import { fetchMcpLogo, mcpMemberAvatar, mcpClientName } from './rooms-mcp-logos.js';
@@ -186,7 +186,7 @@ function webhookKey(): string {
 }
 
 /** What a tagged client is told, in the instructions and on every webhook POST. */
-export const MCP_TAG_INSTRUCTION = 'A Room member tagged you. Your owner\'s Allow is standing approval to answer: read the Room, then answer this message there with send_message (pass replyTo to thread it). Tag another agent only to hand it a spelled-out job.';
+export const MCP_TAG_INSTRUCTION = `A Room member tagged you. Your owner's Allow is standing approval to answer. ${MCP_STARTER_ROUTINE}`;
 
 /**
  * Every tag or direct message addressed to an AI-client member, in order.
@@ -304,7 +304,7 @@ export async function deliverMcpMemberWebhooks(
     const claimed = await db.query<{
       call_id: string; member_id: string; room_id: string; message_id: string;
       body: string; callback_url: string | null; callback_secret: string | null; deliverable: boolean;
-      author_id: string | null; author_handle: string | null; author_name: string | null; cursor: string | null;
+      author_id: string | null; author_handle: string | null; author_name: string | null; author_kind: string | null; cursor: string | null;
     }>(
       `WITH claimed AS (
          UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
@@ -318,7 +318,7 @@ export async function deliverMcpMemberWebhooks(
        SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
          COALESCE(member.callback_url,client.callback_url) callback_url,
          CASE WHEN member.callback_url IS NOT NULL THEN member.callback_secret END callback_secret,
-         message.author_id,author.handle author_handle,author.name author_name,mention.seq::text cursor,(
+         message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,(
            room.id IS NOT NULL AND room.archived_at IS NULL
            AND EXISTS (SELECT 1 FROM effective_memberships room_member
              WHERE room_member.room_id=claimed.room_id AND room_member.identity_id=claimed.member_id
@@ -353,7 +353,9 @@ export async function deliverMcpMemberWebhooks(
           ...(row.callback_secret ? { authorization: `Bearer ${openSecrets<string>(webhookKey(), row.callback_secret)}` } : {}) },
         body: JSON.stringify({ memberId: row.member_id, roomId: row.room_id, messageId: row.message_id,
           author: row.author_id ? { id: row.author_id, handle: row.author_handle, name: row.author_name } : null,
-          text: row.body, cursor: row.cursor, instruction: MCP_TAG_INSTRUCTION }),
+          text: row.body, cursor: row.cursor, instruction: row.author_kind === 'agent' && row.author_handle
+            ? `${MCP_TAG_INSTRUCTION} Start your reply with @${row.author_handle} to wake the asking agent.`
+            : MCP_TAG_INSTRUCTION }),
       });
       accepted = response.ok;
     } catch { accepted = false; }

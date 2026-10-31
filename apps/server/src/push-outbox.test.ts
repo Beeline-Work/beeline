@@ -105,12 +105,15 @@ describe.skipIf(!postgresUrl)('R-PUSH-SCAN-LOCK', () => {
       await setup(owner);
       expect((await jobs.query(`SHOW statement_timeout`)).rows[0]!.statement_timeout).toBe('2s');
       expect((await jobs.query(`SHOW lock_timeout`)).rows[0]!.lock_timeout).toBe('500ms');
-      // Write the fixture before enabling triggers, as though this history predated cutover.
+      // This history predates both outbox and replay cutover. Seed it without
+      // fanout; fresh messages below still exercise both transactional triggers.
       await owner.query(`ALTER TABLE messages DISABLE TRIGGER message_push_outbox`);
+      await owner.query(`ALTER TABLE messages DISABLE TRIGGER beeline_notify_live_messages`);
       await owner.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
         SELECT 'history-'||n,$1,$2,repeat('@owner historical message ',100),now()-interval '1 day'
         FROM generate_series(1,50000) n`, [room, author]);
       await owner.query(`ALTER TABLE messages ENABLE TRIGGER message_push_outbox`);
+      await owner.query(`ALTER TABLE messages ENABLE TRIGGER beeline_notify_live_messages`);
       await owner.query(`INSERT INTO messages(id,room_id,author_id,text)
         SELECT 'fresh-'||n,$1,$2,'@owner fresh' FROM generate_series(1,300) n`, [room, author]);
       // Negative control matches the long-held ACCESS SHARE incident. No retries.

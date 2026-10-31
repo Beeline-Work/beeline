@@ -149,13 +149,26 @@ ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id tex
 
 -- Dispatch paints working before a helper connects. The claim replaces this
 -- reserved generation with the helper's generation in the same turn row.
+-- A command queued behind the agent's running turn in the same Room paints
+-- nothing: it is newer than the running turn, so it would replace that turn
+-- as the agent's latest and the Room would show the running turn as ended.
+-- Its own claim paints it once the running turn is over.
 CREATE OR REPLACE FUNCTION show_dispatched_agent_work() RETURNS trigger AS $$
 BEGIN
   IF NEW.state='pending' AND NEW.action IN ('input','resume')
      AND NEW.wake_after IS NULL AND NEW.startup_wake_after IS NULL AND NEW.reason<>'computer_activity' THEN
-    INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-      VALUES(NEW.room_id,NEW.turn_request_id,NEW.agent_id,'working','pending:' || NEW.id)
-      ON CONFLICT(room_id,request_id,agent_id) DO NOTHING;
+    IF NOT EXISTS(SELECT 1 FROM agent_commands running
+        JOIN agent_turns turn ON turn.room_id=running.room_id AND turn.agent_id=running.agent_id
+          AND turn.request_id=running.turn_request_id AND turn.status='working'
+          AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
+        WHERE running.room_id=NEW.room_id AND running.agent_id=NEW.agent_id
+          AND running.turn_request_id<>NEW.turn_request_id
+          AND running.state='claimed' AND running.lease_expires_at>now()
+          AND running.action IN ('input','resume')) THEN
+      INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+        VALUES(NEW.room_id,NEW.turn_request_id,NEW.agent_id,'working','pending:' || NEW.id)
+        ON CONFLICT(room_id,request_id,agent_id) DO NOTHING;
+    END IF;
   ELSIF NEW.state IN ('cancelled','complete') OR NEW.startup_wake_after IS NOT NULL THEN
     DELETE FROM agent_turns WHERE room_id=NEW.room_id AND request_id=NEW.turn_request_id
       AND agent_id=NEW.agent_id AND generation_id='pending:' || NEW.id;

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
 import { RoomsMcpEvents } from './rooms-mcp-events.js';
-import { backfillMcpMemberRoomsAndAvatars, postMcpWebhook } from './rooms-mcp-members.js';
+import { backfillMcpMemberRoomsAndAvatars, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -24,7 +24,7 @@ import { runMaintenance } from './background.js';
 import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { FACE_SOULS } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, FACE_SOULS } from '@beeline/api-contract/phone';
 
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -701,6 +701,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         if (previousKey === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY;
         else process.env.BEELINE_MCP_WEBHOOK_KEY = previousKey;
       }
+      await page('Returning to your session', 'handoff', 'handoff_invalid', await fetch(`${origin}/mcp/oauth/handoff?state=state-sentinel-123&code=x`));
       // Every sentence is driven by a real refusal, and each reason reads differently.
       expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
       expect(new Set(Object.values(BROWSER_REFUSALS)).size).toBe(Object.keys(BROWSER_REFUSALS).length);
@@ -824,6 +825,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
+    expect(page).toContain('Starter instructions');
+    expect(page).toContain('id="copy-routine" type="button">Copy</button>');
+    expect(page).toContain(MCP_STARTER_ROUTINE.replaceAll("'", '&#39;'));
+    expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
     expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
     expect(page).toContain('<img class="mark" src="data:image/svg+xml;base64,'); expect(page).not.toContain('>b</span>');
@@ -847,6 +852,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
     expect((await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'Firstmate', handle: 'firstmate' });
+  });
+  it('repeats the saved starter wake rule in server, setup and webhook instructions', async () => {
+    const { client } = await connected();
+    const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
+    const send = (await client.listTools()).tools.find(tool => tool.name === 'send_message')!;
+    expect(send.description).toContain("asking agent's exact @handle to wake it");
+    for (const text of [client.getInstructions(), setup, MCP_TAG_INSTRUCTION]) {
+      expect(text).toContain(MCP_STARTER_ROUTINE);
+      expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
+    }
   });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
@@ -1278,7 +1293,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(reconnect.consentHtml).toContain('data:image/webp;base64,' + Buffer.from(portrait.bytes).toString('base64'));
     expect(await avatar()).toBe(chosen);
   });
-  it('pushes one POST per tag to the webhook a member set, with its sealed bearer secret', async () => {
+  it('R1: pushes the asking agent’s exact back-tag instructions per tag to the webhook a member set, with its sealed bearer secret', async () => {
     await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
     const { client, member } = await connected();
     const previous = process.env.BEELINE_MCP_WEBHOOK_KEY;
@@ -1294,8 +1309,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       const stored = (await db.query<{ callback_url: string; callback_secret: string }>('SELECT callback_url,callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
       expect(stored.callback_url).toBe('https://hooks.example/muse'); expect(stored.callback_secret).not.toContain('tag-secret');
       const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, USER);
-      await routeHumanMessage(db, sent.messageId);
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, AGENT);
+      await routeAgentResult(db, undefined, sent.messageId, { roomId: ROOM, agentId: AGENT });
       const posts: { url: string; authorization: string | null; body: Record<string, unknown> }[] = [];
       await deliverMcpMemberWebhooks(db, async (url, init) => {
         posts.push({ url: String(url), authorization: new Headers(init?.headers).get('authorization'), body: JSON.parse(String(init?.body)) });
@@ -1305,6 +1320,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(posts[0]).toMatchObject({ url: 'https://hooks.example/muse', authorization: 'Bearer tag-secret',
         body: { memberId: member, roomId: ROOM, messageId: sent.messageId, text: `@${handle} please answer` } });
       expect(String(posts[0]!.body.instruction)).toContain('send_message');
+      expect(String(posts[0]!.body.instruction)).toContain('Start your reply with @demo-agent to wake the asking agent.');
+      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake it');
       // Removing the webhook stops the push.
       await client.callTool({ name: 'set_webhook', arguments: { url: '' } });
       const quiet = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} again` }, USER);
@@ -1354,6 +1371,18 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(readFileSync(new URL('../../../web/sitemap.xml', import.meta.url), 'utf8')).toContain('<loc>https://usebeeline.app/connect/</loc>');
   });
   const data = (result: unknown) => JSON.parse(((result as { content: { text: string }[] }).content)[0]!.text).data;
+  it('owner-unknown: identifies the approving owner before and after setup, even without Rooms', async () => {
+    const { client, member } = await connected();
+    const listed = () => client.callTool({ name: 'list_rooms', arguments: {} }).then(data);
+    expect((await listed()).owner).toEqual({ name: 'Demo', handle: 'demo' });
+    expect((await listed()).setup).toContain('your own app');
+    const profile = await client.callTool({ name: 'set_profile', arguments: { name: 'Existing Bot' } });
+    expect(profile.isError).toBeFalsy();
+    expect(await listed()).toMatchObject({ owner: { name: 'Demo', handle: 'demo' } });
+    expect((await listed()).setup).toBeUndefined();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NOT NULL', [member]);
+    expect(await listed()).toMatchObject({ rooms: [], owner: { name: 'Demo', handle: 'demo' } });
+  });
   it('repeats the setup rule in read results until the member calls set_profile', async () => {
     const { client } = await connected();
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toContain('set_profile');
@@ -1361,6 +1390,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const tools = (await client.listTools()).tools;
     expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('call it first');
     expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^Call this first/);
+    expect(tools.find(t => t.name === 'set_profile')!.description).toContain('display name and profile picture you already use in your own app');
+    expect(tools.find(t => t.name === 'set_profile')!.description).toContain('https URL or data URI');
+    expect(client.getInstructions()).toContain('Read the owner field in list_rooms');
+    expect(client.getInstructions()).toContain('display name and profile picture you already use in your own app');
     await client.callTool({ name: 'set_profile', arguments: { name: 'Named', handle: `named_${randomBytes(3).toString('hex')}` } });
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toBeUndefined();
     expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toBeUndefined();
@@ -1384,6 +1417,68 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions).toEqual([]);
     const third = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} third` }, USER);
     expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions.map((m: { id: string }) => m.id)).toEqual([third.messageId]);
+  });
+  it('SESSION-JOIN-1: a long poll returns at once when a tag arrives, and after its wait otherwise', async () => {
+    const { client, member } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    // A client learns the name and handle its owner allowed.
+    expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).you).toEqual({ id: member, name: expect.any(String), handle });
+    const first = data(await client.callTool({ name: 'list_mentions', arguments: {} }));
+    const now = new Date().toISOString();
+    let started = Date.now();
+    const empty = data(await client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 1, wakesAfter: now } }));
+    expect(empty.mentions).toEqual([]);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    started = Date.now();
+    const waiting = client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 20, wakesAfter: now } });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const tag = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} are you there?` }, USER);
+    const page = data(await waiting);
+    expect(page.mentions.map((m: { id: string }) => m.id)).toEqual([tag.messageId]);
+    expect(Date.now() - started).toBeLessThan(5000);
+    const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
+    expect(refused.isError).toBe(true);
+  });
+  it('SESSION-JOIN-1: a headless session proposes its name, signs in on another device and collects its code by state', async () => {
+    const handoff = origin + '/mcp/oauth/handoff';
+    const registered = await post('/mcp/oauth/register', { client_name: 'Claude Code', redirect_uris: [handoff] });
+    expect(registered.status).toBe(201);
+    const client = await registered.json() as { client_id: string };
+    const verifier = opaque(), state = opaque();
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: handoff, response_type: 'code', resource: origin + '/mcp',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state,
+      member_name: 'payments  api\u0007' });
+    expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
+    const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
+    const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+    const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+    await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+    await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    await db.query(`UPDATE identities SET handle='payments_api' WHERE id=$1`, [AGENT]);
+    const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
+    expect(page).toContain('Add Claude Code to your team');
+    expect(page).toContain('payments api');
+    // Another member in the Workspace holds the plain handle already.
+    expect(page).toContain('@payments_api_2');
+    await db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
+    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    const target = new URL(allowed.headers.get('location')!);
+    expect(target.origin + target.pathname).toBe(handoff);
+    // The person's browser lands on Beeline's own page, which keeps the code for the session.
+    const landed = await fetch(target);
+    expect(landed.status).toBe(200);
+    expect(await landed.text()).toContain('Go back to your session');
+    expect((await post('/mcp/oauth/handoff', { state: opaque() })).status).toBe(400);
+    const collected = await (await post('/mcp/oauth/handoff', { state })).json() as { code: string };
+    expect(collected.code).toBe(target.searchParams.get('code'));
+    expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
+    // The code alone is not enough: the verifier stays with the session.
+    expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: opaque() })).status).toBe(400);
+    const tokens = await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: verifier });
+    expect(tokens.status).toBe(200);
+    const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
+    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'payments api', handle: 'payments_api_2' });
+    expect((await fetch(`${origin}/mcp/oauth/handoff?state=short&code=x`)).status).toBe(400);
   });
   it('threads a reply under a message in the same Room and refuses a foreign one', async () => {
     const { client, member } = await connected();
@@ -1518,10 +1613,17 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     beforeAll(async () => {
       await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'big','public')`, [BIG, WORKSPACE]);
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, BIG, USER, AGENT]);
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
-        SELECT encode(sha256(('big'||g)::bytea),'hex'),$1,CASE WHEN g%3=0 THEN $3 ELSE $2 END,
-          'message '||g||' about @demo-agent and the release plan, with body text long enough to look real',
-          now()-((20001-g)||' seconds')::interval FROM generate_series(1,20000) g`, [BIG, USER, AGENT]);
+      // Seed pre-cutover history without replay fanout. Fresh MCP sends below
+      // retain all triggers and exercise the live write path against this history.
+      await db.query('ALTER TABLE messages DISABLE TRIGGER beeline_notify_live_messages');
+      try {
+        await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+          SELECT encode(sha256(('big'||g)::bytea),'hex'),$1,CASE WHEN g%3=0 THEN $3 ELSE $2 END,
+            'message '||g||' about @demo-agent and the release plan, with body text long enough to look real',
+            now()-((20001-g)||' seconds')::interval FROM generate_series(1,20000) g`, [BIG, USER, AGENT]);
+      } finally {
+        await db.query('ALTER TABLE messages ENABLE TRIGGER beeline_notify_live_messages');
+      }
       // The long seed outlives the server's keep-alive; drop the stale pooled socket.
       await fetch(origin + '/.well-known/oauth-authorization-server').catch(() => undefined);
     }, 120_000);
@@ -1534,6 +1636,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(Date.now() - started).toBeLessThan(3_000);
       expect(sent.woken).toEqual(['demo-agent']);
       expect(await commands(sent.messageId)).toBe(1);
+      expect((await db.query(`SELECT 1 FROM live_journal
+        WHERE stream_id=$1 AND event->>'messageId'=$2`, [`room:${BIG}`, sent.messageId])).rowCount).toBe(1);
     }, 60_000);
     it('returns one message to a retry sent while the first call is in flight, and wakes once', async () => {
       const { client } = await connected();

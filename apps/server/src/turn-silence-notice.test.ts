@@ -540,6 +540,54 @@ describe('first-silence notice', () => {
     });
   });
 
+  it('WAKE-STORM: repeated ACP rejections settle each command and share one notice until recovery', async () => {
+    const daemon = new DaemonService(database, new LiveHub());
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const command = await ask(database, `protocol-${attempt}`);
+      const result = await daemon.execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId: command.turn_request_id, generationId: 'g1', status: 'failed',
+        reason: 'ACP error -32602: Invalid params', reasonKind: 'hiccup',
+      }, AGENT);
+      expect(result.hiccupRestart).toBeUndefined();
+      expect(await commandState(database, command.id)).toMatchObject({ state: 'complete', hiccup_attempts: 0 });
+      // A long outage must not start another failure span every ten minutes.
+      await database.query(`UPDATE messages SET created_at=now()-interval '1 hour' WHERE card_type='turn-failed'`);
+    }
+    const notices = async () => (await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'`, [ROOM])).rows;
+    expect(await notices()).toHaveLength(1);
+    // Transcript ordering can put a notice after its cause's timestamp.
+    await database.query(`UPDATE messages SET created_at=now()+interval '1 day' WHERE card_type='turn-failed'`);
+    const recovered = await ask(database, 'protocol-recovered');
+    await daemon.execute('postAgentTurnReceipt', {
+      roomId: ROOM, requestId: recovered.turn_request_id, generationId: 'g1', status: 'complete',
+    }, AGENT);
+    const failed = await ask(database, 'protocol-new-span');
+    await daemon.execute('postAgentTurnReceipt', {
+      roomId: ROOM, requestId: failed.turn_request_id, generationId: 'g1', status: 'failed',
+      reason: 'ACP error -32602: Invalid params', reasonKind: 'hiccup',
+    }, AGENT);
+    expect(await notices()).toHaveLength(2);
+  });
+
+  it('WAKE-STORM: a GitHub reset shares one notice across retries, long waits and new wakes', async () => {
+    const daemon = new DaemonService(database, new LiveHub());
+    const requestId = 'github-reset';
+    const command = await ask(database, requestId);
+    const reason = 'GitHub rate limit; checks readable again at 2026-10-27T18:07:00.000Z';
+    for (const attempt of [1, 2, 3]) {
+      if (attempt > 1) await claimAgentCommand(database, ROOM, AGENT, command.id, `g${attempt}`);
+      await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, requestId,
+        generationId: `g${attempt}`, status: 'failed', reason, reasonKind: 'hiccup' }, AGENT);
+      await database.query(`UPDATE messages SET created_at=now()-interval '1 hour' WHERE card_type='turn-failed'`);
+    }
+    const next = await ask(database, 'github-reset-new-wake');
+    await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, requestId: next.turn_request_id,
+      generationId: 'g1', status: 'failed', reason, reasonKind: 'hiccup' }, AGENT);
+    const notices = (await database.query<{ request_id: string }>(
+      `SELECT card->>'requestId' request_id FROM messages WHERE room_id=$1 AND card_type='turn-failed'`, [ROOM])).rows;
+    expect(notices).toEqual([{ request_id: requestId }]);
+  });
+
   it.each(['human', 'agent'])('retries a hung harness once for a %s trigger, then completes its command', async (author) => {
     const requestId = 'hang-request';
     const command = await ask(database, requestId);

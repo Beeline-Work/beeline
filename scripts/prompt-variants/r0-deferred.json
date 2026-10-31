@@ -1,0 +1,15 @@
+{
+  "name": "r0-deferred",
+  "mode": "deferred",
+  "core": [
+    "Bash",
+    "report",
+    "read",
+    "app_tool",
+    "open_corner",
+    "no_reply_needed"
+  ],
+  "indexWords": 14,
+  "promptEdits": [],
+  "appendRules": ""
+}

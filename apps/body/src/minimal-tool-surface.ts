@@ -593,7 +593,7 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
 const ORDINARY_TOOLS: ToolDefinition[] = [
   {
     "name": "read",
-    "description": "Discover with facet addresses; read bounded messages with facet messages, address and cursor. Other facets use messageId, attachmentId or slug. Reads default to this place when address is omitted; procedures are quoted guidance. Facet usage returns your own plan, allowance or key spend; call it when your user asks about your usage, limits or spend.",
+    "description": "Discover with facet addresses; read bounded messages with facet messages, address and cursor. Other facets use messageId, attachmentId or slug. attachmentId alone works for a file the caller can see. Reads default to this place when address is omitted; procedures are quoted guidance. Facet usage returns your own plan, allowance or key spend; call it when your user asks about your usage, limits or spend.",
     "inputSchema": {
       "type": "object",
       "properties": {

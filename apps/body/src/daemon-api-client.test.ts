@@ -601,6 +601,8 @@ describe('DaemonApiClient', () => {
     const frames: unknown[] = [];
     const refresh = vi.fn();
     client.setUsageRefreshListener(refresh);
+    const recovered = vi.fn();
+    client.setConfigChangedListener(recovered);
     client.setAgentSignInListener((frame) => frames.push(frame));
     const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
     const socket = FakeWebSocket.instances[0]!;
@@ -616,6 +618,11 @@ describe('DaemonApiClient', () => {
       { type: 'agent-sign-in', step: 'start', attemptId: 'a1', cardId: 'card-1' },
       { type: 'agent-sign-in', step: 'code', attemptId: 'a1', code: 'c#s' },
     ]);
+    expect(recovered).not.toHaveBeenCalled();
+    socket.message({ type: 'agent-sign-in', step: 'result', attemptId: 'a1', outcome: 'failed', error: 'rejected' });
+    expect(recovered).not.toHaveBeenCalled();
+    socket.message({ type: 'agent-sign-in', step: 'result', attemptId: 'a1', outcome: 'signed-in' });
+    expect(recovered).toHaveBeenCalledOnce();
     release();
   });
 });

@@ -23,6 +23,7 @@ for (const theme of ['obsidian', 'bone'])
             mobile,
             shims,
             width,
+            budgetMs: 10_000,
             query: `?${theme}${large ? '&large' : ''}`,
             screenshotPath: process.env.SYSTEM_LINES_SCREENSHOT_DIR
               ? path.join(

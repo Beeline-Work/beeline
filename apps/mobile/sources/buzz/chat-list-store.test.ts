@@ -163,6 +163,22 @@ afterEach(() => {
 });
 
 describe('app-level Room list store', () => {
+  it.each([1, 5])('keeps %i complete offscreen arrivals ready in the Room cache', async (count) => {
+    const sidebar = join(vi.fn(async () => listOf([row('room-a', 10)])), visible);
+    await vi.advanceTimersByTimeAsync(10);
+    const roomKey = '/room/room-a:';
+    disk.hot.set(roomKey, { room: { id: 'room-a' }, messages: [], members: [],
+      latestAgentTurns: [], pendingAgentCommands: [], watchFilters: [] });
+    for (let index = 0; index < count; index++) {
+      emit({ monolithLive: { type: 'message-delta', roomId: 'room-a', message: {
+        id: `new-${index}`, text: `complete arrival ${index}`, createdAt: 20 + index,
+        author: agent, presentation: 'message',
+      } } });
+    }
+    expect((disk.hot.get(roomKey) as { messages: unknown[] }).messages).toHaveLength(count);
+    sidebar.release();
+  });
+
   it('NET-HOL-1 updates the sidebar without caching a preview as a complete Room message', async () => {
     const chats = vi.fn(async () => listOf([row('room-a', 10)]));
     const sidebar = join(chats, visible);
@@ -176,7 +192,7 @@ describe('app-level Room list store', () => {
     } } });
     await vi.advanceTimersByTimeAsync(1100);
     expect(sidebar.current()?.chats[0]?.latestMessage).toMatchObject({ id: 'new', text: 'short preview', mentionsViewer: true });
-    expect(disk.hot.get(roomKey)).toBe(completeRoom);
+    expect(disk.hot.has(roomKey)).toBe(false);
     expect(chats).toHaveBeenCalledTimes(1);
     sidebar.release();
   });

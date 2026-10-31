@@ -1,3 +1,4 @@
+import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
@@ -2284,6 +2285,7 @@ CREATE TABLE IF NOT EXISTS github_installations (
   status text NOT NULL DEFAULT 'active',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS api_retry_at timestamptz;
 ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS account_id text;
 ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS account_avatar_url text;
 ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS repository_selection text NOT NULL DEFAULT 'selected';
@@ -3658,6 +3660,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
     workflowBackfillOnce(database, 'feedback-triage-prompt-cases-v1', backfillFeedbackTriageWorkflow));
+  await workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow);
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
   await dataStep('workspace walk history', () =>

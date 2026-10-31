@@ -81,6 +81,7 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
+import { retryNotBefore } from './retry-barrier.js';
 import { distillTurnFailureReason, redactToolDetail, redactTurnError } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { hasCornerPrepareScript } from './corner-prepare-script.js';
@@ -492,6 +493,12 @@ export class MonolithCornerTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
   private checkoutBackgroundDone?: () => void;
+  private recoverIntake?: () => void;
+
+  configurationChanged(): void {
+    this.recoverIntake?.();
+  }
+
 
   /**
    * Called on socket resubscription. A `corner-complete` published while that
@@ -2648,6 +2655,9 @@ export class MonolithCornerTurnLoop {
         ).token;
         break;
       } catch (error) {
+        // Known resets belong to command intake's timed barrier, never this
+        // short transport retry loop. Its failed receipt requeues the turn.
+        if (retryNotBefore(error) !== undefined) throw error;
         const outage = error instanceof DaemonApiError && error.status === 502;
         const delay = outage ? Math.min(2_000 * 2 ** attempt, 30_000) : 250 * (attempt + 1);
         if (
@@ -2702,6 +2712,7 @@ export class MonolithCornerTurnLoop {
         onWake: (wake) => {
           this.wakeIntake = wake;
         },
+        onRecovery: (recover) => { this.recoverIntake = recover; },
         onPoll: () => {
           progress();
           this.options.onPoll();

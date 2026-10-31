@@ -26,6 +26,12 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
   const deadlineAt = Date.now() + 600_000;
+  // A running coding session joins Beeline without installing the helper.
+  if (command === 'join' || command === 'session') {
+    const { runSessionCommand } = await import('./session-join/command.js');
+    await runSessionCommand(args);
+    return;
+  }
   const layout = beelineInstallLayout() ?? discoveredBeelineInstallLayout();
   if (command === 'start' && (args.includes('--help') || args.includes('-h'))) {
     console.log(
@@ -39,7 +45,7 @@ async function main(): Promise<void> {
     !(await resolveBundleEntrypoint(layout.libDir))
   ) {
     console.log(
-      'usebeeline connect — install Beeline and pair an agent\nusebeeline update — recover this machine and serve every enabled agent\nusebeeline start [--all|--agent <public key>]\nhttps://usebeeline.app',
+      'usebeeline connect — install Beeline and pair an agent\nusebeeline join — join your Beeline Rooms from a running coding session\nusebeeline update — recover this machine and serve every enabled agent\nusebeeline start [--all|--agent <public key>]\nhttps://usebeeline.app',
     );
     return;
   }

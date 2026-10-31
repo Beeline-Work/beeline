@@ -7,7 +7,7 @@ import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
-import { agentHandleFromName } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -43,7 +43,24 @@ span.plate{display:grid;place-items:center;padding:0;font-weight:500}
 .perm strong{display:block;font-weight:500}.perm span{font-size:13px;line-height:19px;color:var(--quiet)}
 label{display:block;font-weight:500;margin-bottom:8px}.field{margin-bottom:24px}.field p{font-size:13px;line-height:19px;color:var(--quiet);margin:8px 0 0}
 input{width:100%;height:44px;font:16px SG,system-ui,sans-serif;padding:0 12px;border:1px solid var(--strong);border-radius:3px;background:var(--raised);color:var(--t1)}
+.routine{margin-top:32px;padding-top:24px;border-top:1px solid var(--border)}.routine h2{font-size:16px;line-height:23px;font-weight:500;margin:0 0 8px}.routine-text{white-space:pre-line;color:var(--t2);margin:16px 0}.copy{min-height:44px;padding:0;border:0;background:transparent;color:var(--brass);font:inherit;cursor:pointer}.copy-status{font-size:13px;line-height:19px;color:var(--quiet)}
 .foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}`;
+// Static code only; owner, app and Room text never enter executable script.
+const COPY_ROUTINE_SCRIPT = `document.getElementById('copy-routine').addEventListener('click', async () => {
+  const prompt = document.getElementById('starter-routine');
+  const status = document.getElementById('copy-status');
+  try {
+    await navigator.clipboard.writeText(prompt.textContent);
+    status.textContent = 'Copied';
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(prompt);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    status.textContent = 'Could not copy. Copy the selected text into your agent’s saved instructions.';
+  }
+});`;
 /** Whose privacy terms cover Room text a known client reads. */
 const PUBLISHERS: Record<string, string> = { 'meta muse': 'Meta', muse: 'Meta', grok: 'xAI', 'grok bot': 'xAI', chatgpt: 'OpenAI', claude: 'Anthropic' };
 export function mcpJson(response: ServerResponse, status: number, value: unknown): void {
@@ -137,13 +154,16 @@ export class RoomsMcpOAuth {
   private page(response: ServerResponse, title: string, content: string, status = 200): void {
     // No form-action: Chrome applies it to every redirect after a form POST, so
     // a client callback that redirects again (www.cursor.com to cursor.com) stalls.
+    const nonce = randomBytes(18).toString('base64');
+    const copyScript = content.includes('id="starter-routine"')
+      ? `<script nonce="${nonce}">${COPY_ROUTINE_SCRIPT}</script>` : '';
     response.writeHead(status, {
       // Preserve Origin on same-origin form POSTs without sending referrers to other sites.
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
-      'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
+      'content-security-policy': `default-src 'none'; ${copyScript ? `script-src 'nonce-${nonce}'; ` : ''}style-src 'unsafe-inline'; font-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'`,
       'x-content-type-options': 'nosniff',
     });
-    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main></html>`);
+    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escape(title)} · Beeline</title><style>${PAGE_STYLE}</style><main>${content}<p class="foot"><a href="https://usebeeline.app/privacy/">Privacy</a><a href="https://usebeeline.app/terms/">Terms</a><a href="mailto:hello@usebeeline.app">Support</a></p></main>${copyScript}</html>`);
   }
   /** The client's own mark joined to the real Beeline icon by a dashed line. */
   private brand(flow: Pick<Flow, 'name' | 'logo'>): string {
@@ -302,9 +322,12 @@ export class RoomsMcpOAuth {
         const scopes = [...new Set((q.get('scope') ?? MCP_READ).split(' '))];
         if (!scopes.length || scopes.some(scope => ![MCP_READ, MCP_WRITE].includes(scope))) throw new Refusal('invalid_scope', 'scope_invalid');
         const id = opaque(), browser = opaque();
-        await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at)
-          VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes')`,
-          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE]);
+        // A joining session proposes its own name; the Allow page shows it and the person can edit it.
+        const proposed = (q.get('member_name') ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/\s+/g, ' ').slice(0, 60).trim();
+        await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at,joiner_name,joiner_handle)
+          VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes',$8,$9)`,
+          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE,
+            proposed || null, null]);
         response.setHeader('set-cookie', `beeline_mcp=${browser}; Path=/mcp/oauth; HttpOnly; SameSite=Lax; Max-Age=600${this.origin.startsWith('https:') ? '; Secure' : ''}`);
         this.redirect(response, `/mcp/oauth/consent?flow=${id}`); return true;
       }
@@ -342,7 +365,15 @@ export class RoomsMcpOAuth {
             ? (await this.database.query<{ name: string; handle: string | null; avatar_base64: string | null }>(`SELECT i.name,i.handle,encode(a.bytes,'base64') avatar_base64 FROM identities i LEFT JOIN agent_avatars a ON a.agent_id=i.id AND i.avatar='/v1/agent-avatars/'||a.id::text WHERE i.id=$1`, [member])).rows[0]
             : undefined;
           const name = flow.joiner_name ?? existing?.name ?? flow.name;
-          const handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
+          let handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
+          if (!flow.joiner_handle && !existing && flow.joiner_name) {
+            // A proposed name gets a handle no one in the person's Workspaces holds yet, kept for Allow.
+            const taken = await this.database.query<{ handle: string }>(`SELECT DISTINCT i.handle FROM memberships owner
+              JOIN memberships m ON m.workspace_id=owner.workspace_id AND m.removed_at IS NULL JOIN identities i ON i.id=m.identity_id
+              WHERE owner.identity_id=$1 AND owner.room_id IS NULL AND owner.removed_at IS NULL AND i.handle IS NOT NULL`, [flow.identity_id]);
+            handle = uniqueAgentHandle(name, taken.rows.map(row => row.handle));
+            await this.database.query('UPDATE rooms_mcp_flows SET joiner_handle=$2 WHERE id=$1', [flow.id, handle]);
+          }
           const who = `<p class="who">Signed in as <b>${escape(flow.identity_name ?? 'Beeline user')}</b></p>`;
           if (url.searchParams.get('edit') === '1') {
             this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
@@ -352,7 +383,7 @@ export class RoomsMcpOAuth {
           const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Wake link (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called.</p></div><div class="field"><label for="wake_key">Wake key (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Wake link (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called.</p></div><div class="field"><label for="wake_key">Wake key (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><div id="starter-routine" class="routine-text">${escape(MCP_STARTER_ROUTINE)}</div><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
         }
         return true;
       }
@@ -399,6 +430,27 @@ export class RoomsMcpOAuth {
           return target.toString();
         });
         this.redirect(response, target); return true;
+      }
+      if (request.method === 'GET' && path === '/mcp/oauth/handoff') {
+        // A headless session's redirect: keep the code (useless without its PKCE verifier) until the session collects it.
+        const state = url.searchParams.get('state') ?? '';
+        if (!/^[A-Za-z0-9_-]{32,128}$/.test(state)) throw new Refusal('invalid_request', 'handoff_invalid');
+        const code = url.searchParams.get('code'), denied = url.searchParams.get('error');
+        if (!code && !denied) throw new Refusal('invalid_request', 'handoff_invalid');
+        await this.database.query(`INSERT INTO rooms_mcp_handoffs(state_hash,code,error,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes')
+          ON CONFLICT(state_hash) DO NOTHING`, [tokenHash(state), code && code.length <= 100 ? code : null, code ? null : 'access_denied']);
+        this.page(response, code ? 'Connected' : 'Not connected', `<div class="brand"><img class="mark" src="${BEELINE_ICON}" alt="Beeline"></div>${code
+          ? '<h1>Connected</h1><p class="lede">Go back to your session. It finishes joining by itself.</p>'
+          : '<h1>Not connected</h1><p class="lede">You chose Cancel. Your session did not join Beeline.</p>'}`);
+        return true;
+      }
+      if (request.method === 'POST' && path === '/mcp/oauth/handoff') {
+        const input = await mcpBody(request);
+        const state = string(input.state, 128);
+        const row = (await this.database.query<{ code: string | null; error: string | null }>(
+          'DELETE FROM rooms_mcp_handoffs WHERE state_hash=$1 AND expires_at>now() RETURNING code,error', [tokenHash(state)])).rows[0];
+        if (!row) { mcpJson(response, 400, { error: 'authorization_pending' }); return true; }
+        mcpJson(response, 200, row.code ? { code: row.code } : { error: row.error ?? 'access_denied' }); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/token') {
         const input = tokenInput = await mcpBody(request);
@@ -475,6 +527,7 @@ export class RoomsMcpOAuth {
 export const BROWSER_STEPS: Record<string, string> = {
   authorize: 'Starting the connection', login: 'Choosing how to sign in',
   consent: 'Showing what the app can do', 'consent submit': 'Saving your choice',
+  handoff: 'Returning to your session',
 };
 /** One fixed sentence per browser-step refusal reason; request values never reach the page. */
 export const BROWSER_REFUSALS: Record<string, string> = {
@@ -502,6 +555,7 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   wake_unavailable: 'Wake keys are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',
   wake_invalid: 'The wake link must be a public HTTPS URL. A wake key needs a link and cannot contain spaces or control characters.',
   decision_invalid: 'The page sent an answer other than Allow or Cancel.',
+  handoff_invalid: 'The session sent a return address Beeline cannot use.',
   invalid_parameter: 'Beeline hit an unexpected problem on this step.',
 };
 
@@ -511,6 +565,7 @@ function browserStep(method: string | undefined, path: string): string | undefin
   if (method === 'GET' && /^\/mcp\/oauth\/callback\/(google|github)$/.test(path)) return 'callback';
   if (method === 'GET' && path === '/mcp/oauth/consent') return 'consent';
   if (method === 'POST' && path === '/mcp/oauth/consent') return 'consent submit';
+  if (method === 'GET' && path === '/mcp/oauth/handoff') return 'handoff';
   return undefined;
 }
 

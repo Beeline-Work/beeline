@@ -152,6 +152,10 @@ export function classifyTurnSilence(
       fault: "it couldn't start: its program or interpreter is missing. Reinstall the agent on this computer with `beeline connect`",
     };
   }
+  // JSON-RPC rejects the request shape before the model runs. Replaying it
+  // cannot repair an incompatible adapter, even on a legacy hiccup receipt.
+  if (/\bACP error -(?:32600|32601|32602)\b/i.test(reason ?? ''))
+    return { kind: 'helper-out-of-date' };
   if (isTurnReceiptReasonKind(reasonKind)) {
     const kind = receiptKindToSilenceKind(reasonKind);
     if (kind === 'hiccup') {

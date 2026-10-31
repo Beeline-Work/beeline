@@ -40,6 +40,8 @@ import {
   selectReleaseComponentsFromPublishedInputs,
 } from './unified-release.mjs';
 
+import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
+
 const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
 const NEW_SHA = '2'.repeat(40);
@@ -749,10 +751,10 @@ test('PIN-STORE-NONE: the plan CLI returns a plan, a notice and no store leg for
     assert.equal(lines.run_mobile_native, 'false');
     assert.equal(lines.runtime_pin_changed, 'true');
     // The OTA leg is handed the runtimes the previous release served.
-    assert.deepEqual(JSON.parse(lines.ota_memory).previousTargets.map((t) => `${t.platform}@${t.runtimeVersion}`),
+    assert.deepEqual(decodeReleaseOutput(lines.ota_memory).previousTargets.map((t) => `${t.platform}@${t.runtimeVersion}`),
       ['android@40', 'android@39', 'android@38', 'ios@36', 'ios@34', 'ios@31']);
-    assert.equal(JSON.parse(lines.ota_memory).previousBranch, 'release-v0.0.8');
-    assert.equal(JSON.parse(lines.release_state).plan.paths, undefined);
+    assert.equal(decodeReleaseOutput(lines.ota_memory).previousBranch, 'release-v0.0.8');
+    assert.equal(decodeReleaseOutput(lines.release_state).plan.paths, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1269,10 +1271,16 @@ test('release_result records a fully delivered slow attempt as a success', () =>
 
   // Run the release_result classifier exactly as the job does: a fully
   // delivered attempt whose wall clock passed the old 20-minute budget.
-  function classifyDeliveredAttempt(triggerAgoSeconds, { otaResult = 'success' } = {}) {
+  function classifyDeliveredAttempt(triggerAgoSeconds, { otaResult = 'success', stateOutput, previous, previousOutput, suppress = false, expectedFailure } = {}) {
     const root = mkdtempSync(join(tmpdir(), 'beeline-release-budget-'));
     try {
-      const state = initializeRelease(identity);
+      const state = initializeRelease({ ...identity, previous });
+      const transport = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map((line) => { const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)]; }));
+      // Replay the runner's false positive: a multiline credential registered
+      // JSON punctuation as secret lines. Public encoded metadata survives.
+      if (suppress) for (const key of Object.keys(transport)) {
+        if (/[{}\[\]]/.test(transport[key])) delete transport[key];
+      }
       const now = Math.floor(Date.now() / 1000);
       const needs = {
         initialize: { result: 'success', outputs: {
@@ -1297,14 +1305,19 @@ test('release_result records a fully delivered slow attempt as a success', () =>
           GITHUB_OUTPUT: output,
           TRIGGER_EPOCH: String(now - triggerAgoSeconds),
           NEEDS: JSON.stringify(needs),
-          RELEASE_STATE: JSON.stringify(state),
-          PREVIOUS_RECORD: '',
+          RELEASE_STATE: stateOutput ?? transport.release_state ?? '',
+          PREVIOUS_RECORD: previousOutput ?? transport.previous_record ?? '',
+          GITHUB_STEP_SUMMARY: join(root, 'summary'),
           NO_OP: 'false',
           RELEASE_VERSION: identity.version,
           RELEASE_SHA: identity.sourceSha,
           RELEASE_ID: `${identity.version}-${identity.sourceSha}`,
         },
       });
+      if (expectedFailure) {
+        assert.match(readFileSync(join(root, 'summary'), 'utf8'), new RegExp(expectedFailure));
+        assert.equal(readFileSync(output, 'utf8').includes('state_ready=false'), true);
+      }
       return Object.fromEntries(
         readFileSync(output, 'utf8').split('\n').filter(Boolean).map((line) => {
           const index = line.indexOf('=');
@@ -1315,6 +1328,22 @@ test('release_result records a fully delivered slow attempt as a success', () =>
       rmSync(root, { recursive: true, force: true });
     }
   }
+
+  const previous = deliveredPrevious();
+  const masked = classifyDeliveredAttempt(26 * 60, { previous, suppress: true });
+  assert.equal(masked.outcome, 'success');
+  for (const [stateOutput, failure] of [['', 'release-state:missing'], ['{', 'release-state:invalid'], ['b64:broken', 'release-state:invalid'], ['null', 'release-state:invalid'], [JSON.stringify({ ...initializeRelease(identity), sourceSha: OLD_SHA }), 'release-state:invalid']]) {
+    const result = classifyDeliveredAttempt(60, { stateOutput, expectedFailure: failure });
+    assert.equal(result.outcome, 'failure');
+    assert.equal(result.failure_class, failure);
+  }
+  for (const [previousOutput, failure] of [['', 'previous-record:missing'], ['{', 'previous-record:invalid'], [encodeReleaseOutput({ ...previous, sourceSha: NEW_SHA }), 'previous-record:invalid']]) {
+    const result = classifyDeliveredAttempt(60, { previous, previousOutput, expectedFailure: failure });
+    assert.equal(result.outcome, 'failure');
+    assert.equal(result.failure_class, failure);
+  }
+  // Legacy raw JSON is accepted for local fixtures and same-commit reruns.
+  assert.equal(classifyDeliveredAttempt(60, { stateOutput: JSON.stringify(initializeRelease(identity)) }).outcome, 'success');
 
   // Run 541 shape: every component shipped and the OTA landed 25 minutes
   // after dispatch. The old budget rule failed this release.
@@ -1910,7 +1939,8 @@ test('ARTIFACT-NOT-FOUND: a rerun plans from the published record alone and read
       } });
       assert.equal(result.status, 0, result.stderr);
       const outputs = readFileSync(join(dir, 'outputs'), 'utf8');
-      return outputs.replace(/"(?:startedAt|updatedAt)":"[^"]+"/g, '');
+      return outputs.replace(/^release_state=(.+)$/m, (_, value) => `release_state=${JSON.stringify(decodeReleaseOutput(value))}`)
+        .replace(/"(?:startedAt|updatedAt)":"[^"]+"/g, '');
     };
     const first = runPlan();
     assert.match(first, /^run_server=true$/m);
@@ -1940,4 +1970,53 @@ test('R-DESKTOP-EVIDENCE: notification diagnostics are optional while desktop bu
     assert.notEqual(upload['continue-on-error'], true);
     assert.equal(upload.with['if-no-files-found'], 'error');
   }
+});
+
+test('public JSON release outputs survive punctuation masking across plan, OTA and bookkeeping', () => {
+  const previous = deliveredPrevious();
+  const state = initializeRelease({ version: 'v0.0.9', sourceSha: NEW_SHA, previous });
+  const outputs = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map((line) => {
+    const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
+  }));
+  for (const key of ['release_state', 'previous_record', 'ota_memory']) {
+    assert.doesNotMatch(outputs[key], /[{}\[\]]/);
+    assert.equal(typeof decodeReleaseOutput(outputs[key]), 'object');
+  }
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const ota = parse(readFileSync('.github/actions/mobile-ota-leg/action.yml', 'utf8'));
+  const publish = ota.runs.steps.find((step) => step.id === 'publish');
+  assert.match(publish.run, /store_runtime=\$\{encodeReleaseOutput/);
+  const memory = ota.runs.steps.find((step) => step.name === 'Read the live store runtimes');
+  assert.match(memory.run, /release-job-output.mjs OTA_MEMORY/);
+  assert.match(workflow.jobs.bookkeeping.steps.at(-1).run, /release-job-output.mjs PREVIOUS_RECORD/);
+  assert.equal(workflow.jobs.release_result.steps.find((step) => step.name === 'Surface release outcome and duration').if,
+    "steps.result.outputs.state_ready != 'false'");
+  const dir = mkdtempSync(join(tmpdir(), 'release-public-output-'));
+  try {
+    const output = join(dir, 'decoded.json');
+    const result = spawnSync(process.execPath, ['scripts/release-job-output.mjs', 'PREVIOUS_RECORD', output], {
+      env: { ...process.env, PREVIOUS_RECORD: outputs.previous_record }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), previous);
+    // A same-head no-op passes the published record as both state and previous;
+    // its supersedes identity still points at the older release.
+    const published = { ...previous, plan: { selected: RELEASE_COMPONENTS, carried: [] }, delivery: { state: 'success' }, supersedes: { version: 'v0.0.7', sourceSha: OLD_SHA } };
+    const restored = spawnSync(process.execPath, [RELEASE_SCRIPT, 'restore-job-state', '--state', output, '--previous', join(dir, 'previous.json')], {
+      env: { ...process.env, RELEASE_STATE: encodeReleaseOutput(published), PREVIOUS_RECORD: encodeReleaseOutput(published),
+        RELEASE_VERSION: published.version, RELEASE_SHA: published.sourceSha, GITHUB_OUTPUT: join(dir, 'outputs') }, encoding: 'utf8',
+    });
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), published);
+    const otaState = structuredClone(state);
+    applyComponentCheckpoints(otaState, checkpointsFromJobs({
+      initialize: { outputs: { run_mobile_ota: 'true' } },
+      mobile_ota: { result: 'success', outputs: {} },
+    }, { version: state.version, sourceSha: state.sourceSha }));
+    const observations = { previouslyLive: [{ platform: 'ios', runtimeVersion: '36' }] };
+    applyJobFacts(otaState, { mobile_ota: { result: 'success', outputs: {
+      ota_branch: 'release-v0.0.9', ota_targets: 'ios@36', store_runtime: encodeReleaseOutput(observations),
+    } } }, { previous });
+    assert.deepEqual(otaState.storeRuntime.previouslyLive, observations.previouslyLive);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

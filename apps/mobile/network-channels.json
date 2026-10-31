@@ -53,7 +53,7 @@
     {
       "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
       "kind": "fetch",
-      "count": 2,
+      "count": 1,
       "fate": "moves-to-socket",
       "why": "expo/fetch handed to MonolithSession for voice requests; goes with them."
     },
@@ -184,6 +184,13 @@
       "why": "Sign-in exchanges, Google link, GitHub reconnect, review exchange, logout and token refresh run before an authenticated socket can open; the general dispatch call goes with monolithFetch."
     },
     {
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "global-object",
+      "count": 1,
+      "fate": "exception",
+      "why": "Web build only: hands window to watchOtherTabs, which only listens for the storage event so another browser tab's sign-out reaches this one. Opens no connection."
+    },
+    {
       "file": "apps/mobile/sources/auth/signin-funnel.ts",
       "kind": "fetch",
       "count": 1,
@@ -252,6 +259,13 @@
       "count": 1,
       "fate": "exception",
       "why": "Voice call audio over WebRTC to LiveKit. Real-time media cannot ride the socket."
+    },
+    {
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "global-object",
+      "count": 1,
+      "fate": "exception",
+      "why": "Reads the RN$Bridgeless, nativeFabricUIManager and __turboModuleProxy flags off globalThis for a voice error report. Opens no connection."
     },
     {
       "file": "apps/mobile/sources/buzz/voice-transport.ts",

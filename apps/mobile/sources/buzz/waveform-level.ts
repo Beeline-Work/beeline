@@ -7,8 +7,10 @@ const SOURCE_FLOOR_DB = -60;
 const SOURCE_CEILING_DB = 0;
 const IOS_VOLUME_MIN = -2;
 const IOS_VOLUME_MAX = 10;
-const ANDROID_RMS_MIN_DB = -2;
-const ANDROID_RMS_MAX_DB = 10;
+// R1 Google recognizer captures reach 10 even on normal syllable peaks.
+// Leave headroom above those peaks; zero and negative readings are silence.
+// Evidence: apps/mobile/evidence/android-dictation-rms/README.md.
+const ANDROID_RMS_DISPLAY_CEILING = 12;
 
 /** Fixed display range in dBFS; no per-take gain or peak normalization. */
 export function waveformLevelFromDb(db: number): number {
@@ -24,13 +26,14 @@ export function voiceWaveformLevel(amplitude: number): number {
 }
 
 export function dictationWaveformLevel(value: number, platform: string): number {
+  if (platform === 'android') {
+    if (!Number.isFinite(value)) return 0;
+    // Android forwards recognizer-relative RMS, not iOS's scaled dBFS.
+    // Applying the dBFS display window again clips ordinary syllables at 7.
+    return Math.max(0, Math.min(1, value / ANDROID_RMS_DISPLAY_CEILING));
+  }
   // expo-speech-recognition iOS scales -60..0 dBFS to -2..10.
-  // Android forwards recognizer-relative RMS dB without that scaling. Use a
-  // package-documented -2..10 event envelope, not the old assumed -2..30.
-  // Android RMS is recognizer-relative, not calibrated dBFS; this conversion
-  // sets display gain and does not claim identical microphone calibration.
-  const min = platform === 'android' ? ANDROID_RMS_MIN_DB : IOS_VOLUME_MIN;
-  const max = platform === 'android' ? ANDROID_RMS_MAX_DB : IOS_VOLUME_MAX;
-  const db = SOURCE_FLOOR_DB + (value - min) / (max - min) * (SOURCE_CEILING_DB - SOURCE_FLOOR_DB);
+  const db = SOURCE_FLOOR_DB + (value - IOS_VOLUME_MIN) / (IOS_VOLUME_MAX - IOS_VOLUME_MIN)
+    * (SOURCE_CEILING_DB - SOURCE_FLOOR_DB);
   return waveformLevelFromDb(db);
 }

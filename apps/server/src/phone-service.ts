@@ -4203,6 +4203,8 @@ export class PhoneService {
     input: Input<Name>,
     viewerId: string,
     sourceClient?: { id: string; name: string },
+    /** Sign-in family of this device session. Absent when the caller is not one. */
+    familyId?: string,
   ): Promise<Output<Name>> {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
@@ -4275,13 +4277,13 @@ export class PhoneService {
           this.github,
         )) as Output<Name>;
       case 'sendRoomMessage': {
-        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId, sourceClient);
+        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
         await observeOnboardingMessage(this.database, (input as Input<'sendRoomMessage'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
-        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient);
+        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
         await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
         return sent as Output<Name>;
@@ -4295,6 +4297,8 @@ export class PhoneService {
           this.database,
           input as Input<'reportMessageIssue'>,
           viewerId,
+          sourceClient,
+          familyId,
         )) as Output<Name>;
       case 'setMessageBookmark':
         return (await this.setMessageBookmark(
@@ -4718,7 +4722,7 @@ export class PhoneService {
         ]);
         return undefined as Output<Name>;
       case 'reportRunningUpdate':
-        await this.reportUpdate(input as Input<'reportRunningUpdate'>, viewerId);
+        await this.reportUpdate(input as Input<'reportRunningUpdate'>, viewerId, familyId);
         return undefined as Output<Name>;
       case 'disconnectAiClient': {
         const clientId = (input as Input<'disconnectAiClient'>).clientId;
@@ -5072,6 +5076,7 @@ export class PhoneService {
     input: Input<'sendRoomMessage'>,
     author: string,
     sourceClient?: { id: string; name: string },
+    familyId?: string,
   ): Promise<Output<'sendRoomMessage'>> {
     if (!this.routingTransaction)
       return this.database.transaction((db) =>
@@ -5082,7 +5087,7 @@ export class PhoneService {
           this.sendPushTest,
           this.live,
           true,
-        ).sendMessage(input, author, sourceClient),
+        ).sendMessage(input, author, sourceClient, familyId),
       );
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
@@ -5170,6 +5175,7 @@ export class PhoneService {
           messageId: id,
           authorId: author,
           text: input.text,
+          ...(familyId ? { familyId } : {}),
         });
       return {
         messageId: id,
@@ -5252,6 +5258,7 @@ export class PhoneService {
     input: Input<'sendRoomReply'>,
     author: string,
     sourceClient?: { id: string; name: string },
+    familyId?: string,
   ): Promise<Output<'sendRoomReply'>> {
     if (!this.routingTransaction)
       return this.database.transaction((db) =>
@@ -5262,7 +5269,7 @@ export class PhoneService {
           this.sendPushTest,
           this.live,
           true,
-        ).sendReply(input, author, sourceClient),
+        ).sendReply(input, author, sourceClient, familyId),
       );
     const parent = await this.database.query<{
       root_message_id: string | null;
@@ -5334,6 +5341,7 @@ export class PhoneService {
         messageId: id,
         authorId: author,
         text: input.text,
+        ...(familyId ? { familyId } : {}),
       });
       return {
         messageId: id,
@@ -9065,13 +9073,27 @@ export class PhoneService {
     });
     return { accepted: true };
   }
-  private async reportUpdate(input: Input<'reportRunningUpdate'>, viewerId: string) {
+  private async reportUpdate(input: Input<'reportRunningUpdate'>, viewerId: string, familyId?: string) {
     if (input.platform && !['ios', 'android', 'macos', 'windows', 'linux'].includes(input.platform))
       throw new Error('invalid platform');
+    if (typeof input.deviceId !== 'string') throw new Error('invalid device');
+    const deviceId = input.deviceId.trim();
+    if (!deviceId || deviceId.length > 128) throw new Error('invalid device');
     await this.database.query(
       `INSERT INTO device_update_receipts(identity_id,device_id,receipt) VALUES($1,$2,$3::jsonb) ON CONFLICT(identity_id,device_id) DO UPDATE SET receipt=EXCLUDED.receipt,reported_at=now()`,
-      [viewerId, input.deviceId, JSON.stringify(input)],
+      [viewerId, deviceId, JSON.stringify({ ...input, deviceId })],
     );
+    // Remember this installation on the sign-in family that reported it.
+    // A browser session never reaches here, so it cannot inherit the receipt.
+    if (familyId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(familyId)) {
+      await this.database.query(
+        `INSERT INTO phone_update_devices(family_id,identity_id,device_id)
+         VALUES($1::uuid,$2,$3)
+         ON CONFLICT(family_id) DO UPDATE
+           SET identity_id=EXCLUDED.identity_id, device_id=EXCLUDED.device_id, reported_at=now()`,
+        [familyId, viewerId, deviceId],
+      );
+    }
   }
   private requireGitHub() {
     if (!this.github) throw new Error('GitHub service is not configured');

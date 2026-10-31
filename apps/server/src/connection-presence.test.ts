@@ -526,7 +526,6 @@ describe('delivery-driven presence', () => {
   });
 
   it('retains lifecycle facts through maintenance and makes no idle writes', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
     await database.query(
       `UPDATE live_outputs SET updated_at=now()-interval '3 hours' WHERE agent_id=$1`,
@@ -534,6 +533,9 @@ describe('delivery-driven presence', () => {
     );
     await runMaintenance(database);
     expect((await body()).status).toBe('online');
+    // Database work stays on real timers. A day of fake timeouts with a frozen
+    // Date re-arms deadline timers forever and the worker never reports back.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const query = vi.spyOn(database, 'query');
     await vi.advanceTimersByTimeAsync(24 * 3600_000);
     expect(query).not.toHaveBeenCalled();

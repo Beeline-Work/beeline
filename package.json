@@ -59,6 +59,7 @@
     "prove:agent-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-agent-sign-in.ts",
     "prove:signin-attempts": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-signin-attempts.mjs",
     "prove:done-report-before-pr": "npm run build -w @beeline/server && node --import tsx scripts/prove-done-report-before-pr.mjs",
+    "prove:handback-route": "npm run build -w @beeline/server && node --import tsx scripts/prove-handback-route.mjs",
     "prove:report-files": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-files.mjs",
     "prove:report-wake-artifacts": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-wake-artifacts.mjs",
     "prove:closed-corner": "npm run build -w @beeline/server && node --import tsx scripts/prove-closed-corner.mjs",

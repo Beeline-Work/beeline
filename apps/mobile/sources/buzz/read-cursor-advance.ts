@@ -17,36 +17,49 @@ function isProvisional(
 }
 
 /**
- * The durable message id the viewport says has been read.
- *
- * A virtualized row may fold several durable messages into one; seeing that
- * row is seeing all of them, so the newest visible row contributes its LAST
- * durable id. Rows are ranked by their position in the transcript rather than
- * by any clock, because the transcript already carries the server's own
- * `(created_at, id)` order and the read mark is compared against exactly that.
- *
- * `chronological` must be the CHRONOLOGICAL order — oldest first — and not the
- * reversed array the native inverted list renders from. Ranking by index is
- * only "newest wins" when the array agrees with the server's ordering; handed
- * the phone's reversed list it picks the oldest visible row and reads a scroll
- * back up the transcript as forward progress. The jump control reads the same
- * order for the same reason (`_chat-surface.tsx`, `newestTranscriptRowId`).
- *
- * `visible` may arrive in any order — it is the list's own viewability report,
- * and only membership is taken from it.
+ * Row order is authoritative for ordinary and folded rows. Corner cards alone
+ * have moved away from their chronological position: merge them back by the
+ * server's (created_at, id) order for read marks, without moving their UI.
+ */
+function readBoundaries(chronological: readonly ChatDisplayMessage[]) {
+  const rows = chronological.filter(message => !isProvisional(message));
+  const time = (message: ChatDisplayMessage) =>
+    message.foldedIds ? message.timestamp * 1_000 : message.orderAtMs ?? message.timestamp * 1_000;
+  const compare = (left: ChatDisplayMessage, right: ChatDisplayMessage) =>
+    time(left) - time(right) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  const markers = rows.flatMap(host => (host.cornerMarkers ?? [])
+    .filter(marker => !isProvisional(marker))
+    .map(message => ({ message, hostId: host.id })))
+    .sort((left, right) => compare(left.message, right.message));
+  const boundaries: { id: string; hostId: string }[] = [];
+  let nextMarker = 0;
+  const appendMarker = () => {
+    const { message, hostId } = markers[nextMarker++]!;
+    for (const id of messageBoundaryIds(message)) boundaries.push({ id, hostId });
+  };
+  for (const row of rows) {
+    while (nextMarker < markers.length && compare(markers[nextMarker]!.message, row) < 0) appendMarker();
+    for (const id of messageBoundaryIds(row)) boundaries.push({ id, hostId: row.id });
+  }
+  while (nextMarker < markers.length) appendMarker();
+  return boundaries;
+}
+
+/**
+ * Seeing a host credits its anchored cards. Seeing the durable tail credits
+ * all preceding content, including a newest card anchored above the viewport.
+ * Away from the tail, cards on unseen hosts contribute nothing.
  */
 export function newestVisibleMessageId(
   chronological: readonly ChatDisplayMessage[],
   visible: readonly ChatDisplayMessage[],
 ): string | null {
-  let newestIndex = -1;
-  for (const message of visible) {
-    if (isProvisional(message)) continue;
-    const index = chronological.findIndex((row) => row.id === message.id);
-    if (index > newestIndex) newestIndex = index;
-  }
-  if (newestIndex < 0) return null;
-  return messageBoundaryIds(chronological[newestIndex]!).at(-1) ?? null;
+  const visibleIds = new Set(visible.filter(message => !isProvisional(message)).map(message => message.id));
+  const tail = newestCountableMessage(chronological);
+  const atTail = tail !== null && visibleIds.has(tail.id);
+  return readBoundaries(chronological)
+    .filter(boundary => atTail || visibleIds.has(boundary.hostId))
+    .at(-1)?.id ?? null;
 }
 
 /**
@@ -109,8 +122,8 @@ export function pinnedTailReadReport(
  * Coalesces a scroll's worth of viewport reports into one read-cursor write.
  *
  * Every array handed to this advancer is the CHRONOLOGICAL transcript, oldest
- * first — never the reversed array the native inverted list renders from. Both
- * the candidate's selection and the forward-only comparison rank by index, so
+ * first — never the reversed array the native inverted list renders from. The
+ * forward-only comparison ranks durable boundaries, including anchored cards, so
  * a reversed array silently inverts both.
  *
  * The boundary only ever moves forward under this advancer: it compares the
@@ -217,11 +230,10 @@ export class ReadCursorAdvancer {
     // A reader sitting still reports the same row many times over. Only a
     // different, later boundary is worth a write.
     if (this.#published === candidate) return false;
-    const published = chronological.findIndex((row) =>
-      messageBoundaryIds(row).includes(this.#published!),
-    );
+    const boundaries = readBoundaries(chronological);
+    const published = boundaries.findIndex(boundary => boundary.id === this.#published);
     if (published < 0) return true;
-    const next = chronological.findIndex((row) => messageBoundaryIds(row).includes(candidate));
-    return next < 0 || next >= published;
+    const next = boundaries.findIndex(boundary => boundary.id === candidate);
+    return next > published;
   }
 }

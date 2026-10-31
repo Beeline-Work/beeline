@@ -3115,6 +3115,8 @@ export function BuzzChatSurface({
     isFocused,
     newMessageHasObservedVisibility,
     newestTranscriptMessageId,
+    // An anchored card can arrive without changing the tail row's id.
+    visibleMessages,
     scrollController,
   ]));
   // Back from the code reader: center the row the reader opened it from.

@@ -1,3 +1,4 @@
+import { anchorCornerMarkers } from './corner-markers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import {
@@ -352,5 +353,71 @@ describe('ReadCursorAdvancer and the mark the server already holds', () => {
     advancer.observe(TRANSCRIPT, [TRANSCRIPT[3]!]);
     vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
     expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+// Reproduction R1: the newest durable card is displayed under an older source.
+describe('anchored corner card read boundaries (R1)', () => {
+  const source = row('source', { timestamp: 1 });
+  const middle = row('middle', { timestamp: 2 });
+  const tail = row('tail', { timestamp: 3 });
+  function card(id: string, timestamp: number) {
+    return row(id, { timestamp, daemonFact: { type: 'corner-open', sourceMessageId: 'source' } as ChatDisplayMessage['daemonFact'] });
+  }
+  const rows = anchorCornerMarkers([source, middle, tail, card('corner', 4)]);
+
+  it('keeps the card reachable under its source and publishes it when the tail is viewed', () => {
+    expect(rows[0]!.cornerMarkers?.map(marker => marker.id)).toEqual(['corner']);
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    advancer.seed('tail');
+    advancer.observe(rows, pinnedTailReadReport(rows, { pinnedToTail: true, landing: false, hasObservedVisibility: true }));
+    advancer.flush();
+    expect(publish).toHaveBeenCalledExactlyOnceWith('corner');
+  });
+
+  it('credits a visible host card even when another visible row follows the host', () => {
+    expect(newestVisibleMessageId(rows, rows.slice(0, 2))).toBe('corner');
+  });
+
+  it('seeing the host does not credit ordinary rows newer than its card', () => {
+    const withUnseenTail = [...rows, row('unseen', { timestamp: 5 })];
+    expect(newestVisibleMessageId(withUnseenTail, [withUnseenTail[0]!])).toBe('corner');
+  });
+
+  it('a newer ordinary reply advances past an already-read anchored card', () => {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    const withNewReply = [...rows, row('reply', { timestamp: 5 })];
+    advancer.seed('corner');
+    advancer.observe(withNewReply, [withNewReply.at(-1)!]);
+    advancer.flush();
+    expect(publish).toHaveBeenCalledExactlyOnceWith('reply');
+  });
+
+  it('does not credit a card on an unseen host while reading the middle', () => {
+    expect(newestVisibleMessageId(rows, [rows[1]!])).toBe('middle');
+  });
+
+  it('never moves backwards from a newer anchored card to a later-positioned row', () => {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    advancer.seed('corner');
+    advancer.observe(rows, [rows[1]!]);
+    advancer.flush();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('does not let an older card outrank a newer visible row', () => {
+    const olderCard = anchorCornerMarkers([source, card('corner', 1.5), middle, tail]);
+    expect(newestVisibleMessageId(olderCard, olderCard.slice(0, 2))).toBe('middle');
+  });
+
+  it('orders cards by milliseconds and id, not by their host or attachment order', () => {
+    const fine = anchorCornerMarkers([source, middle, tail,
+      { ...card('z', 4), orderAtMs: 4001 },
+      { ...card('a', 4), orderAtMs: 4002 },
+      { ...card('b', 4), orderAtMs: 4002 }]);
+    expect(newestVisibleMessageId(fine, [fine[0]!])).toBe('b');
   });
 });

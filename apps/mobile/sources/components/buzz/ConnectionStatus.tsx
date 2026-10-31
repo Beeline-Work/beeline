@@ -1,5 +1,5 @@
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
-import { useSyncExternalStore } from 'react';
+import { type ReactNode, useSyncExternalStore } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Button } from './Button';
@@ -7,14 +7,19 @@ import { InlineRow } from './IndexRow';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 
 /** One socket status line shared by the Room deck and every open Room. */
-export function ConnectionStatus() {
+type ConnectionStatusProps = {
+  /** Recovery content for a failed screen read while the socket remains live. */
+  connectedFallback?: ReactNode;
+};
+
+export function ConnectionStatus({ connectedFallback }: ConnectionStatusProps) {
   const connection = sharedLiveConnection();
   const state = useSyncExternalStore(
     (listener) => connection.subscribeConnectionStatus(listener),
     () => connection.connectionStatus(),
     () => 'disconnected',
   );
-  if (state === 'connected') return null;
+  if (state === 'connected') return connectedFallback ?? null;
   if (state === 'connecting') {
     return <InlineRow accessibilityLiveRegion="polite" style={styles.line} testID="connection-status-connecting">
       <BeelineMarkSpinner live />

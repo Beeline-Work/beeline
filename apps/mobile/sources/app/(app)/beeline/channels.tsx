@@ -866,7 +866,7 @@ export default function BuzzChannels() {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         {error === connectionErrorTitle
-          ? <ConnectionStatus />
+          ? <ConnectionStatus connectedFallback={<IndexRow title={`Could not load ${WORKSPACE_LABEL}s`} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />} />
           : <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />}
       </View>
     );

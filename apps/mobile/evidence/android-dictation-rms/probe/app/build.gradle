@@ -1,0 +1,4 @@
+plugins { id 'com.android.application' version '8.13.0' }
+android { namespace 'proof.rms'; compileSdk 35
+ defaultConfig { applicationId 'proof.rms'; minSdk 26; targetSdk 32; versionCode 1; versionName '1' }
+}

@@ -1,4 +1,5 @@
 import type { RepositoryOnboardingAction } from './repository-onboarding.js';
+import { PHONE_ROUTE_READ_OPERATIONS, type PhoneRouteOperationMap } from './phone-route-operations.js';
 import type { RoomSubscriptionListResult } from './subscriptions.js';
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
@@ -84,7 +85,7 @@ export type CornerMergeHold = {
   setAt: string;
 };
 
-export type PhoneOperationMap = {
+export type PhoneOperationMap = PhoneRouteOperationMap & {
   /** A short-lived browser viewer token, issued only to people who may steer its agent. */
   openComputerSession: { input: { id: string }; output: { access: string } };
   /** Explicitly return a live browser to its agent; closing a viewer is not a handback. */
@@ -284,6 +285,7 @@ export type PhoneOperationMap = {
  * may also repeat one on a fresh connection when the first attempt stalls.
  */
 export const PHONE_READ_OPERATIONS = [
+  ...PHONE_ROUTE_READ_OPERATIONS,
   'openComputerSession',
   'revealWebhookToken',
   'listRoomSubscriptions',

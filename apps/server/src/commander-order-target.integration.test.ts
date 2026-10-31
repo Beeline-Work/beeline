@@ -207,3 +207,44 @@ it.each(['corner', 'parent Room'])('stops a corner → %s → corner order loop 
     .rejects.toThrow('agent order chain depth limit reached');
   expect(await orderWakes()).toEqual(before);
 });
+
+it.each(['done', 'blocked', 'failed', 'needs_decision'].flatMap(status => [false, true].flatMap(digest => [JELLYBEAN, OWNER, EARTH].map(commander => ({ status, digest, commander })))))('HANDBACK-ROUTE-1: implementer handback $status (digest=$digest, commander=$commander) reaches the right recipient', async ({ status, digest, commander }) => {
+  const incoming = await cornerTurn();
+  // Baby reviews Candy's work; Jellybean remains the corner commander.
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, BABY]);
+  const { createAgentCommand } = await import('./agent-command.js');
+  const context = { cornerId: incoming.roomId, headSha: 'head', pullRequest: 42, briefRevision: 1 };
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    [incoming.roomId, JSON.stringify({ pr: { number: 42, headSha: 'head' } })]);
+  if (commander !== JELLYBEAN) await createAgentCommand(db, { id: randomBytes(32).toString('hex'),
+    roomId: incoming.roomId, agentId: CANDY, sourceMessageId: null, reason: 'order',
+    privatePayload: { kind: 'order', authorId: commander, fromRoomId: commander === OWNER ? DM : ROOM, text: 'Continue under my order' } });
+  const review = await createAgentCommand(db, { id: randomBytes(32).toString('hex'), roomId: incoming.roomId,
+    agentId: BABY, sourceMessageId: null, reason: 'order',
+    privatePayload: { kind: 'order', authorId: JELLYBEAN, fromRoomId: DM, text: 'Review the change' } });
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [review!.id, JSON.stringify(context)]);
+  const reviewer = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, BABY)).commands.find(c => c.id === review!.id)!;
+  await daemon.execute('claimAgentCommand', { roomId: reviewer.roomId, commandId: reviewer.id, generationId: 'review' }, BABY);
+  await daemon.execute('order', { roomId: reviewer.roomId, requestId: reviewer.turnRequestId, generationId: 'review',
+    address: incoming.roomId, text: 'FAIL: repair the missing proof' }, BABY);
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [incoming.id]);
+  const repair = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, CANDY)).commands.find(c => c.reason === 'order' && c.source.authorId === BABY)!;
+  if (digest) {
+    const folded = await createAgentCommand(db, { id: randomBytes(32).toString('hex'), roomId: incoming.roomId, agentId: CANDY,
+      sourceMessageId: null, reason: 'order', parent: { ...review!, review_context: context },
+      privatePayload: { kind: 'order', authorId: BABY, fromRoomId: incoming.roomId, text: 'Additional review findings' } });
+    await db.query(`UPDATE agent_commands SET coalesced_context=$2 WHERE id=$1`,
+      [repair.id, JSON.stringify({ id: folded!.id })]);
+    await db.query(`UPDATE agent_commands SET state='cancelled',cancellation_reason='coalesced_into:'||$1
+      WHERE room_id=$2 AND reason='order' AND agent_id=$3 AND id<>$1 AND review_context->>'purpose'='repair'`, [repair.id, incoming.roomId, CANDY]);
+  }
+  await daemon.execute('claimAgentCommand', { roomId: repair.roomId, commandId: repair.id, generationId: 'repair' }, CANDY);
+  await daemon.execute('report', { roomId: repair.roomId, requestId: repair.turnRequestId, generationId: 'repair',
+    status, text: `${status.replace('_', '-')}: repair result` }, CANDY);
+  const recipient = status === 'done' ? BABY : commander;
+  const destination = status === 'done' ? incoming.roomId : commander === EARTH ? ROOM : DM;
+  expect((await db.query(`SELECT agent_id,room_id FROM agent_commands WHERE reason='report'`)).rows)
+    .toEqual(recipient === OWNER ? [] : [{ agent_id: recipient, room_id: destination }]);
+  if (recipient === OWNER) expect((await db.query(`SELECT room_id FROM messages WHERE text=$1 AND presentation='message'`,
+    [`${status.replace('_', '-')}: repair result`])).rows).toEqual([{ room_id: DM }]);
+});

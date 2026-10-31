@@ -134,6 +134,7 @@ export class LiveConnection {
   private readonly pendingSubscribe = new Set<string>();
   private readonly overlays = new Map<string, RoomOverlayCache>();
   private readonly roomCursors = new Map<string, RoomCursor>();
+  private readonly workspaceCursors = new Map<string, RoomCursor>();
   private readonly traceOwners = new Map<string, Registration>();
   private readonly connectedListeners = new Set<() => void>();
   private socket: WebSocket | undefined;
@@ -187,6 +188,7 @@ export class LiveConnection {
       else if (previous === 0 && !this.pendingSubscribe.has(roomId)) fresh.push(roomId);
     }
     if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
+    if (!roomIds.size) this.sendWorkspaceSync();
     for (const roomId of held) this.replayLateJoin(registration, roomId);
     // Registration is complete before the socket authenticates. Initial
     // Workspace/Room reads start after this promise, so a slow live handshake
@@ -421,6 +423,7 @@ export class LiveConnection {
     this.pendingSubscribe.clear();
     this.overlays.clear();
     this.roomCursors.clear();
+    this.workspaceCursors.clear();
     this.traceOwners.clear();
     this.heardMessages.clear();
     this.reconnectAttempt = 0;
@@ -484,6 +487,7 @@ export class LiveConnection {
         setConnectionState('connected');
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
+        this.sendWorkspaceSync();
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
@@ -622,6 +626,14 @@ export class LiveConnection {
     }
   }
 
+  private sendWorkspaceSync(): void {
+    if (!this.socket || !isSocketOpen(this.socket) ||
+        ![...this.registrations.values()].some(r => !r.closed && !r.roomIds.size)) return;
+    this.socket.send(JSON.stringify({ type: 'sync', workspaceCursors:
+      Object.fromEntries([...this.workspaceCursors].map(([id, cursor]) =>
+        [id, { epoch: cursor.epoch, base: cursor.base, seen: [...cursor.seen] }])) }));
+  }
+
   private replayLateJoin(registration: Registration, roomId: string): void {
     const cursor = this.roomCursors.get(roomId);
     registration.listener({
@@ -642,6 +654,49 @@ export class LiveConnection {
 
   private dispatch(live: LiveWireEvent | { type: 'pong' }, generation: WebSocket): void {
     if (live.type === 'pong') return;
+    if (live.type === 'workspace-cursor') {
+      this.workspaceCursors.set(live.workspaceId, {
+        epoch: live.epoch, base: live.sequence, seen: new Set(),
+      });
+      if (!live.epoch) this.workspaceCursors.delete(live.workspaceId);
+      if (!live.reload) return;
+      live = { type: 'invalidate', roomId: '', reason: 'reconnect' };
+    } else if ('roomId' in live && live.roomId === '' && live.workspaceId &&
+        live.epoch && typeof live.sequence === 'number') {
+      const cursor = this.workspaceCursors.get(live.workspaceId);
+      if (cursor?.epoch === live.epoch && live.sequence <= cursor.base) return;
+      this.workspaceCursors.set(live.workspaceId, {
+        epoch: live.epoch, base: live.sequence, seen: new Set(),
+      });
+      // Existing list handlers use reconnect for a covering workspace read.
+      if (live.type === 'invalidate' && live.reason === 'workspace-replay')
+        live = { ...live, reason: 'reconnect' };
+    }
+    if (live.type === 'cursor') {
+      const cursor = this.roomCursors.get(live.roomId);
+      if (cursor && cursor.epoch === live.epoch && Number.isSafeInteger(live.sequence) &&
+          live.sequence! >= cursor.base) {
+        cursor.base = live.sequence!;
+        for (const seen of cursor.seen) if (seen <= cursor.base) cursor.seen.delete(seen);
+      }
+      return;
+    }
+    if (live.type === 'reload') {
+      this.roomCursors.delete(live.roomId);
+      this.overlays.delete(live.roomId);
+      noteCornerLaneSubscribed(live.roomId, false);
+      if (live.epoch && Number.isSafeInteger(live.sequence))
+        this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.sequence!, seen: new Set() });
+      live = { type: 'invalidate', roomId: live.roomId, reason: 'resync' };
+    }
+    // An event may race the replay that covers it. Its durable id is the
+    // stream epoch plus sequence, including for draft append validation.
+    if ('roomId' in live && live.roomId && live.type !== 'subscribed' &&
+        live.epoch && typeof live.sequence === 'number') {
+      const cursor = this.roomCursors.get(live.roomId);
+      if (cursor?.epoch === live.epoch &&
+          (live.sequence <= cursor.base || cursor.seen.has(live.sequence))) return;
+    }
     if (live.type === 'message-delta') this.hear(live.message.id);
     else if (live.type === 'sidebar-preview') this.hear(live.preview.id);
     else if (live.type === 'invalidate') this.hear(live.messageId);
@@ -732,7 +787,7 @@ export class LiveConnection {
         noteCornerLaneSubscribed(live.roomId, false);
       }
       if (cursor && live.sequence > cursor.base) {
-        if (live.sequence > cursor.base + 256) {
+        if (live.sequence > cursor.base + 1024) {
           this.roomCursors.delete(live.roomId);
           this.reconnect();
           return;

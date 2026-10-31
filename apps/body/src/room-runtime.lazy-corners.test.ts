@@ -2,16 +2,78 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DaemonApiError } from './daemon-api-client.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('idle corner discovery', () => {
+  it('WAKE-STORM: mass pushed starts are bounded and a reset parks queued and repeated starts', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-storm-'));
+    roots.push(supervisorRoot);
+    vi.useFakeTimers();
+    // One coordinator fails while the other's slower initial reads remain in flight.
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+      .mockReturnValueOnce(0).mockReturnValueOnce(0.99)
+      .mockReturnValueOnce(0).mockReturnValueOnce(0.99);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const reset = Date.now() + 600_000;
+    let inFlight = 0;
+    let peak = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+      if (name === 'getCornerRestoreState') {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 300));
+        inFlight--;
+        throw new DaemonApiError(`GitHub rate limit; checks readable again at ${new Date(reset).toISOString()}`, 502, true);
+      }
+      throw new Error(`unexpected ${name}`);
+    });
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const make = () => new RoomRuntimeCoordinator({
+      agent: { name: 'Bee', publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32) },
+      rooms: [], communityId: 'workspace', supervisorRoot,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+    } as unknown as AgentRuntimeRecord, resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never, { daemonApi: { execute } as unknown as DaemonApiClient });
+    const coordinators = [make(), make()];
+    const start = (id: number) => (coordinators[id % 2] as unknown as {
+      startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
+    }).startCorner({ cornerId: `corner-${id}`, parentRoomId: 'parent' });
+    const jobs = Array.from({ length: 80 }, (_, i) => start(i));
+    await vi.advanceTimersByTimeAsync(20_000);
+    await Promise.all(jobs);
+    expect(peak).toBeLessThanOrEqual(4);
+    const reads = execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState').length;
+    expect(reads).toBeGreaterThan(0);
+    expect(reads).toBeLessThanOrEqual(4);
+    await Promise.all(Array.from({ length: 80 }, (_, i) => start(i)));
+    expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads);
+    // Failed startup leaves the authoritative pending commands untouched.
+    expect(execute.mock.calls.some(([name]) => name === 'postAgentTurnReceipt')).toBe(false);
+    const wakes = coordinators.map(coordinator => {
+      const listener = vi.fn();
+      coordinator.setDiscoveryWakeListener(listener);
+      return listener;
+    });
+    await vi.advanceTimersByTimeAsync(581_000);
+    expect(wakes.every(wake => wake.mock.calls.length === 1)).toBe(true);
+    const resumed = start(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await resumed;
+    expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(reads + 1);
+    await Promise.all(coordinators.map(coordinator => coordinator.shutdown()));
+  });
+
   it('forgets archived parent mappings after discovery requests active corners only', async () => {
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-active-corner-'));
     roots.push(supervisorRoot);

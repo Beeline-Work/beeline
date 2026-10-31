@@ -58,11 +58,13 @@ it('R-GH-403: actual PR and discussion rate limits send no Sentry event; plain 4
     const port = (collector.address() as AddressInfo).port;
     const source = `import { captureServerError, flushServerErrors } from ${JSON.stringify(resolve('src/sentry.ts'))};
       import { GitHubAppClient } from '@beeline/auth/github';
-      const client = new GitHubAppClient({appId:'42',privateKey:'unused',slug:'beeline'});
       for (const headers of [
         {'x-ratelimit-remaining':'0','x-ratelimit-reset':String(Math.floor(Date.now()/1000)+600)},
         {'retry-after':'120'}, {}
       ]) {
+        // Independent failure spans: an earlier documented cooldown must not
+        // prevent the plain-403 fixture from actually reaching its provider.
+        const client = new GitHubAppClient({appId:'42',privateKey:'unused',slug:'beeline'});
         globalThis.fetch = async () => new Response('{}',{status:403,headers});
         for (const read of [() => client.readPullRequest('fake','owner/widgets',1),
           () => client.readPullRequestDiscussion('fake','owner/widgets',1)]) {

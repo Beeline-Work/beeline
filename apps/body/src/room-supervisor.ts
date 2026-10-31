@@ -1,3 +1,4 @@
+import { isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
 import { DaemonApiError } from './daemon-api-client.js';
 /** Failure backoff grows to this ceiling and continues until recovery. */
 export const ROOM_RETRY_DELAYS_MS: readonly number[] = [1_000, 5_000, 30_000];
@@ -10,6 +11,8 @@ export const ROOM_RETRY_DELAYS_MS: readonly number[] = [1_000, 5_000, 30_000];
 export class RoomSupervisor {
   readonly #parked = new Set<() => void>();
   #wakes = 0;
+  #configurationChanges = 0;
+  readonly #configurationWaits = new Set<() => void>();
 
   constructor(private readonly delaysMs: readonly number[] = ROOM_RETRY_DELAYS_MS) {}
 
@@ -17,6 +20,12 @@ export class RoomSupervisor {
   wake(): void {
     this.#wakes += 1;
     for (const resume of [...this.#parked]) resume();
+  }
+
+  /** Called only by the server's configuration event, never discovery/reconnect. */
+  configurationChanged(): void {
+    this.#configurationChanges++;
+    for (const resume of [...this.#configurationWaits]) resume();
   }
 
   /** Wakes so far; a wait that started from an older count does not wait. */
@@ -73,6 +82,7 @@ export class RoomSupervisor {
     let failures = 0;
     for (;;) {
       const since = this.#wakes;
+      const configuration = this.#configurationChanges;
       try {
         await run(() => {
           failures = 0;
@@ -81,6 +91,8 @@ export class RoomSupervisor {
       } catch (error) {
         if (signal?.aborted) return;
         failures += 1;
+        const retryAt = retryNotBefore(error);
+        const standing = isStandingRuntimeFault(error);
         const parked =
           error instanceof DaemonApiError &&
           !error.retryable &&
@@ -88,12 +100,36 @@ export class RoomSupervisor {
           error.status < 500;
         console.error(
           `[thin-core] ${label} intake failed; ${
-            parked
+            standing ? 'waiting for a configuration change'
+              : retryAt !== undefined ? `waiting until ${new Date(retryAt).toISOString()}`
+              : parked
               ? 'waiting for the next live open or discovery wake'
               : `retry ${failures} in ${this.delaysMs[Math.min(failures, this.delaysMs.length) - 1]}ms`
           }:`,
           error,
         );
+        if (retryAt !== undefined || standing) {
+          // Routine discovery, reconnects and other corners' errors cannot
+          // shorten a provider reset or repair a rejected adapter protocol.
+          await new Promise<void>(resolve => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const done = () => {
+              clearTimeout(timer);
+              this.#configurationWaits.delete(done);
+              signal?.removeEventListener('abort', done);
+              resolve();
+            };
+            signal?.addEventListener('abort', done, { once: true });
+            if (standing) this.#configurationWaits.add(done);
+            if (signal?.aborted || standing && configuration !== this.#configurationChanges) done();
+            else if (!standing) {
+              timer = setTimeout(done, Math.min(2_147_483_647, Math.max(0, retryAt! - Date.now()) + 50 + Math.floor(Math.random() * 250)));
+              timer.unref?.();
+            }
+          });
+          if (signal?.aborted) return;
+          continue;
+        }
         await this.retryDelay(
           parked ? this.delaysMs.length + 1 : Math.min(failures, this.delaysMs.length),
           signal,

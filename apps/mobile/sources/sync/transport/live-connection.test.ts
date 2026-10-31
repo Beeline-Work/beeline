@@ -819,6 +819,66 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('R-DURABLE-REPLAY: dedupes events and checkpoints filtered Room events', async () => {
+    const { connection } = createConnection();
+    const received = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], received);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'durable', cursor: 0 });
+    received.mockClear();
+    const event = { type: 'invalidate', roomId: ROOM_A, reason: 'message', epoch: 'durable', sequence: 1 };
+    sockets[0]!.emit(event);
+    sockets[0]!.emit(event);
+    expect(received).toHaveBeenCalledTimes(1);
+    sockets[0]!.emit({ type: 'cursor', roomId: ROOM_A, epoch: 'durable', sequence: 300 });
+    connection.reconnect();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    expect(JSON.parse(sockets[1]!.sent[0]!).cursors[ROOM_A]).toEqual({ epoch: 'durable', base: 300, seen: [] });
+    connection.dispose();
+  });
+
+  it('R-DURABLE-REPLAY: resumes workspace cursors, dedupes replay, and applies reload', async () => {
+    const { connection, changeIdentity } = createConnection();
+    const received = vi.fn();
+    await connection.register([], received);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'workspace-cursor', roomId: '', workspaceId: 'workspace',
+      epoch: 'durable', sequence: 10, reload: true });
+    expect(received).toHaveBeenCalledWith({ monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } });
+    received.mockClear();
+    const event = { type: 'invalidate', roomId: '', reason: 'workspace-replay', workspaceId: 'workspace',
+      epoch: 'durable', sequence: 11 };
+    sockets[0]!.emit(event);
+    sockets[0]!.emit(event);
+    expect(received).toHaveBeenCalledTimes(1);
+    connection.reconnect();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({ type: 'sync', workspaceCursors: {
+      workspace: { epoch: 'durable', base: 11, seen: [] } } });
+    changeIdentity();
+    await vi.waitFor(() => expect(sockets).toHaveLength(3));
+    sockets[2]!.open();
+    expect(JSON.parse(sockets[2]!.sent[0]!)).toEqual({ type: 'sync', workspaceCursors: {} });
+    connection.dispose();
+  });
+
+  it('R-DURABLE-REPLAY: reload invalidates the Room and starts at the server head', async () => {
+    const { connection } = createConnection();
+    const received = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], received);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'old', cursor: 0 });
+    sockets[0]!.emit({ type: 'reload', roomId: ROOM_A, epoch: 'new', sequence: 1200 });
+    expect(received).toHaveBeenCalledWith({ monolithLive: { type: 'invalidate', roomId: ROOM_A, reason: 'resync' } });
+    connection.reconnect();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    expect(JSON.parse(sockets[1]!.sent[0]!).cursors[ROOM_A]).toEqual({ epoch: 'new', base: 1200, seen: [] });
+    connection.dispose();
+  });
+
   it('does not replay a draft whose turn already ended', async () => {
     const { connection } = createConnection();
     const room: unknown[] = [];
@@ -979,7 +1039,7 @@ describe('LiveConnection', () => {
     await connection.register([], (event) => received.push(event));
     expect(sockets).toHaveLength(1);
     sockets[0]!.open();
-    expect(sockets[0]!.sent).toEqual([]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'sync', workspaceCursors: {} })]);
     // Its own first read covers the first socket.
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(received).toEqual([]);
@@ -1409,6 +1469,7 @@ describe('LiveConnection', () => {
     sockets[1]!.open();
     expect(sockets[1]!.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM_A] },
+      { type: 'sync', workspaceCursors: {} },
     ]);
     expect(roomless.map((event) => event.monolithLive)).toEqual([
       { type: 'invalidate', roomId: '', reason: 'reconnect' },

@@ -5,6 +5,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
+import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import {
   CORNER_ROW_FACT_COLUMNS,
   CORNER_ROW_MESSAGE_COLUMNS,
@@ -83,9 +84,15 @@ export async function notifyAgentConfigChange(
 }
 
 export const POSTGRES_LIVE_SCHEMA = `
+${DURABLE_LIVE_SCHEMA}
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE
   payload jsonb;
+  workspace text;
+  source_room text;
+  parent_room text;
+  body jsonb;
+  streams text[] := ARRAY[]::text[];
 BEGIN
   CASE TG_TABLE_NAME
     WHEN 'messages' THEN
@@ -345,6 +352,43 @@ BEGIN
     );
   END IF;
   IF payload->>'roomId' IS NOT NULL THEN
+    -- Workspace first, then Room and parent: the same lock order for every
+    -- writer. Deleted Rooms retain their workspace in OLD.
+    source_room := NULLIF(payload->>'roomId','');
+    parent_room := NULLIF(payload->>'cornerParentId','');
+    workspace := COALESCE(payload->>'workspaceId',
+      (SELECT workspace_id::text FROM rooms WHERE id=source_room::uuid));
+    IF TG_TABLE_NAME IN ('rooms','memberships','workspaces') THEN
+      workspace := COALESCE(workspace,
+        to_jsonb(NEW)->>'workspace_id',to_jsonb(OLD)->>'workspace_id');
+      IF TG_TABLE_NAME='workspaces' THEN workspace := COALESCE(NEW.id,OLD.id)::text; END IF;
+    END IF;
+    -- Draft text/presence is an overlay, restored by the existing snapshot.
+    -- Durable Room state, including reactions and deletes, is ID-only here.
+    IF TG_TABLE_NAME <> 'live_outputs' AND (source_room IS NOT NULL OR workspace IS NOT NULL) THEN
+      IF workspace IS NOT NULL THEN
+        PERFORM beeline_journal('workspace:' || workspace,jsonb_build_object(
+          'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room));
+        streams := array_append(streams,'workspace:' || workspace);
+      END IF;
+      IF source_room IS NOT NULL THEN
+        body := jsonb_strip_nulls(jsonb_build_object(
+          'type','invalidate','roomId',source_room,'reason','postgres:' || TG_TABLE_NAME,
+          'messageId',payload->>'messageId','agentId',payload->>'agentId',
+          'requestId',payload->>'requestId','operation',TG_OP,
+          'trace',jsonb_build_object('id',payload->>'traceId',
+            'databaseAt',payload->'databaseAt','emittedAt',payload->'databaseAt'),
+          'readerId',CASE WHEN TG_TABLE_NAME='room_read_marks' THEN payload->>'identityId' END));
+        PERFORM beeline_journal('room:' || source_room,body);
+        streams := array_append(streams,'room:' || source_room);
+      END IF;
+      IF parent_room IS NOT NULL AND parent_room IS DISTINCT FROM source_room THEN
+        PERFORM beeline_journal('room:' || parent_room,jsonb_build_object(
+          'type','invalidate','roomId',parent_room,'reason','corner-status'));
+        streams := array_append(streams,'room:' || parent_room);
+      END IF;
+    END IF;
+    payload := payload || jsonb_build_object('journalStreams',streams);
     PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', payload::text);
   END IF;
   IF TG_TABLE_NAME='agent_commands' THEN
@@ -411,6 +455,7 @@ export interface LivePgClient {
 type LivePgClientFactory = () => LivePgClient;
 
 interface LiveNotificationPayload {
+  journalStreams?: string[];
   table: string;
   operation: string;
   roomId: string;
@@ -474,6 +519,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
     )
       return undefined;
     return {
+      ...(Array.isArray(parsed.journalStreams)
+        ? { journalStreams: parsed.journalStreams.filter((s): s is string => typeof s === 'string') } : {}),
       table: parsed.table,
       operation: parsed.operation,
       roomId: parsed.roomId,
@@ -635,6 +682,7 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
+    if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
       return;

@@ -531,7 +531,7 @@ export class DaemonService {
         for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
       } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
         await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
-      } else if (isCorner && (['getCornerRestoreState', 'order', 'report', 'postCornerMessage'].includes(name) ||
+      } else if (isCorner && (['order', 'report', 'postCornerMessage'].includes(name) ||
         name === 'postRoomMessage' && candidate.relay === undefined)) {
         await this.github.refreshCornerReviewHead?.(scopedRoom);
       }
@@ -3423,6 +3423,7 @@ export class DaemonService {
   }
 
   private async roomMessage(input: Input<'getRoomMessage'>, agentId: string): Promise<{ messageId: string; body: string; attachments: DaemonAttachment[]; nextOffset?: number }> {
+    if (input.attachmentId !== undefined) return this.roomAttachment(input, agentId);
     let borrowedSource = false;
     await this.access(input.roomId, agentId).catch(async (error: unknown) => {
       if (!(error instanceof AccessDeniedError)) throw error;
@@ -3572,6 +3573,47 @@ export class DaemonService {
       attachments: await this.withStoredDigests(attachments),
       ...(nextOffset < row.total ? { nextOffset } : {}),
     };
+  }
+
+  /** Locate candidates only; the existing message/brief reads decide reach. */
+  private async roomAttachment(input: Input<'getRoomMessage'>, agentId: string): Promise<{
+    messageId: string; body: string; attachments: DaemonAttachment[];
+  }> {
+    const wanted = input.attachmentId!.trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(wanted))
+      return { messageId: '', body: '', attachments: [] };
+    const candidates = await this.database.query<{ id: string }>(
+      `SELECT message.id FROM messages message
+       WHERE message.deleted_at IS NULL AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements(message.attachments) file
+         WHERE file->>'mediaId'=$1 OR file->>'url' LIKE '%/v1/media/' || $1)
+       UNION
+       SELECT command.id FROM agent_commands command WHERE EXISTS (
+         SELECT 1 FROM jsonb_array_elements(command.private_payload->'attachments') file
+         WHERE file->>'mediaId'=$1 OR file->>'url' LIKE '%/v1/media/' || $1)`, [wanted]);
+    for (const candidate of candidates.rows) {
+      try {
+        const message = await this.roomMessage({ ...input, attachmentId: undefined, messageId: candidate.id }, agentId);
+        if (message.attachments.some(file => mediaIdFromUrl(file.url) === wanted)) return message;
+      } catch (error) {
+        if (!(error instanceof AccessDeniedError) &&
+            !/message (access denied|not found)/.test(String(error))) throw error;
+      }
+    }
+    const briefs = await this.database.query<{ corner_id: string; attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] }>(
+      `SELECT corner_id,attachments FROM corner_brief_revisions brief WHERE EXISTS (
+         SELECT 1 FROM jsonb_array_elements(brief.attachments) file WHERE file->>'objectId'=$1)
+       ORDER BY revision DESC`, [wanted]);
+    for (const brief of briefs.rows) {
+      try { await this.reach(brief.corner_id, agentId); }
+      catch (error) { if (error instanceof AccessDeniedError) continue; throw error; }
+      const file = brief.attachments.find(file => file.objectId === wanted)!;
+      return { messageId: wanted, body: '', attachments: [{
+        url: `/v1/media/${wanted}`, name: file.title, mimeType: file.mime,
+        size: file.size, sha256: file.sha256,
+      }] };
+    }
+    return { messageId: '', body: '', attachments: [] };
   }
 
   /** Each ready attachment's stored sha256, so a helper can skip re-downloading bytes it holds. */

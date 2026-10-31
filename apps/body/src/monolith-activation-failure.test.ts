@@ -12,7 +12,7 @@ import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
-type Loop = { activate(): Promise<string>; discardSession(preserve?: boolean): Promise<void>; run(): Promise<void>; client?: AcpClient };
+type Loop = { activate(): Promise<string>; discardSession(preserve?: boolean): Promise<void>; run(): Promise<void>; configurationChanged(): void; client?: AcpClient };
 
 it.each([['room', 'activation'], ['corner', 'activation'], ['room', 'intake'], ['corner', 'intake']] as const)('Reproduction ACP-LEAK: %s %s authentication refusal leaves no live subprocess', async (surface, path) => {
   const root = await mkdtemp(join(tmpdir(), 'beeline-activation-failure-'));
@@ -88,7 +88,17 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     }
     if (path === 'intake') {
       running = loop.run();
-      await vi.waitFor(() => expect(receipts).toHaveLength(4), { timeout: 10_000 });
+      if (surface === 'corner') {
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          await vi.waitFor(() => expect(receipts).toHaveLength(attempt), { timeout: 10_000 });
+          await vi.waitFor(() => expect(clients.filter(client => client.isAlive)).toHaveLength(0));
+          // A rejected corner intake stays parked despite later requests.
+          // Exercise four distinct recovery attempts, with cleanup between them.
+          await new Promise(resolve => setTimeout(resolve, 30));
+          expect(receipts).toHaveLength(attempt);
+          if (attempt < 4) loop.configurationChanged();
+        }
+      } else await vi.waitFor(() => expect(receipts).toHaveLength(4), { timeout: 10_000 });
       expect(receipts.every(receipt => receipt.reasonKind === 'not-signed-in')).toBe(true);
       expect(receipts.every(receipt => String(receipt.reason).includes('sign in again'))).toBe(true);
       expect(clients.filter(client => client.isAlive)).toHaveLength(0);

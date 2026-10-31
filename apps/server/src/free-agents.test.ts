@@ -257,11 +257,14 @@ describe('free starter agents', () => {
     const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
     const welcome = room.messages.find(message => message.choice)!.choice!;
     expect(welcome.prompt).toBe('Pick a first job');
-    expect(welcome.options.map(option => option.label)).toEqual(['Write code in your repo', 'Post a video to your YouTube', 'Something else']);
+    expect(welcome.options.map(option => option.label)).toEqual(['Make a welcome video and post it to my YouTube', 'Play tic-tac-toe with me', 'Something else']);
+    expect(welcome.options.map(option => option.consequence)).toEqual(['Beebee makes it, Luna checks it, you approve the post', 'You and Beebee against Luna', 'Tell us the job in your own words']);
     expect(room.messages.some(message => message.attachments?.length)).toBe(false);
     expect(room.messages.some(message => message.text.startsWith('Most AI apps'))).toBe(false);
     await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'C' }, OWNER);
-    expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM messages WHERE card->>'workflowSlug'='welcome-video'`)).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(1);
+    await db.query('DELETE FROM agent_commands');
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Plan a picnic' }, OWNER);
     expect((await db.query(`SELECT agent_id FROM agent_commands`)).rowCount).toBe(1);
   });
@@ -271,7 +274,9 @@ describe('free starter agents', () => {
     await finishWelcome(workspace.roomId!, OWNER);
     await finishWelcome(workspace.roomId!, OWNER);
     const welcome = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.choice)!.choice!;
-    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'B' }, OWNER);
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'A' }, OWNER);
+    await expect(phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'A' }, OWNER)).rejects.toThrow('already decided');
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'workflowSlug'='welcome-video' AND card->>'seq'='0'`, [workspace.roomId])).rowCount).toBe(1);
     const commands = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM agent_commands`)).rows;
     expect(commands).toHaveLength(1);
     const agent = commands[0]!.agent_id;
@@ -312,15 +317,18 @@ describe('free starter agents', () => {
     expect(commands).toEqual([{ name: 'Beebee' }]);
   });
 
-  it('opens the existing repository card when the code job is chosen', async () => {
-    const workspace = await phone.execute('createWorkspace', { name: 'Repo choice' }, OWNER);
-    await finishWelcome(workspace.roomId!, OWNER);
+  it('posts Luna’s stored game with inline faces when B is chosen', async () => {
+    const objects = new ObjectService(db, new MemoryObjectStorage().asStorage(), 'https://server.test');
+    phone = new PhoneService(db, 'https://server.test', undefined, undefined, live, false, db, objects);
+    phone.setFreeAgents(freeAgents);
+    const workspace = await phone.execute('createWorkspace', { name: 'Game' }, OWNER);
     await finishWelcome(workspace.roomId!, OWNER);
     const welcome = (await phone.readRoom(workspace.roomId!, OWNER))!.messages.find(message => message.choice)!.choice!;
-    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'A' }, OWNER);
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'B' }, OWNER);
     const room = (await phone.readRoom(workspace.roomId!, OWNER))!;
-    expect(room.messages.some(message => message.onboarding?.kind === 'repository')).toBe(true);
-    expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);
+    expect(room.messages.some(message => message.attachments?.some(file => file.mimeType === 'application/vnd.beeline.game+html'))).toBe(true);
+    expect((await db.query(`SELECT 1 FROM messages WHERE card->>'workflowSlug'='welcome-video'`)).rowCount).toBe(0);
+    expect(room.messages.some(message => message.text.startsWith('Game on.'))).toBe(true);
   });
 
   it('keeps starter agent mentions on the ordinary handoff path without a forced review limit', async () => {

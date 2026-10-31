@@ -1,0 +1,240 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { createHash } from 'node:crypto';
+import { createStub } from './prompt-replay-stub.mjs';
+import { loadSplit, gradeNative, summarize, frontier, codexArgs, nativePrompt, runSubscription, usableSample } from './prompt-subscription-replay.mjs';
+import { loadCases, loadSource, toolsFor } from './prompt-cases.ts';
+
+const tools = [
+  { name: 'read', description: 'Read scenario facts', inputSchema: { type: 'object' } },
+  { name: 'Bash', description: 'Run a shell command', inputSchema: { type: 'object', required: ['command'], properties: { command: { type: 'string' } } } },
+  { name: 'order', description: 'Assign one agent', inputSchema: { type: 'object', required: ['address', 'text'], properties: { address: { type: 'string' }, text: { type: 'string' } } } },
+];
+const variant = { mode: 'deferred', core: ['read'] };
+
+test('split is frozen, disjoint, exhaustive, and held-out execution requires final selection', async () => {
+  const split = loadSplit(loadCases());
+  assert.equal(split.tune.length, 54);
+  assert.equal(split.heldout.length, 23);
+  assert.equal(split.tune.some(id => split.heldout.includes(id)), false);
+  await assert.rejects(runSubscription(['--model', 'gpt-6-luna', '--partition', 'heldout']), /frozen --selection/);
+});
+
+test('missing-data repair reuses a fully graded sample with telemetry without invoking Codex or altering its source', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'replay-repair-test-'));
+  try {
+    const split = loadSplit(loadCases());
+    const config = JSON.parse(readFileSync('scripts/prompt-variants/full.json'));
+    const row = { id: split.tune[0], model: 'gpt-6-luna', partition: 'tune', status: 'behavior', pass: true,
+      inputTokens: 100, modelRequests: 1, searchCalls: 0, toolCalls: 1,
+      telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', modelRequests: 1, sumProviderInputTokens: 100, calls: [{ inputTokens: 100, beelineOwnedTokensPerCall: 20, codexInstructionTokens: 5, codexToolTokens: 3, codexAddedTokensPerCall: 8 }] } };
+    const source = { model: row.model, partition: 'tune', splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'),
+      variants: { full: { config, rows: [row] } } };
+    const path = join(folder, 'original.json');
+    const original = JSON.stringify(source);
+    writeFileSync(path, original);
+    const out = join(folder, 'repaired');
+    const result = await runSubscription(['--model', row.model, '--variants', 'full', '--only', row.id, '--repair-from', path, '--out', out]);
+    assert.equal(result.status, 'complete');
+    assert.deepEqual(result.variants.full.rows, [row]);
+    assert.equal(existsSync(join(out, 'full', row.id, 'fixture.json')), false);
+    assert.equal(readFileSync(path, 'utf8'), original);
+    const invalid = join(folder, 'wrong-split.json');
+    writeFileSync(invalid, JSON.stringify({ ...source, splitHash: 'different-split' }));
+    await assert.rejects(runSubscription(['--model', row.model, '--variants', 'full', '--repair-from', invalid, '--out', folder]), /different model, partition or split/);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('stub loads definitions, keeps them per sample, and never executes a proposed shell command', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'replay-stub-test-'));
+  try {
+    const marker = join(folder, 'must-not-exist');
+    const command = `touch ${marker}`;
+    const fixture = { tools, skills: {}, variant, testCase: { scenario: { results: [{ call: 'Bash', args: { command }, result: { exitCode: 0, stdout: 'recorded only' } }] } } };
+    const stub = createStub(fixture);
+    assert.deepEqual(stub.listing().map(t => t.name), ['read', 'find_tools']);
+    assert.equal(stub.call('find_tools', { query: 'Bash' }).definitions[0].name, 'Bash');
+    assert.equal(stub.listing().some(t => t.name === 'Bash'), true);
+    assert.equal(stub.call('Bash', { command }).stdout, 'recorded only');
+    assert.equal(existsSync(marker), false);
+    const fresh = createStub(fixture);
+    assert.equal(fresh.call('Bash', { command }).error, 'Called an unloaded tool');
+    assert.equal(fresh.trace.calls.length, 0);
+    assert.ok(stub.listing().every(t => t.annotations.readOnlyHint && !t.annotations.openWorldHint));
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('stub respects terminal actions and native grading preserves safety failures and incomplete facts', () => {
+  const fixture = { tools, skills: {}, variant, testCase: { scenario: {} } };
+  const stub = createStub(fixture);
+  stub.call('find_tools', { query: 'order' });
+  stub.call('order', { address: 'corner', text: 'Do it' });
+  assert.equal(stub.trace.terminal, 'order');
+  stub.call('read', {});
+  assert.equal(stub.trace.failure, 'Call after terminal boundary');
+  const events = [{ type: 'turn.completed', usage: { input_tokens: 50 } }];
+  assert.equal(gradeNative({ pass: { call: 'order' } }, stub.trace, events, variant, tools).pass, false);
+  const fresh = createStub(fixture);
+  fresh.call('read', {});
+  assert.equal(gradeNative({ pass: { call: 'read' } }, fresh.trace, events, variant, tools).status, 'behavior');
+  assert.equal(fresh.trace.terminal, 'unsupported-operation');
+  const forbidden = createStub(fixture);
+  forbidden.call('Bash', { command: 'do not run' });
+  assert.equal(gradeNative({ pass: { noCall: 'Bash' } }, forbidden.trace, events, variant, tools).pass, false);
+});
+
+test('all native prompts preserve the scenario but contain neither rule expectations nor JSON call instructions', async () => {
+  const source = await loadSource(process.cwd());
+  const split = loadSplit(loadCases());
+  const config = JSON.parse(readFileSync('scripts/prompt-variants/r0-deferred.json'));
+  for (const c of loadCases().filter(c => split.tune.includes(c.id))) {
+    const prompt = nativePrompt(source, c, config, toolsFor(source, c), 1000);
+    assert.ok(prompt.includes('## System prompt'));
+    assert.ok(prompt.includes(c.turn.task.body));
+    assert.equal(prompt.includes('Return only the next batch'), false);
+    assert.equal(prompt.includes('input_schema'), false);
+  }
+});
+
+test('full and deferred initial inputs expose exactly their advertised schemas despite Codex catalog deferral', async () => {
+  const source = await loadSource(process.cwd());
+  const c = loadCases().find(c => c.id === 'android-uses-leased-emulator');
+  const actual = toolsFor(source, c);
+  for (const name of ['full', 'r0-deferred', 'r1-short']) {
+    const config = JSON.parse(readFileSync(`scripts/prompt-variants/${name}.json`));
+    const prompt = nativePrompt(source, c, config, actual, 1000);
+    const match = /## Replay tool definitions\n\n````json\n([\s\S]*?)\n````/.exec(prompt);
+    const definitions = match ? JSON.parse(match[1]) : [];
+    const stub = createStub({ testCase: c, tools: actual, skills: {}, variant: config });
+    if (config.mode === 'full') {
+      assert.deepEqual(definitions, stub.listing());
+      assert.deepEqual(definitions.map(t => t.name), actual.map(t => t.name));
+    } else {
+      assert.equal(match, null);
+      const names = [...prompt.matchAll(/^([A-Za-z0-9_]+): /gm)].map(m => m[1]);
+      for (const tool of actual) assert.ok(names.includes(tool.name));
+      assert.ok(names.includes('find_tools'));
+    }
+    if (config.descriptionWords) {
+      const loaded = stub.call('find_tools', { query: 'Read' });
+      assert.ok(stub.trace.searches[0].names.includes('Read'));
+      assert.ok(loaded.definitions.every(t => t.description.split(/\s+/).length <= config.descriptionWords));
+      assert.ok(stub.listing().every(t => t.name === 'find_tools' || t.description.split(/\s+/).length <= config.descriptionWords));
+    }
+  }
+});
+
+test('usage and frontier exclude unscored samples and reject per-model regressions', () => {
+  const result = summarize([{ status: 'behavior', pass: true, inputTokens: 10, searchCalls: 1 }, { status: 'incomplete', pass: null, inputTokens: null, searchCalls: 0 }]);
+  assert.equal(result.passRate, 1);
+  assert.equal(result.unscored, 1);
+  assert.equal(result.p90InputTokens, 10);
+  const measured = summarize([{ status: 'behavior', pass: true, inputTokens: 100, modelRequests: 2, searchCalls: 0,
+    telemetry: { calls: [{ inputTokens: 40, beelineOwnedTokensPerCall: 20 }, { inputTokens: 60, beelineOwnedTokensPerCall: 30 }] } }]);
+  assert.equal(measured.medianBeelineFirstCallTokens, 20);
+  assert.equal(measured.medianBeelineOwnedTokensPerCall, 25);
+  assert.equal(measured.medianCodexInputTokensPerCall, 50);
+  assert.equal(measured.sumCodexInputTokensAcrossCases, 100);
+  assert.equal(measured.medianModelRequestsPerCase, 2);
+  const a = { name: 'a', complete: true, regressionModels: [], meanPassRate: .8, medianBeelineOwnedTokensPerCall: 100 };
+  const b = { ...a, name: 'b', meanPassRate: .9, medianBeelineOwnedTokensPerCall: 90 };
+  const c = { ...b, name: 'c', medianBeelineOwnedTokensPerCall: 80, regressionModels: ['luna'] };
+  assert.deepEqual(frontier([a, b, c]).map(v => v.name), ['b']);
+  const args = codexArgs('gpt-6-luna', '/tmp/cwd', '/tmp/fixture', '/tmp/trace');
+  assert.ok(args.includes('forced_login_method="chatgpt"'));
+  assert.ok(args.includes('shell_tool'));
+  assert.equal(args.includes('--ephemeral'), false);
+  assert.ok(args.includes('agents.enabled=false'));
+  assert.ok(args.includes('features.multi_agent_v2=false'));
+  assert.equal(args.some(a => /grant-token|api.key/i.test(a)), false);
+});
+
+test('real stdio MCP handshake advertises only core tools then refreshes after search', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'replay-protocol-'));
+  const fixture = join(folder, 'fixture.json');
+  writeFileSync(fixture, JSON.stringify({ tools, skills: {}, variant, testCase: {} }));
+  const child = spawn('node', ['--import', 'tsx', 'scripts/prompt-replay-stub.mjs', fixture, join(folder, 'trace.json')]);
+  const lines = createInterface({ input: child.stdout });
+  const responses = [];
+  lines.on('line', line => { const message = JSON.parse(line); if (message.id !== undefined) responses.push(message); });
+  child.stdin.end([
+    { id: 0, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
+    { id: 1, method: 'tools/list' },
+    { id: 2, method: 'tools/call', params: { name: 'find_tools', arguments: { query: 'order' } } },
+    { id: 3, method: 'tools/list' },
+  ].map(q => JSON.stringify(q)).join('\n') + '\n');
+  try {
+    assert.equal(await new Promise(resolve => child.on('close', resolve)), 0);
+    assert.equal(responses[0].result.capabilities.tools.listChanged, true);
+    assert.equal(responses[1].result.tools.some(t => t.name === 'order'), false);
+    assert.equal(responses[3].result.tools.some(t => t.name === 'order'), true);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('repair-only rejects legacy rows without invoking a model and counts them as missing telemetry', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'replay-legacy-test-'));
+  try {
+    const split = loadSplit(loadCases());
+    const config = JSON.parse(readFileSync('scripts/prompt-variants/full.json'));
+    const row = { id: split.tune[0], status: 'behavior', pass: true, inputTokens: 100, modelRequests: 1,
+      telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', modelRequests: 1,
+        sumProviderInputTokens: 100, calls: [{ inputTokens: 100, beelineOwnedTokensPerCall: 20 }] } };
+    assert.equal(usableSample(row, config), false);
+    const path = join(folder, 'legacy.json');
+    const source = JSON.stringify({ model: 'gpt-6-luna', partition: 'tune', splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'), variants: { full: { config, rows: [row] } } });
+    writeFileSync(path, source);
+    const result = await runSubscription(['--model', 'gpt-6-luna', '--variants', 'full', '--only', row.id, '--repair-from', path, '--reparse-only', '--out', join(folder, 'out')]);
+    assert.equal(result.status, 'incomplete');
+    assert.equal(result.variants.full.summary.missingTelemetry, 1);
+    assert.equal(readFileSync(path, 'utf8'), source);
+    const complete = structuredClone(row);
+    Object.assign(complete.telemetry.calls[0], { codexInstructionTokens: 5, codexToolTokens: 3, codexAddedTokensPerCall: 8 });
+    assert.equal(usableSample(complete, config), true);
+    for (const mutate of [r => { r.telemetry.calls = []; }, r => { r.modelRequests = 2; },
+      r => { r.telemetry.modelRequests = 2; }, r => { r.telemetry.calls[0].inputTokens = NaN; },
+      r => { r.telemetry.calls[0].codexAddedTokensPerCall = 9; }, r => { r.inputTokens = 99; }]) {
+      const broken = structuredClone(complete); mutate(broken); assert.equal(usableSample(broken, config), false);
+    }
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('repair reparses retained evidence before reuse, preserves source bytes and makes no model call', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'replay-retained-test-'));
+  try {
+    const split = loadSplit(loadCases());
+    const config = JSON.parse(readFileSync('scripts/prompt-variants/full.json'));
+    const id = split.tune[0], directory = join(folder, 'full', id);
+    mkdirSync(directory, { recursive: true });
+    const prompt = 'Replay\n## Replay tool definitions\n\n````json\n[]\n````\n\n## Turn\n\n````text\nA case\n````\n\n';
+    const rollout = [
+      { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ text: 'Codex instructions' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ text: prompt }] } },
+      { type: 'token_usage_record', payload: { response_id: 'one', usage: { input_tokens: 100 } } },
+    ].map(r => JSON.stringify(r)).join('\n');
+    writeFileSync(join(directory, 'rollout.jsonl'), rollout);
+    writeFileSync(join(directory, 'prompt.txt'), prompt);
+    writeFileSync(join(directory, 'fixture.json'), JSON.stringify({ variant: config, testCase: { id }, tools: [] }));
+    const row = { id, model: 'gpt-6-luna', partition: 'tune', status: 'behavior', pass: true, inputTokens: 100, modelRequests: 1,
+      configHash: createHash('sha256').update(JSON.stringify(config)).digest('hex'),
+      telemetry: { status: 'complete', initialExposure: 'explicit-replay-definitions', calls: [{ inputTokens: 100, beelineOwnedTokensPerCall: 20 }] } };
+    const path = join(folder, 'result.json');
+    const original = JSON.stringify({ model: row.model, partition: 'tune', splitHash: createHash('sha256').update(JSON.stringify(split)).digest('hex'), variants: { full: { config, rows: [row] } } });
+    writeFileSync(path, original);
+    const out = join(folder, 'out');
+    const result = await runSubscription(['--model', row.model, '--variants', 'full', '--only', id, '--repair-from', path, '--reparse-only', '--out', out]);
+    assert.equal(result.status, 'complete');
+    assert.equal(result.variants.full.summary.missingTelemetry, 0);
+    assert.ok(usableSample(result.variants.full.rows[0], config));
+    assert.equal(result.variants.full.rows[0].inputTokens, row.inputTokens);
+    assert.equal(result.variants.full.rows[0].pass, row.pass);
+    assert.equal(readFileSync(path, 'utf8'), original);
+    assert.equal(readFileSync(join(directory, 'rollout.jsonl'), 'utf8'), rollout);
+    assert.equal(existsSync(join(out, 'full', id, 'events.jsonl')), false);
+    assert.equal(readFileSync(join(out, 'full', id, 'rollout.jsonl'), 'utf8'), rollout);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});

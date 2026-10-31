@@ -31,6 +31,14 @@ describe('ConnectionStatus', () => {
     expect(state.reconnect).toHaveBeenCalledOnce();
   });
 
+  it('renders connected recovery content without a connection status line', () => {
+    state.value = 'connected';
+    let view!: ReturnType<typeof create>;
+    act(() => { view = create(<ConnectionStatus connectedFallback={<Recovery />} />); });
+    expect(view.root.findByType(Recovery)).toBeTruthy();
+    expect(view.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
+  });
+
   it('replaces the Room-list offline error row and its retired copy', () => {
     const source = readFileSync(new URL('../../app/(app)/beeline/channels.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<ConnectionStatus />');
@@ -39,3 +47,7 @@ describe('ConnectionStatus', () => {
     expect(source).not.toContain("Beeline isn't answering");
   });
 });
+
+function Recovery() {
+  return React.createElement('Recovery');
+}

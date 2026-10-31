@@ -462,6 +462,22 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('keeps startup failure recovery visible while the socket is connected', async () => {
+    deck.selectedWorkspace = null;
+    deck.connectionState = 'connected';
+    deck.workspaceFailures = [new RoomViewHttpError(503, 'unavailable')];
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await quiet();
+    expect(renderer.root.findAllByType('Text').length).toBeGreaterThan(0);
+    const retry = renderer.root.findByProps({ action: 'Retry' });
+    await act(async () => { retry.props.onPress(); });
+    await quiet();
+    expect(deck.workspaceReads).toBe(2);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
   it('does not retry a server refusal as a transient startup timeout', async () => {
     deck.selectedWorkspace = null;
     deck.workspaceFailures = [new RoomViewHttpError(403, 'forbidden')];

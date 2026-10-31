@@ -733,6 +733,88 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     }
   });
 
+  async function piped(command: string, args: string[], stdin: string, env: NodeJS.ProcessEnv) {
+    return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.on('error', reject);
+      child.on('close', (code) => {
+        const result = {
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+        };
+        if (code === 0) resolve(result);
+        else reject(Object.assign(new Error(`gh exited ${code}: ${result.stderr}`), result));
+      });
+      child.stdin.end(stdin);
+    });
+  }
+
+  it('keeps a piped body for pr create and issue create when the body file is -', async () => {
+    const requests: Array<{ method: string; url: string; body: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push({ method: request.method, url: request.url, body: request.body });
+      response.writeHead(201, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/3' }));
+    });
+    try {
+      const { root, gh } = await fixture(
+        '/usr/bin/git',
+        `import { appendFileSync, readFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+let stdin = '';
+try { stdin = readFileSync(0, 'utf8'); } catch {}
+let file = '';
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  const path = arg === '--body-file' || arg === '-F' ? args[index + 1] : arg.startsWith('--body-file=') ? arg.slice('--body-file='.length) : '';
+  if (!path || path === '-') continue;
+  try { file = readFileSync(path, 'utf8'); } catch {}
+}
+appendFileSync(process.env.HOST_LOG, JSON.stringify({ args, stdin, file }) + '\\n');
+if (args[0] === 'issue') process.exit(0);
+process.stderr.write('not logged into any GitHub hosts\\n');
+process.exit(1);
+`,
+      );
+      const hostLog = join(root, 'host.log');
+      const env = { ...process.env, GITHUB_API_URL: api.url, HOST_LOG: hostLog };
+      const stdinBody = 'create body from stdin\n';
+      const created = await piped(
+        gh,
+        ['pr', 'create', '--repo', 'acme/widget', '--title', 't', '-F', '-'],
+        stdinBody,
+        env,
+      );
+      expect(created.stdout.trim()).toBe('https://github.com/acme/widget/pull/3');
+      expect(JSON.parse(requests[0]!.body)).toEqual({
+        title: 't',
+        body: stdinBody,
+        head: featureBranch,
+        base: targetBranch,
+        draft: false,
+      });
+      const hostCalls = (await readFile(hostLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(hostCalls[0]).toMatchObject({ stdin: '', file: stdinBody });
+      const issued = await piped(
+        gh,
+        ['issue', 'create', '--repo', 'acme/widget', '--title', 't', '--body-file', '-'],
+        'issue body from stdin\n',
+        env,
+      );
+      expect(issued.stderr).toBe('');
+      const afterIssue = (await readFile(hostLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(afterIssue[1]).toMatchObject({ stdin: '', file: 'issue body from stdin\n' });
+      expect(afterIssue[1].args).not.toContain('-');
+      console.log('gh pr create -F - and gh issue create --body-file -: body is stdin');
+    } finally {
+      await api.close();
+    }
+  });
+
   it.each([
     { flags: ['--body', '123'], number: 12 },
     { flags: ['--title', '456'], number: 12 },

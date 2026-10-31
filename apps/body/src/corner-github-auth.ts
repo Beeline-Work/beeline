@@ -228,7 +228,9 @@ export function cornerGitHubCommandRefusal(
 async function writeLauncher(path: string, config: Record<string, string | boolean>): Promise<void> {
   const source = `#!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const config = ${JSON.stringify(config)};
 const cornerGitHubCommandRefusal = ${cornerGitHubCommandRefusal.toString()};
 const authFailure = /(?:authentication failed|bad credentials|could not read username|not logged into any github hosts|http(?:\\/\\d(?:\\.\\d)?)? 40[13]|status (?:code )?40[13])/i;
@@ -339,7 +341,7 @@ function token() {
 }
 function runCommand(command, args, value, quiet) {
   const env = { ...process.env, GH_TOKEN: value, GITHUB_TOKEN: value, GIT_TERMINAL_PROMPT: '0' };
-  const child = spawn(command, args, { env, stdio: ['inherit', quiet ? 'ignore' : 'pipe', quiet ? 'ignore' : 'pipe'] });
+  const child = spawn(command, config.launcher === 'gh' ? hostArguments(args) : args, { env, stdio: ['inherit', quiet ? 'ignore' : 'pipe', quiet ? 'ignore' : 'pipe'] });
   if (quiet) {
     return new Promise((resolve, reject) => {
       child.once('error', reject);
@@ -449,9 +451,40 @@ async function github(pathname, options, value) {
   }
   return { ok: true, status: response.status, data };
 }
+let stdinBody;
+let stdinFile;
+function readStandardInput() {
+  // gh uses "-" as the body file to mean standard input. Read it once: a host
+  // process spawned with inherited stdin would otherwise consume the pipe, and
+  // the REST fallback would then see an empty body.
+  return readFileSync(0, 'utf8');
+}
 function readBodyFile(path) {
-  // gh reads standard input when the body file is "-".
-  return path === '-' ? readFileSync(0, 'utf8') : readFileSync(path, 'utf8');
+  if (path !== '-') return readFileSync(path, 'utf8');
+  if (stdinBody === undefined) stdinBody = readStandardInput();
+  return stdinBody;
+}
+function hostArguments(args) {
+  const next = args.slice();
+  for (let index = 0; index < next.length; index += 1) {
+    const arg = next[index];
+    const separate = arg === '--body-file' || arg === '-F';
+    const inline = arg.startsWith('--body-file=');
+    if (!separate && !inline) continue;
+    const value = separate ? next[index + 1] : arg.slice('--body-file='.length);
+    if (value !== '-') continue;
+    if (stdinBody === undefined) stdinBody = readStandardInput();
+    if (stdinFile === undefined) {
+      stdinFile = join(tmpdir(), 'beeline-gh-body-' + process.pid);
+      writeFileSync(stdinFile, stdinBody);
+    }
+    if (inline) next[index] = '--body-file=' + stdinFile;
+    else {
+      next[index + 1] = stdinFile;
+      index += 1;
+    }
+  }
+  return next;
 }
 async function runRest(args, value) {
   const slug = repoSlug(args);

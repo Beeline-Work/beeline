@@ -44,6 +44,8 @@ export type LiveWireEvent = (
       reconcilesDelivery?: string;
     }
   | { type: 'subscribed'; roomId: string; epoch?: string; cursor?: number; resumed?: boolean }
+  | { type: 'cursor' | 'reload'; roomId: string }
+  | { type: 'workspace-cursor'; roomId: ''; workspaceId: string; sequence: number; epoch: string; reload: boolean }
   | { type: 'sync-ok' }
   | { type: 'bookmark-delta'; roomId: ''; workspaceId: string; messageId: string;
       bookmark: MessageBookmarkView | null }
@@ -97,7 +99,7 @@ export type LiveWireEvent = (
       /** A live helper connection holds this presence; it does not age out. */
       held?: boolean;
     }
-) & { sequence?: number; epoch?: string };
+) & { sequence?: number; epoch?: string; workspaceId?: string };
 
 export type MonolithSurfaceEvent = {
   readonly monolithLive: LiveWireEvent;

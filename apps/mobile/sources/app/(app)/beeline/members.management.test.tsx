@@ -599,35 +599,35 @@ beforeEach(() => {
   modal.prompt.mockResolvedValue(null);
 });
 
-it('saves a wake link and key through the owner profile, clears the draft and can clear setup', async () => {
+it('saves a webhook URL and key through the owner profile, clears the draft and can clear setup', async () => {
   state.agent.wake = { url: null, keySet: false };
   const renderer = await render();
   await openAgentProfile(renderer);
-  const wakeRow = () => renderer.root.findAll((node: any) => node.props.title === 'Wake link' && node.props.actionControl)[0];
+  const wakeRow = () => renderer.root.findAll((node: any) => node.props.title === 'Webhook URL' && node.props.actionControl)[0];
   await act(async () => wakeRow().props.actionControl.onPress());
   const field = (label: string) => renderer.root.findAll((node: any) => node.props.accessibilityLabel === label && node.props.onChangeText)[0];
   await act(async () => {
-    field('Wake link').props.onChangeText('https://hooks.example/wake');
-    field('Wake key').props.onChangeText('private-wake-key');
+    field('Webhook URL').props.onChangeText('https://hooks.example/wake');
+    field('Auth token').props.onChangeText('private-wake-key');
   });
-  expect(field('Wake key').props.secureTextEntry).toBe(true);
+  expect(field('Auth token').props.secureTextEntry).toBe(true);
   const actions = () => renderer.root.findAll((node: any) => Array.isArray(node.props.actions) && node.props.actions.some((a: any) => a.label === 'Save'))[0];
   await act(async () => { await actions().props.actions.find((a: any) => a.label === 'Save').onPress(); });
   expect(phoneOperation).toHaveBeenCalledWith('updateAgentWake', {
     workspaceId: WORKSPACE, agentId: AGENT, url: 'https://hooks.example/wake', key: 'private-wake-key',
   });
-  expect(wakeRow().props.descriptionDetail).toBe('Wake key: set');
+  expect(wakeRow().props.descriptionDetail).toBe('Auth token: set');
   await act(async () => wakeRow().props.actionControl.onPress());
-  expect(field('Wake key').props.value).toBe('');
-  const clear = renderer.root.findAll((node: any) => node.props.label === 'Clear wake link' && node.props.onPress)[0];
+  expect(field('Auth token').props.value).toBe('');
+  const clear = renderer.root.findAll((node: any) => node.props.label === 'Clear webhook' && node.props.onPress)[0];
   await act(async () => { await clear.props.onPress(); });
   expect(phoneOperation).toHaveBeenLastCalledWith('updateAgentWake', { workspaceId: WORKSPACE, agentId: AGENT, url: '' });
-  expect(wakeRow().props.descriptionDetail).toBe('Wake key: not set');
+  expect(wakeRow().props.descriptionDetail).toBe('Auth token: not set');
 });
 it('does not expose wake setup when the server omits owner-only wake configuration', async () => {
   const renderer = await render();
   await openAgentProfile(renderer);
-  expect(renderer.root.findAll((node: any) => node.props.title === 'Wake link')).toHaveLength(0);
+  expect(renderer.root.findAll((node: any) => node.props.title === 'Webhook URL')).toHaveLength(0);
 });
 
 function sheet(renderer: ReactTestRenderer) {

@@ -65,7 +65,7 @@ const ROOM_TOOLS: Tool[] = [
     { corner: { type: 'string', format: 'uuid' } }, ['corner']),
   tool('set_profile', 'Call this first, before any other tool: use the display name and profile picture you already use in your own app, passing the picture as an https URL or data URI, and set your @handle. The model label shown in Beeline comes from the app registration, never from this call.',
     { name: { type: 'string', minLength: 1, maxLength: 60 }, handle: { type: 'string', minLength: 1, maxLength: 40, description: 'Lower-case letters, digits and underscores.' }, avatar: { type: 'string', maxLength: MCP_AVATAR_MAX_CHARS, description: 'A data:image/png, data:image/jpeg or data:image/webp base64 URI (up to about 200 KB), or an https URL of one. Beeline stores a 256 px copy and returns its URL.' } }, [], true),
-  tool('set_webhook', 'Set the HTTPS URL Beeline POSTs to the moment someone tags you, so you can answer at once. The JSON body names roomId, messageId and text. Pass an empty url to remove it. An optional secret is sent as "Authorization: Bearer <secret>" and is never shown again.',
+  tool('set_webhook', 'Set the HTTPS URL Beeline POSTs to the moment someone tags you, so you can answer at once. The JSON body names roomId, messageId and text. Pass an empty url to remove it. An optional secret is sent as "Authorization: Bearer <secret>" and is never shown again. A pasted Bearer prefix is accepted.',
     { url: { type: 'string', maxLength: 2048, description: 'An https:// URL, or empty to remove the webhook.' }, secret: { type: 'string', minLength: 1, maxLength: 512 } }, ['url'], true),
 ];
 const TOOLS: Tool[] = [...ROOM_TOOLS, ...MCP_AGENT_TOOLS];

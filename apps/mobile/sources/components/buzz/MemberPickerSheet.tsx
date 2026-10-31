@@ -7,6 +7,7 @@ import { Typography } from '@/constants/Typography';
 import { HullActionSheetModal } from './HullActionSheet';
 import { IdentityMark } from './IdentityMark';
 import { Button } from './Button';
+import { ExistingAgentJoin } from './ExistingAgentJoin';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { RoomMemberPickerActions, type MemberPickerKind } from './RoomMemberPickerActions';
 
@@ -188,16 +189,29 @@ export function MemberPickerSheet({
       )}
       {(agentConnectOnly || pairCommand) && (
         <View style={styles.pairing} testID="invite-agent-flow">
-          <Text style={styles.meta}>
-            Run this where the agent will live. It joins every Room you're in.
-          </Text>
+          {agentConnectOnly ? (
+            <>
+              <ExistingAgentJoin onCopy={onCopyPairCommand} />
+              <View style={styles.sectionRule} />
+              <Text accessibilityRole="header" style={styles.heading}>Create new agent</Text>
+              <Text style={styles.subheading}>Run on terminal</Text>
+            </>
+          ) : (
+            <Text style={styles.meta}>
+              Run this where the agent will live. It joins every Room you're in.
+            </Text>
+          )}
           {pairCommand && (
             <TouchableOpacity
               accessibilityLabel="Copy connect command"
               onPress={() => onCopyPairCommand?.(pairCommand)}
-              style={styles.commandRow}
+              style={[styles.commandRow, agentConnectOnly && styles.newAgentCommandRow]}
             >
-              <Text selectable style={styles.command} testID="pair-agent-command">
+              <Text
+                selectable
+                style={[styles.command, agentConnectOnly && styles.newAgentCommand]}
+                testID="pair-agent-command"
+              >
                 {pairCommand}
               </Text>
               <Text style={styles.copyLabel}>Copy</Text>
@@ -243,6 +257,12 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: hull.radius,
     },
     command: { ...Typography.mono(), ...hull.type.machine, color: hull.textPrimary, flex: 1 },
+    // The Members-page sheet draws both copy rows the same way (approved mock 3281cf69).
+    newAgentCommandRow: { minHeight: 0, marginTop: 6, padding: 12, gap: 10, borderWidth: 1 },
+    newAgentCommand: { fontSize: 12, lineHeight: 17, letterSpacing: 0 },
+    heading: { ...hull.type.body, ...Typography.default('medium'), fontSize: 16, color: hull.textPrimary },
+    subheading: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, marginTop: -5 },
+    sectionRule: { height: 1, backgroundColor: hull.border, marginVertical: 10 },
     copyLabel: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
     footer: {
       borderTopWidth: StyleSheet.hairlineWidth,

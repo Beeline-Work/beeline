@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Real uploader and real phone transport; only the network, file read and
 // native modules are stubbed.
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
+  request: vi.fn(),
   readFileBytes: vi.fn(async () => new Uint8Array([1, 2, 3])),
 }));
 
@@ -20,13 +21,14 @@ vi.mock('@/auth/monolith-session', () => ({
   MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
   monolithSession: { fetch: mocks.fetch },
 }));
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: vi.fn() }));
+vi.mock('@/sync/transport/live-connection', () => ({
+  sharedLiveConnection: () => ({ request: mocks.request }),
+}));
 
 import { createChatAttachmentUploader, type PickedChatAttachment } from './chat-attachment';
 import { BuzzRigTransport } from '@/sync/transport';
 
 const MEDIA_URL = 'https://server.example/v1/phone/media';
-const SEND_URL = 'https://server.example/v1/phone/operations/sendRoomMessage';
 const stored = {
   url: 'https://server.example/v1/media/0b6a1f6e-4c39-4f7e-9d1e-5d3c1b2a9f00',
   mimeType: 'application/pdf',
@@ -44,20 +46,22 @@ const report: PickedChatAttachment = {
 const transport = () =>
   new BuzzRigTransport({ publicKey: 'viewer', secretKey: new Uint8Array(32) } as never);
 const sentAttachments = () =>
-  (
-    JSON.parse(String(mocks.fetch.mock.calls.find(([url]) => url === SEND_URL)?.[1].body)) as {
-      attachments: unknown[];
-    }
-  ).attachments;
+  mocks.request.mock.calls.find(([operation]) => operation === 'sendRoomMessage')?.[1].attachments;
 const mediaPosts = () => mocks.fetch.mock.calls.filter(([url]) => url === MEDIA_URL).length;
+
+beforeEach(() => {
+  mocks.fetch.mockReset();
+  mocks.request.mockReset().mockImplementation(async (operation, input) => {
+    if (operation === 'sendRoomMessage') return { messageId: input.messageId };
+    throw new Error(`unexpected socket operation ${operation}`);
+  });
+});
 
 describe('Send while a staged file is still uploading', () => {
   it('uploads a staged file through phone media once and sends it as an attachment', async () => {
-    mocks.fetch.mockReset();
-    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    mocks.fetch.mockImplementation(async (url: string) => {
       if (url === MEDIA_URL) return new Response(JSON.stringify(stored), { status: 201 });
-      const input = JSON.parse(String(init.body)) as { messageId: string };
-      return new Response(JSON.stringify({ messageId: input.messageId }), { status: 200 });
+      throw new Error(`unexpected HTTP request ${url}`);
     });
     const phone = transport();
     const uploader = createChatAttachmentUploader();
@@ -74,6 +78,8 @@ describe('Send while a staged file is still uploading', () => {
       `Send result: sent with ${sentAttachments().length} attachment after ${mediaPosts()} media POST`,
     );
     expect(mediaPosts()).toBe(1);
+    expect(mocks.request).toHaveBeenCalledOnce();
+    expect(mocks.fetch.mock.calls.every(([url]) => url === MEDIA_URL)).toBe(true);
     expect(sentAttachments()).toEqual([
       expect.objectContaining({ name: 'report.pdf', url: stored.url }),
     ]);
@@ -81,17 +87,12 @@ describe('Send while a staged file is still uploading', () => {
 
   it('retries a background upload that fails in flight and sends the file', async () => {
     let failBackgroundUpload!: () => void;
-    mocks.fetch.mockReset();
-    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    mocks.fetch.mockImplementation(async (url: string) => {
       if (url === MEDIA_URL && !failBackgroundUpload)
         return new Promise<Response>((resolve) => {
           failBackgroundUpload = () => resolve(new Response('unavailable', { status: 503 }));
         });
       if (url === MEDIA_URL) return new Response(JSON.stringify(stored), { status: 201 });
-      if (url === SEND_URL) {
-        const input = JSON.parse(String(init.body)) as { messageId: string };
-        return new Response(JSON.stringify({ messageId: input.messageId }), { status: 200 });
-      }
       throw new Error(`unexpected request ${url}`);
     });
     const phone = transport();
@@ -116,6 +117,8 @@ describe('Send while a staged file is still uploading', () => {
       `Send result: sent with ${sentAttachments().length} attachment after ${mediaPosts()} media POSTs`,
     );
     expect(mediaPosts()).toBe(2);
+    expect(mocks.request).toHaveBeenCalledOnce();
+    expect(mocks.fetch.mock.calls.every(([url]) => url === MEDIA_URL)).toBe(true);
     expect(sentAttachments()).toEqual([
       expect.objectContaining({ name: 'report.pdf', url: stored.url }),
     ]);

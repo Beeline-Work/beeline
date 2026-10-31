@@ -1063,6 +1063,8 @@ export type CornerListResult = {
   }[];
 };
 export type CornerRestoreResult = {
+  /** Current server assignment, used to hand legacy local work to its writer. */
+  readonly implementerAgentId?: string;
   readonly cornerId: string;
   /** Explicit opening corner; absent on existing and Room/DM-opened corners. */
   readonly openedFromCornerId?: string;

@@ -3865,6 +3865,7 @@ export class DaemonService {
         parent_room_id: string;
         opened_from_corner_id: string | null;
         objective: string;
+        implementer_agent_id: string | null;
         title: string;
         title_generated: boolean;
         kind: 'agent' | 'human';
@@ -3880,7 +3881,7 @@ export class DaemonService {
         last_excerpt: string | null;
       }>(
         `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
-           f.opened_from_corner_id,f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
+           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
            approval.pull_request_number,approval.head_sha approval_head_sha,
            lm.author_id last_author_id,lm.created_at last_created_at,
            lm.presentation last_type,left(lm.text,280) last_excerpt
@@ -3895,6 +3896,7 @@ export class DaemonService {
     const held = holds.length > 0;
     return {
       cornerId,
+      ...(row?.implementer_agent_id ? { implementerAgentId: row.implementer_agent_id } : {}),
       ...(row ? { archived: Boolean(row.archived_at), parentRoomId: row.parent_room_id } : {}),
       ...(row?.opened_from_corner_id ? { openedFromCornerId: row.opened_from_corner_id } : {}),
       objective: row?.objective ?? '',

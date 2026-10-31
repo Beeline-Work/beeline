@@ -114,7 +114,7 @@ describe('a new corner worktree', () => {
     const worktrees = await Promise.all(Array.from({ length: 8 }, (_, index) =>
       materialize(supervisorRoot, remote, `concurrent-${index}`),
     ));
-    expect(new Set(worktrees.map(tree => tree.gitCommonDir)).size).toBe(1);
+    expect(new Set(worktrees.map(tree => tree.gitCommonDir)).size).toBe(8);
     for (const [index, tree] of worktrees.entries()) {
       const branch = await execFileAsync('git', ['-C', tree.path, 'branch', '--show-current']);
       expect(branch.stdout.trim()).toBe(`feature/concurrent-${index}`);

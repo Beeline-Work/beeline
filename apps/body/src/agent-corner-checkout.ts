@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, realpath, rename, rm } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { constants, existsSync } from 'node:fs';
+import { copyFile, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { withKernelLock } from './kernel-lock.js';
+import { CRASH_SAFE_CLONE_ARGS, fetchRepositoryCache } from './repository-cache-repair.js';
 
-const exec = promisify(execFile);
+const execFileAsync = promisify(execFile);
+const git = (args: string[], env?: NodeJS.ProcessEnv) => execFileAsync('git', args, { env, timeout: 120_000, killSignal: 'SIGKILL' });
 
 /** Private refs let agents check out the same public branch independently. */
 export function agentCornerCheckoutPaths(root: string, cornerId: string, agentId: string) {
@@ -15,51 +16,134 @@ export function agentCornerCheckoutPaths(root: string, cornerId: string, agentId
   }
   const key = createHash('sha256').update(`${cornerId}:${agentId}`).digest('hex');
   return {
-    path: resolve(root, 'beeline', 'agent-corners', cornerId, agentId),
+    path: resolve(root, 'beeline', 'corners', key),
     gitCommonDir: resolve(root, 'beeline', 'repositories', `agent-corner-${key}.git`),
   };
 }
 
+/** Copy mutable work; hardlink only dependency files, like the warm store. */
+async function copyLegacy(source: string, target: string): Promise<void> {
+  for (const entry of await readdir(source)) {
+    if (entry === '.git') continue;
+    const from = resolve(source, entry), to = resolve(target, entry);
+    const stat = await lstat(from);
+    if (stat.isDirectory() && entry === 'node_modules') {
+      await cp(from, to, { recursive: true, verbatimSymlinks: true,
+        filter: async (path, destination) => {
+          if ((await lstat(path)).isFile()) {
+            await mkdir(dirname(destination), { recursive: true });
+            await link(path, destination).catch(() => copyFile(path, destination));
+            return false;
+          }
+          return true;
+        } });
+    } else if (stat.isDirectory()) {
+      await mkdir(to, { recursive: true });
+      await copyLegacy(from, to);
+    } else await cp(from, to, { verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+  }
+}
+
 /**
- * Clone local objects with hard links, but never share mutable refs or alternates.
- * Removing or pruning the source cache cannot invalidate this agent's checkout.
- * Callers serialize source-cache updates while creating this repository.
+ * Clone immutable local objects with hard links, never refs or alternates.
+ * One coordinator owns each corner+agent setup; there are no checkout locks.
+ * The source cache remains recovery evidence until ordinary archive cleanup.
  */
 export async function materializeAgentCornerCheckout(input: {
-  root: string;
-  cornerId: string;
-  agentId: string;
-  sourceGitDir: string;
-  remote: string;
-  branch: string;
-  startRef: string;
+  root: string; cornerId: string; agentId: string; sourceGitDir: string;
+  remote: string; branch: string; startRef: string;
+  targetBranch?: string; env?: NodeJS.ProcessEnv;
+  /** Only the server's current implementer receives the old shared work. */
+  legacyPath?: string;
 }): Promise<{ path: string; gitCommonDir: string }> {
   const paths = agentCornerCheckoutPaths(input.root, input.cornerId, input.agentId);
   await mkdir(dirname(paths.gitCommonDir), { recursive: true });
-  const parent = await realpath(dirname(paths.gitCommonDir));
-  return withKernelLock(`agent-corner-create:${parent}:${input.cornerId}:${input.agentId}`, async () => {
-    if (!existsSync(resolve(paths.gitCommonDir, 'HEAD'))) {
-      const staging = `${paths.gitCommonDir}.creating`;
-      await rm(staging, { recursive: true, force: true });
+  if ((await lstat(paths.path).catch(() => undefined))?.isSymbolicLink()) throw new Error('refusing symlinked agent checkout');
+  let legacy = input.legacyPath && existsSync(resolve(input.legacyPath, '.git')) ? input.legacyPath : undefined;
+  const transferRecord = legacy ? resolve((await git(['-C', legacy, 'rev-parse', '--absolute-git-dir'])).stdout.trim(), 'beeline-agent-checkout') : undefined;
+  const transferred = transferRecord ? await readFile(transferRecord, 'utf8').catch(() => undefined) : undefined;
+  if (transferred && transferred !== paths.path) legacy = undefined;
+  const pending = resolve(paths.gitCommonDir, 'beeline-legacy-pending');
+  const creating = !existsSync(resolve(paths.gitCommonDir, 'HEAD'));
+  const label = `repositories/${basename(paths.gitCommonDir)}`;
+  if (creating) {
+    const staging = `${paths.gitCommonDir}.creating`;
+    await rm(staging, { recursive: true, force: true });
+    try {
       try {
-        await exec('git', ['clone', '--bare', '--local', input.sourceGitDir, staging]);
-        await exec('git', [`--git-dir=${staging}`, 'remote', 'set-url', 'origin', input.remote]);
-        await exec('git', [`--git-dir=${staging}`, 'config', '--replace-all',
-          'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
-        // Resolve before publishing so a bad start ref never leaves a partial checkout.
-        const head = (await exec('git', [`--git-dir=${input.sourceGitDir}`, 'rev-parse', '--verify', input.startRef])).stdout.trim();
-        await exec('git', [`--git-dir=${staging}`, 'update-ref', `refs/heads/${input.branch}`, head]);
-        await rename(staging, paths.gitCommonDir);
-      } finally {
+        await git(['clone', '--mirror', '--local', ...CRASH_SAFE_CLONE_ARGS, input.sourceGitDir, staging]);
+        await git([`--git-dir=${staging}`, 'fsck', '--connectivity-only', '--no-dangling']);
+      } catch (error) {
+        if (!input.targetBranch) throw error;
+        // A damaged immutable seed must not disable every new corner. Rebuild
+        // only this private staging copy from the remote; keep the seed intact.
         await rm(staging, { recursive: true, force: true });
+        await git(['clone', '--mirror', ...CRASH_SAFE_CLONE_ARGS, input.remote, staging], input.env);
+        if (legacy) {
+          const localHead = (await git(['-C', legacy, 'rev-parse', 'HEAD'])).stdout.trim();
+          await git([`--git-dir=${staging}`, 'fetch', input.sourceGitDir, localHead]);
+        }
       }
+      await git([`--git-dir=${staging}`, 'config', '--unset', 'remote.origin.mirror']);
+      await git([`--git-dir=${staging}`, 'remote', 'set-url', 'origin', input.remote]);
+      await git([`--git-dir=${staging}`, 'config', '--replace-all', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
+      let startRef = input.startRef;
+      if (input.targetBranch) {
+        const fetch = (branch: string) => fetchRepositoryCache({ gitDir: staging, label,
+          args: ['origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], env: input.env });
+        await fetch(input.targetBranch);
+        const published = await fetch(input.branch).then(() => true, error => {
+          if (/remote ref does not exist|remote reference does not exist|couldn't find remote ref/i.test(String(error))) return false;
+          throw error;
+        });
+        startRef = `refs/remotes/origin/${published ? input.branch : input.targetBranch}`;
+      }
+      const head = (await git(legacy
+        ? ['-C', legacy, 'rev-parse', '--verify', 'HEAD']
+        : [`--git-dir=${staging}`, 'rev-parse', '--verify', startRef])).stdout.trim();
+      await git([`--git-dir=${staging}`, 'update-ref', `refs/heads/${input.branch}`, head]);
+      await git([`--git-dir=${staging}`, 'symbolic-ref', 'HEAD', `refs/heads/${input.branch}`]);
+      // Seed objects are shared; inherited local branches are not this agent's
+      // work. Keep only its branch so later publication checks cover every
+      // branch the agent creates without pinning other legacy corners.
+      const inherited = (await git([`--git-dir=${staging}`, 'for-each-ref', '--format=%(refname)', 'refs/heads'])).stdout
+        .trim().split('\n').filter(ref => ref && ref !== `refs/heads/${input.branch}`);
+      if (!legacy) inherited.push('refs/stash');
+      const prune = git([`--git-dir=${staging}`, 'update-ref', '--stdin']);
+      prune.child.stdin?.on('error', () => undefined);
+      prune.child.stdin?.end(inherited.map(ref => `delete ${ref}\n`).join(''));
+      await prune;
+
+      if (legacy) await writeFile(resolve(staging, 'beeline-legacy-pending'), legacy);
+      await rename(staging, paths.gitCommonDir);
+    } finally { await rm(staging, { recursive: true, force: true }); }
+  }
+  await git([`--git-dir=${paths.gitCommonDir}`, 'config', '--replace-all', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
+  if (!creating && input.targetBranch) await fetchRepositoryCache({ gitDir: paths.gitCommonDir, label,
+    args: ['origin', `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`], env: input.env });
+  if (!existsSync(resolve(paths.path, '.git'))) {
+    await mkdir(dirname(paths.path), { recursive: true });
+    await git([`--git-dir=${paths.gitCommonDir}`, 'worktree', 'add', paths.path, input.branch]);
+  }
+  await git([`--git-dir=${paths.gitCommonDir}`, 'config', 'extensions.worktreeConfig', 'true']);
+  await git(['-C', paths.path, 'config', '--worktree', 'core.bare', 'false']);
+  const source = await readFile(pending, 'utf8').catch(() => undefined);
+  if (source) {
+    // A pending copy has never been handed to a harness. Rebuilding it also
+    // preserves staged deletions, which overlaying a fresh checkout would undo.
+    if (source !== legacy || relative(resolve(input.root, 'beeline/corners'), source) !== input.cornerId)
+      throw new Error('legacy corner import source changed');
+    for (const entry of await readdir(paths.path)) {
+      if (entry !== '.git') await rm(resolve(paths.path, entry), { recursive: true, force: true });
     }
-    if (!existsSync(resolve(paths.path, '.git'))) {
-      await mkdir(dirname(paths.path), { recursive: true });
-      await exec('git', [`--git-dir=${paths.gitCommonDir}`, 'worktree', 'add', paths.path, input.branch]);
-    }
-    await exec('git', [`--git-dir=${paths.gitCommonDir}`, 'config', 'extensions.worktreeConfig', 'true']);
-    await exec('git', ['-C', paths.path, 'config', '--worktree', 'core.bare', 'false']);
-    return paths;
-  });
+    await copyLegacy(source, paths.path);
+    const index = async (path: string) => (await git(['-C', path, 'rev-parse', '--path-format=absolute', '--git-path', 'index'])).stdout.trim();
+    await copyFile(await index(source), await index(paths.path));
+    await rename(pending, resolve(paths.gitCommonDir, 'beeline-legacy-imported'));
+    if (transferRecord) await writeFile(transferRecord, paths.path);
+  }
+  // Git must identify exactly this checkout, including when root is symlinked.
+  const top = (await git(['-C', paths.path, 'rev-parse', '--show-toplevel'])).stdout.trim();
+  if (await realpath(top) !== await realpath(paths.path)) throw new Error('agent corner checkout escaped its root');
+  return paths;
 }

@@ -85,7 +85,8 @@ it('hands legacy unpublished commits, staged deletions, edits and untracked file
     expect(await git('-C', writer.path, 'rev-parse', 'HEAD')).toBe(head);
     expect(await git('-C', writer.path, 'status', '--porcelain')).toBe(await git('-C', legacy, 'status', '--porcelain'));
     expect(await readFile(resolve(writer.path, 'file'), 'utf8')).toBe('unfinished edit');
-    expect((await stat(resolve(writer.path, 'node_modules/proof/data'))).ino).toBe((await stat(resolve(legacy, 'node_modules/proof/data'))).ino);
+    expect(await readFile(resolve(writer.path, 'node_modules/proof/data'), 'utf8')).toBe('warm');
+    expect((await stat(resolve(writer.path, 'node_modules/proof/data'))).ino).not.toBe((await stat(resolve(legacy, 'node_modules/proof/data'))).ino);
     await writeFile(resolve(writer.path, 'file'), 'writer continues');
     await materializeCornerWorktree({ ...input, migrateLegacy: true, committer: { name: 'A', publicKey: 'a' } });
     expect(await readFile(resolve(writer.path, 'file'), 'utf8')).toBe('writer continues');

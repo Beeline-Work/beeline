@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, existsSync } from 'node:fs';
-import { copyFile, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { CRASH_SAFE_CLONE_ARGS, fetchRepositoryCache } from './repository-cache-repair.js';
@@ -21,23 +21,13 @@ export function agentCornerCheckoutPaths(root: string, cornerId: string, agentId
   };
 }
 
-/** Copy mutable work; hardlink only dependency files, like the warm store. */
+/** Preserve legacy work privately; dependency sharing begins at sealed activation. */
 async function copyLegacy(source: string, target: string): Promise<void> {
   for (const entry of await readdir(source)) {
     if (entry === '.git') continue;
     const from = resolve(source, entry), to = resolve(target, entry);
     const stat = await lstat(from);
-    if (stat.isDirectory() && entry === 'node_modules') {
-      await cp(from, to, { recursive: true, verbatimSymlinks: true,
-        filter: async (path, destination) => {
-          if ((await lstat(path)).isFile()) {
-            await mkdir(dirname(destination), { recursive: true });
-            await link(path, destination).catch(() => copyFile(path, destination));
-            return false;
-          }
-          return true;
-        } });
-    } else if (stat.isDirectory()) {
+    if (stat.isDirectory()) {
       await mkdir(to, { recursive: true });
       await copyLegacy(from, to);
     } else await cp(from, to, { verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });

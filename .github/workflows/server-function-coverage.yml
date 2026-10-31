@@ -37,9 +37,8 @@ jobs:
         if: matrix.shard == 1
         working-directory: apps/server
         run: >-
-          npx vitest run --config vitest.function-coverage.config.ts
+          node scripts/collect-ci-coverage.mjs
           src/agent-command.scaling.test.ts src/production-corpus-hot-reads.test.ts
-          --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         with:
           name: function-packets-${{ matrix.shard }}

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { selectTests, changedRanges, readsOutsideCoverage } from '../apps/server/scripts/select-ci-tests.mjs';
+import { collectionGroups } from '../apps/server/scripts/collect-ci-coverage.mjs';
 
 const prefix = 'apps/server/src/';
 const tests = ['affected', 'unrelated', 'system-messages-lock', 'unlinked'].map(name => `${prefix}${name}.test.ts`);
@@ -61,4 +62,19 @@ test('source reads hidden behind local helpers and subprocess/browser tests rema
   assert.equal(readsOutsideCoverage('/test.ts', file => sources[file]), true);
   assert.equal(readsOutsideCoverage('/test.ts', () => "import { spawn } from 'node:child_process';"), true);
   assert.equal(readsOutsideCoverage('/test.ts', () => "import { chromium } from 'playwright';"), true);
+});
+
+test('collection runs the real source scanner without profiling and instruments only prunable tests', () => {
+  const previous = process.env.BEELINE_FUNCTION_COVERAGE_DIR;
+  try {
+    process.env.BEELINE_FUNCTION_COVERAGE_DIR = 'coverage';
+    const groups = collectionGroups(['src/system-messages-lock.test.ts', 'src/live-replay.test.ts']);
+    assert.deepEqual(groups, [
+      { files: ['src/system-messages-lock.test.ts'], args: [], marker: true },
+      { files: ['src/live-replay.test.ts'], args: ['--config', 'vitest.function-coverage.config.ts'], marker: false },
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env.BEELINE_FUNCTION_COVERAGE_DIR;
+    else process.env.BEELINE_FUNCTION_COVERAGE_DIR = previous;
+  }
 });

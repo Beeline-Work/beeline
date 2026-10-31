@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { currentSelection } from './select-ci-tests.mjs';
+import { collectionGroups, recordAlwaysRun } from './collect-ci-coverage.mjs';
 
 const [position, count] = process.argv[2]?.split('/').map(Number) ?? [];
 if (
@@ -22,7 +23,8 @@ if (!selection.tests.includes(`apps/server/${testFile}`)) {
   console.log(`Integration: no changed covered functions (${selection.reason})`);
   process.exit(0);
 }
-const coverageArgs = process.env.BEELINE_FUNCTION_COVERAGE_DIR ? ['--config', 'vitest.function-coverage.config.ts'] : [];
+const coverageGroup = collectionGroups([testFile])[0];
+const coverageArgs = coverageGroup.args;
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function listTests(args = []) {
@@ -58,4 +60,5 @@ const run = spawnSync(
   { stdio: 'inherit' },
 );
 if (run.error) throw run.error;
+if (run.status === 0 && coverageGroup.marker) recordAlwaysRun([testFile]);
 process.exit(run.status ?? 1);

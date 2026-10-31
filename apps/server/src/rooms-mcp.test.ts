@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
 import { RoomsMcpEvents } from './rooms-mcp-events.js';
-import { postMcpWebhook } from './rooms-mcp-members.js';
+import { MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -24,7 +24,7 @@ import { runMaintenance } from './background.js';
 import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { FACE_SOULS } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, FACE_SOULS } from '@beeline/api-contract/phone';
 
 const USER = tokenHash('google:mcp-demo'), OTHER = 'b'.repeat(64), AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -823,6 +823,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
+    expect(page).toContain('Starter instructions');
+    expect(page).toContain('id="copy-routine" type="button">Copy</button>');
+    expect(page).toContain(MCP_STARTER_ROUTINE.replaceAll("'", '&#39;'));
+    expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
     expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
     expect(page).toContain('<img class="mark" src="data:image/svg+xml;base64,'); expect(page).not.toContain('>b</span>');
@@ -846,6 +850,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
     expect((await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'Firstmate', handle: 'firstmate' });
+  });
+  it('repeats the saved starter wake rule in server, setup and webhook instructions', async () => {
+    const { client } = await connected();
+    const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
+    const send = (await client.listTools()).tools.find(tool => tool.name === 'send_message')!;
+    expect(send.description).toContain("asking agent's exact @handle to wake it");
+    for (const text of [client.getInstructions(), setup, MCP_TAG_INSTRUCTION]) {
+      expect(text).toContain(MCP_STARTER_ROUTINE);
+      expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
+    }
   });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
@@ -1241,7 +1255,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
     expect(await avatar()).toBe(chosen);
   });
-  it('pushes one POST per tag to the webhook a member set, with its sealed bearer secret', async () => {
+  it('R1: pushes the asking agent’s exact back-tag instructions per tag to the webhook a member set, with its sealed bearer secret', async () => {
     await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
     const { client, member } = await connected();
     const previous = process.env.BEELINE_MCP_WEBHOOK_KEY;
@@ -1257,8 +1271,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       const stored = (await db.query<{ callback_url: string; callback_secret: string }>('SELECT callback_url,callback_secret FROM rooms_mcp_members WHERE member_id=$1', [member])).rows[0]!;
       expect(stored.callback_url).toBe('https://hooks.example/muse'); expect(stored.callback_secret).not.toContain('tag-secret');
       const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
-      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, USER);
-      await routeHumanMessage(db, sent.messageId);
+      const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} please answer` }, AGENT);
+      await routeAgentResult(db, undefined, sent.messageId, { roomId: ROOM, agentId: AGENT });
       const posts: { url: string; authorization: string | null; body: Record<string, unknown> }[] = [];
       await deliverMcpMemberWebhooks(db, async (url, init) => {
         posts.push({ url: String(url), authorization: new Headers(init?.headers).get('authorization'), body: JSON.parse(String(init?.body)) });
@@ -1268,6 +1282,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(posts[0]).toMatchObject({ url: 'https://hooks.example/muse', authorization: 'Bearer tag-secret',
         body: { memberId: member, roomId: ROOM, messageId: sent.messageId, text: `@${handle} please answer` } });
       expect(String(posts[0]!.body.instruction)).toContain('send_message');
+      expect(String(posts[0]!.body.instruction)).toContain('Start your reply with @demo-agent to wake the asking agent.');
+      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake it');
       // Removing the webhook stops the push.
       await client.callTool({ name: 'set_webhook', arguments: { url: '' } });
       const quiet = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} again` }, USER);

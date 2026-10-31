@@ -12,6 +12,9 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
+  React.useEffect(() => {
+    void import('@/buzz/message-outbox-runtime').then(({ startMessageOutbox }) => startMessageOutbox());
+  }, []);
   const isDesktop = useIsDesktop();
   const { theme } = useUnistyles();
 

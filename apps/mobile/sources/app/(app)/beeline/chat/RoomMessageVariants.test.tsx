@@ -105,10 +105,10 @@ vi.mock('react-native-gesture-handler', async () => {
 
 vi.mock('react-native-unistyles', async () => {
   const { beelineThemes } = await import('@/buzz/groknight');
-  const theme = { buzz: beelineThemes.obsidian };
+  const theme = { buzz: process.env.BEELINE_OUTBOX_TEST_THEME === 'bone' ? beelineThemes.bone : beelineThemes.obsidian };
   return {
     StyleSheet: {
-      create: (factory: (theme: { buzz: typeof beelineThemes.obsidian }) => unknown) =>
+      create: (factory: (value: { buzz: typeof beelineThemes.obsidian | typeof beelineThemes.bone }) => unknown) =>
         factory(theme),
     },
     useUnistyles: () => ({ theme }),
@@ -4519,4 +4519,54 @@ it('opens a standalone corner PR event in its corner', () => {
   act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-message' }).props.onPress());
   expect(onOpenCorner).toHaveBeenCalledWith('corner-42');
   expect(onOpenUrl).not.toHaveBeenCalled();
+});
+
+describe('Reproduction R2 rendered outbox path', () => {
+  it('renders Sending while offline, then the one-off offline state, and removes it after reconnect', async () => {
+    vi.useFakeTimers();
+    const { MessageOutbox } = await import('@/buzz/message-outbox');
+    const e = { id: 'a'.repeat(64), pubkey: 'b'.repeat(64), created_at: 1, kind: 9, sig: '', content: 'Start with the server PR', tags: [['h', 'room-proof'], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] };
+    const send = vi.fn(async () => ({ messageId: e.id }));
+    const owner = new MessageOutbox({ load: async () => [], save: async () => undefined, send, rejection: () => undefined });
+    await owner.enqueue(e, { id: e.id, text: e.content, createdAt: 1, author: { pubkey: e.pubkey, kind: 'human', name: 'Kai' }, presentation: 'message' });
+    const props = {
+      message: message({ id: e.id, text: e.content, isUser: true, pubkey: e.pubkey }),
+      participantsHydrated: true, viewerPubkey: e.pubkey, speakerWorking: false, continued: false,
+      participantHandles: [], channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
+      onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(), onDismiss: vi.fn(),
+    } satisfies OrdinaryLedgerMessageProps;
+    const renderer = render(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />);
+    const text = (value: any): string => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' ? value : value?.props ? text(value.props.children) : '';
+    expect(text(renderer.root.findByProps({ testID: `outbox-sending-${e.id}` }).props.children)).toBe(' Sending');
+    expect(send).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('LedgerSteer' as never).props.pending).toBe(true);
+    console.log('R2 rendered: Sending; pending prose; no popup; no Retry');
+    await vi.advanceTimersByTimeAsync(120_000);
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />));
+    expect(renderer.root.findAllByType('Text' as never).map((node: any) => text(node.props.children))).toContain('Not sent yet · no connection');
+    expect(renderer.root.findAllByProps({ label: 'Retry' })).toHaveLength(0);
+    console.log('R2 rendered after offline cutoff: Not sent yet · no connection; Dismiss');
+    await owner.connectionChanged(true);
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />));
+    expect(renderer.root.findAllByProps({ testID: `outbox-sending-${e.id}` })).toHaveLength(0);
+    expect(send).toHaveBeenCalledTimes(1); expect(modal.alert).not.toHaveBeenCalled();
+    console.log('R2 rendered after reconnect: sent; status removed; one publication');
+    owner.dispose();
+  });
+
+  it('renders the server refusal and only Dismiss', () => {
+    const renderer = render(<OrdinaryLedgerMessage
+      message={message({ id: 'refused', text: 'Start with the server PR', isUser: true })}
+      participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
+      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed
+      sendState={{ kind: 'refused', text: 'Not sent · The relay did not allow this message.' }}
+      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onDismiss={vi.fn()}
+    />);
+    const banner = renderer.root.findByProps({ testID: 'outbox-delivery-failed-refused' });
+    expect(banner.props.title).toBe('Not sent · The relay did not allow this message.');
+    expect(renderer.root.findAllByProps({ label: 'Retry' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ label: 'Dismiss' }).length).toBeGreaterThan(0);
+    expect(modal.alert).not.toHaveBeenCalled();
+    console.log('R2 rendered refusal: Not sent · The relay did not allow this message.; Dismiss; no Retry; no popup');
+  });
 });

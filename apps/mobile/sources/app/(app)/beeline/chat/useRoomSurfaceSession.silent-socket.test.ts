@@ -56,6 +56,9 @@ vi.mock('@/buzz/surface-storage', () => ({
   createRoomOutbox: vi.fn(() => ({
     restore: vi.fn(async () => undefined),
     list: vi.fn(() => []),
+    subscribe: () => () => undefined,
+    state: () => undefined,
+    acknowledgeFailures: async () => undefined,
     reconcile: vi.fn(async () => undefined),
     fail: vi.fn(async () => undefined),
     retry: vi.fn(async () => undefined),

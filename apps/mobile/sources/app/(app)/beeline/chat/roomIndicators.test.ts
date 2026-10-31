@@ -117,7 +117,7 @@ describe('server-owned composer status above the Room composer', () => {
     // wait or its own 15s bound. The publish ack IS the send's answer: once
     // the server has stored the message the bridge retires, and the claimed
     // turn's WORKING receipt lights `thinking` on its own.
-    const at = chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);');
+    const at = chatSource.indexOf('await activeOutbox.send(preparedEvent.id);');
     expect(at).toBeGreaterThan(0);
     const settled = chatSource.indexOf('acknowledgeReadMark(preparedEvent.id);', at);
     expect(settled).toBeGreaterThan(at);
@@ -131,10 +131,10 @@ describe('server-owned composer status above the Room composer', () => {
 
   it('shows received only from the server response for the currently active corner turn', () => {
     const at = chatSource.indexOf(
-      'const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);',
+      'const writeResult = await activeOutbox.send(preparedEvent.id);',
     );
     expect(at).toBeGreaterThan(0);
-    const received = chatSource.slice(at, chatSource.indexOf('if (desktopExperience)', at));
+    const received = chatSource.slice(at, chatSource.indexOf("setDesktopDeliveryState('delivered')", at));
     expect(received).toContain('isCorner');
     expect(received).toContain('writeResult.activeSteerAgentIds?.includes');
     expect(received).toContain('turnRequestId: activeAgentTurn.requestId');

@@ -1,3 +1,5 @@
+import { Ionicons } from '@expo/vector-icons';
+import type { MessageSendState } from '@/buzz/message-outbox';
 import { ChoiceVideoPreview } from '@/components/buzz/ChoiceVideoPreview';
 import { funnelOnboarding } from '@/auth/signin-funnel';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
@@ -1069,6 +1071,7 @@ export interface OrdinaryLedgerMessageProps {
   participantHandles: readonly { pubkey: string; handle: string }[];
   channelIndex: ChannelReferenceIndex;
   deliveryFailed: boolean;
+  sendState?: MessageSendState;
   untaggedHint?: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
   codeRoomId?: string;
@@ -1093,7 +1096,7 @@ export interface OrdinaryLedgerMessageProps {
   cornerProposalAction?: 'open' | 'cancel' | null;
   /** The human reply that answered this corner proposal, once one exists. */
   cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
-  onRetry(eventId: string): void;
+  onRetry?(eventId: string): void;
   onDismiss(eventId: string): void;
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
   announcementFeed?: boolean;
@@ -1212,6 +1215,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   participantHandles,
   channelIndex,
   deliveryFailed,
+  sendState,
   untaggedHint = false,
   onChannelReference,
   codeRoomId,
@@ -1231,7 +1235,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onCornerProposalDecision,
   cornerProposalAction = null,
   cornerProposalAnswer = null,
-  onRetry,
   onDismiss,
   announcementFeed = false,
   desktopLayout = false,
@@ -1559,6 +1562,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       <View>
         {isSelfSteer ? (
           <LedgerSteer
+            pending={sendState?.kind === 'sending'}
             itemId={message.id}
             continued={continuedRun}
             chronological={desktopLayout}
@@ -1639,6 +1643,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             continued={continuedRun}
             chronological={desktopLayout}
             precededByDayCaption={dayOpener}
+            pending={sendState?.kind === 'sending'}
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}
@@ -1679,14 +1684,17 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           (message.pubkey ?? indexedAuthor?.pubkey) === viewerPubkey ? (
           <LedgerUntaggedHint messageId={message.id} />
         ) : null}
-        {message.isUser && deliveryFailed ? (
-          <ErrorBanner inline
-            title="Delivery failed"
-            retryLabel="Retry"
-            onRetry={() => onRetry(message.id)}
-            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
-            testID={`outbox-delivery-failed-${message.id}`}
+        {message.isUser && sendState && sendState.showStatus !== false ? (
+          sendState.kind === 'sending' ? (
+            <Text style={styles.forwardCaption} testID={`outbox-sending-${message.id}`}><Ionicons name="time-outline" size={13} color={styles.forwardCaption.color} /> {sendState.text}</Text>
+          ) : (
+            <ErrorBanner inline
+              title={sendState.text}
+              icon={<Ionicons name="alert-circle-outline" size={13} color={styles.sendFailure.color} />}
+              secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
+              testID={`outbox-delivery-failed-${message.id}`}
             />
+          )
         ) : null}
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
@@ -1794,6 +1802,7 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: 8,
   },
   reactionEmoji: emojiTextStyle(theme.buzz.type.body),
+  sendFailure: { color: theme.buzz.dialogDanger },
   forwardCaption: {
     ...theme.buzz.type.sectionHead,
     marginTop: theme.buzz.space.xs,

@@ -156,6 +156,7 @@ export class LiveConnection {
   private readonly workspaceCursors = new Map<string, RoomCursor>();
   private readonly traceOwners = new Map<string, Registration>();
   private readonly connectedListeners = new Set<() => void>();
+  private readonly disconnectedListeners = new Set<() => void>();
   private readonly requests = new Map<string, PendingRequest>();
   private nextRequestId = 0;
   private socket: WebSocket | undefined;
@@ -410,6 +411,12 @@ export class LiveConnection {
     return () => this.connectedListeners.delete(listener);
   }
 
+  /** Observe transport loss without owning the socket's recovery policy. */
+  subscribeDisconnected(listener: () => void): () => void {
+    this.disconnectedListeners.add(listener);
+    return () => this.disconnectedListeners.delete(listener);
+  }
+
   /**
    * Replace the socket now. A backgrounded socket can look open while the
    * server has long stopped delivering to it; the fresh socket's resubscribe
@@ -657,6 +664,7 @@ export class LiveConnection {
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     noteCornerSocketDropped();
+    for (const listener of this.disconnectedListeners) listener();
     // Keep the last painted overlays and Room cursors across a transport
     // reconnect. A resumed server lane only replays what changed.
     this.traceOwners.clear();

@@ -10,6 +10,7 @@ import { Button, type ButtonDestination, type ButtonVariant } from './Button';
  */
 export function ErrorBanner({
   inline = false,
+  icon,
   description,
   onRetry,
   retryLabel = 'Retry',
@@ -23,6 +24,7 @@ export function ErrorBanner({
   titleTestID,
 }: {
   inline?: boolean;
+  icon?: React.ReactNode;
   description?: string;
   onRetry?: () => void;
   retryLabel?: string;
@@ -51,6 +53,7 @@ export function ErrorBanner({
       style={inline ? styles.inline : styles.banner}
       testID={testID}
     >
+      {icon}
       <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}>
         {inline && description ? `${title} ${description}` : title}
       </Text>

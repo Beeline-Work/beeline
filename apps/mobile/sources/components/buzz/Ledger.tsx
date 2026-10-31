@@ -112,6 +112,7 @@ export type LedgerByline = {
 type LedgerBodyProps = {
   itemId: string;
   bodyText: string | undefined;
+  pending?: boolean;
   bodyTestID: string;
   /**
    * The message byline. Omitted only for a human continuation in the same run.
@@ -600,6 +601,7 @@ export function LedgerEntry({
   chronological = false,
   precededByDayCaption = false,
   luminous = false,
+  pending = false,
   replyReference,
   bodyAction,
   attachments,
@@ -615,7 +617,7 @@ export function LedgerEntry({
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
   const [leadText, remainingText] =
     bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
-  const bodyTextStyle = luminous ? styles.ledgerTextLuminous : styles.ledgerText;
+  const bodyTextStyle = (pending || luminous) ? styles.ledgerTextLuminous : styles.ledgerText;
   // A settling reply was already typed out, live, in front of the reader. It
   // cross-fades; it never re-types itself.
   const typeOut = typewriter && !settleFrom;
@@ -708,6 +710,7 @@ export function LedgerSteer({
   itemId,
   bodyText,
   bodyTestID,
+  pending = false,
   byline,
   chronological = false,
   precededByDayCaption = false,
@@ -764,7 +767,7 @@ export function LedgerSteer({
             onChannelReference={onChannelReference}
             codeSource={codeRoomId ? { roomId: codeRoomId, messageId: itemId } : undefined}
             onOpenCode={onOpenCode}
-            textStyle={styles.steerText}
+            textStyle={pending ? styles.ledgerTextLuminous : styles.steerText}
             testID={bodyTestID}
           />
         )

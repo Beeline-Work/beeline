@@ -1,15 +1,13 @@
 import { MMKV } from 'react-native-mmkv';
 import { webStringStorage } from '@/sync/browser-string-storage';
 import {
-  SignedEventOutbox,
   SurfaceResponseCache,
-  type Identity,
-  type SignedOutboxRecord,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
 import { selectIdentities } from './identity-records';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
-import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
+import { clearMessageOutboxStorage } from './message-outbox-storage';
+export { configureMessageOutboxDelivery, getMessageOutbox, createRoomOutbox, resetMessageOutboxes } from './message-outbox-storage';
 import { SurfaceRegistry } from './surface-registry';
 import { deferRoomWrite } from './room-transition-work';
 import { webRuntimeStorage } from '@/utils/web-storage';
@@ -17,9 +15,7 @@ import { webRuntimeStorage } from '@/utils/web-storage';
 const web = webRuntimeStorage();
 const RESPONSE_NAMESPACE = 'beeline.surface.';
 const responses = web ? webStringStorage(web.storage, RESPONSE_NAMESPACE) : new MMKV({ id: 'buzz-surface-responses' });
-const mutations = web ? webStringStorage(web.storage, 'beeline.outbox.') : new MMKV({ id: 'buzz-surface-outbox' });
 const RESPONSE_PREFIX = 'surface.';
-const OUTBOX_PREFIX = 'outbox.';
 
 function storageKey(key: string): string {
   return `${RESPONSE_PREFIX}${encodeURIComponent(key)}`;
@@ -86,55 +82,10 @@ export function surfaceAddress(
   return { relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}) };
 }
 
-function relayScope(relayOrigin: string): string {
-  try {
-    return encodeURIComponent(new URL(relayOrigin).origin);
-  } catch {
-    return encodeURIComponent(relayOrigin);
-  }
-}
-
-function outboxKey(relayOrigin: string, viewerPubkey: string, roomId: string): string {
-  return `${OUTBOX_PREFIX}${relayScope(relayOrigin)}.${viewerPubkey}.${encodeURIComponent(roomId)}`;
-}
-
-/** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
-export function createRoomOutbox(
-  relayOrigin: string,
-  identity: Pick<Identity, 'publicKey'>,
-  roomId: string,
-) {
-  const key = outboxKey(relayOrigin, identity.publicKey, roomId);
-  return new SignedEventOutbox(
-    {
-      load: async () => {
-        const encoded = mutations.getString(key);
-        if (!encoded) return [];
-        try {
-          return JSON.parse(encoded) as SignedOutboxRecord[];
-        } catch {
-          mutations.delete(key);
-          return [];
-        }
-      },
-      save: async (records) => {
-        const encoded = records.length === 0 ? undefined : JSON.stringify(records);
-        if (encoded === undefined) mutations.delete(key);
-        else mutations.set(key, encoded);
-      },
-    },
-    {
-      acceptUnsignedEvent: isUnsignedMonolithMessage,
-    },
-  );
-}
-
 export function clearMobileSurfaceStorage(): void {
+  clearMessageOutboxStorage();
   mobileSurfaceCache.clear();
   for (const key of responses.getAllKeys()) {
     if (key.startsWith(RESPONSE_PREFIX)) responses.delete(key);
-  }
-  for (const key of mutations.getAllKeys()) {
-    if (key.startsWith(OUTBOX_PREFIX)) mutations.delete(key);
   }
 }

@@ -176,3 +176,24 @@ describe('ConversationRow preview', () => {
     expect(root.findByProps({ testID: 'room-needs-you' })).toBeDefined();
   });
 });
+
+it('R2 renders an offscreen refusal on its Room row until that Room is opened', async () => {
+  const { MessageOutbox } = await import('@/buzz/message-outbox');
+  const { observeMessageOutbox } = await import('@/buzz/message-outbox-observer');
+  const e = { id: 'a'.repeat(64), pubkey: 'b'.repeat(64), created_at: 1, kind: 9, sig: '', content: 'Start with the server PR', tags: [['h', 'room'], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] };
+  const owner = new MessageOutbox({ load: async () => [], save: async () => undefined,
+    send: async () => { throw new Error('The relay did not allow this message.'); }, rejection: error => (error as Error).message });
+  await owner.enqueue(e, { id: e.id, text: e.content, createdAt: 1, author: { pubkey: e.pubkey, kind: 'human', name: 'Kai' }, presentation: 'message' });
+  await owner.connectionChanged(true);
+  let stop!: () => void;
+  act(() => { stop = observeMessageOutbox(owner); });
+  const { root } = renderRow();
+  const text = (value: any): string => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' ? value : value?.props ? text(value.props.children) : '';
+  expect(text(root.findByProps({ testID: 'room-preview' }).props.children)).toBe(' Not sent: Start with the server PR');
+  console.log('R2 Room list after leaving: Not sent: Start with the server PR');
+  await act(async () => owner.acknowledgeFailures('room'));
+  expect(text(root.findByProps({ testID: 'room-preview' }).props.children)).not.toContain('Not sent:');
+  expect(owner.state(e.id)?.kind).toBe('refused');
+  act(() => { stop(); observeMessageOutbox(); });
+  owner.dispose();
+});

@@ -16,6 +16,7 @@ const room = '22222222-2222-4222-8222-222222222222';
 const dm = '33333333-3333-4333-8333-333333333333';
 const tokens = new Map([[commander, 'bdt_answered_commander_fixture'], [worker, 'bdt_answered_worker_fixture']]);
 const base = process.argv.includes('--base');
+const delegatePath = process.argv.includes('--delegate');
 let server;
 try {
   await migrate(db);
@@ -58,6 +59,23 @@ try {
     brief: { spec: 'Verify the publish', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } });
   const turn = (await call('getAgentCommands', { roomId: opened.cornerId }, worker)).commands[0];
   await claim(turn);
+  if (delegatePath) {
+    // The implementer orders another member in its corner. That member is a
+    // delegate, so the primary-worker attention index does not track its report.
+    await call('order', { ...authority(turn), address: opened.cornerId, agent: 'commander', text: 'Recover input' }, worker);
+    const delegated = (await call('getAgentCommands', { roomId: opened.cornerId })).commands[0];
+    await claim(delegated);
+    await call('report', { ...authority(delegated), status: 'blocked', text: 'blocked: input is missing' });
+    const blocked = (await call('getAgentCommands', { roomId: opened.cornerId }, worker)).commands.find(command => command.reason === 'report');
+    assert.ok(blocked);
+    await call('order', { ...authority(turn), address: opened.cornerId, agent: 'commander', text: 'Use recovered input' }, worker);
+    const cached = await request('claimAgentCommand', { roomId: opened.cornerId, commandId: blocked.id, generationId: 'cached' }, worker);
+    assert.equal(cached.status, base ? 200 : 409);
+    if (base) await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL WHERE id=$1`, [blocked.id]);
+    const inbox = await call('getAgentCommands', { roomId: opened.cornerId }, worker);
+    assert.equal(inbox.commands.some(command => command.id === blocked.id), base);
+    console.log(`STALE-DELEGATE-REPORT ${base ? 'BASELINE BUG' : 'PASS'}: delegate blocker → newer commander order → cached claim HTTP ${cached.status}; stale blocker in inbox=${base}`);
+  } else {
   await call('report', { ...authority(turn), status: 'blocked', text: 'blocked: publish job is running' }, worker);
   const report = (await call('getAgentCommands', { roomId: dm })).commands.find(command => command.reason === 'report');
   assert.ok(report);
@@ -71,6 +89,7 @@ try {
   const delivered = inbox.commands.some(command => command.id === report.id);
   assert.equal(delivered, base);
   console.log(`STALE-ANSWERED-REPORT ${base ? 'BASELINE BUG' : 'PASS'}: worker blocker → commander resolved reply → answered marker; cached claim HTTP ${cached.status}; stale blocker in inbox=${delivered}`);
+  }
 } finally {
   if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   await db.close();

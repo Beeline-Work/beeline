@@ -46,4 +46,6 @@ To demonstrate the old HTTP behavior, build the baseline server and run the same
 
 ## Boundaries
 
+The follow-up [audit of all nine reports](stale-order-report-audit.md) found a delegate blocker path without an attention-index marker. `STALE-DELEGATE-REPORT` now also rejects that path after a newer order to the reporting delegate; the built HTTP proof uses `--delegate`. The audit records the remaining pending-work acknowledgement decision separately.
+
 The fix trusts the existing server-owned answered marker; it does not infer completion from message wording, cancel arbitrary older orders, or interrupt active work. No production mutation or release was performed. The production event itself was not replayed against production: the narrow stand-in exercises its worker-report → commander-answer → delivery/claim path through a built local HTTP service.

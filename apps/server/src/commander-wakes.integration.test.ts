@@ -90,6 +90,24 @@ async function expireWindow(database = db) {
   await flushDueCommanderWakes(database);
 }
 const batch = () => daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
+it.each([
+  ['delivery', 'blocked'], ['cached claim', 'blocked'],
+  ['delivery', 'needs_decision'], ['cached claim', 'needs_decision'],
+  ['delivery', 'done'],
+] as const)('STALE-DELEGATE-REPORT: a new order answers a delegate %s / %s', async (path, status) => {
+  const opened = await open(false), turn = await worker(opened.cornerId);
+  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Recover the input' }, WORKER);
+  const delegate = (await commands(opened.cornerId, RUBY))[0]!;
+  await claim(delegate);
+  await daemon.execute('report', { ...authority(delegate), status, text: `${status.replace('_', '-')}: input recovery result` }, RUBY);
+  const report = (await commands(opened.cornerId, WORKER)).find(command => command.reason === 'report')!;
+  expect(report).toBeDefined();
+  // A delegate is not the corner implementer, so its blocker has no attention-index row.
+  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE report_id=$1', [report.id])).rowCount).toBe(0);
+  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Use the recovered input' }, WORKER);
+  if (path === 'cached claim') await expect(claim(report)).rejects.toThrow('command claim conflict');
+  expect((await commands(opened.cornerId, WORKER)).some(command => command.id === report.id)).toBe(status === 'done');
+});
 it.each(['delivery', 'cached claim'])('Reproduction STALE-ANSWERED-REPORT: drops an answered blocker at %s', async path => {
   const opened = await open(false), turn = await worker(opened.cornerId);
   await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: publish job is running' }, WORKER);

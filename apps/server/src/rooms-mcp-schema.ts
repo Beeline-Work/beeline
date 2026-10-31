@@ -100,6 +100,14 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_codes (
 CREATE INDEX IF NOT EXISTS rooms_mcp_codes_identity ON rooms_mcp_codes(identity_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_codes_client ON rooms_mcp_codes(client_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_codes_expiry ON rooms_mcp_codes(expires_at);
+-- A headless client (a coding session on a VPS) registers this server's own handoff
+-- page as its redirect: the page keeps the code for the client to collect by state.
+-- The code still needs the client's PKCE verifier, so the page never grants access.
+CREATE TABLE IF NOT EXISTS rooms_mcp_handoffs (
+  state_hash text PRIMARY KEY, code text, error text,
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rooms_mcp_handoffs_expiry ON rooms_mcp_handoffs(expires_at);
 CREATE TABLE IF NOT EXISTS rooms_mcp_tokens (
   hash text PRIMARY KEY, client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,

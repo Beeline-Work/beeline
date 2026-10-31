@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { chmod, mkdir, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -29,3 +29,5 @@ const result = spawnSync(
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 await chmod(output, 0o755);
+// The session-join adapters are ported from Reason Network; its notice ships with the bundle.
+await copyFile(resolve(root, 'apps/body/src/session-join/NOTICE'), resolve(dirname(output), 'NOTICE-reason-network'));

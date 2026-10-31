@@ -1,0 +1,33 @@
+name: Reason adapter upstream check
+
+# Beeline's session-join adapters are ported from Reason Network. Each week this
+# compares Reason's adapter files with the commit Beeline copied, and opens one
+# "Port Reason adapter changes" issue when any changed. Ruby's repository
+# subscription opens a port corner from that issue.
+on:
+  schedule:
+    - cron: '23 9 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: reason-upstream-check
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: Compare Reason adapters with the copied commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Open a port issue when a ported adapter changed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/reason-upstream-check.mjs --open-issue

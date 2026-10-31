@@ -55,6 +55,8 @@
         // Reproduction STALE-CAUSE-1 invokes the isolated HTTP proof by path.
         "scripts/prove-stale-wake-drop.mjs",
         "scripts/prove-corner-stall.mjs",
+        // Reproduction SESSION-JOIN-1 invokes the loopback session-join proof by path.
+        "scripts/prove-session-join.mjs",
         // The development guide invokes the built storage retention proof by path.
         "scripts/prove-corner-proof-retention.mjs",
         // The dashboard runbook invokes the recorded Cloudflare HTTP proof by path.

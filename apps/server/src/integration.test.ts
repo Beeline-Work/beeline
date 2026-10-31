@@ -2440,14 +2440,15 @@ describe('monolith integration', () => {
     ).json()) as { items: Array<{ id: string }> };
     expect(addressedInbox.items).toContainEqual(expect.objectContaining({ id: 'd'.repeat(64) }));
 
-    const agentReply = (await (
-      await daemonOperation('postRoomMessage', {
-        roomId: dm.id,
-        requestId: 'd'.repeat(64),
-        triggerMessageId: 'd'.repeat(64),
-        text: 'I am here.',
-      })
-    ).json()) as { id: string };
+    // The oldest queued input owns the combined DM turn.
+    const replyResponse = await daemonOperation('postRoomMessage', {
+      roomId: dm.id,
+      requestId: 'c'.repeat(64),
+      triggerMessageId: 'd'.repeat(64),
+      text: 'I am here.',
+    });
+    expect(replyResponse.status).toBe(200);
+    const agentReply = (await replyResponse.json()) as { id: string };
     const directReplyId = 'e'.repeat(64);
     expect(
       (

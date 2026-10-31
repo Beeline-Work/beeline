@@ -1,3 +1,6 @@
+import type { SandboxSessionSpec } from './bwrap-sandbox.js';
+import { withKernelLock } from './kernel-lock.js';
+import { dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
 import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { modelContextWindowTokens } from './model-context-window.js';
@@ -901,6 +904,7 @@ export class MonolithCornerTurnLoop {
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
+      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath),
       devices: grantedDevices,
       isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
@@ -1260,14 +1264,14 @@ export class MonolithCornerTurnLoop {
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
     const kvm = prepareKvmAccess(grantedDevices);
     if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
-    const spawnCommand = wrapAgentCommand({
-      bwrapPath: this.options.config.bwrapPath,
-      spec: {
+    const dependencyPaths: string[] = [];
+    const sandboxSpec: SandboxSessionSpec = {
         mode: 'edit',
         cwd: this.options.worktreePath,
         worktreePath: this.options.worktreePath,
         ...(repository ? { gitCommonDir: repository.gitCommonDir } : {}),
         protectedPaths: [this.options.runtime.supervisorRoot],
+        dependencyPaths,
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
@@ -1305,7 +1309,36 @@ export class MonolithCornerTurnLoop {
               isolatedCategories,
             } }
           : {}),
-      },
+      };
+    if (!this.options.config.bwrapPath && ['', 'apps/mobile'].some(part =>
+      existsSync(resolve(this.options.worktreePath, part, 'node_modules/.beeline-generation')))) {
+      throw new Error('Beeline shared dependencies require a working bubblewrap sandbox. Restore sandbox support before resuming this checkout.');
+    }
+    if (repository && this.options.config.bwrapPath && (this.repositoryWork || existsSync(resolve(this.options.worktreePath, 'node_modules')))) {
+      const npm = (await execFileAsync('which', ['npm'])).stdout.trim();
+      const install = (cwd: string) => async () => {
+        const command = wrapAgentCommand({ bwrapPath: this.options.config.bwrapPath,
+          spec: { ...sandboxSpec, cwd }, command: npm, args: ['ci', '--no-audit', '--no-fund'] });
+        await execFileAsync(command.command, command.args, {
+          cwd, env: { ...process.env, ...agentEnv }, maxBuffer: 16 * 1024 * 1024,
+        });
+      };
+      dependencyPaths.push(...await prepareDependencyGeneration({
+        root: this.options.worktreePath, store: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(this.options.worktreePath),
+      }));
+      const mobile = resolve(this.options.worktreePath, 'apps/mobile');
+      if (existsSync(resolve(mobile, 'node_modules')) || existsSync(resolve(this.options.worktreePath, dependencyRequest))) dependencyPaths.push(...await prepareDependencyGeneration({
+        root: mobile, store: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(mobile),
+      }));
+      if (dependencyPaths.length && this.options.config.agentHomeRoot) {
+        agentEnv.PATH = await installDependencyNpmGuard(this.options.config.agentHomeRoot, npm, agentEnv.PATH ?? process.env.PATH ?? '');
+        agentEnv.BEELINE_READONLY_DEPENDENCIES = '1';
+      }
+    }
+
+    const spawnCommand = wrapAgentCommand({
+      bwrapPath: this.options.config.bwrapPath,
+      spec: sandboxSpec,
       command: selectedCommand,
       args: agentArgs,
     });
@@ -1346,6 +1379,7 @@ export class MonolithCornerTurnLoop {
       this.options.worktreePath,
     );
     const fingerprint = sessionConfigFingerprint({
+      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath),
       devices: grantedDevices,
       isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
@@ -1701,9 +1735,9 @@ export class MonolithCornerTurnLoop {
       try {
         this.options.worktreePath = copy;
         await this.syncBranch();
-        await seedWarmNodeModules({ worktreePath: copy,
+        if (this.options.config.bwrapPath) await seedWarmNodeModules({ worktreePath: copy,
           storeRoot: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
-        await seedWarmNodeModules({ worktreePath: resolve(copy, 'apps/mobile'),
+        if (this.options.config.bwrapPath) await seedWarmNodeModules({ worktreePath: resolve(copy, 'apps/mobile'),
           storeRoot: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
         return await this.runWithCheckout(work);
       } finally {
@@ -2688,19 +2722,20 @@ export class MonolithCornerTurnLoop {
    * where a later corner could read it as complete.
    */
   private harvestWarmNodeModules(): void {
-    if (this.harvest || !this.options.repository || this.options.config.agentSharedAssetRoot) return;
+    if (this.harvest || !this.options.repository) return;
     const { cornerId, worktreePath, runtime } = this.options;
     // `apps/mobile` has its own lockfile and store; harvesting it is what lets
     // the next fresh corner skip the whole mobile install.
     const mobilePath = resolve(worktreePath, 'apps/mobile');
+    const harvest = (input: { worktreePath: string; storeRoot: string }) => withKernelLock(`dependency-store:${resolve(input.storeRoot)}`, () => harvestWarmNodeModules(input));
     const jobs = [
-      harvestWarmNodeModules({
+      harvest({
         worktreePath,
         storeRoot: warmNodeModulesStoreDir(runtime.supervisorRoot),
       }),
       ...(existsSync(resolve(mobilePath, 'package-lock.json'))
         ? [
-            harvestWarmNodeModules({
+            harvest({
               worktreePath: mobilePath,
               storeRoot: mobileNodeModulesStoreDir(runtime.supervisorRoot),
             }),

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Prepare only the dependency trees requested by the corner's work.
+import { writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const flags = new Set(process.argv.slice(2));
@@ -15,7 +16,12 @@ if (flags.has('--help')) {
     if (result.error) throw result.error;
     if (result.status !== 0) process.exit(result.status ?? 1);
   };
-  run(['ci']);
-  if (flags.has('--mobile')) run(['run', 'mobile:install']);
+  if (process.env.BEELINE_READONLY_DEPENDENCIES !== '1') run(['ci']);
+  if (flags.has('--mobile')) {
+    if (process.env.BEELINE_READONLY_DEPENDENCIES === '1') {
+      writeFileSync('.beeline-dependency-request', 'mobile');
+      console.log('Mobile dependencies requested. Beeline prepares and mounts them automatically at the next turn.');
+    } else run(['run', 'mobile:install']);
+  }
   if (flags.has('--build')) run(['run', 'build']);
 }

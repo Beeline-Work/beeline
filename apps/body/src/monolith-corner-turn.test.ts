@@ -2021,7 +2021,7 @@ describe('corner close-request delivery', () => {
       await writeFile(join(path, 'package-lock.json'), lock);
       await writeFile(join(path, 'node_modules/proof/package.json'), '{"name":"proof","version":"1.0.0"}');
       await writeFile(join(path, 'node_modules/.package-lock.json'), '{"packages":{"node_modules/proof":{}}}');
-      expect((await harvestWarmNodeModules({ worktreePath: path, storeRoot })).reason).toBe('stored');
+      expect(['stored', 'already-warm']).toContain((await harvestWarmNodeModules({ worktreePath: path, storeRoot })).reason);
     }
     await writeFile(join(root, 'review.txt'), 'published head');
     await execFileAsync('git', ['-C', root, 'add', 'review.txt', '.gitignore', 'package-lock.json', 'apps/mobile/package-lock.json']);
@@ -2042,7 +2042,7 @@ describe('corner close-request delivery', () => {
       const review = () => internal.withCheckout(async () => {
         await internal.syncBranch();
         reviewPath = internal.options.worktreePath;
-        for (const relative of ['node_modules/proof/package.json', 'apps/mobile/node_modules/proof/package.json']) {
+        for (const relative of fallback ? [] : ['node_modules/proof/package.json', 'apps/mobile/node_modules/proof/package.json']) {
           expect(await readFile(join(reviewPath, relative), 'utf8')).toContain('proof');
         }
         if (fallback) {

@@ -38,3 +38,15 @@ test('invalid options fail before installation', async () => fixture(async (cwd)
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Unknown preparation option/);
 }));
+
+test('managed preparation preserves mounted trees and requests mobile for the next turn', async () => fixture(async (cwd) => {
+  await rm(join(cwd, 'package-lock.json'));
+  const result = spawnSync(process.execPath, [prepare, '--mobile', '--build'], {
+    cwd, encoding: 'utf8', env: { ...process.env, BEELINE_READONLY_DEPENDENCIES: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await exists(join(cwd, 'mobile-ran')), false);
+  assert.equal(await exists(join(cwd, '.beeline-dependency-request')), true);
+  assert.equal(await exists(join(cwd, 'build-ran')), true);
+  assert.match(result.stdout, /automatically at the next turn/);
+}));

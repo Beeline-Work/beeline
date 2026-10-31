@@ -1,0 +1,9 @@
+{
+  "cliVersion": "0.165.0",
+  "configPresent": false,
+  "hooksPresent": false,
+  "statePresent": false,
+  "environment": "env -i; only PATH, HOME, CODEX_HOME, XDG_CONFIG_HOME, XDG_STATE_HOME, TERM, LANG",
+  "permissionOverrides": [],
+  "hookTrustBypass": false
+}

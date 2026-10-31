@@ -31,11 +31,12 @@ export async function registerClient(server: string, clientName: string): Promis
 
 export interface SignIn { url: string; verifier: string; state: string }
 
-export function signInLink(server: string, clientId: string, memberName: string): SignIn {
+export function signInLink(server: string, clientId: string, memberName: string, claudeInboundFallback = false): SignIn {
   const verifier = opaque(), state = opaque();
   const query = new URLSearchParams({ client_id: clientId, redirect_uri: handoffUri(server), response_type: 'code', resource: `${server}/mcp`,
     code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write',
     state, member_name: memberName });
+  if (claudeInboundFallback) query.set('claude_inbound_fallback', '1');
   return { url: `${server}/mcp/oauth/authorize?${query}`, verifier, state };
 }
 

@@ -1,3 +1,6 @@
+import React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
@@ -40,6 +43,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 
 import { resetClientState } from '@/sync/client-reset';
 import {
+  useNeedsYouCount,
   applyNeedsYouLiveDelta,
   applyBookmarkDelta,
   forgetTray,
@@ -208,4 +212,46 @@ describe('one tray clock and registration', () => {
     await settle();
     expect(fixture.disk.get(diskB)).toMatchObject({ items: [{ messageId: 'new-account' }] });
   });
+});
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+describe('Reproduction NEEDS-YOU-FLICKER: Room-list badge invalidations', () => {
+  it.each(['postgres:memberships', 'reconnect', 'needs-you-gap'].flatMap((reason) =>
+    [true, false].map((mounted) => ({ reason, mounted }))))(
+    'keeps every badge render nonzero during a held $reason refetch (mounted=$mounted)', async ({ reason, mounted }) => {
+      const first = loadNeedsYouList('ws');
+      await settle();
+      fixture.reads[0]!([need('ask-1'), need('ask-2')]);
+      await first;
+      if (!mounted) {
+        fixture.registrations[0]!.receive({ monolithLive: { type: 'invalidate', reason } });
+        await settle();
+        expect(fixture.reads).toHaveLength(1);
+      }
+      const values: number[] = [];
+      function Badge() {
+        const count = useNeedsYouCount('ws', 'surface');
+        values.push(count);
+        return React.createElement('badge', { count });
+      }
+      let root: ReturnType<typeof create>;
+      await act(async () => { root = create(React.createElement(React.Fragment, null,
+        React.createElement(Badge), React.createElement(Badge))); });
+      try {
+        await act(async () => {
+          if (mounted) fixture.registrations[0]!.receive({ monolithLive: { type: 'invalidate', reason } });
+          await settle();
+        });
+        expect(fixture.reads).toHaveLength(2);
+        const heldValues = [...values];
+        await act(async () => { fixture.reads[1]!([need('ask-new')]); await settle(); });
+        expect(heldValues.every((value) => value === 2)).toBe(true);
+        expect(values.at(-1)).toBe(1);
+        expect(values).not.toContain(0);
+        await act(async () => { forgetTray('ws'); await settle(); });
+        expect(values.at(-1)).toBe(0);
+        expect(fixture.reads).toHaveLength(2);
+      } finally { await act(async () => root!.unmount()); }
+    });
 });

@@ -4,6 +4,7 @@ import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beel
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
+import type { LiveHub } from './live.js';
 import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { joinRooms } from './membership-join.js';
 import { captureServerError } from './sentry.js';
@@ -512,8 +513,17 @@ export interface FreeAgentBootstrapGrant {
 export const FREE_AGENT_START_LIMIT = 5;
 export const FREE_AGENT_START_WINDOW_MINUTES = 10;
 
+/** Durable install/sign-in work ends on completion, failure, or disconnect. */
+const connectorWorkSql = (agent: string): string => `(
+  EXISTS (SELECT 1 FROM agents helper WHERE helper.agent_id=${agent}
+    AND helper.squire_work->>'install'='true'
+    AND COALESCE(helper.squire_work->>'errorMessage','')='')
+  OR EXISTS (SELECT 1 FROM workspace_connectors connector
+    WHERE connector.helper_agent_id=${agent} AND connector.status='installing')
+)`;
+
 /**
- * Whether a wake is due for the row `f`: a pending command, a Machine, and the
+ * Whether a wake is due for the row `f`: pending work, a Machine, and the
  * agent not serving. A waking or running agent waits 20 seconds between starts.
  */
 const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
@@ -524,9 +534,9 @@ const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
         JOIN live_server_instances server ON server.instance_id=connection.instance_id
         WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
           AND server.renewed_at>clock_timestamp()-interval '90 seconds')))
-  AND EXISTS (SELECT 1 FROM agent_commands command
+  AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
     WHERE command.agent_id=f.agent_id AND command.state='pending'
-      AND (command.wake_after IS NULL OR command.wake_after<=now()))`;
+      AND (command.wake_after IS NULL OR command.wake_after<=now())))`;
 
 /**
  * The start limit for one agent. A `connected` event ends an episode. A
@@ -551,7 +561,7 @@ const START_LIMIT_SQL = `WITH last_connect AS (
   FROM last_connect, last_stop`;
 
 /** Wake reasons recorded for the latency measurement. */
-type WakeCause = 'command' | 'sweep' | 'provisioned';
+type WakeCause = 'command' | 'connector' | 'sweep' | 'provisioned';
 
 /**
  * Runtime half of free agents: provisioning, waking, sleeping, bootstrap and
@@ -807,6 +817,7 @@ export class FreeAgentService {
       await this.database.query<{ fly_machine_id: string }>(
         `UPDATE free_agents f SET state='sleeping',updated_at=now()
          WHERE f.agent_id=$1 AND f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
+           AND NOT ${connectorWorkSql('f.agent_id')}
            AND NOT EXISTS (SELECT 1 FROM agent_commands command
              WHERE command.agent_id=f.agent_id AND command.state IN ('pending','claimed')
                AND (command.state='claimed' OR command.wake_after IS NULL OR command.wake_after<=now()))
@@ -927,8 +938,8 @@ export class FreeAgentService {
     const provision = await this.database.query<{ agent_id: string }>(
       `SELECT agent_id FROM free_agents
        WHERE removed_at IS NULL AND fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5
-         AND EXISTS (SELECT 1 FROM agent_commands command WHERE command.agent_id=free_agents.agent_id
-           AND command.state='pending' AND (command.wake_after IS NULL OR command.wake_after<=now()))
+         AND (${connectorWorkSql('free_agents.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command WHERE command.agent_id=free_agents.agent_id
+           AND command.state='pending' AND (command.wake_after IS NULL OR command.wake_after<=now())))
          AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
        ORDER BY created_at LIMIT 20`,
     );
@@ -941,10 +952,10 @@ export class FreeAgentService {
     const wakes = await this.database.query<{ agent_id: string }>(
       `SELECT f.agent_id FROM free_agents f
        WHERE (f.fly_machine_id IS NOT NULL OR f.state='destroyed') AND f.state<>'failed' AND f.removed_at IS NULL
-         AND EXISTS (SELECT 1 FROM agent_commands command
+         AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id AND command.state='pending'
              AND (command.wake_after IS NULL OR command.wake_after<=now())
-             AND command.created_at<clock_timestamp()-interval '5 seconds')
+             AND command.created_at<clock_timestamp()-interval '5 seconds'))
          AND NOT EXISTS (SELECT 1 FROM agent_connections connection
            JOIN live_server_instances server ON server.instance_id=connection.instance_id
            WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
@@ -1002,6 +1013,7 @@ export class FreeAgentService {
        WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
          AND f.last_activity_at<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
          AND COALESCE(f.wake_requested_at,f.created_at)<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
+         AND NOT ${connectorWorkSql('f.agent_id')}
          AND NOT EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id AND (command.state IN ('pending','claimed')
              OR (command.cancellation_reason IS DISTINCT FROM 'free-agent-time-limit'
@@ -1020,6 +1032,7 @@ export class FreeAgentService {
       `SELECT f.agent_id,f.fly_machine_id FROM free_agents f
        WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('sleeping','stopped')
          AND f.last_activity_at<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
+         AND NOT ${connectorWorkSql('f.agent_id')}
          AND NOT EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id
              AND (command.state IN ('pending','claimed')
@@ -1076,12 +1089,23 @@ export class FreeAgentService {
     return true;
   }
 
-  /** A committed command for any agent: start the Machine if it is a sleeping free agent. */
-  kickIfFree(agentId: string): void {
+  /** Committed work wakes the Machine; the sweep recovers missed notifications. */
+  subscribeToWakes(live: LiveHub): () => void {
+    return live.subscribeAll((event) => {
+      if (event.type !== 'invalidate' || !event.targetAgentId) return;
+      if (event.reason === 'connector-assignment') this.kickIfFree(event.targetAgentId, 'connector');
+      else if (event.reason === 'postgres:agent_commands' && event.operation === 'INSERT')
+        this.kickIfFree(event.targetAgentId);
+    });
+  }
+
+  /** Start the Machine if committed work targets a free agent. */
+  kickIfFree(agentId: string, cause: WakeCause = 'command'): void {
     void this.database
-      .query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND state<>'failed' AND removed_at IS NULL`, [agentId])
+      .query(`SELECT 1 FROM free_agents f WHERE agent_id=$1 AND state<>'failed' AND removed_at IS NULL
+        ${cause === 'connector' ? `AND ${connectorWorkSql('f.agent_id')}` : ''}`, [agentId])
       .then((found) => {
-        if (found.rowCount) this.kick(agentId, 'command');
+        if (found.rowCount) this.kick(agentId, cause);
       })
       .catch((error) => this.log(`wake lookup ${agentId.slice(0, 12)}: ${String(error)}`));
   }

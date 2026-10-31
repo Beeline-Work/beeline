@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 
-it('checkout-1: refuses a symlink alias and recovers ownership after a crashed turn', async () => {
+it('checkout-1: waits on a symlink alias and recovers ownership after a crashed turn', async () => {
   const root = await mkdtemp(join(tmpdir(), 'corner-checkout-owner-'));
   const alias = `${root}-alias`;
   await symlink(root, alias);
@@ -22,12 +22,14 @@ it('checkout-1: refuses a symlink alias and recovers ownership after a crashed t
       child.once('error', reject);
       child.once('exit', code => { if (!output.includes('owned')) reject(new Error(`owner exited ${code}`)); });
     });
-    await expect(withCornerCheckoutLock(alias, async () => { throw new Error('must not enter'); }))
-      .rejects.toThrow('in use by another agent');
+    let entered = false;
+    const waiting = withCornerCheckoutLock(alias, async () => { entered = true; return 'recovered'; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(entered).toBe(false);
     const exited = once(child, 'exit');
     child.kill('SIGKILL');
     await exited;
-    await expect(withCornerCheckoutLock(alias, async () => 'recovered')).resolves.toBe('recovered');
+    await expect(waiting).resolves.toBe('recovered');
     await expect(withCornerCheckoutLock(root, async () => { throw new Error('turn failed'); }))
       .rejects.toThrow('turn failed');
     await expect(withCornerCheckoutLock(root, async () => 'released')).resolves.toBe('released');

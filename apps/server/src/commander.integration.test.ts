@@ -545,6 +545,8 @@ it('reconnect recovery keeps every private report, even when each was queued off
   for (const text of ['blocked: missing input', 'failed: build stopped', 'needs-decision: select scope'])
     await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
   await db.query(`UPDATE agent_commands SET created_offline=true,created_at=now()-interval '10 minutes' WHERE reason='report'`);
+  // Preserve causal order: the assignment preceded these offline reports.
+  await db.query(`UPDATE agent_commands SET created_at=now()-interval '11 minutes' WHERE id=$1`, [turn.id]);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
 });

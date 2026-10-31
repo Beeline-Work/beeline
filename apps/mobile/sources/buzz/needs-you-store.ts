@@ -22,10 +22,11 @@ type Slot = { key: string; relay: string; pubkey: string; workspaceId: string;
   entry: Entry; clock: number; needsRead: number; savedRead: number;
   reads: Set<number>; changes: Change[]; projectionRead?: Promise<readonly NeedsYouItemView[]>;
   trayRead?: Promise<{ needsError?: string; savedError?: string }>;
-  forgotten?: boolean; seen?: Set<string>; seeing?: Set<string> };
+  needsStale?: number; forgotten?: boolean; seen?: Set<string>; seeing?: Set<string> };
 const EMPTY: Entry = { needs: null, saved: null, held: new Set() };
 const slots = new Map<string, Slot>();
 const listeners = new Set<() => void>();
+const badgeReaders = new Map<string, number>();
 const trayReaders = new Map<string, Set<(reason: string) => void>>();
 let viewer: { key: string; relay: string; pubkey: string } | undefined;
 let resolving: Promise<NonNullable<typeof viewer>> | undefined;
@@ -110,7 +111,9 @@ function startLive(): void {
     else if (signal.type === 'invalidate' && GAP_REASONS.has(signal.reason)) {
       for (const slot of slots.values()) if (signal.reason !== 'bookmark-gap' && !trayReaders.has(slot.workspaceId)) {
         slot.clock += 1;
-        write(slot, { ...slot.entry, needs: null }, false);
+        slot.needsStale = slot.clock;
+        if (badgeReaders.has(slot.workspaceId) && !slot.forgotten)
+          void refreshProjection(slot).catch(() => undefined);
       }
       for (const readers of trayReaders.values()) for (const read of readers) read(signal.reason);
     }
@@ -163,6 +166,7 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
       { ...slot.entry, needs: orderedNeeds([...result.items]) });
     if (active(slot) && at > slot.needsRead) {
       slot.needsRead = at;
+      if (at >= (slot.needsStale ?? 0)) slot.needsStale = undefined;
       slot.forgotten = false;
       write(slot, entry);
     }
@@ -192,7 +196,7 @@ export async function loadTrayList(workspaceId: string, force = false): Promise<
   const slot = slotFor(await resolveViewer(), workspaceId);
   if (!slot.entry.needs) await seed(workspaceId, 'needs-you');
   if (!slot.entry.saved) await seed(workspaceId, 'bookmarks');
-  if (!force && !slot.forgotten && slot.entry.needs && slot.entry.saved) return {};
+  if (!force && !slot.forgotten && !slot.needsStale && slot.entry.needs && slot.entry.saved) return {};
   if (slot.trayRead) return slot.trayRead;
   const at = ++slot.clock;
   slot.reads.add(at);
@@ -203,6 +207,7 @@ export async function loadTrayList(workspaceId: string, force = false): Promise<
       entry = replay(slot, 'needs', at,
         { ...entry, needs: orderedNeeds([...result.needs.items]) });
       slot.needsRead = at;
+      if (at >= (slot.needsStale ?? 0)) slot.needsStale = undefined;
     }
     if (result.saved && at > slot.savedRead) {
       entry = replay(slot, 'saved', at,
@@ -241,6 +246,7 @@ export function forgetTray(workspaceId: string): void {
   const slot = current(workspaceId);
   if (!slot) return;
   slot.forgotten = true;
+  slot.needsStale = undefined;
   slot.needsRead = slot.savedRead = ++slot.clock;
   slot.changes = [];
   write(slot, { ...slot.entry, needs: [], saved: [], next: undefined }, false);
@@ -315,8 +321,26 @@ export function useTrayList(workspaceId: string | null | undefined) {
   return { needs: visibleNeeds(entry),
     bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next };
 }
+function refreshProjection(slot: Slot): Promise<readonly NeedsYouItemView[]> {
+  return slot.projectionRead ??= loadNeedsYouList(slot.workspaceId).then((items) => {
+    slot.projectionRead = undefined;
+    // A second gap during the read needs a newer read, still without blanking.
+    if (active(slot) && !slot.forgotten && slot.needsStale && badgeReaders.has(slot.workspaceId))
+      return refreshProjection(slot);
+    return items;
+  }, (error) => { slot.projectionRead = undefined; throw error; });
+}
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
   useEffect(() => { void resolveViewer(); }, []);
+  useEffect(() => {
+    if (!workspaceId || refreshKey === undefined) return;
+    badgeReaders.set(workspaceId, (badgeReaders.get(workspaceId) ?? 0) + 1);
+    return () => {
+      const remaining = (badgeReaders.get(workspaceId) ?? 1) - 1;
+      if (remaining) badgeReaders.set(workspaceId, remaining);
+      else badgeReaders.delete(workspaceId);
+    };
+  }, [workspaceId, refreshKey]);
   // A badge observes its number, not every replacement of the Tray's rows.
   const count = useSyncExternalStore(subscribe, () => {
     const entry = workspaceId ? current(workspaceId)?.entry : undefined;
@@ -324,16 +348,15 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
   });
   const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
   useEffect(() => {
-    if (!workspaceId || refreshKey === undefined || count !== null) return;
+    if (!workspaceId || refreshKey === undefined) return;
     let cancelled = false;
     void (async () => {
       const slot = slotFor(await resolveViewer(), workspaceId);
-      if (cancelled || !active(slot) || slot.entry.needs) return;
+      if (cancelled || !active(slot) || (slot.entry.needs && !slot.needsStale)) return;
       try {
         // The existing badge read seeds complete rows. Concurrent badges share
         // it; loadNeedsYouList replays deltas received while it was in flight.
-        await (slot.projectionRead ??= loadNeedsYouList(workspaceId)
-          .finally(() => { slot.projectionRead = undefined; }));
+        await refreshProjection(slot);
       } catch { /* Keep the previous projection. */ }
     })();
     return () => { cancelled = true; };

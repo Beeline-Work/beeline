@@ -15,6 +15,7 @@ const server = vi.hoisted(() => ({
 }));
 const live = vi.hoisted(() => ({
   registrations: [] as Array<{ filters: unknown; listener: (event: unknown) => void; closed: boolean }>,
+  connected: new Set<() => void>(),
   reconnects: 0,
   viewing: new Set<string>(),
 }));
@@ -86,6 +87,10 @@ vi.mock('@/sync/transport/live-connection', () => ({
       };
     },
     whenSubscribed: async () => undefined,
+    subscribeConnected: (listener: () => void) => {
+      live.connected.add(listener);
+      return () => live.connected.delete(listener);
+    },
     isViewing: (roomId: string) => live.viewing.has(roomId),
     reconnect: () => {
       live.reconnects += 1;
@@ -154,6 +159,7 @@ beforeEach(() => {
   disk.rows.clear();
   disk.writes = [];
   live.registrations = [];
+  live.connected.clear();
   live.reconnects = 0;
   live.viewing.clear();
 });
@@ -275,6 +281,23 @@ describe('app-level Room list store', () => {
     roomScreen.release();
     expect(openWatches()).toBe(0);
     expect(liveChatList(key)).toBeNull();
+  });
+
+  it('Reproduction R1: a failed opening read runs again when the socket subscribes', async () => {
+    const chats = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(listOf([row('room-a', 10)]));
+    const handle = join(chats, visible);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(chats).toHaveBeenCalledTimes(1);
+    expect(handle.confirmed()).toBe(false);
+    expect(handle.current()).toBeNull();
+    for (const listener of live.connected) listener();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chats).toHaveBeenCalledTimes(2);
+    expect(handle.confirmed()).toBe(true);
+    expect(handle.current()?.chats[0]?.room.id).toBe('room-a');
+    handle.release();
   });
 
   it('makes one covering read on open even when every Room resumes its lane', async () => {

@@ -118,7 +118,7 @@
       "kind": "origin:server.usebeeline.app",
       "count": 2,
       "fate": "exception",
-      "why": "The Beeline server origin: host of the main live socket, and of HTTP until the migration."
+      "why": "The Beeline server origin: host of the main live socket and of the remaining HTTP exceptions."
     },
     {
       "file": "apps/mobile/sources/buzz/sentry.ts",
@@ -293,7 +293,7 @@
       "kind": "origin:beeline-server.fly.dev",
       "count": 1,
       "fate": "link",
-      "why": "Compared against the configured server to label funnel events as production; drop with the backup origin."
+      "why": "Compared against the configured server to label funnel events as production."
     },
     {
       "file": "apps/mobile/sources/auth/signin-funnel.ts",

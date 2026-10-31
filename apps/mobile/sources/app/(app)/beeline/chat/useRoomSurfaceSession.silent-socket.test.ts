@@ -228,6 +228,29 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('Reproduction R1: a failed opening read clears Retry when the socket subscribes again', async () => {
+    controls.failures = 100;
+    let latest: UseRoomSurfaceSessionResult | undefined;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
+    });
+    await advance(60_000);
+    expect(controls.roomReads).toBe(4);
+    expect(latest!.hydrationFailed).toBe(true);
+    expect(latest!.roomSurface).toBeNull();
+    controls.failures = 0;
+    await act(async () => controls.emit({
+      monolithLive: { type: 'subscribed', roomId: 'experiments', resumed: false },
+    }));
+    await advance(0);
+    expect(controls.roomReads).toBe(5);
+    expect(latest!.roomSurface?.messages.at(-1)?.id).toBe('m-2042');
+    expect(latest!.hydrationFailed).toBe(false);
+    console.log('R1 stand-in: failed open left Retry; reconnect subscribe painted the Room and cleared it');
+    await act(async () => renderer.unmount());
+  });
+
   it('bounds failed refresh retries to three after the opening read', async () => {
     controls.failures = 100;
     let renderer!: ReactTestRenderer;

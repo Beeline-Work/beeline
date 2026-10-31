@@ -861,7 +861,10 @@ export function useRoomSurfaceSession({
               // A push-prefetched read can predate this lane, in which case
               // one follow-up read covers that gap.
               if (handshakeSeen) {
-                if (hasPainted && !live.resumed) visibleScheduler()?.force();
+                // A failed opening read never paints, so Retry stays up until
+                // this reconnect starts the covering read. A resumed lane
+                // that already painted replayed its own gap.
+                if (!hasPainted || !live.resumed) visibleScheduler()?.force();
                 return;
               }
               handshakeSeen = true;

@@ -1366,48 +1366,24 @@ test('the emulator release proof gates OTA promotion', () => {
   const workflow = parse(source);
   const proof = workflow.jobs.release_proof;
   assert.match(proof.if, /run_mobile_ota == 'true'/);
-  // A native build that was skipped because it was not needed (carried
-  // forward or already checkpointed) no longer suppresses the proof: only a
-  // genuinely failed native build stops it. Run 34972989027 skipped the
-  // proof exactly because the old clause treated `skipped` as a hold.
-  assert.doesNotMatch(proof.if, /native_android != 'true'/);
-  assert.match(proof.if, /needs\.mobile_native_android\.result != 'failure'/);
+  assert.equal(proof.needs, 'initialize');
   assert.deepEqual(proof['runs-on'], ['self-hosted', 'beeline-android']);
+  assert.equal(proof['timeout-minutes'], 18);
   const steps = proof.steps;
-  const aab = steps.find((step) => step.name === 'Download the native AAB under proof');
-  const apk = steps.find((step) => step.name === 'Build the sideload APK under proof (no native build in this run)');
+  const stage = steps.find((step) => step.name === 'Stage the candidate OTA without promoting production');
   const run = steps.find((step) => step.name === 'Run the emulator release proof');
   const evidence = steps.find((step) => step.name === 'Preserve release-proof evidence');
-  // The AAB exists only when the native job built it in this run; a rerun
-  // that found the build already on Play proves a sideload APK instead.
-  assert.match(aab.if, /needs\.mobile_native_android\.outputs\.built == 'true'/);
-  assert.match(aab.with.name, /mobile-native-android-build-/);
-  assert.match(apk.if, /needs\.mobile_native_android\.outputs\.built != 'true'/);
-  // The sideload build IS the carried-build proof path: npm ci installs
-  // @beeline/* as unbuilt file: symlinks whose package `main` is dist/index.js
-  // (gitignored), so Metro dies in createBundleReleaseJsAndAssets with
-  // "this package itself specifies a `main` module field that could not be
-  // resolved" and no commit whose Android build was carried can ever be
-  // proven (run 35041737312). The step must build the SDK dist exactly the
-  // way the native leg's eas-build-post-install does, after npm ci.
-  assert.match(apk.run, /npm-ci-timed\.sh/);
-  assert.match(apk.run, /npm run eas-build-post-install/);
-  assert.ok(
-    apk.run.indexOf('npm-ci-timed.sh') < apk.run.indexOf('npm run eas-build-post-install'),
-    'eas-build-post-install must run after npm ci',
-  );
-  // The runner's system node is older than metro-config's use of
-  // Array.prototype.toReversed, so the proof job must pin the same node
-  // version the native build bundles on.
-  const proofNode = steps.find((step) => step.uses === 'actions/setup-node@v4' && step.with?.['node-version']);
-  assert.equal(String(proofNode.with['node-version']), '22');
-  // The shared rig emulator must survive the OTA-only APK build's teardown.
-  assert.equal(apk.env.BEELINE_ANDROID_KEEP_DEVICE, '1');
-  assert.match(apk.env.ANDROID_SIDELOAD_KEYSTORE_B64, /secrets\./);
-  assert.match(run.run, /release-proof\.mjs --aab "\$RUNNER_TEMP\/proof-binary\/beeline\.aab"/);
-  assert.match(run.run, /release-proof\.mjs --apk apps\/mobile\/android\/app\/build\/outputs\/apk\/release\/app-release\.apk/);
+  assert.equal(stage.uses, './.github/actions/mobile-ota-leg');
+  assert.equal(stage.with.promote, 'false');
+  assert.ok(steps.indexOf(stage) < steps.indexOf(run));
+  assert.equal(run['timeout-minutes'], 5);
+  assert.match(run.run, /timeout .*280s node scripts\/release-proof\.mjs --ota --sha/);
+  assert.match(run.env.BEELINE_REVIEW_SECRET, /secrets\.BEELINE_REVIEW_SECRET/);
+  assert.doesNotMatch(JSON.stringify(steps), /android-build\.sh|--aab|--apk|download-artifact/);
   assert.match(evidence.if, /always\(\) && steps\.proof\.conclusion != 'skipped'/);
   assert.match(evidence.with.path, /release-proof-out/);
+  assert.equal(workflow.jobs.server.needs, 'initialize');
+  assert.ok(!JSON.stringify(workflow.jobs.helper.needs).includes('release_proof'));
 
   // The proof is consent-gated: it runs only when the operator explicitly
   // dispatches with run_release_proof=true. OTA promotion never depends on
@@ -1583,8 +1559,8 @@ test('the release proof is consent-gated; a requested proof that fails blocks pr
     true,
     'an OTA-only release has no native build to wait for',
   );
-  // Only a native build that genuinely FAILED stops a requested proof.
-  assert.equal(githubGate(proofIf, proofEnv({ native_result: 'failure', requested: true })), false);
+  // Native publishing is independent of the existing-binary OTA proof.
+  assert.equal(githubGate(proofIf, proofEnv({ native_result: 'failure', requested: true })), true);
 
   // Promotion truth table: an unrequested proof routes the OTA through
   // mobile_ota, which never waits; a requested proof routes it through

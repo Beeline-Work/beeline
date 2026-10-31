@@ -506,34 +506,22 @@ jobs:
         run: node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}"
 
   release_proof:
-    # The emulator proof is a release gate, not a check: a blank-screen build
-    # must never promote its OTA (the failure class it exists to catch). It
-    # drives the rig emulator under /tmp/emulator-5554.lock through
-    # apps/mobile/scripts/release-proof.mjs, which never starts, stops, or
-    # restarts the emulator itself. The rig AVD and its signed-in session live
-    # on the beeline-android pool hosts; a host without them fails the lane
-    # loudly instead of passing vacuously.
-    # consent-gated (run_release_proof=true): OTA promotion never depends on
-    # the proof.
-    needs: [initialize, mobile_native_android]
+    # Stage the candidate on beta, then exercise an existing native binary.
+    # Only OTA promotion waits for this opt-in lane; server/helper stay independent.
+    needs: initialize
     if: >-
-      always() && needs.initialize.result == 'success' &&
-      inputs.run_release_proof == true &&
-      needs.initialize.outputs.run_mobile_ota == 'true' &&
-      needs.mobile_native_android.result != 'failure'
+      needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof == true
     runs-on: [self-hosted, beeline-android]
-    timeout-minutes: 60
+    timeout-minutes: 18
+    env:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+      EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+      EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+      EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      # The proof builds its own sideload APK when the native build was
-      # carried, and that build runs Metro. Without this the job inherits the
-      # runner's system node, which is older than metro-config's use of
-      # Array.prototype.toReversed, so `createBundleReleaseJsAndAssets` dies
-      # with "configs.toReversed is not a function" and NO release whose
-      # Android build was carried can ever be proven. Same version and cache
-      # as mobile_native_android so both legs bundle on identical node.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -541,11 +529,6 @@ jobs:
       - name: Resolve the Android SDK
         run: |
           set -euo pipefail
-          # A value written to $GITHUB_ENV reaches LATER steps, never this
-          # shell, so the guard has to read what the loop resolved rather
-          # than $ANDROID_HOME. Checking the env var made a runner whose
-          # SDK was found but whose ANDROID_HOME was unset (the rig's own
-          # beeline-runner account) fail as 'SDK missing'.
           resolved=""
           for candidate in "${ANDROID_HOME:-}" "$HOME/Android/Sdk" /home/lunchbox/android-sdk /opt/android-sdk; do
             if [ -n "$candidate" ] && [ -d "$candidate/platform-tools" ]; then
@@ -556,54 +539,27 @@ jobs:
           test -n "$resolved" || { echo 'Android SDK missing on runner' >&2; exit 1; }
           echo "ANDROID_HOME=$resolved" >> "$GITHUB_ENV"
           echo "$resolved/platform-tools" >> "$GITHUB_PATH"
-      # `native_android` says android is one of this release's platforms, NOT
-      # that a native build ran in THIS run. When the native component is
-      # carried forward from an earlier release, the AAB artifact lives in
-      # that older run and cannot be downloaded here. The binary under proof
-      # therefore follows whether the native job actually ran and succeeded.
-      - name: Download the native AAB under proof
-        if: needs.mobile_native_android.outputs.built == 'true'
-        uses: actions/download-artifact@v4
+      - uses: ./.github/actions/eas-cli
+      - name: Stage the candidate OTA without promoting production
+        uses: ./.github/actions/mobile-ota-leg
         with:
-          name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/proof-binary
-      - name: Build the sideload APK under proof (no native build in this run)
-        if: needs.mobile_native_android.outputs.built != 'true'
-        working-directory: apps/mobile
-        env:
-          ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
-          ANDROID_SIDELOAD_KEY_ALIAS: ${{ secrets.ANDROID_SIDELOAD_KEY_ALIAS }}
-          ANDROID_SIDELOAD_STORE_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_STORE_PASSWORD }}
-          ANDROID_SIDELOAD_KEY_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_KEY_PASSWORD }}
-          # The emulator is a shared rig: the build's teardown must neither kill
-          # it nor the adb server the proof itself is about to use.
-          BEELINE_ANDROID_KEEP_DEVICE: '1'
-        run: |
-          set -euo pipefail
-          bash ../../scripts/npm-ci-timed.sh
-          # Metro resolves @beeline/* to their built dist/; build them like
-          # the OTA leg's eas-build-post-install does.
-          npm run eas-build-post-install
-          bash scripts/android-build.sh
+          promote: 'false'
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+          ota_memory: ${{ needs.initialize.outputs.ota_memory }}
       - name: Run the emulator release proof
         id: proof
+        working-directory: apps/mobile
         env:
-          ANDROID_SIDELOAD_KEYSTORE_B64: ${{ secrets.ANDROID_SIDELOAD_KEYSTORE_B64 }}
-          ANDROID_SIDELOAD_KEY_ALIAS: ${{ secrets.ANDROID_SIDELOAD_KEY_ALIAS }}
-          ANDROID_SIDELOAD_STORE_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_STORE_PASSWORD }}
-          ANDROID_SIDELOAD_KEY_PASSWORD: ${{ secrets.ANDROID_SIDELOAD_KEY_PASSWORD }}
-          # Lets the proof sign itself in via the /review bypass after the
-          # install wipes the app, so it no longer needs a persisted GitHub session.
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+        # Includes lock wait, download, sign-in, fetch/reload and crash watch.
+        timeout-minutes: 5
         run: |
-          set -euo pipefail
-          if [ "${{ needs.mobile_native_android.outputs.built }}" = 'true' ]; then
-            node apps/mobile/scripts/release-proof.mjs --aab "$RUNNER_TEMP/proof-binary/beeline.aab"
-          else
-            node apps/mobile/scripts/release-proof.mjs --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          fi
-      # Only demand evidence when the proof itself ran; a proof that never
-      # started has nothing to preserve and must not fail twice for it.
+          timeout --signal=TERM --kill-after=10s 280s node scripts/release-proof.mjs --ota --sha "$RELEASE_SHA" --targets "$RUNNER_TEMP/ota/targets.json"
       - name: Preserve release-proof evidence
         if: always() && steps.proof.conclusion != 'skipped'
         uses: actions/upload-artifact@v4

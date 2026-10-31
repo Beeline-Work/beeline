@@ -18,7 +18,7 @@ vi.mock('node:https', () => ({
     return req;
   },
 }));
-import { bundledMcpLogo, fetchMcpLogo } from './rooms-mcp-logos.js';
+import { bundledMcpLogo, fetchMcpLogo, mcpMemberAvatar } from './rooms-mcp-logos.js';
 afterEach(() => { state.answers = [{ address: '93.184.216.34', family: 4 }]; state.status = 200; state.type = 'image/png'; state.calls = 0; });
 it('rejects unsafe URL schemes and any private DNS answer before connecting', async () => {
   for (const url of ['http://example.com/a', 'file:///etc/passwd', 'https://user:password@example.com/a', 'https://example.com:8443/a'])
@@ -47,4 +47,26 @@ it('bundles the official client marks and leaves unknown clients to the monogram
   expect(await bundledMcpLogo('Grok')).toMatch(/^data:image\/png;base64,/);
   expect(await bundledMcpLogo('Meta Muse')).toMatch(/^data:image\/png;base64,/);
   expect(await bundledMcpLogo('Other')).toBeUndefined();
+});
+
+it('uses Muse sheep pixels instead of the old corporate squiggle even with a cached logo', async () => {
+  const { readFileSync } = await import('node:fs');
+  const sheep = readFileSync(new URL('../assets/mcp/muse.webp', import.meta.url));
+  const actual = await mcpMemberAvatar('Meta Muse', 'data:image/png;base64,' + state.bytes.toString('base64'));
+  const inset = Math.round(256 * .14);
+  const expected = await sharp(sheep).resize(256 - inset * 2, 256 - inset * 2).png().toBuffer();
+  const center = await sharp(actual).extract({ left: inset, top: inset, width: 256 - inset * 2, height: 256 - inset * 2 }).raw().toBuffer();
+  const source = await sharp(expected).removeAlpha().raw().toBuffer();
+  const averageError = center.reduce((sum, pixel, index) => sum + Math.abs(pixel - source[index]!), 0) / center.length;
+  expect(averageError).toBeLessThan(8);
+});
+
+it('retains an unknown app supplied image and uses letters only without one', async () => {
+  const logo = await sharp({ create: { width: 64, height: 64, channels: 3, background: 'red' } }).png().toBuffer();
+  const portrait = await mcpMemberAvatar('Other', 'data:image/png;base64,' + logo.toString('base64'));
+  expect(portrait).toBeDefined();
+  const center = await sharp(portrait).extract({ left: 128, top: 128, width: 1, height: 1 }).raw().toBuffer();
+  expect(center[0]).toBeGreaterThan(240);
+  expect(center[1]).toBeLessThan(10);
+  expect(await mcpMemberAvatar('Other', null)).toBeUndefined();
 });

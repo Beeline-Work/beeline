@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { fetchMcpLogo, bundledMcpLogo } from './rooms-mcp-logos.js';
+import { fetchMcpLogo, bundledMcpLogo, mcpClientName } from './rooms-mcp-logos.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SqlDatabase } from './database.js';
@@ -119,7 +119,7 @@ function callbackUri(value: unknown): string {
 interface Flow {
   id: string; browser_hash: string; client_id: string; redirect_uri: string; state: string;
   challenge: string; scope: string; identity_id: string | null; provider: string | null;
-  name: string; logo: string | null; identity_name: string | null;
+  name: string; redirects: string[]; logo: string | null; identity_name: string | null;
   joiner_name: string | null; joiner_handle: string | null;
 }
 export interface McpPrincipal { hash: string; client_id: string; identity_id: string; member_id: string | null; scope: string }
@@ -156,12 +156,15 @@ export class RoomsMcpOAuth {
     response.writeHead(302, { location, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); response.end();
   }
   private async flow(id: unknown, request: IncomingMessage, db = this.database): Promise<Flow> {
-    const result = await db.query<Flow>(`SELECT f.*,c.name,c.logo,i.name identity_name FROM rooms_mcp_flows f
+    const result = await db.query<Flow>(`SELECT f.*,c.name,c.redirects,c.logo,i.name identity_name FROM rooms_mcp_flows f
       JOIN rooms_mcp_clients c ON c.id=f.client_id LEFT JOIN identities i ON i.id=f.identity_id
       WHERE f.id=$1 AND f.browser_hash=$2 AND f.expires_at>now() FOR UPDATE OF f`,
       [typeof id === 'string' && id && id.length <= 100 ? id : '', tokenHash(this.cookie(request))]);
     if (!result.rows[0]) throw new Refusal('invalid_request', 'flow_missing_or_expired');
-    return result.rows[0];
+    const flow = result.rows[0];
+    flow.name = mcpClientName(flow.name, flow.redirects);
+    flow.logo = await bundledMcpLogo(flow.name) ?? flow.logo;
+    return flow;
   }
   /** Require the registered authentication method before consuming any grant. */
   private async client(request: IncomingMessage, input: Record<string, unknown>): Promise<string> {
@@ -336,7 +339,7 @@ export class RoomsMcpOAuth {
         else {
           const member = await mcpMemberId(this.database, flow.client_id, flow.identity_id);
           const existing = member
-            ? (await this.database.query<{ name: string; handle: string | null }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]
+            ? (await this.database.query<{ name: string; handle: string | null; avatar_base64: string | null }>(`SELECT i.name,i.handle,encode(a.bytes,'base64') avatar_base64 FROM identities i LEFT JOIN agent_avatars a ON a.agent_id=i.id AND i.avatar='/v1/agent-avatars/'||a.id::text WHERE i.id=$1`, [member])).rows[0]
             : undefined;
           const name = flow.joiner_name ?? existing?.name ?? flow.name;
           const handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
@@ -345,7 +348,8 @@ export class RoomsMcpOAuth {
             this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
             return true;
           }
-          const plate = flow.logo ? `<img class="plate" src="${escape(flow.logo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
+          const memberLogo = existing?.avatar_base64 ? `data:image/webp;base64,${existing.avatar_base64.replace(/\s/g, '')}` : flow.logo;
+          const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
           this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div><p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Wake link (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For bots that only run when called.</p></div><div class="field"><label for="wake_key">Wake key (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form>`);

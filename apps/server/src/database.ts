@@ -3652,6 +3652,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   if (mcpMembers) console.log(`backfillMcpMembers: created ${mcpMembers} member(s)`);
   await dataStep('rooms MCP member public Rooms and logos', () =>
     workflowBackfillOnce(database, 'rooms-mcp-member-public-rooms-v1', backfillMcpMemberRoomsAndAvatars));
+  await dataStep('rooms MCP app default pictures', () =>
+    workflowBackfillOnce(database, 'rooms-mcp-app-default-pictures-v2', backfillMcpMemberRoomsAndAvatars));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>

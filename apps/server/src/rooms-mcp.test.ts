@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
 import { RoomsMcpEvents } from './rooms-mcp-events.js';
-import { postMcpWebhook } from './rooms-mcp-members.js';
+import { backfillMcpMemberRoomsAndAvatars, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -97,14 +97,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     // Reproduction mcp-consent-1: form-action blocked the client's own redirect hops after Allow.
     expect(page.headers.get('content-security-policy')).not.toContain('form-action');
     expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
-    expect(await page.text()).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
+    const consentHtml = await page.text();
+    expect(consentHtml).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
     const result = await post('/mcp/oauth/consent', { flow, decision, ...wake }, { cookie, origin });
     expect(result.status).toBe(302);
     const target = new URL(result.headers.get('location')!);
     expect(target.href.startsWith(redirectUri + '?')).toBe(true);
     expect(target.searchParams.get('state')).toBe('review-state');
     expect(target.searchParams.get('iss')).toBe(origin);
-    return { clientId: client.client_id, code: target.searchParams.get('code'), verifier, error: target.searchParams.get('error'), cookie, flow };
+    return { consentHtml, consent, clientId: client.client_id, code: target.searchParams.get('code'), verifier, error: target.searchParams.get('error'), cookie, flow };
   }
   async function exchange(grant: Awaited<ReturnType<typeof authorize>>, overrides: Record<string, unknown> = {}) {
     return post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: grant.clientId, code: grant.code, code_verifier: grant.verifier,
@@ -486,7 +487,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   it('registers a client whose logo cannot be loaded and keeps the bundled logo', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      for (const [name, logo_uri, stored] of [['Cursor', 'https://127.0.0.1/favicon.svg', null], ['Grok Bot', 'http://grok.example/logo.png', 'data:image/png;base64,'], ['Cursor', 42, null]] as const) {
+      for (const [name, logo_uri, stored] of [['Cursor', 'https://127.0.0.1/favicon.svg', 'data:image/png;base64,'], ['Grok Bot', 'http://grok.example/logo.png', 'data:image/png;base64,'], ['Cursor', 42, 'data:image/png;base64,']] as const) {
         warn.mockClear();
         const response = await post('/mcp/oauth/register', { client_name: name, logo_uri, redirect_uris: ['https://www.cursor.com/callback'], token_endpoint_auth_method: 'none' });
         expect(response.status).toBe(201);
@@ -1219,6 +1220,40 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1', [unused.client_id])).rowCount).toBe(0);
     expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1 AND preregistered', [muse.id])).rowCount).toBe(1);
   });
+  it.each([
+    ['Cursor', ['https://www.cursor.com/agents/mcp/oauth/callback', 'http://localhost:8787/callback'], 'Grok Bot'],
+    ['Cursor', ['cursor://anysphere.cursor-mcp/oauth/callback'], 'Cursor'],
+    ['Cursor', ['https://cursor.com/agents/oauth/callback'], 'Cursor'],
+    ['Meta Muse', ['https://agent.meta.ai/api/hatch/oauth/callback'], 'Meta Muse'],
+    ['Codex', ['http://127.0.0.1:9876/callback'], 'Codex'],
+    ['Claude Code', ['http://127.0.0.1:9876/callback'], 'Claude Code'],
+    ['Dots', ['http://127.0.0.1:9876/callback'], 'Dots'],
+  ])('R-MCP-DEFAULT-PICTURES: %s %j shows app pictures on Allow and its member', async (name, redirects, display) => {
+    const registered = await (await post('/mcp/oauth/register', { client_name: name, redirect_uris: redirects })).json() as { client_id: string };
+    const grant = await authorize('rooms:read rooms:write', 'allow', registered.client_id, redirects[0]);
+    const html = grant.consentHtml;
+    expect(html).toContain(`Add ${display} to your team`);
+    expect(html).toMatch(/<img class="mark client" src="data:image/);
+    expect(html).toMatch(/<img class="plate" src="data:image/);
+    expect(html).not.toContain('class="mark client initial"');
+    const member = (await db.query<{ member_id: string; name: string; avatar: string }>(
+      'SELECT m.member_id,i.name,i.avatar FROM rooms_mcp_members m JOIN identities i ON i.id=m.member_id WHERE m.client_id=$1 AND m.owner_id=$2', [registered.client_id, USER])).rows[0]!;
+    expect(member.name).toBe(display);
+    expect((await fetch(origin + member.avatar)).status).toBe(200);
+    // A default from the old bundled mark is upgraded; custom provenance wins,
+    // including legacy request ids that predate drawing.source.
+    await db.query("UPDATE agent_avatars SET bytes=$2 WHERE agent_id=$1", [member.member_id, Buffer.from('old default')]);
+    await backfillMcpMemberRoomsAndAvatars(db);
+    const updated = (await db.query<{ bytes: Buffer; id: string }>('SELECT bytes,id FROM agent_avatars WHERE agent_id=$1', [member.member_id])).rows[0]!;
+    expect(Buffer.from(updated.bytes).toString()).not.toBe('old default');
+    await backfillMcpMemberRoomsAndAvatars(db);
+    expect((await db.query<{ id: string }>('SELECT id FROM agent_avatars WHERE agent_id=$1', [member.member_id])).rows[0]!.id).toBe(updated.id);
+    for (const [request, drawing] of [['rooms-mcp-set_profile', { source: 'set_profile' }], ['mcp-set-profile-hotfix', []], ['rooms-mcp-client-logo', { source: 'set_profile' }]]) {
+      await db.query("UPDATE agent_avatars SET request_id=$2,drawing=$3::jsonb WHERE agent_id=$1", [member.member_id, request, JSON.stringify(drawing)]);
+      await backfillMcpMemberRoomsAndAvatars(db);
+      expect((await db.query<{ id: string }>('SELECT id FROM agent_avatars WHERE agent_id=$1', [member.member_id])).rows[0]!.id).toBe(updated.id);
+    }
+  });
   it('shows the client logo as the member picture until the member sets its own', async () => {
     const muse = PREREGISTERED_MCP_CLIENTS[0];
     const grant = await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
@@ -1238,7 +1273,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const chosen = await avatar();
     expect(chosen).toMatch(/^\/v1\/agent-avatars\/[0-9a-f-]{36}$/); expect(chosen).not.toBe(logo);
     // Reconnecting never puts the logo back over the member's own picture.
-    await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
+    const reconnect = await authorize('rooms:read rooms:write', 'allow', muse.id, muse.redirects[0]);
+    const portrait = (await db.query<{ bytes: Buffer }>('SELECT bytes FROM agent_avatars WHERE agent_id=$1', [member])).rows[0]!;
+    expect(reconnect.consentHtml).toContain('data:image/webp;base64,' + Buffer.from(portrait.bytes).toString('base64'));
     expect(await avatar()).toBe(chosen);
   });
   it('pushes one POST per tag to the webhook a member set, with its sealed bearer secret', async () => {

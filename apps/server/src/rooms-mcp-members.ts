@@ -6,7 +6,7 @@ import { Agent, request as httpsRequest } from 'node:https';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
-import { fetchMcpLogo, mcpMemberAvatar } from './rooms-mcp-logos.js';
+import { fetchMcpLogo, mcpMemberAvatar, mcpClientName } from './rooms-mcp-logos.js';
 import { normalizeAvatar } from './durable-avatar.js';
 import { openSecrets, sealSecrets } from './free-agents.js';
 import { publicMcpAddress } from './company-mcp-discovery.js';
@@ -102,9 +102,11 @@ export async function ensureMcpMember(
   db: SqlDatabase,
   input: { clientId: string; ownerId: string; modelLabel: string },
 ): Promise<string | undefined> {
-  const client = (await db.query<{ name: string; logo: string | null }>(
-    'SELECT name,logo FROM rooms_mcp_clients WHERE id=$1', [input.clientId])).rows[0];
-  const avatar = client ? await mcpLogoAvatar(client.name, client.logo) : undefined;
+  const client = (await db.query<{ name: string; redirects: string[]; logo: string | null }>(
+    'SELECT name,redirects,logo FROM rooms_mcp_clients WHERE id=$1', [input.clientId])).rows[0];
+  const clientName = client ? mcpClientName(client.name, client.redirects) : input.modelLabel;
+  const modelLabel = client && input.modelLabel === client.name ? clientName : input.modelLabel;
+  const avatar = client ? await mcpLogoAvatar(clientName, client.logo) : undefined;
   return db.transaction(async (tx) => {
     const owner = (
       await tx.query<{ workspaces: string[] }>(
@@ -131,19 +133,19 @@ export async function ensureMcpMember(
       `INSERT INTO identities(id,kind,name,handle,hidden_from_roster) VALUES($1,'agent',$2,$3,false)
        ON CONFLICT(id) DO UPDATE SET hidden_from_roster=false,updated_at=now()
        RETURNING id`,
-      [memberId, input.modelLabel, uniqueAgentHandle(input.modelLabel, taken.rows.map((row) => row.handle))],
+      [memberId, modelLabel, uniqueAgentHandle(modelLabel, taken.rows.map((row) => row.handle))],
     );
     if (!created.rowCount) return undefined;
     await tx.query(
       `INSERT INTO agents(agent_id,owner_id,selected_model) VALUES($1,$2,$3)
        ON CONFLICT(agent_id) DO NOTHING`,
-      [memberId, input.ownerId, input.modelLabel],
+      [memberId, input.ownerId, modelLabel],
     );
     const fresh = (await tx.query<{ fresh: boolean }>(
       `INSERT INTO rooms_mcp_members(client_id,owner_id,member_id,model_label) VALUES($1,$2,$3,$4)
        ON CONFLICT(client_id,owner_id) DO UPDATE SET model_label=EXCLUDED.model_label
        RETURNING (xmax=0) fresh`,
-      [input.clientId, input.ownerId, memberId, input.modelLabel],
+      [input.clientId, input.ownerId, memberId, modelLabel],
     )).rows[0]?.fresh ?? false;
     if (owner.workspaces.length) {
       await tx.query(
@@ -394,8 +396,8 @@ export async function backfillMcpMembers(db: SqlDatabase): Promise<number> {
  * and show the client logo where no picture is set.
  */
 export async function backfillMcpMemberRoomsAndAvatars(db: SqlDatabase): Promise<number> {
-  const members = await db.query<{ member_id: string; name: string; logo: string | null; avatar: string | null; workspaces: string[] }>(
-    `SELECT member.member_id,client.name,client.logo,identity.avatar,
+  const members = await db.query<{ member_id: string; name: string; redirects: string[]; logo: string | null; avatar: string | null; workspaces: string[] }>(
+    `SELECT member.member_id,client.name,client.redirects,client.logo,identity.avatar,
        COALESCE((SELECT array_agg(workspace_id) FROM memberships
          WHERE identity_id=member.member_id AND room_id IS NULL AND removed_at IS NULL),'{}') workspaces
      FROM rooms_mcp_members member
@@ -404,14 +406,23 @@ export async function backfillMcpMemberRoomsAndAvatars(db: SqlDatabase): Promise
   );
   for (const member of members.rows) {
     if (member.workspaces.length) await db.query(JOIN_PUBLIC_ROOMS, [member.member_id, member.workspaces, false]);
-    // A stored portrait stays (including any repaired by hand). A raw string
-    // that the app never renders is replaced: by its own image when it is
-    // one, otherwise by the client logo.
-    if (member.avatar?.startsWith('/v1/agent-avatars/')) continue;
-    const own = member.avatar ? await mcpAvatarBytes(member.avatar).catch(() => undefined) : undefined;
-    const avatar = own ?? await mcpLogoAvatar(member.name, member.logo);
-    if (avatar) await replaceMcpMemberAvatar(db, member.member_id, avatar, own ? 'set_profile' : 'client-logo');
-    else if (member.avatar) await db.query('UPDATE identities SET avatar=NULL WHERE id=$1', [member.member_id]);
+    await db.transaction(async tx => {
+      // Serialize with set_profile, whose identity update precedes its avatar write.
+      const current = (await tx.query<{ avatar: string | null }>(
+        'SELECT avatar FROM identities WHERE id=$1 FOR UPDATE', [member.member_id])).rows[0];
+      if (!current) return;
+      const stored = (await tx.query<{ request_id: string | null; drawing: { source?: string } | null }>(
+        'SELECT request_id,drawing FROM agent_avatars WHERE agent_id=$1 FOR UPDATE', [member.member_id])).rows[0];
+      if (stored && (stored.request_id !== 'rooms-mcp-client-logo' || stored.drawing?.source !== 'client-logo')) return;
+      if (current.avatar?.startsWith('/v1/agent-avatars/') && !stored) return;
+      const own = !stored && current.avatar ? await mcpAvatarBytes(current.avatar).catch(() => undefined) : undefined;
+      const avatar = own ?? await mcpLogoAvatar(mcpClientName(member.name, member.redirects), member.logo);
+      if (avatar) {
+        // Avoid changing the URL and generating a new portrait on every run.
+        const same = await tx.query('SELECT 1 FROM agent_avatars WHERE agent_id=$1 AND bytes=$2', [member.member_id, avatar]);
+        if (!same.rowCount) await replaceMcpMemberAvatar(tx, member.member_id, avatar, own ? 'set_profile' : 'client-logo');
+      } else if (current.avatar) await tx.query('UPDATE identities SET avatar=NULL WHERE id=$1', [member.member_id]);
+    });
   }
   return members.rowCount;
 }

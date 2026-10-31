@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -752,6 +752,41 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
       child.stdin.end(stdin);
     });
   }
+
+  it('privately forwards piped bodies and removes them after success, failure and interrupts', async () => {
+    const { root, gh } = await fixture('/usr/bin/git', `
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+const args = process.argv.slice(2);
+const path = args[args.indexOf('--body-file') + 1];
+writeFileSync(process.env.HOST_LOG, JSON.stringify({
+  path, body: readFileSync(path, 'utf8'),
+  mode: statSync(path).mode & 0o777,
+  directoryMode: statSync(dirname(path)).mode & 0o777,
+}));
+if (process.env.HOST_STATUS.startsWith('SIG')) {
+  process.kill(process.ppid, process.env.HOST_STATUS);
+  process.exit(0);
+}
+process.exit(Number(process.env.HOST_STATUS));
+`);
+    const scratch = await mkdtemp(join(root, 'scratch-'));
+    const paths: string[] = [];
+    for (const status of [0, 7, 'SIGINT', 'SIGTERM']) {
+      const log = join(root, 'host-' + status);
+      const result = piped(gh, ['issue', 'create', '--body-file', '-'], 'private body\n', {
+        ...process.env, TMPDIR: scratch, HOST_LOG: log, HOST_STATUS: String(status),
+      });
+      if (status === 0) await result;
+      else await expect(result).rejects.toThrow('gh exited ' + (status === 'SIGINT' ? 130 : status === 'SIGTERM' ? 143 : status));
+      const observed = JSON.parse(await readFile(log, 'utf8'));
+      expect(observed).toMatchObject({ body: 'private body\n', mode: 0o600, directoryMode: 0o700 });
+      paths.push(observed.path);
+      expect(await readdir(scratch)).toEqual([]);
+      await expect(readFile(observed.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect(paths[0]).not.toBe(paths[1]);
+  });
 
   it('keeps a piped body for pr create and issue create when the body file is -', async () => {
     const requests: Array<{ method: string; url: string; body: string }> = [];

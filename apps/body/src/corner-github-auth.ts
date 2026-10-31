@@ -228,7 +228,7 @@ export function cornerGitHubCommandRefusal(
 async function writeLauncher(path: string, config: Record<string, string | boolean>): Promise<void> {
   const source = `#!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const config = ${JSON.stringify(config)};
@@ -453,6 +453,14 @@ async function github(pathname, options, value) {
 }
 let stdinBody;
 let stdinFile;
+let stdinDirectory;
+function cleanupStandardInput() {
+  if (stdinDirectory !== undefined) rmSync(stdinDirectory, { recursive: true, force: true });
+}
+process.once('exit', cleanupStandardInput);
+for (const [signal, status] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.once(signal, () => process.exit(status));
+}
 function readStandardInput() {
   // gh uses "-" as the body file to mean standard input. Read it once: a host
   // process spawned with inherited stdin would otherwise consume the pipe, and
@@ -475,8 +483,9 @@ function hostArguments(args) {
     if (value !== '-') continue;
     if (stdinBody === undefined) stdinBody = readStandardInput();
     if (stdinFile === undefined) {
-      stdinFile = join(tmpdir(), 'beeline-gh-body-' + process.pid);
-      writeFileSync(stdinFile, stdinBody);
+      stdinDirectory = mkdtempSync(join(tmpdir(), 'beeline-gh-body-'));
+      stdinFile = join(stdinDirectory, 'body');
+      writeFileSync(stdinFile, stdinBody, { mode: 0o600, flag: 'wx' });
     }
     if (inline) next[index] = '--body-file=' + stdinFile;
     else {

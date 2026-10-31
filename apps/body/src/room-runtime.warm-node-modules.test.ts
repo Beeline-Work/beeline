@@ -153,3 +153,20 @@ describe('a new corner worktree', () => {
     await expect(stat(resolve(worktree.path, 'node_modules'))).rejects.toThrow();
   });
 });
+
+it('materializes independent agent copies through the runtime allocation seam', async () => {
+  const supervisorRoot = await scratch('agent-runtime-copies-');
+  const input = {
+    cornerId: 'same-corner', remote, targetBranch: 'main',
+    featureBranch: 'feature/agent-copies', token: 'fixture', supervisorRoot,
+    committer: { name: 'Writer', publicKey: 'writer' },
+  };
+  const [a, b] = await Promise.all(['writer-a', 'writer-b'].map(agentId =>
+    materializeCornerWorktree({ ...input, agentId })));
+  expect(a.path).not.toBe(b.path);
+  expect(a.gitCommonDir).not.toBe(b.gitCommonDir);
+  await writeFile(resolve(a.path, 'private-edit'), 'unfinished');
+  expect(await readFile(resolve(b.path, 'private-edit')).catch(() => undefined)).toBeUndefined();
+  expect(await materializeCornerWorktree({ ...input, agentId: 'writer-a' })).toEqual(a);
+  expect(await readFile(resolve(a.path, 'private-edit'), 'utf8')).toBe('unfinished');
+});

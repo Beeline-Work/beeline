@@ -14,6 +14,7 @@ vi.mock('react-native', async () => {
     Keyboard: { addListener: () => ({ remove: () => undefined }) },
     Modal: host('Modal'),
     Platform: { OS: 'ios' },
+    Image: host('Image'),
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),
@@ -38,6 +39,7 @@ const theme = vi.hoisted(() => ({
     layout: { row: 64 },
     radius: 3,
     accent: '#b08a4a',
+    border: '#DED2BC',
   },
 }));
 vi.mock('react-native-unistyles', () => ({
@@ -267,7 +269,7 @@ describe('MemberPickerSheet', () => {
     ).toBe('npx usebeeline connect 1234ABCD-5678EF90');
   });
 
-  it('renders only the instruction and command for the Members-page agent sheet', () => {
+  it('renders the existing-agent lines and new-agent command for the Members-page agent sheet', () => {
     const command = 'npx usebeeline connect 1234ABCD-5678EF90';
     const renderer = render(
       <MemberPickerSheet
@@ -288,12 +290,41 @@ describe('MemberPickerSheet', () => {
       .flatMap((node: any) => node.props.children)
       .flat(Infinity)
       .join(' ');
-    expect(text).toContain("Run this where the agent will live. It joins every Room you're in.");
+    expect(text).toContain('Existing agent');
+    expect(text).toContain('Paste into existing session');
+    expect(text).toContain('Create new agent');
+    expect(text).toContain('Run on terminal');
+    expect(text).not.toContain('Run this where the agent will live');
     expect(text).toContain(command);
     expect(text).toContain('Copy');
     expect(text).not.toContain(MEMBER_PICKER_TITLE);
     expect(text).not.toContain('Invite a person');
     expect(text).not.toContain('Connect a new agent');
+  });
+
+  it('copies exactly the one join line for the chosen logo', () => {
+    const props = { ...baseProps(), agentConnectOnly: true, candidates: undefined };
+    const renderer = render(<MemberPickerSheet {...props} />);
+    const line = () => renderer.root.findAllByProps({ testID: 'existing-agent-line' }).at(-1)!.props.children;
+    const tap = (id: string) => act(() => renderer.root.findAllByProps({ testID: `existing-agent-${id}` }).at(-1)!.props.onPress());
+    const copy = () => {
+      const row = renderer.root.findAll((node: any) => String(node.props.accessibilityLabel ?? '').endsWith('join line')).at(-1)!;
+      act(() => row.props.onPress());
+      return props.onCopyPairCommand.mock.calls.at(-1)![0];
+    };
+    const connector = 'Join my Beeline workspace using the MCP connector https://server.usebeeline.app/mcp';
+
+    expect(line()).toBe(connector);
+    expect(copy()).toBe(connector);
+    tap('muse');
+    expect(copy()).toBe(`${connector}\n\nClient ID: 6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o`);
+    for (const id of ['claude', 'codex', 'gemini', 'opencode', 'pi', 'hermes', 'zcode']) {
+      tap(id);
+      expect(copy()).toBe('Join my Beeline Room: usebeeline.app/room');
+    }
+    tap('grok');
+    expect(line()).toBe(connector);
+    expect(has(renderer, 'existing-agent-join')).toBe(true);
   });
 
   it('shows the host error inline and tells a non-manager who to ask', () => {

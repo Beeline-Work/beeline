@@ -7,7 +7,7 @@ import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
-import { MCP_STARTER_ROUTINE, agentHandleFromName } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -319,9 +319,12 @@ export class RoomsMcpOAuth {
         const scopes = [...new Set((q.get('scope') ?? MCP_READ).split(' '))];
         if (!scopes.length || scopes.some(scope => ![MCP_READ, MCP_WRITE].includes(scope))) throw new Refusal('invalid_scope', 'scope_invalid');
         const id = opaque(), browser = opaque();
-        await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at)
-          VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes')`,
-          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE]);
+        // A joining session proposes its own name; the Allow page shows it and the person can edit it.
+        const proposed = (q.get('member_name') ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/\s+/g, ' ').slice(0, 60).trim();
+        await this.database.query(`INSERT INTO rooms_mcp_flows(id,browser_hash,client_id,redirect_uri,state,challenge,scope,expires_at,joiner_name,joiner_handle)
+          VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes',$8,$9)`,
+          [id, tokenHash(browser), q.get('client_id'), q.get('redirect_uri'), q.get('state') ?? '', q.get('code_challenge'), MCP_FULL_SCOPE,
+            proposed || null, null]);
         response.setHeader('set-cookie', `beeline_mcp=${browser}; Path=/mcp/oauth; HttpOnly; SameSite=Lax; Max-Age=600${this.origin.startsWith('https:') ? '; Secure' : ''}`);
         this.redirect(response, `/mcp/oauth/consent?flow=${id}`); return true;
       }
@@ -359,7 +362,15 @@ export class RoomsMcpOAuth {
             ? (await this.database.query<{ name: string; handle: string | null }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]
             : undefined;
           const name = flow.joiner_name ?? existing?.name ?? flow.name;
-          const handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
+          let handle = flow.joiner_handle ?? existing?.handle ?? agentHandleFromName(name);
+          if (!flow.joiner_handle && !existing && flow.joiner_name) {
+            // A proposed name gets a handle no one in the person's Workspaces holds yet, kept for Allow.
+            const taken = await this.database.query<{ handle: string }>(`SELECT DISTINCT i.handle FROM memberships owner
+              JOIN memberships m ON m.workspace_id=owner.workspace_id AND m.removed_at IS NULL JOIN identities i ON i.id=m.identity_id
+              WHERE owner.identity_id=$1 AND owner.room_id IS NULL AND owner.removed_at IS NULL AND i.handle IS NOT NULL`, [flow.identity_id]);
+            handle = uniqueAgentHandle(name, taken.rows.map(row => row.handle));
+            await this.database.query('UPDATE rooms_mcp_flows SET joiner_handle=$2 WHERE id=$1', [flow.id, handle]);
+          }
           const who = `<p class="who">Signed in as <b>${escape(flow.identity_name ?? 'Beeline user')}</b></p>`;
           if (url.searchParams.get('edit') === '1') {
             this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
@@ -415,6 +426,27 @@ export class RoomsMcpOAuth {
           return target.toString();
         });
         this.redirect(response, target); return true;
+      }
+      if (request.method === 'GET' && path === '/mcp/oauth/handoff') {
+        // A headless session's redirect: keep the code (useless without its PKCE verifier) until the session collects it.
+        const state = url.searchParams.get('state') ?? '';
+        if (!/^[A-Za-z0-9_-]{32,128}$/.test(state)) throw new Refusal('invalid_request', 'handoff_invalid');
+        const code = url.searchParams.get('code'), denied = url.searchParams.get('error');
+        if (!code && !denied) throw new Refusal('invalid_request', 'handoff_invalid');
+        await this.database.query(`INSERT INTO rooms_mcp_handoffs(state_hash,code,error,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes')
+          ON CONFLICT(state_hash) DO NOTHING`, [tokenHash(state), code && code.length <= 100 ? code : null, code ? null : 'access_denied']);
+        this.page(response, code ? 'Connected' : 'Not connected', `<div class="brand"><img class="mark" src="${BEELINE_ICON}" alt="Beeline"></div>${code
+          ? '<h1>Connected</h1><p class="lede">Go back to your session. It finishes joining by itself.</p>'
+          : '<h1>Not connected</h1><p class="lede">You chose Cancel. Your session did not join Beeline.</p>'}`);
+        return true;
+      }
+      if (request.method === 'POST' && path === '/mcp/oauth/handoff') {
+        const input = await mcpBody(request);
+        const state = string(input.state, 128);
+        const row = (await this.database.query<{ code: string | null; error: string | null }>(
+          'DELETE FROM rooms_mcp_handoffs WHERE state_hash=$1 AND expires_at>now() RETURNING code,error', [tokenHash(state)])).rows[0];
+        if (!row) { mcpJson(response, 400, { error: 'authorization_pending' }); return true; }
+        mcpJson(response, 200, row.code ? { code: row.code } : { error: row.error ?? 'access_denied' }); return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/token') {
         const input = tokenInput = await mcpBody(request);
@@ -491,6 +523,7 @@ export class RoomsMcpOAuth {
 export const BROWSER_STEPS: Record<string, string> = {
   authorize: 'Starting the connection', login: 'Choosing how to sign in',
   consent: 'Showing what the app can do', 'consent submit': 'Saving your choice',
+  handoff: 'Returning to your session',
 };
 /** One fixed sentence per browser-step refusal reason; request values never reach the page. */
 export const BROWSER_REFUSALS: Record<string, string> = {
@@ -518,6 +551,7 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   wake_unavailable: 'Wake keys are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',
   wake_invalid: 'The wake link must be a public HTTPS URL. A wake key needs a link and cannot contain spaces or control characters.',
   decision_invalid: 'The page sent an answer other than Allow or Cancel.',
+  handoff_invalid: 'The session sent a return address Beeline cannot use.',
   invalid_parameter: 'Beeline hit an unexpected problem on this step.',
 };
 
@@ -527,6 +561,7 @@ function browserStep(method: string | undefined, path: string): string | undefin
   if (method === 'GET' && /^\/mcp\/oauth\/callback\/(google|github)$/.test(path)) return 'callback';
   if (method === 'GET' && path === '/mcp/oauth/consent') return 'consent';
   if (method === 'POST' && path === '/mcp/oauth/consent') return 'consent submit';
+  if (method === 'GET' && path === '/mcp/oauth/handoff') return 'handoff';
   return undefined;
 }
 

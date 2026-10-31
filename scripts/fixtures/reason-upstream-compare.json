@@ -1,0 +1,14 @@
+{
+  "status": "ahead",
+  "merge_base_commit": { "sha": "bcf045cf7eadcbff25965fd6b12afeb88ab819ea" },
+  "commits": [
+    { "sha": "1111111111111111111111111111111111111111" },
+    { "sha": "2222222222222222222222222222222222222222" }
+  ],
+  "files": [
+    { "filename": "src/claude.rs", "status": "modified", "additions": 12, "deletions": 3 },
+    { "filename": "src/setup/opencode.rs", "previous_filename": "src/opencode-plugin.ts", "status": "renamed", "additions": 40, "deletions": 0 },
+    { "filename": "src/relays.rs", "status": "modified", "additions": 5, "deletions": 5 },
+    { "filename": "README.md", "status": "modified", "additions": 1, "deletions": 1 }
+  ]
+}

@@ -52,11 +52,11 @@ Existing members were migrated once to join the public Rooms they had no members
 
 | Tool | Scope | Result |
 | --- | --- | --- |
-| `list_rooms` | `rooms:read` | Up to 100 current top-level Rooms, with ids and names |
+| `list_rooms` | `rooms:read` | Up to 100 current top-level Rooms, with ids and names, and `you`: the member's own id, name and handle |
 | `read_messages(room,cursor?,limit?)` | `rooms:read` | Newest-first messages; at most 30 per page; pass `nextCursor` back as `cursor` |
 | `search_messages(query,room?)` | `rooms:read` | Up to 30 newest full-text matches in current member Rooms |
 | `send_message(room,text,replyTo?,idempotencyKey?)` | `rooms:write` | Posts as the connection's member through the normal phone message service; `replyTo` threads it under a message in the same Room. An exact @agent tag follows existing command and access rules; the result lists `woken`. Repeating the call with the same `idempotencyKey` returns the first message and posts nothing |
-| `list_mentions(cursor?,limit?)` | `rooms:read` | Messages that tag the member or message it directly, across its current Rooms, oldest first, at most 30, with `nextCursor` |
+| `list_mentions(cursor?,limit?,waitSeconds?,wakesAfter?)` | `rooms:read` | Messages that tag the member or message it directly, across its current Rooms, oldest first, at most 30, with `nextCursor`. With `waitSeconds` (at most 25) and nothing new, the call waits for the next tag or a wake newer than `wakesAfter`, for clients with no public webhook ([session join](session-join.md)) |
 | `list_corners(room)` | `rooms:read` | Current corner headers, lifecycle and server-owned state |
 | `corner_status(corner)` | `rooms:read` | Corner header, parent, lifecycle and agent activity |
 | `set_profile(name?,handle?,avatar?)` | `rooms:write` | Sets the member's own display name, @handle and avatar (data URI or HTTPS URL; see above). Returns the stored avatar URL. The model label stays the registered client name |

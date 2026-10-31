@@ -700,6 +700,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         if (previousKey === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY;
         else process.env.BEELINE_MCP_WEBHOOK_KEY = previousKey;
       }
+      await page('Returning to your session', 'handoff', 'handoff_invalid', await fetch(`${origin}/mcp/oauth/handoff?state=state-sentinel-123&code=x`));
       // Every sentence is driven by a real refusal, and each reason reads differently.
       expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
       expect(new Set(Object.values(BROWSER_REFUSALS)).size).toBe(Object.keys(BROWSER_REFUSALS).length);
@@ -1379,6 +1380,68 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions).toEqual([]);
     const third = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} third` }, USER);
     expect(data(await client.callTool({ name: 'list_mentions', arguments: { cursor: page.nextCursor } })).mentions.map((m: { id: string }) => m.id)).toEqual([third.messageId]);
+  });
+  it('SESSION-JOIN-1: a long poll returns at once when a tag arrives, and after its wait otherwise', async () => {
+    const { client, member } = await connected();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    // A client learns the name and handle its owner allowed.
+    expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).you).toEqual({ id: member, name: expect.any(String), handle });
+    const first = data(await client.callTool({ name: 'list_mentions', arguments: {} }));
+    const now = new Date().toISOString();
+    let started = Date.now();
+    const empty = data(await client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 1, wakesAfter: now } }));
+    expect(empty.mentions).toEqual([]);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    started = Date.now();
+    const waiting = client.callTool({ name: 'list_mentions', arguments: { cursor: first.nextCursor, waitSeconds: 20, wakesAfter: now } });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const tag = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} are you there?` }, USER);
+    const page = data(await waiting);
+    expect(page.mentions.map((m: { id: string }) => m.id)).toEqual([tag.messageId]);
+    expect(Date.now() - started).toBeLessThan(5000);
+    const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
+    expect(refused.isError).toBe(true);
+  });
+  it('SESSION-JOIN-1: a headless session proposes its name, signs in on another device and collects its code by state', async () => {
+    const handoff = origin + '/mcp/oauth/handoff';
+    const registered = await post('/mcp/oauth/register', { client_name: 'Claude Code', redirect_uris: [handoff] });
+    expect(registered.status).toBe(201);
+    const client = await registered.json() as { client_id: string };
+    const verifier = opaque(), state = opaque();
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: handoff, response_type: 'code', resource: origin + '/mcp',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state,
+      member_name: 'payments  api\u0007' });
+    expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
+    const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
+    const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+    const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+    await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+    await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    await db.query(`UPDATE identities SET handle='payments_api' WHERE id=$1`, [AGENT]);
+    const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
+    expect(page).toContain('Add Claude Code to your team');
+    expect(page).toContain('payments api');
+    // Another member in the Workspace holds the plain handle already.
+    expect(page).toContain('@payments_api_2');
+    await db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
+    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    const target = new URL(allowed.headers.get('location')!);
+    expect(target.origin + target.pathname).toBe(handoff);
+    // The person's browser lands on Beeline's own page, which keeps the code for the session.
+    const landed = await fetch(target);
+    expect(landed.status).toBe(200);
+    expect(await landed.text()).toContain('Go back to your session');
+    expect((await post('/mcp/oauth/handoff', { state: opaque() })).status).toBe(400);
+    const collected = await (await post('/mcp/oauth/handoff', { state })).json() as { code: string };
+    expect(collected.code).toBe(target.searchParams.get('code'));
+    expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
+    // The code alone is not enough: the verifier stays with the session.
+    expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: opaque() })).status).toBe(400);
+    const tokens = await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: verifier });
+    expect(tokens.status).toBe(200);
+    const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
+    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'payments api', handle: 'payments_api_2' });
+    expect((await fetch(`${origin}/mcp/oauth/handoff?state=short&code=x`)).status).toBe(400);
   });
   it('threads a reply under a message in the same Room and refuses a foreign one', async () => {
     const { client, member } = await connected();

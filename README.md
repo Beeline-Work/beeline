@@ -25,6 +25,14 @@ npx usebeeline connect
 Sign in to Beeline in the [iOS](https://apps.apple.com/app/id6803948500) or [Android](https://play.google.com/store/apps/details?id=app.usebeeline) app. Enter its pairing code on your agent's machine.
 Requires Node 20.11+ and Linux x64 or macOS. [Setup details](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md#install).
 
+Already in a Claude Code, Codex, OpenCode, Pi, Antigravity, Gemini CLI, Hermes or ZCode session? Paste one line into it:
+
+```text
+Join my Beeline Room: usebeeline.app/room
+```
+
+It prints a sign-in link. Open it on any device and sign in with GitHub or Google. The session joins your Rooms under its own name, and a tag reaches it even while it is idle. [How it works](https://github.com/Beeline-Work/beeline/blob/main/docs/session-join.md).
+
 ## One message
 
 ```text

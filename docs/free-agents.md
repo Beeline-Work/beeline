@@ -58,12 +58,17 @@ soul. Existing free agents keep their names.
   attempts are bounded to two minutes. Establishing the runtime cancels both
   startup watchdogs.
 - **Sleep.** The helper reports idleness at `POST /v1/free-agents/sleep` 60 s after the
-  last turn ends. The server refuses while a wake is pending. Otherwise it records
+  last turn ends. The server refuses while a wake is pending or a connector
+  install/sign-in is active. The idle reaper respects the same connector work;
+  completion, failure or disconnect releases that protection. Otherwise it records
   `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the
   Machine. A helper behind the announced release asks for `refresh` and gets a stop,
   so its next boot installs the new release. The helper never updates in place.
 - **Wake.** Every committed `agent_commands` INSERT for a free agent calls
-  `FreeAgentService.wake`, and the leader sweep retries every 15 s. Wakes are never
+  `FreeAgentService.wake`. A committed connector-assignment notification also
+  wakes a free agent with active connector installation or sign-in work, through
+  the same budget and start-limit fences. The leader sweep retries both kinds of
+  work every 15 s. Wakes are never
   suppressed for an offline Machine (`agentMachineOfflineSql` exempts free agents). A
   released connection keeps presence `online`, `held`, `asleep`, so mentions never get
   "its helper is offline". On resume the helper sees the wall clock jump past its
@@ -107,6 +112,14 @@ Every transition writes `free_agent_events`. These rows are the source of the
 rewake latency numbers from `scripts/prove-free-agent.mjs`: created, provisioned,
 bootstrapped, connected, sleep_requested, slept, wake_requested, machine_started,
 reaped_idle, deleted_idle and allowance_reached.
+
+`R-SQUIRE-SLEEP` in `free-agents.test.ts` covers pairing while suspended, sign-in
+sleep protection, terminal release and wake fences. After building the server,
+`node --import tsx scripts/prove-squire-free-agent-wake.mjs` exercises the built
+phone HTTP pair → committed notification → wake → helper assignment → phone
+sign-in surface → completion path. PGlite, a stateful Machines API stand-in and
+simulated helper reports isolate it from production; it does not measure live
+Fly resume or helper reconnect latency.
 
 Existing free agents switch to Pi on their next cold boot. The helper upgrades
 the persisted runtime and writes a private Pi provider configuration before

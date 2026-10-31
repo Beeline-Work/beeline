@@ -591,17 +591,7 @@ async function main() {
   });
   // A committed wake for a sleeping free agent starts its Machine at once;
   // the leader sweep retries anything this misses.
-  const stopFreeAgentWake = freeAgents
-    ? live.subscribeAll((event) => {
-        if (
-          event.type === 'invalidate' &&
-          event.reason === 'postgres:agent_commands' &&
-          event.operation === 'INSERT' &&
-          event.targetAgentId
-        )
-          freeAgents.kickIfFree(event.targetAgentId);
-      })
-    : undefined;
+  const stopFreeAgentWake = freeAgents?.subscribeToWakes(live);
   const stopBackgroundWake = live.subscribeAll((event) => {
     if (event.type !== 'invalidate') return;
     if (event.reason === 'postgres:messages') {

@@ -3,7 +3,6 @@ import type {
   RoomView, WorkspaceListView, WorkspaceMemberListQuery, WorkspaceMemberListView, WorkspaceView, MessageSearchView,
 } from './phone-types.js';
 import type { AgentVoiceCatalog, AgentVoicePreview, VoiceCall, VoiceIdleState, VoiceJoin } from './voice.js';
-import type { VaultSaveCard } from './vault-save.js';
 
 /** Former REST-only operations. HTTP wrappers and socket requests use one dispatcher. */
 export type PhoneRouteOperationMap = {
@@ -31,7 +30,6 @@ export type PhoneRouteOperationMap = {
   readAgentVoices: { input: { workspaceId: string; agentId: string; roomId?: string }; output: AgentVoiceCatalog };
   saveAgentVoice: { input: { workspaceId: string; agentId: string; voiceId: string }; output: AgentVoiceCatalog };
   previewAgentVoice: { input: { workspaceId: string; agentId: string; voiceId: string }; output: AgentVoicePreview };
-  submitVaultSave: { input: { cardId: string; roomId: string; values: Record<string, string> }; output: { status: 'saved' | 'retry'; card?: VaultSaveCard } };
   reportPageLoad: { input: { durationMs: number; failed: boolean; network?: {
     requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number;
   } }; output: void };
@@ -52,6 +50,6 @@ export const PHONE_ROUTE_READ_OPERATIONS = [
 
 export const PHONE_ROUTE_OPERATION_NAMES = [
   ...PHONE_ROUTE_READ_OPERATIONS, 'markRead', 'markUnread', 'voiceJoin', 'voiceLeave',
-  'voiceIdle', 'voiceResume', 'saveAgentVoice', 'previewAgentVoice', 'submitVaultSave',
+  'voiceIdle', 'voiceResume', 'saveAgentVoice', 'previewAgentVoice',
   'reportPageLoad', 'reportClientError',
 ] as const satisfies readonly (keyof PhoneRouteOperationMap)[];

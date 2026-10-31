@@ -62,18 +62,14 @@ export class VaultSaveRelay {
     request: VaultSaveRequest,
     values: Record<string, string>,
     timeoutMs = 65_000,
-    signal?: AbortSignal,
   ): Promise<VaultSaveAnswer> {
     const send = this.helpers.get(agentId);
     const attemptId = `${this.instanceId}:${randomUUID()}`;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let onAbort: (() => void) | undefined;
     try {
-      if (signal?.aborted || !send || this.pending.size >= 128) return { status: 'retry' };
+      if (!send || this.pending.size >= 128) return { status: 'retry' };
       return await new Promise<VaultSaveAnswer>((resolve) => {
         this.pending.set(attemptId, { agentId, resolve });
-        onAbort = () => resolve({ status: 'retry' });
-        signal?.addEventListener('abort', onAbort, { once: true });
         timer = setTimeout(() => resolve({ status: 'retry' }), timeoutMs);
         timer.unref?.();
         try {
@@ -85,7 +81,6 @@ export class VaultSaveRelay {
       });
     } finally {
       if (timer) clearTimeout(timer);
-      if (onAbort) signal?.removeEventListener('abort', onAbort);
       this.pending.delete(attemptId);
       for (const name of Object.keys(values)) delete values[name];
     }

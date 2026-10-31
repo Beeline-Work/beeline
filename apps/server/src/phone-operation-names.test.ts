@@ -35,7 +35,6 @@ const ALL_PHONE_OPERATION_NAMES = {
   readAgentVoices: true,
   saveAgentVoice: true,
   previewAgentVoice: true,
-  submitVaultSave: true,
   reportPageLoad: true,
   reportClientError: true,
   disconnectAiClient: true,

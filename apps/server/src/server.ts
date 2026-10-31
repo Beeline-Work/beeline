@@ -553,7 +553,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, vaultSaveRelay);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {

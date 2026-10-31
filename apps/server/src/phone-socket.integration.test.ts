@@ -15,8 +15,6 @@ import { phoneReadLimits } from './phone-read-limit.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
-import { systemLine } from './system-line.js';
-import { vaultSaveRequest } from '@beeline/api-contract/daemon';
 
 // Reproduction SOCKET-OPS-1: real HTTP and WebSocket boundaries against an isolated database.
 // This is a protocol feature, not a defect report; no production phone can issue it yet.
@@ -24,7 +22,6 @@ const VIEWER = 'a'.repeat(64), OUTSIDER = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const MESSAGE = 'c'.repeat(64);
-const AGENT = '4'.repeat(64), HELPER_TOKEN = `bdt_${'helper'.repeat(8)}`;
 const SNAPSHOT = await (async () => {
   const db = new PgliteDatabase();
   try { await migrate(db); return await db.snapshot(); }
@@ -54,7 +51,6 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     server = createBeelineServer({ database: db, phone, live,
       auth: {
         authenticatePhone: async (token: string) => token === 'viewer'.repeat(8) ? VIEWER : token === 'outsider'.repeat(8) ? OUTSIDER : null,
-        authenticateDaemon: async (token: string) => token === HELPER_TOKEN ? AGENT : null,
       } as unknown as TokenAuth,
       daemon: {} as DaemonService, mediaMaximumBytes: 1,
       phoneReadLimits: phoneReadLimits({ history: { maxRequestsPerWindow: 4 } }),
@@ -256,36 +252,26 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect((await closed)[0]).toBe(1009);
   });
 
-  it('saves a vault card over the socket through the private helper path with metadata-only persistence', async () => {
-    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [AGENT]);
-    await db.query(`INSERT INTO agents(agent_id,owner_id,harness) VALUES($1,$2,'codex')`, [AGENT, VIEWER]);
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`, [WORKSPACE, ROOM, AGENT]);
-    const metadata = vaultSaveRequest({ service: 'test', label: 'socket', purpose: 'Private socket proof',
-      fields: [{ name: 'password', label: 'Password', secret: true }], allowedHosts: ['example.com'], authStrategy: 'api_key' });
-    const card = await systemLine(db, { roomId: ROOM, subject: { kind: 'agent', id: AGENT, name: 'Helper' },
-      verb: 'wants a vault entry', presentation: 'card', cardType: 'vault-save',
-      card: { ...metadata, agentId: AGENT, ownerId: VIEWER, ownerName: 'Viewer', status: 'pending', originCommandId: 'missing-proof-command' },
-    });
-    const helper = new WebSocket(`${origin.replace('http:', 'ws:')}/v1/phone/live`, [`bearer.${HELPER_TOKEN}`]);
-    sockets.push(helper); await once(helper, 'open');
-    const delivery = new Promise<Record<string, unknown>>(resolve => helper.on('message', raw => {
-      const frame = JSON.parse(String(raw)); if (frame.type === 'vault-save') resolve(frame);
-    }));
+  it('refuses vault secret submissions with a typed error and does not read or write the database', async () => {
     const socket = await open();
-    const secret = 'socket-test-secret-sentinel';
-    const saved = request(socket, 'submitVaultSave', { roomId: ROOM, cardId: card.id, values: { password: secret } });
-    const frame = await delivery;
-    expect(frame.values).toEqual({ password: secret });
-    const answer = await fetch(`${origin}/v1/vault-save/answer`, {
-      method: 'POST', headers: { authorization: `Bearer ${HELPER_TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ attemptId: frame.attemptId, answer: { status: 'saved', reference: 'vault://test/socket' } }),
+    const before = await db.query(`SELECT id,card,text FROM messages ORDER BY id`);
+    const query = vi.spyOn(db, 'query');
+    const execute = vi.spyOn(phone, 'execute');
+    const secret = 'socket-refused-secret-sentinel';
+    const result = await request(socket, 'submitVaultSave', {
+      roomId: ROOM, cardId: MESSAGE, values: { password: secret },
     });
-    expect(answer.status).toBe(200);
-    const result = await saved;
-    expect(result).toMatchObject({ ok: true, result: { status: 'saved', card: { reference: 'vault://test/socket' } } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'unknown_phone_operation', retryable: false } });
+    expect(execute).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(secret);
-    const messages = await db.query(`SELECT text,card FROM messages WHERE room_id=$1`, [ROOM]);
-    expect(JSON.stringify(messages.rows)).not.toContain(secret);
+    const after = await db.query(`SELECT id,card,text FROM messages ORDER BY id`);
+    expect(after.rows).toEqual(before.rows);
+    const operation = await http('/v1/phone/operations/submitVaultSave', {
+      roomId: ROOM, cardId: MESSAGE, values: { password: secret },
+    });
+    expect(operation.status).toBe(404);
+    expect(await operation.json()).toEqual({ error: 'unknown_phone_operation' });
   });
 
   it('records page timings and redacts client reports through the same socket and HTTP handlers', async () => {

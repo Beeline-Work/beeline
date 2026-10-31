@@ -61,10 +61,17 @@ try {
   assert.deepEqual(unknown.error, {
     code: 'unknown_phone_operation', message: 'unknown_phone_operation', retryable: false,
   });
+  const before = await database.query(`SELECT id,text,card FROM messages ORDER BY id`);
+  const secret = 'refused-proof-value';
+  const vault = await request('submitVaultSave', { roomId: room, cardId: messageId, values: { password: secret } });
+  assert.equal(vault.ok, false);
+  assert.equal(vault.error.code, 'unknown_phone_operation');
+  assert.equal(JSON.stringify(vault).includes(secret), false);
+  assert.deepEqual((await database.query(`SELECT id,text,card FROM messages ORDER BY id`)).rows, before.rows);
   const replies = await Promise.all(Array.from({ length: 20 }, () => request('readWorkspaces', {})));
   assert.equal(new Set(replies.map(reply => reply.id)).size, 20);
   assert.ok(replies.every(reply => reply.ok));
-  console.log('SOCKET-OPS-1 PASS: built server authenticates the live socket, returns identical HTTP/socket Room and Workspace views, reads concurrent requests by id, and shows one message after socket and HTTP retries.');
+  console.log('SOCKET-OPS-1 PASS: built server authenticates the live socket, returns identical HTTP/socket Room and Workspace views, reads concurrent requests by id, shows one message after socket and HTTP retries, and refuses vault secret submissions without database changes.');
 } finally {
   socket?.terminate(); server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));

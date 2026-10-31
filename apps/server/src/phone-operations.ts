@@ -6,8 +6,6 @@ import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerC
 import { recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { IdentityRateLimit, type PhoneReadLimits } from './phone-read-limit.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
-import { submitVaultSave } from './vault-save-http.js';
-import type { VaultSaveRelay } from './vault-save-relay.js';
 import type { ServerOptions } from './server.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 
@@ -20,8 +18,8 @@ export class PhoneOperationError extends ExpectedRefusalError {
 const quiet = new Set<string>([
   ...PHONE_READ_OPERATIONS, 'reopenChat', 'updateRoomPushState',
   'markRead', 'markUnread', 'reportClientError', 'reportPageLoad',
-  // These services publish their own precise changes, including secret-free vault metadata.
-  'submitVaultSave', 'voiceJoin', 'voiceLeave', 'voiceIdle', 'voiceResume',
+  // These services publish their own precise changes.
+  'voiceJoin', 'voiceLeave', 'voiceIdle', 'voiceResume',
   'saveAgentVoice', 'previewAgentVoice',
 ]);
 const clientErrorLimit = new IdentityRateLimit('client-error', 12);
@@ -61,9 +59,8 @@ function isIanaTimeZone(value: string): boolean {
 export function createPhoneOperationDispatcher(
   options: ServerOptions,
   readLimits: PhoneReadLimits,
-  vaultRelay: VaultSaveRelay,
 ) {
-  const execute = async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal): Promise<unknown> => {
+  const execute = async (name: string, input: Record<string, unknown>, viewerId: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
       case 'readWorkspaces': return phone.readWorkspaces(viewerId);
@@ -163,11 +160,6 @@ export function createPhoneOperationDispatcher(
         return name === 'saveAgentVoice' ? options.voice.profiles.save(workspace, agent, viewerId, voiceId)
           : options.voice.profiles.preview(workspace, agent, viewerId, voiceId);
       }
-      case 'submitVaultSave': {
-        const result = await submitVaultSave(input, viewerId, options, vaultRelay, false, signal);
-        if (result.status >= 400) throw new PhoneOperationError(result.status, result.body);
-        return result.body;
-      }
       case 'reportClientError': {
         if (!clientErrorLimit.admit(viewerId)) refuse(429, 'too_many_requests');
         const limits = { message: 2048, stack: 4096, platform: 32, platformVersion: 64, releaseSha: 128, runtimeVersion: 64, updateId: 64 };
@@ -215,7 +207,7 @@ export function createPhoneOperationDispatcher(
     signal?.throwIfAborted();
     const startedAt = Date.now();
     // Let admitted writes settle atomically. Never race a transaction against socket closure.
-    const result = await execute(name, input, viewerId, signal);
+    const result = await execute(name, input, viewerId);
     if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
       void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
         .catch(error => console.error('[server] human-triggered merge recovery failed:', error));

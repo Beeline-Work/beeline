@@ -30,7 +30,16 @@ node --import tsx scripts/prove-answered-report.mjs --delegate
 
 The new fence requires exact report-recipient/order-author, report-author/order-recipient, origin-corner and creation-order provenance. It applies only to blocked/needs-decision reports. Completed informational reports and active live claims survive. Digest sources use the existing stale-source rebuild path.
 
-## Remaining product decision
+## Decision on the six pending-work cases
 
-No main commit can honestly be named as closing the six pending-work cases. Main intentionally queues instructions behind active work (#3073); finishing one request does not acknowledge unrelated pending commands. Cancelling them on any later reply or push would discard work the agent has not handled. Closing these cases safely requires an explicit acknowledgement of named pending command IDs, or a decision that a queued first delivery which has become redundant remains expected behavior. This audit does not invent that product rule or claim the six cases are fixed.
+Ruby's decision: the following six reports are **redundant first delivery, expected; no fix in this corner**:
+
+- `fb_b4afb20d672abab3738201b5`
+- `fb_7b317afd4c061c7a804b76e0`
+- `fb_003e4fb2dce5bf5737ae52c5`
+- `fb_6c2f728411e4897a34901cb0`
+- `fb_64923c160d5b9dbfa5ab53f7`
+- `fb_b81df68d80356208c0a43c17`
+
+In each case the work was still pending when the command was queued, and the redundant delivery finished in under six minutes. No completed command reopened. Main intentionally queues instructions behind active work (#3073). Explicit acknowledgement of pending command IDs would introduce a new protocol and is outside this corner's scope. PR #3174 remains limited to the reproduced answered-blocker and delegate-blocker paths.
 

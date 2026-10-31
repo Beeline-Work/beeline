@@ -96,12 +96,11 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     // The implementer's turn. A push reported by the GitHub webhook moves it
     // to checks. `rechecked` is a checks verdict on the same head arriving
     // after the one that sent the corner here (a re-run, or a reviewer
-    // configured later); `rereview` is a yes on the same head after a
-    // changes-requested handback.
+    // configured later).
     implement: { does: 'Build and prove the agreed change.',
       role: 'implementer',
       requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', merge_refused: 'implement', pr_closed: 'implement' },
+      on: { pushed: 'checks', rechecked: 'checks', merge_refused: 'implement', pr_closed: 'implement' },
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer
@@ -141,7 +140,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   // Only an event from outside the run takes these: a new commit on the
   // branch, a check verdict re-reported on the same head, a yes after a
   // handback, or GitHub refusing the merge.
-  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused', 'pr_closed'],
+  externalOutcomes: ['pushed', 'rechecked', 'merge_refused', 'pr_closed'],
 };
 
 /** Everything that can move a corner. Each adapter reports exactly one of these. */
@@ -190,6 +189,7 @@ type CornerRow = {
   commissioned_by: string | null;
   lifecycle: CornerLifecycleView;
   archived: boolean;
+  locked: boolean;
   configured_reviewer_id: string | null;
   configured_reviewer_kind: string | null;
   configured_reviewer_name: string | null;
@@ -251,7 +251,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
     await db.query<CornerRow>(
       `SELECT corner.parent_id,parent.workspace_id,
               ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-              fact.commissioned_by,fact.lifecycle,
+              fact.commissioned_by,fact.lifecycle,fact.locked,
               corner.archived_at IS NOT NULL archived,
               ${cornerReviewerSql()} configured_reviewer_id,
               configured.kind configured_reviewer_kind,
@@ -360,8 +360,7 @@ async function projectRunState(
 
 /**
  * One validated transition inside an `advanceCorner` transaction. The edge
- * must be declared on the current state (or be an implicit edge); a loop edge
- * counted past its cap goes to the loop's `onExceeded` instead.
+ * must be declared on the current state (or be an implicit edge).
  */
 class Transition {
   constructor(
@@ -384,24 +383,15 @@ class Transition {
     return Object.hasOwn(edgesOf(this.run.toState), outcome);
   }
 
-  /**
-   * `loopCount` is this trip's number around the state's loop, when the edge
-   * is its loop edge.
-   */
   async take(
     outcome: string,
     contents: Record<string, unknown> = {},
-    loopCount?: number,
   ): Promise<string> {
     const fromState = this.run.toState;
     const implicit = CORNER_LIFECYCLE_CONTRACT.implicitEdges?.includes(outcome) ?? false;
     if (!implicit && !this.allows(outcome))
       throw new Error(`corner contract has no ${fromState} --${outcome}--> edge`);
-    let toState = implicit ? outcome : edgesOf(fromState)[outcome]!;
-    const state = CORNER_LIFECYCLE_CONTRACT.handoffs[fromState];
-    const loop = state && 'loop' in state ? state.loop : undefined;
-    if (loop && loop.onEdge === outcome && loopCount !== undefined && loopCount > loop.cap)
-      toState = loop.onExceeded;
+    const toState = implicit ? outcome : edgesOf(fromState)[outcome]!;
     const seq = this.run.seq + 1;
     const status = terminalStatus(toState);
     if (this.headSha && contents.headSha === undefined) contents = { ...contents, headSha: this.headSha };
@@ -463,7 +453,7 @@ async function backfillRun(
   cornerId: string,
   corner: CornerRow,
 ): Promise<RunState> {
-  const derived = cornerRunFromLifecycle({ archived: corner.archived, lifecycle: corner.lifecycle });
+  const derived = cornerRunFromLifecycle({ archived: corner.archived, locked: corner.locked, lifecycle: corner.lifecycle });
   let toState = derived.state;
   let outcome = derived.outcome;
   if (toState === 'review') {
@@ -614,7 +604,7 @@ async function applyEvent(
       const verdictHolds =
         transition.state === 'review' || transition.state === 'ask_human' ||
         (transition.state === 'implement' &&
-          (transition.run.outcome === 'failing' || transition.run.outcome === 'no_reviewer'));
+          transition.run.outcome === 'failing');
       if (!verdictHolds) return no('no checks verdict to re-run');
       await transition.take('rechecked');
       return OK;
@@ -637,7 +627,7 @@ async function applyEvent(
     case 'merged':
       // Landing wakes no one in the parent Room: the merge card announces it,
       // and an agent with work left after the merge subscribes to `merged`.
-      await transition.take('landed', event.contents);
+      await transition.take(corner.locked ? 'pr_closed' : 'landed', event.contents);
       return OK;
     case 'pull-request-closed':
       if (corner.lifecycle.pr) return no('the corner still has a pull request');
@@ -692,18 +682,6 @@ async function checksReported(
   // then is woken.
   if (event.result === 'passing' && from === 'review' && sameHead && transition.run.outcome !== 'no_reviewer')
     return ensureReviewDispatch(db, cornerId, corner, transition);
-  if (event.result === 'passing' && from === 'implement' && sameHead && headSha &&
-      transition.run.outcome === 'changes_requested' &&
-      corner.lifecycle.lifecycle === 'in-review') {
-    const implementerWorking = corner.worker_agent_id ? await db.query(
-      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-       AND state IN ('pending','claimed') LIMIT 1`,
-      [cornerId, corner.worker_agent_id],
-    ) : undefined;
-    if (implementerWorking?.rowCount) return no('implementer still answering the review');
-    await transition.take('rereview', { headSha });
-    return ensureReviewDispatch(db, cornerId, corner, transition);
-  }
   let plan: ChecksPlan;
   if (event.result === 'failing') plan = { outcome: 'failing' };
   // A yes given while checks ran (a PASS or a person's order) needs no review.
@@ -720,13 +698,7 @@ async function checksReported(
   if (from === 'review' && sameHead && plan.outcome === 'no_reviewer')
     return ensureReviewDispatch(db, cornerId, corner, transition);
   if (from === 'implement' && sameHead) {
-    const repeat =
-      transition.run.outcome === plan.outcome ||
-      // The reviewer already ended a review on this head with a
-      // changes-requested handback. A re-reported green for the same head is
-      // not a new review: the implementer still owes a push, so do not wake
-      // the reviewer again.
-      (plan.outcome !== 'failing' && transition.run.outcome === 'changes_requested');
+    const repeat = transition.run.outcome === plan.outcome;
     if (repeat && plan.outcome === 'failing' && event.followup) {
       if (!corner.worker_agent_id) {
         await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, 'the corner has no implementer');
@@ -1293,8 +1265,6 @@ async function approvalRecorded(
   // A yes while checks still run is kept; the checks-passed that follows it
   // skips the review.
   if (corner.lifecycle.checks !== 'passing') return no('checks are not green yet');
-  if (transition.state === 'implement' && transition.run.outcome === 'changes_requested')
-    await transition.take('rereview');
   if (transition.state !== 'review') return no('not waiting for a yes');
   await transition.take('approved', { verdict: 'approved', headSha: event.headSha });
   // A person's order is landed by its caller at once; nobody else is woken.

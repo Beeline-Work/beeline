@@ -38,3 +38,4 @@ export * from './repository-onboarding.js';
 export { squireApprovalAction, type SquireApprovalDetails } from './approval-copy.js';
 
 export * from './sidebar-preview.js';
+export * from './mcp-starter-routine.js';

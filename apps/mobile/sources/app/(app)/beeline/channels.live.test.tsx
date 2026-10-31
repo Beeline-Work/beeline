@@ -224,6 +224,11 @@ vi.mock('@/sync/transport/live-connection', () => ({
   useConnectionState: () => deck.connectionState,
   reconnectNow: () => { deck.reconnects += 1; },
   sharedLiveConnection: () => ({
+    connectionStatus: () => deck.connectionState,
+    subscribeConnectionStatus: () => () => undefined,
+    reconnectNow: () => {
+      deck.reconnects += 1;
+    },
     request: deck.socketRequest,
     register: async (
       filters: readonly { readonly '#h'?: readonly string[] }[],

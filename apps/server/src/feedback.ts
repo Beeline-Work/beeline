@@ -99,6 +99,101 @@ function feedbackItemId(): string {
   return `fb_${randomBytes(12).toString('hex')}`;
 }
 
+/** The helper release and the phone's reported release share this shape. */
+const RELEASE_VERSION = /^v\d+\.\d+\.\d+$/;
+const HARNESS_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+const APP_PLATFORMS = new Set(['ios', 'android', 'web', 'macos', 'windows', 'linux']);
+
+type ReportVersions = {
+  helperVersion: string | null;
+  appVersion: string | null;
+  appPlatform: string | null;
+  harness: string | null;
+  harnessVersion: string | null;
+};
+
+const UNKNOWN_VERSIONS: ReportVersions = {
+  helperVersion: null,
+  appVersion: null,
+  appPlatform: null,
+  harness: null,
+  harnessVersion: null,
+};
+
+function releaseVersionOrNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && RELEASE_VERSION.test(trimmed) ? trimmed : null;
+}
+
+function harnessOrNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && HARNESS_NAME.test(trimmed) ? trimmed : null;
+}
+
+function platformOrNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && APP_PLATFORMS.has(trimmed) ? trimmed : null;
+}
+
+/**
+ * Helper version from the connection's presence announcement, and the harness
+ * kind the helper already posted. The harness process version never reaches
+ * the server, so it stays null. App fields stay null: this is not a phone.
+ */
+async function agentReportVersions(database: SqlDatabase, agentId: string): Promise<ReportVersions> {
+  const row = (
+    await database.query<{ helper_version: string | null; harness: string | null }>(
+      `SELECT presence.body->>'releaseVersion' AS helper_version, agent.harness
+       FROM agents agent
+       LEFT JOIN LATERAL (
+         SELECT body FROM live_outputs
+         WHERE agent_id=agent.agent_id AND kind='presence'
+         ORDER BY updated_at DESC
+         LIMIT 1
+       ) presence ON true
+       WHERE agent.agent_id=$1`,
+      [agentId],
+    )
+  ).rows[0];
+  return {
+    ...UNKNOWN_VERSIONS,
+    helperVersion: releaseVersionOrNull(row?.helper_version),
+    harness: harnessOrNull(row?.harness),
+  };
+}
+
+/**
+ * App release and platform from the builds this person already reported with
+ * `reportRunningUpdate`. A field is stored only when every receipt agrees.
+ * Disagreeing devices, or no receipt, stay null. The sign-in funnel's package
+ * version is a different number and is not used here.
+ */
+async function humanReportVersions(database: SqlDatabase, reporterId: string): Promise<ReportVersions> {
+  const row = (
+    await database.query<{ app_platform: string | null; app_version: string | null }>(
+      `SELECT
+         CASE WHEN count(*)>0 AND count(DISTINCT platform)=1 AND bool_and(platform IS NOT NULL)
+           THEN min(platform) END AS app_platform,
+         CASE WHEN count(*)>0 AND bool_and(version IS NOT NULL) AND count(DISTINCT version)=1
+           THEN min(version) END AS app_version
+       FROM (
+         SELECT CASE WHEN receipt->>'platform' IN ('ios','android','web','macos','windows','linux')
+                     THEN receipt->>'platform' END AS platform,
+                CASE WHEN receipt->>'releaseVersion' ~ '^v[0-9]+\\.[0-9]+\\.[0-9]+$'
+                     THEN receipt->>'releaseVersion' END AS version
+         FROM device_update_receipts
+         WHERE identity_id=$1
+       ) reported`,
+      [reporterId],
+    )
+  ).rows[0];
+  return {
+    ...UNKNOWN_VERSIONS,
+    appVersion: releaseVersionOrNull(row?.app_version),
+    appPlatform: platformOrNull(row?.app_platform),
+  };
+}
+
 /** The trigger, then up to twenty earlier live messages from its Room, newest first. */
 async function evidenceMessageIds(
   database: SqlDatabase,
@@ -157,6 +252,7 @@ export async function reportAgentFeedback(
   if (containsSecret([summary, detail, errorExcerpt, toolName].filter(Boolean).join('\n')))
     throw new Error('feedback contains a secret-shaped value; describe the problem without it');
   const summaryKey = feedbackSummaryKey(summary) || summary.toLowerCase();
+  const versions = await agentReportVersions(database, agentId);
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`feedback:${agentId}`]);
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     `feedback-match:${JSON.stringify([input.category, summaryKey, toolName ?? null])}`,
@@ -200,6 +296,9 @@ export async function reportAgentFeedback(
           summary,
           detail: detail ?? null,
           errorExcerpt: errorExcerpt ?? null,
+          helperVersion: versions.helperVersion,
+          harness: versions.harness,
+          harnessVersion: versions.harnessVersion,
         }),
       ],
     );
@@ -231,8 +330,10 @@ export async function reportAgentFeedback(
     `INSERT INTO feedback_items(
        id,source_kind,reporter_identity_id,reporter_owner_id,workspace_id,room_id,
        trigger_message_id,message_ids,request_id,category,summary,summary_key,detail,
-       tool_name,error_excerpt,prompt_section_ids
-     ) VALUES($1,'agent',$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::text[])
+       tool_name,error_excerpt,prompt_section_ids,
+       helper_version,app_version,app_platform,harness,harness_version
+     ) VALUES($1,'agent',$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::text[],
+       $16,$17,$18,$19,$20)
      ${overflow ? `ON CONFLICT(id) DO UPDATE SET
        occurrence_count=feedback_items.occurrence_count+1, last_occurrence_at=now(),
        summary=EXCLUDED.summary, detail=EXCLUDED.detail, category=EXCLUDED.category,
@@ -240,6 +341,9 @@ export async function reportAgentFeedback(
        workspace_id=EXCLUDED.workspace_id, room_id=EXCLUDED.room_id,
        trigger_message_id=EXCLUDED.trigger_message_id, message_ids=EXCLUDED.message_ids,
        request_id=EXCLUDED.request_id, prompt_section_ids=EXCLUDED.prompt_section_ids,
+       helper_version=EXCLUDED.helper_version, app_version=EXCLUDED.app_version,
+       app_platform=EXCLUDED.app_platform, harness=EXCLUDED.harness,
+       harness_version=EXCLUDED.harness_version,
        status='new', issue_repository=NULL, issue_number=NULL, triage_reason=NULL,
        triaged_at=NULL, resolved_notified_at=NULL` : ''}
      RETURNING occurrence_count`,
@@ -259,6 +363,11 @@ export async function reportAgentFeedback(
       toolName ?? null,
       errorExcerpt ?? null,
       promptSectionIds,
+      versions.helperVersion,
+      versions.appVersion,
+      versions.appPlatform,
+      versions.harness,
+      versions.harnessVersion,
     ],
   );
   return { itemId: id, duplicate: stored.rows[0]!.occurrence_count > 1 };
@@ -278,11 +387,13 @@ async function insertHumanReport(
   },
 ): Promise<ReportFeedbackResult> {
   const id = feedbackItemId();
+  const versions = await humanReportVersions(database, input.reporterId);
   const inserted = await database.query(
     `INSERT INTO feedback_items(
        id,source_kind,reporter_identity_id,workspace_id,room_id,trigger_message_id,
-       message_ids,category,summary,summary_key,detail
-     ) VALUES($1,'human',$2,$3,$4,$5,$6::text[],'human_report',$7,$8,$9)
+       message_ids,category,summary,summary_key,detail,
+       helper_version,app_version,app_platform,harness,harness_version
+     ) VALUES($1,'human',$2,$3,$4,$5,$6::text[],'human_report',$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT(trigger_message_id) WHERE source_kind='human' DO NOTHING`,
     [
       id,
@@ -294,6 +405,11 @@ async function insertHumanReport(
       input.summary,
       feedbackSummaryKey(input.summary),
       input.note ?? null,
+      versions.helperVersion,
+      versions.appVersion,
+      versions.appPlatform,
+      versions.harness,
+      versions.harnessVersion,
     ],
   );
   if (!inserted.rowCount) {

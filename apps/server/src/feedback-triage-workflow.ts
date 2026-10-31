@@ -2,6 +2,18 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { WorkflowContract } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 
+/** Daily sweep pull. Latest flags compare stored versions to the delivered helper bundle. */
+export const FEEDBACK_TRIAGE_PULL_SQL = `SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences,
+       helper_version, app_version, app_platform, harness, harness_version,
+       CASE WHEN helper_version IS NULL OR latest.version IS NULL THEN NULL
+            ELSE helper_version = latest.version END AS helper_is_latest,
+       CASE WHEN app_version IS NULL OR latest.version IS NULL THEN NULL
+            ELSE app_version = latest.version END AS app_is_latest
+FROM feedback_items
+LEFT JOIN helper_release_notifications latest ON latest.singleton
+WHERE status = 'new' AND (source_kind = 'human' OR COALESCE(last_occurrence_at, created_at) > now() - interval '24 hours')
+ORDER BY created_at;`;
+
 /**
  * Feedback triage is a saved workflow, installed by the server so the triage
  * corner's daily schedule runs it with no setup step. The copies under
@@ -200,19 +212,20 @@ items stay unresolved, so a later run with a System sender reports them.
 Run the read-only query through the vaulted Neon route:
 
 \`\`\`sql
-SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at, last_occurrence_at, reporter_identity_id, occurrence_count, occurrences
-FROM feedback_items
-WHERE status = 'new' AND (source_kind = 'human' OR COALESCE(last_occurrence_at, created_at) > now() - interval '24 hours')
-ORDER BY created_at;
+${FEEDBACK_TRIAGE_PULL_SQL}
 \`\`\`
+
+Each row carries the versions stored when it was filed. \`helper_version\` and \`harness\` are the helper connection and harness kind for an agent report. \`app_version\` and \`app_platform\` are the app release and platform for a human report. \`harness_version\` is set only when the server knew the harness process version. A field the server did not know is null. \`helper_is_latest\` and \`app_is_latest\` compare those versions with the helper bundle the release pipeline last delivered. True is that version, false is an older or different one, and null means the version or the delivered release was unknown. A later occurrence on an agent item keeps its own \`helperVersion\` and \`harness\` inside \`occurrences\`.
+
+Count only latest-version reports. An agent report counts when \`helper_is_latest\` is true. A human report qualifies when \`app_is_latest\` is true. A null flag does not count as latest. Keep every other report in the list with its versions so older builds stay visible. Do not drop them.
 
 If the previous run never reached \`done\`, widen the window back to that run's start.
 Run the JSON rows through \`node scripts/feedback-signals.mjs\` on stdin.
 Group agents by tool name, normalized error (summary fallback), and category.
 Use every stored occurrence, including repeats on older items. Keep count,
 firstSeen, lastSeen and all item ids. Rank by distinct confirmed affected humans
-first, then agent occurrences. Never infer human pain from an agent's owner.
-Human reports always qualify; agent-only singletons cannot open a fix corner.
+on latest-version reports first, then latest agent occurrences. Never infer human pain from an agent's owner.
+Agent-only singletons cannot open a fix corner.
 Read human context before assessment; do not quote it. If a human report and an
 agent group demonstrably share a cause, merge their evidence and deduplicate
 human identities before final ranking. Keep the stable signature for follow-up.

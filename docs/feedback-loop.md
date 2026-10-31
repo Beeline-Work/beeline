@@ -99,7 +99,11 @@ triager never calls `fetch_credential` for it.
 Each run reads two things:
 
 - New rows in `feedback_items`: every human report still `new`, at any age,
-  and agent reports with a new occurrence in the last 24 hours.
+  and agent reports with a new occurrence in the last 24 hours. Each row
+  includes the helper, app, platform and harness versions stored at filing
+  time, and whether that helper or app version is the one the release pipeline
+  last delivered. A missing version is null. Count only latest-version reports;
+  older ones stay in the list.
 - Each report's context. Every report stores `message_ids`: the trigger
   message plus up to 20 messages before it in the same Room. Human `@system`
   reports often have an empty `detail`, so the triager always reads this
@@ -116,7 +120,7 @@ Give the vaulted credential a login role that can read only these tables:
 CREATE ROLE beeline_feedback_reader LOGIN PASSWORD '<generated>';
 GRANT CONNECT ON DATABASE <database> TO beeline_feedback_reader;
 GRANT USAGE ON SCHEMA public TO beeline_feedback_reader;
-GRANT SELECT ON feedback_items, messages, identities TO beeline_feedback_reader;
+GRANT SELECT ON feedback_items, messages, identities, helper_release_notifications TO beeline_feedback_reader;
 ```
 
 A triager whose owner has no such credential stops at `pull` and says so.

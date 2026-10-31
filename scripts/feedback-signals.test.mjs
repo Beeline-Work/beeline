@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupFeedback, signature, followUp } from './feedback-signals.mjs';
+import { groupFeedback, signature, followUp, versionReport } from './feedback-signals.mjs';
 const row = { id: 'one', source_kind: 'agent', category: 'bug', tool_name: 'read',
   error_excerpt: 'Request 404 https://example.test/a', created_at: '2026-10-20T10:00:00Z' };
 test('dynamic URLs collapse but status and tool retain distinct causes', () => {
@@ -32,6 +32,30 @@ test('incomplete observation never claims a fix and offset timestamps compare by
   assert.throws(() => followUp({releasedAt:'2026-10-20',occurrences:[]}), /timestamps/);
   assert.equal(followUp({releasedAt:'2026-10-20T10:00:00Z',observedThrough:'2026-10-21T10:00:00Z',
     occurrences:['2026-10-20T07:00:00-04:00']}), 'still occurring (reopen)');
+});
+test('printed groups keep each report version and whether it is latest', () => {
+  const printed = groupFeedback([{
+    ...row,
+    helper_version: 'v0.1.90',
+    harness: 'codex',
+    helper_is_latest: false,
+    occurrences: [{ helperVersion: 'v0.1.94', harness: 'codex', harnessVersion: null }],
+  }])[0];
+  assert.deepEqual(printed.versionReports, [{
+    id: 'one',
+    helperVersion: 'v0.1.90',
+    appVersion: null,
+    appPlatform: null,
+    harness: 'codex',
+    harnessVersion: null,
+    helperIsLatest: false,
+    appIsLatest: null,
+    later: [{ helperVersion: 'v0.1.94', harness: 'codex', harnessVersion: null }],
+  }]);
+  assert.deepEqual(versionReport({ id: 'bare' }), {
+    id: 'bare', helperVersion: null, appVersion: null, appPlatform: null,
+    harness: null, harnessVersion: null, helperIsLatest: null, appIsLatest: null,
+  });
 });
 test('first/last times compare normalized instants across SQL and ISO formats', () => {
   const group=groupFeedback([{...row,created_at:'2026-10-20 15:00:00+00'},

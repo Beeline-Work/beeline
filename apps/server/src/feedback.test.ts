@@ -4,6 +4,7 @@ import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DAEMON_OPERATION_NAMES, DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
 import { feedbackConfigFromEnv, type FeedbackConfig, type FeedbackPullRequests } from './feedback.js';
+import { FEEDBACK_TRIAGE_PULL_SQL } from './feedback-triage-workflow.js';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
@@ -403,6 +404,154 @@ describe('@system and Report issue (human path)', () => {
     const view = await phone.readRoom(ROOM, PERSON);
     expect(view?.messages.find((row) => row.id === target)?.feedbackReported).toBe(true);
     expect(view?.messages.find((row) => row.id === other)?.feedbackReported).toBeUndefined();
+  });
+});
+
+describe('report versions', () => {
+  async function presence(agentId: string, releaseVersion: string) {
+    await database.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+       VALUES($1,$2,'presence','presence',$3::jsonb)
+       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
+      [ROOM, agentId, JSON.stringify({ status: 'online', releaseVersion })],
+    );
+  }
+
+  async function receipt(identityId: string, deviceId: string, body: { platform: string; releaseVersion?: string }) {
+    await database.query(
+      `INSERT INTO device_update_receipts(identity_id,device_id,receipt) VALUES($1,$2,$3::jsonb)`,
+      [identityId, deviceId, JSON.stringify({ deviceId, ...body })],
+    );
+  }
+
+  async function versions(id: string) {
+    return (await database.query<{
+      helper_version: string | null;
+      app_version: string | null;
+      app_platform: string | null;
+      harness: string | null;
+      harness_version: string | null;
+    }>(
+      `SELECT helper_version,app_version,app_platform,harness,harness_version FROM feedback_items WHERE id=$1`,
+      [id],
+    )).rows[0]!;
+  }
+
+  it('stores the helper version and harness the server already knows, and leaves the rest null', async () => {
+    await database.query(`UPDATE agents SET harness='claude' WHERE agent_id=$1`, [AGENT]);
+    await presence(AGENT, 'v0.1.94');
+    const filed = await report({ summary: 'the socket dropped during send' });
+    expect(await versions(filed.itemId)).toEqual({
+      helper_version: 'v0.1.94',
+      app_version: null,
+      app_platform: null,
+      harness: 'claude',
+      harness_version: null,
+    });
+    await database.query(`UPDATE feedback_items SET created_at=now()-interval '2 hours' WHERE id=$1`, [filed.itemId]);
+    await report({ summary: 'the socket dropped during send' });
+    const later = (await database.query<{ occurrences: Array<{ helperVersion: string | null; harness: string | null; harnessVersion: string | null }> }>(
+      `SELECT occurrences FROM feedback_items WHERE id=$1`,
+      [filed.itemId],
+    )).rows[0]!.occurrences;
+    expect(later).toEqual([
+      expect.objectContaining({ helperVersion: 'v0.1.94', harness: 'claude', harnessVersion: null }),
+    ]);
+  });
+
+  it('stores null when the connection version or harness is not one the server understands', async () => {
+    await database.query(`UPDATE agents SET harness='Claude Code' WHERE agent_id=$1`, [AGENT]);
+    await presence(AGENT, 'latest');
+    const filed = await report({ summary: 'unreadable connection version' });
+    expect(await versions(filed.itemId)).toEqual({
+      helper_version: null,
+      app_version: null,
+      app_platform: null,
+      harness: null,
+      harness_version: null,
+    });
+  });
+
+  it('stores the app release and platform a person already reported, and leaves helper fields null', async () => {
+    await receipt(PERSON, 'phone', { platform: 'ios', releaseVersion: 'v0.1.94' });
+    const phone = new PhoneService(database, 'http://local.test');
+    const sent = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system the keyboard covers send' },
+      PERSON,
+    );
+    const item = (await items()).find((row) => row.trigger_message_id === sent.messageId)!;
+    expect(await versions(item.id)).toEqual({
+      helper_version: null,
+      app_version: 'v0.1.94',
+      app_platform: 'ios',
+      harness: null,
+      harness_version: null,
+    });
+  });
+
+  it('leaves an app version null when the person\'s devices disagree', async () => {
+    await receipt(PERSON, 'phone', { platform: 'ios', releaseVersion: 'v0.1.90' });
+    await receipt(PERSON, 'tablet', { platform: 'ios', releaseVersion: 'v0.1.94' });
+    const phone = new PhoneService(database, 'http://local.test');
+    const sent = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system two phones disagree' },
+      PERSON,
+    );
+    const item = (await items()).find((row) => row.trigger_message_id === sent.messageId)!;
+    expect(await versions(item.id)).toEqual({
+      helper_version: null,
+      app_version: null,
+      app_platform: 'ios',
+      harness: null,
+      harness_version: null,
+    });
+  });
+
+  it('marks a report from an older helper not latest and a current one latest', async () => {
+    await database.query(
+      `INSERT INTO helper_release_notifications(singleton,version,sha) VALUES(true,'v0.1.94',$1)`,
+      ['a'.repeat(40)],
+    );
+    await database.query(`UPDATE agents SET harness='codex' WHERE agent_id=$1`, [AGENT]);
+    await presence(AGENT, 'v0.1.90');
+    const older = await report({ summary: 'old helper dropped the socket' });
+    await presence(AGENT, 'v0.1.94');
+    const current = await report({ summary: 'current helper dropped the socket' });
+    const quiet = await report({ summary: 'helper never announced a version' }, ROOM, OUTSIDER);
+    await receipt(PERSON, 'phone', { platform: 'android', releaseVersion: 'v0.1.90' });
+    await receipt(OTHER, 'phone', { platform: 'android', releaseVersion: 'v0.1.94' });
+    const phone = new PhoneService(database, 'http://local.test');
+    const oldApp = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system old app froze' },
+      PERSON,
+    );
+    const newApp = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system current app froze' },
+      OTHER,
+    );
+    const rows = (await database.query<{
+      id: string;
+      helper_version: string | null;
+      helper_is_latest: boolean | null;
+      app_version: string | null;
+      app_is_latest: boolean | null;
+      harness: string | null;
+      harness_version: string | null;
+    }>(FEEDBACK_TRIAGE_PULL_SQL)).rows;
+    const row = (id: string) => rows.find((item) => item.id === id)!;
+    expect(row(older.itemId)).toMatchObject({
+      helper_version: 'v0.1.90', helper_is_latest: false, harness: 'codex', harness_version: null, app_is_latest: null,
+    });
+    expect(row(current.itemId)).toMatchObject({ helper_version: 'v0.1.94', helper_is_latest: true });
+    expect(row(quiet.itemId)).toMatchObject({ helper_version: null, helper_is_latest: null });
+    const oldHuman = (await items()).find((item) => item.trigger_message_id === oldApp.messageId)!.id;
+    const newHuman = (await items()).find((item) => item.trigger_message_id === newApp.messageId)!.id;
+    expect(row(oldHuman)).toMatchObject({ app_version: 'v0.1.90', app_is_latest: false, helper_is_latest: null });
+    expect(row(newHuman)).toMatchObject({ app_version: 'v0.1.94', app_is_latest: true });
   });
 });
 

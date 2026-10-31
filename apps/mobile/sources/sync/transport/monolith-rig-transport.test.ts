@@ -180,12 +180,23 @@ describe('monolith Room send path', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: 'subscribed', roomId: ROOM, epoch: 'epoch-1', cursor: 3 }),
+    });
+    received.length = 0;
 
     sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.onopen?.();
-    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
+    expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({
+      type: 'subscribe',
+      sidebarPreviews: true,
+      roomIds: [ROOM],
+      cursors: { [ROOM]: { epoch: 'epoch-1', base: 3, seen: [] } },
+    });
     sockets[1]!.onmessage?.({
       data: JSON.stringify({
         type: 'invalidate',
@@ -238,7 +249,7 @@ describe('monolith Room send path', () => {
     stopSecond();
   });
 
-  it('retries authorization and resets reconnect backoff after opening', async () => {
+  it('reconnects after an authorization failure only when asked, not on a timer', async () => {
     vi.useFakeTimers();
     const sockets: Array<{
       sent: string[];
@@ -269,11 +280,19 @@ describe('monolith Room send path', () => {
       () => {},
     );
     expect(sockets).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(0);
+    sharedLiveConnection().reconnectNow();
+    await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
 
     stop();

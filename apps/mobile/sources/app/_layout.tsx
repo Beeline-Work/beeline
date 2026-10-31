@@ -137,8 +137,8 @@ if (Platform.OS === 'android') {
   });
 }
 
-// A push names a message the live socket should already have delivered; one
-// that never arrived proves the socket silently dead, so it is replaced.
+// A push for a subscribed Room replaces the socket when that message has not
+// already arrived on it.
 Notifications.addNotificationReceivedListener((notification) => {
   const data = notification.request.content.data as Record<string, unknown> | undefined;
   const roomId =

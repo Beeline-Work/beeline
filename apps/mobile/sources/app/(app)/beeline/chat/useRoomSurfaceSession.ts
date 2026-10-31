@@ -610,8 +610,7 @@ export function useRoomSurfaceSession({
     // newer message while the socket stayed silent proves the socket missed it.
     let heardSinceRead = false;
     let liveReadApplied = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let refreshFailures = 0;
+    let refreshFailed = false;
     // Turn deltas heard while a Room read is in flight. Turn times are whole
     // seconds, so the read cannot tell a same-second retry from a stale turn;
     // replaying these in order on top of the read keeps what the socket said.
@@ -813,6 +812,7 @@ export function useRoomSurfaceSession({
     // Enter the storage queue before the app suspends; background writes flush it.
     const cacheAppStateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') flushCacheWrite();
+      else if (state === 'active' && refreshFailed) visibleScheduler()?.force();
     });
     scheduleCacheWriteRef.current = scheduleCacheWrite;
 
@@ -861,7 +861,10 @@ export function useRoomSurfaceSession({
               // A push-prefetched read can predate this lane, in which case
               // one follow-up read covers that gap.
               if (handshakeSeen) {
-                if (hasPainted && !live.resumed) visibleScheduler()?.force();
+                // A failed read waits for this frame. Foreground and network
+                // recovery replace the socket, which subscribes again. A
+                // resumed lane that already painted replays its own gap.
+                if (refreshFailed || !hasPainted || !live.resumed) visibleScheduler()?.force();
                 return;
               }
               handshakeSeen = true;
@@ -1249,9 +1252,7 @@ export function useRoomSurfaceSession({
           },
           apply: (view) => {
             if (cancelled) return;
-            refreshFailures = 0;
-            if (retryTimer) clearTimeout(retryTimer);
-            retryTimer = undefined;
+            refreshFailed = false;
             const missedLive =
               liveReadApplied &&
               !heardSinceRead &&
@@ -1314,16 +1315,10 @@ export function useRoomSurfaceSession({
               (error.status === 401 ||
                 error.status === 403 ||
                 error.status === 404);
-            if (!terminal && refreshFailures < 3 && !retryTimer) {
-              const delay = 1_000 * 2 ** refreshFailures++;
-              retryTimer = setTimeout(() => {
-                retryTimer = undefined;
-                if (!cancelled) visibleScheduler()?.followUp();
-              }, delay);
-            }
+            // A failed read waits for the next subscribed frame or foreground.
+            // It does not schedule another read.
+            refreshFailed = !terminal;
             if (terminal) {
-              if (retryTimer) clearTimeout(retryTimer);
-              retryTimer = undefined;
               setRoomSurface(null);
               for (const overlay of liveOverlaysRef.current) {
                 if (overlay.kind === 'draft') {
@@ -1384,7 +1379,6 @@ export function useRoomSurfaceSession({
       cacheAppStateSubscription.remove();
       flushCacheWrite();
       cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
       watchGeneration += 1;
       abandonHandshakeWait?.();
       scheduler?.dispose();

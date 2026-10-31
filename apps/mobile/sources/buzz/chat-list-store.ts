@@ -55,8 +55,11 @@ class ChatListStore {
   private deltasDuringRead: Parameters<typeof applyChatListDelta>[1][] = [];
   private missed = false;
   private confirmedRead = false;
+  /** The opening read failed. A later subscribe is a reconnect, not the open. */
+  private openingReadFailed = false;
   private closed = false;
   private durableTimer?: ReturnType<typeof setTimeout>;
+  private stopConnected?: () => void;
 
   constructor(readonly key: ChatListKey, private readonly onClosed: () => void) {
     this.address = addressOf(key);
@@ -74,6 +77,9 @@ class ChatListStore {
           const read = await new RoomViewClient({ baseUrl: key.relayUrl, identity }).chats(key.workspaceId);
           if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, cornerClock);
           return read;
+        } catch (error) {
+          this.openingReadFailed = true;
+          throw error;
         } finally {
           this.reading = false;
         }
@@ -84,6 +90,7 @@ class ChatListStore {
         const value = this.deltasDuringRead.reduce((view, delta) => applyChatListDelta(view, delta, deltaContext),
           withoutCornerFacts(keepUnavailableChatFacts(held, read)));
         const missedLive = this.confirmedRead && held !== null && roomsMissedByLive(held, read, this.heard);
+        this.openingReadFailed = false;
         this.confirmedRead = true;
         this.missed = false;
         this.heard.clear();
@@ -97,6 +104,10 @@ class ChatListStore {
       onError: (reason) => {
         if (!this.closed) for (const consumer of this.consumers) consumer.onError?.(reason);
       },
+    });
+    // Stubs that only register a watch omit this. The real socket always has it.
+    this.stopConnected = sharedLiveConnection().subscribeConnected?.(() => {
+      if (!this.closed && this.openingReadFailed) this.force();
     });
     void this.open();
   }
@@ -193,7 +204,12 @@ class ChatListStore {
       return;
     }
     if (live?.type === 'presence' || isDraftFrame(event) || (live?.type === 'invalidate' && live.deliveryId)) return;
-    if (live?.type === 'subscribed' && (!this.confirmedRead || (live.resumed && this.covered.has(live.roomId)))) return;
+    // The opening subscribe arrives before that read finishes. Ignore it.
+    // After the read fails, the next subscribe is the reconnect: read again
+    // so Retry is not the only way off the error screen.
+    if (live?.type === 'subscribed' && !this.confirmedRead && !this.openingReadFailed) return;
+    if (live?.type === 'subscribed' && !this.confirmedRead && this.reading) return;
+    if (live?.type === 'subscribed' && this.confirmedRead && live.resumed && this.covered.has(live.roomId)) return;
     this.requestRead();
   }
   private close(persist = true): void {
@@ -202,6 +218,7 @@ class ChatListStore {
       const value = this.current(); if (persist && value) void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView); }
     this.closed = true;
     this.scheduler.dispose();
+    this.stopConnected?.();
     this.stopWatch?.();
     for (const stop of this.subscriptions) stop();
     this.subscriptions.clear();

@@ -97,15 +97,7 @@ export function useConnectionState(): ConnectionState {
   );
 }
 
-/** A socket stuck opening on a bad network fires no close on its own. */
-const LIVE_CONNECT_TIMEOUT_MS = 15_000;
-/** A foreground sync is a one-off liveness check, never a periodic ping. */
-const FOREGROUND_SYNC_TIMEOUT_MS = 3_000;
 const BACKGROUND_CLOSE_DELAY_MS = 120_000;
-const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000] as const;
-/** A push can beat the socket frame for the same message; past this, the
- *  socket missed it. */
-const PUSH_MISS_GRACE_MS = 5_000;
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
 /** Parent-Room invalidations that name a corner change without its rows. */
@@ -160,18 +152,17 @@ export class LiveConnection {
   private readonly requests = new Map<string, PendingRequest>();
   private nextRequestId = 0;
   private socket: WebSocket | undefined;
+  /** True only after this socket's `onopen`. A failed handshake stays false. */
+  private socketReachedOpen = false;
   private connectInFlight: Promise<void> | undefined;
-  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** Rooms on screen, counted per holder; the server holds their pushes. */
   private readonly viewing = new Map<string, number>();
   private readonly heardMessages = new Set<string>();
   private readonly subscribeWaiters = new Set<() => void>();
-  private foregroundSyncTimer: ReturnType<typeof setTimeout> | undefined;
   private backgroundCloseTimer: ReturnType<typeof setTimeout> | undefined;
   private backgroundSocketClosed = false;
   private readonly unsubscribeAppState: () => void;
   private readonly unsubscribeNetworkChange: () => void;
-  private reconnectAttempt = 0;
   private nextRegistrationId = 1;
   private generation = 0;
   /** Bumped only by `dispose`; a held view survives an identity change. */
@@ -390,16 +381,12 @@ export class LiveConnection {
   }
 
   /**
-   * A push arrived for a message in a Room this socket carries. When the
-   * socket never delivered that message, it is silently dead: replace it.
+   * A push arrived for a message in a Room this socket carries. Replace the
+   * socket when that message has not already arrived on it.
    */
   notePushedMessage(roomId: string, messageId: string): void {
     if (!this.seenSubscribed.has(roomId) || this.heardMessages.has(messageId)) return;
-    const socket = this.socket;
-    setTimeout(() => {
-      if (this.socket !== socket || !this.seenSubscribed.has(roomId)) return;
-      if (!this.heardMessages.has(messageId)) this.reconnect();
-    }, PUSH_MISS_GRACE_MS);
+    this.reconnect();
   }
 
   /** Fires once per successful socket open, first connect and every
@@ -427,12 +414,17 @@ export class LiveConnection {
     this.reconnectNow();
   }
 
-  /** Explicit Retry, foreground, network and deadline recovery entry point. */
+  /**
+   * Next socket for an explicit Retry, a foreground return, a network change,
+   * a push the socket has not delivered, or a request deadline. A handshake
+   * that is still opening yields to that event too. A failed attempt does not
+   * schedule another.
+   */
   reconnectNow(): void {
     if (this.connectInFlight) {
       // Registration can return while the first connect promise is still
       // settling. Keep a foreground/read recovery request made in that gap.
-      if (this.socket || this.reconnectTimer) {
+      if (this.socket) {
         const generation = this.generation;
         void this.connectInFlight.then(() => {
           if (generation === this.generation) this.reconnect();
@@ -440,18 +432,15 @@ export class LiveConnection {
       }
       return;
     }
-    if (this.socket?.readyState === 0) return;
-    this.reconnectAttempt = 0;
-    if (!this.socket && !this.reconnectTimer) {
+    if (!this.socket) {
       if (this.registrations.size) void this.ensureSocket();
       return;
     }
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
+    this.socketReachedOpen = false;
     this.dropSocketState();
-    current?.close();
+    current.close();
     void this.ensureSocket();
   }
 
@@ -465,23 +454,6 @@ export class LiveConnection {
     this.backgroundSocketClosed = false;
     if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
     this.backgroundCloseTimer = undefined;
-    // A one-shot ordered socket echo proves the background connection still
-    // carries its subscriptions. Replace it only when that path is silent.
-    if (this.socket && isSocketOpen(this.socket)) {
-      if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-      const current = this.socket;
-      try {
-        current.send(JSON.stringify({ type: 'sync' }));
-      } catch {
-        this.reconnectNow();
-        return;
-      }
-      this.foregroundSyncTimer = setTimeout(() => {
-        this.foregroundSyncTimer = undefined;
-        if (this.socket === current) this.reconnect();
-      }, FOREGROUND_SYNC_TIMEOUT_MS);
-      return;
-    }
     this.reconnectNow();
   }
 
@@ -526,15 +498,12 @@ export class LiveConnection {
     setConnectionState('disconnected');
     this.generation += 1;
     this.connectInFlight = undefined;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
     if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
     this.backgroundCloseTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
+    this.socketReachedOpen = false;
     current?.close();
-    if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-    this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     this.overlays.clear();
@@ -542,7 +511,6 @@ export class LiveConnection {
     this.workspaceCursors.clear();
     this.traceOwners.clear();
     this.heardMessages.clear();
-    this.reconnectAttempt = 0;
   }
 
   private stop(registration: Registration): void {
@@ -580,26 +548,28 @@ export class LiveConnection {
     return flight;
   }
 
+  /**
+   * Opens one socket. A handshake that never opens waits for foreground, a
+   * network change, a push, or an explicit Retry. A socket that had opened
+   * and then closes or errors starts one new attempt immediately, with no
+   * timer. That attempt does not start another if it never opens.
+   */
   private async connect(): Promise<void> {
     const generation = this.generation;
     try {
       const token = await this.deps.authorization();
       if (generation !== this.generation) return;
+      if (this.registrations.size === 0 && this.requests.size === 0) {
+        setConnectionState('disconnected');
+        return;
+      }
       const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
-      const connectTimer = setTimeout(() => {
-        if (this.socket !== next || next.readyState !== 0) return;
-        this.socket = undefined;
-        this.dropSocketState();
-        next.close();
-        setConnectionState('disconnected');
-        this.scheduleReconnect();
-      }, LIVE_CONNECT_TIMEOUT_MS);
+      this.socketReachedOpen = false;
       next.onopen = () => {
-        clearTimeout(connectTimer);
         if (this.socket !== next) return;
-        this.reconnectAttempt = 0;
+        this.socketReachedOpen = true;
         setConnectionState('connected');
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
@@ -617,11 +587,7 @@ export class LiveConnection {
           return;
         }
         if (this.receiveReply(live, next)) return;
-        if (live.type === 'sync-ok') {
-          if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-          this.foregroundSyncTimer = undefined;
-          return;
-        }
+        if (live.type === 'sync-ok') return;
         noteLiveFrame();
         if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) {
           this.reconnect();
@@ -630,37 +596,58 @@ export class LiveConnection {
         this.dispatch(live, next);
       };
       next.onclose = () => {
-        clearTimeout(connectTimer);
         if (this.socket !== next) return;
-        this.socket = undefined;
-        this.dropSocketState();
-        setConnectionState('disconnected');
-        this.scheduleReconnect(this.reconnectAttempt === 0);
+        const reachedOpen = this.socketReachedOpen;
+        this.forgetSocket();
+        if (reachedOpen) this.recoverOpenedSocket();
       };
       next.onerror = () => {
         if (this.socket !== next) return;
         // Some WebSocket implementations emit another error while `close()`
         // tears down a failed handshake. Drop ownership first so that error
         // cannot recursively close the same socket.
-        this.socket = undefined;
-        this.dropSocketState();
-        setConnectionState('disconnected');
-        // Only the first recovery skips the backoff. A handshake that keeps
-        // failing must consume the same finite retry budget as a close.
-        this.scheduleReconnect(this.reconnectAttempt === 0);
+        const reachedOpen = this.socketReachedOpen;
+        this.forgetSocket();
         next.close();
+        if (reachedOpen) this.recoverOpenedSocket();
       };
     } catch {
       if (generation !== this.generation) return;
       setConnectionState('disconnected');
-      this.scheduleReconnect();
     }
+  }
+
+  /** Drop ownership. The caller decides whether this close starts a new socket. */
+  private forgetSocket(): void {
+    this.socket = undefined;
+    this.socketReachedOpen = false;
+    this.dropSocketState();
+    setConnectionState('disconnected');
+  }
+
+  /**
+   * One replacement after a socket that had opened. Nothing is scheduled:
+   * a handshake that never opens, a background shutdown, or the last
+   * registration leaving does not start another.
+   */
+  private recoverOpenedSocket(): void {
+    if (this.backgroundSocketClosed || this.registrations.size === 0) return;
+    const flight = this.connectInFlight;
+    // Register resolves before its socket attempt finishes. A close in that
+    // gap must not reuse the attempt that just died.
+    if (!flight) {
+      void this.ensureSocket();
+      return;
+    }
+    void flight.finally(() => {
+      if (this.socket || this.connectInFlight || this.backgroundSocketClosed || this.registrations.size === 0)
+        return;
+      void this.ensureSocket();
+    });
   }
 
   private dropSocketState(): void {
     this.rejectRequests();
-    if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
-    this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     noteCornerSocketDropped();
@@ -668,17 +655,6 @@ export class LiveConnection {
     // Keep the last painted overlays and Room cursors across a transport
     // reconnect. A resumed server lane only replays what changed.
     this.traceOwners.clear();
-  }
-
-  private scheduleReconnect(immediately = false): void {
-    if (this.reconnectTimer) return;
-    const delayMs = immediately ? 0 : RECONNECT_BACKOFF_MS[this.reconnectAttempt++];
-    if (delayMs === undefined) return;
-    if (immediately) this.reconnectAttempt = 1;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = undefined;
-      void this.ensureSocket();
-    }, delayMs);
   }
 
   /**

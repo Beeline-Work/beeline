@@ -318,10 +318,6 @@ async function captureMountUse(): Promise<(path: string) => boolean> {
   };
 }
 export async function hasMount(path: string): Promise<boolean> { return (await captureMountUse())(path); }
-export async function storageObjectInUse(root: string, options: WholeStorageOptions = {}): Promise<boolean> {
-  return await (options.inUse ?? (async path => (await capturePrivateProcessUse(options.progress))(path)))(root) ||
-    await hasMount(root) || await emulatorLeased(root, options.emulatorLeaseRoot);
-}
 function observeMountUse(): (path: string) => Promise<boolean> {
   let capturedAt = -Infinity;
   let mounted: (path: string) => boolean = () => true;

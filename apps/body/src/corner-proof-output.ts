@@ -15,4 +15,3 @@ export async function declareCornerProofOutput(checkout: string, cornerId: strin
   if (!existing) await writePrivateFileAtomically(manifest, JSON.stringify({ version: 1, cornerId, disposable: true }));
   return path;
 }
-

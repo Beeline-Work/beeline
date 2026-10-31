@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
-import { basename, dirname, relative, resolve, sep } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import {
@@ -353,45 +353,6 @@ export interface CornerWorktree {
 export interface DiscoveredCornerWorktree {
   path: string;
   gitCommonDir: string;
-}
-
-/**
- * Recover a linked corner checkout left by an older daemon process.
- *
- * Both the corner path and the common git directory are held to the two roots
- * Body itself owns. A repository-controlled `.git` file must never turn a
- * stale-copy sweep into deletion outside the supervisor state directory.
- */
-export async function discoverCornerWorktree(
-  supervisorRoot: string,
-  cornerId: string,
-): Promise<DiscoveredCornerWorktree | undefined> {
-  const cornersRoot = resolve(supervisorRoot, 'beeline', 'corners');
-  const path = resolve(cornersRoot, cornerId);
-  if (dirname(path) !== cornersRoot || !existsSync(resolve(path, '.git'))) return undefined;
-  const [canonicalRoot, canonicalPath] = await Promise.all([
-    realpath(cornersRoot),
-    realpath(path).catch(() => undefined),
-  ]);
-  if (!canonicalPath || relative(canonicalRoot, canonicalPath) !== cornerId) {
-    throw new Error(`refusing corner ${cornerId} whose checkout path is not canonical`);
-  }
-  const common = await execFileAsync('git', ['-C', path, 'rev-parse', '--git-common-dir']).catch(
-    () => undefined,
-  );
-  if (!common) return undefined;
-  const gitCommonDir = resolve(path, common.stdout.trim());
-  const repositoriesRoot = resolve(supervisorRoot, 'beeline', 'repositories');
-  const commonRelative = relative(repositoriesRoot, gitCommonDir);
-  if (
-    !commonRelative ||
-    commonRelative === '..' ||
-    commonRelative.startsWith(`..${sep}`) ||
-    commonRelative.startsWith(sep)
-  ) {
-    throw new Error(`refusing corner ${cornerId} with git directory outside repository cache`);
-  }
-  return { path, gitCommonDir };
 }
 
 /** The local worktree root is small even when the server has years of archived corners. */

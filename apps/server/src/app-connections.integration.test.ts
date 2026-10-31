@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
@@ -238,9 +238,20 @@ describe('connect_app', () => {
     return provider as typeof provider & ComposioApps;
   }
 
+  // Export only migrated schema; every test owns a new database and fresh seed rows.
+  let databaseSnapshot: Blob | File;
+  beforeAll(async () => {
+    const template = new PgliteDatabase();
+    try {
+      await migrate(template);
+      databaseSnapshot = await template.snapshot();
+    } finally {
+      await template.close();
+    }
+  });
+
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = PgliteDatabase.fromSnapshot(databaseSnapshot);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle)
        VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,

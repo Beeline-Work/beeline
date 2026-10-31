@@ -39,9 +39,20 @@ const REVIEWER = 'b'.repeat(64);
 
 describe('GitHub phone operations', () => {
   let database: PgliteDatabase;
+  // Export only migrated schema; every test owns a new database and fresh seed rows.
+  let databaseSnapshot: Blob | File;
+  beforeAll(async () => {
+    const template = new PgliteDatabase();
+    try {
+      await migrate(template);
+      databaseSnapshot = await template.snapshot();
+    } finally {
+      await template.close();
+    }
+  });
+
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = PgliteDatabase.fromSnapshot(databaseSnapshot);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
       HUMAN,
     ]);

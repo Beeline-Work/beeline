@@ -1,7 +1,7 @@
 import { freeAgentModelTakesImages, IMAGE_TOKEN_RESERVATION } from './free-agent-image-input.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import {
   allowanceMessage,
@@ -41,11 +41,22 @@ describe('free agent model proxy', () => {
   let reply: (signal?: AbortSignal | null) => Response;
   let config: FreeAgentModelProxyOptions['config'];
 
+  // Export only migrated schema; every test owns a new database and fresh seed rows.
+  let databaseSnapshot: Blob | File;
+  beforeAll(async () => {
+    const template = new PgliteDatabase();
+    try {
+      await migrate(template);
+      databaseSnapshot = await template.snapshot();
+    } finally {
+      await template.close();
+    }
+  });
+
   beforeEach(async () => {
     vi.mocked(freeAgentModelTakesImages).mockResolvedValue(false);
     config = { ...CONFIG };
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = PgliteDatabase.fromSnapshot(databaseSnapshot);
     await db.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Fern')`,
       [OWNER, AGENT],

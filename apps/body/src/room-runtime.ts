@@ -644,6 +644,13 @@ export class RoomRuntimeCoordinator {
   private readonly repositoryRevisions = new Map<string, string>();
   /** A revision discovered mid-turn retires the Room only after that turn ends. */
   private readonly deferredRepositoryRestarts = new Set<string>();
+  /** Stop-then-start for a repository change is in progress for these Rooms. */
+  private readonly repositoryRestartInFlight = new Set<string>();
+  /**
+   * A newer repository change arrived while that restart or a start was in
+   * progress. Applied once, after the in-flight start, so it is not dropped.
+   */
+  private readonly repositoryRestartAgain = new Set<string>();
   private readonly repositoryStateCache = new Map<
     string,
     { value: RoomRepositoryStateResult; until: number }
@@ -1223,6 +1230,8 @@ export class RoomRuntimeCoordinator {
     } finally {
       this.startingRooms.delete(roomId);
     }
+    if (this.repositoryRestartAgain.delete(roomId) && !this.stopped)
+      await this.restartRunningRoomForRepositoryChange(roomId);
   }
 
   private async startRoomOnce(roomId: string): Promise<void> {
@@ -1679,16 +1688,30 @@ export class RoomRuntimeCoordinator {
    * live repository-change event names. A no-op when that id names nothing
    * currently running - e.g. a Room whose corners changed but is not itself
    * being served, or a corner id, which this event never actually names.
+   * A change that arrives while this restart or the Room's start is in
+   * progress is applied again once that start finishes, so a second
+   * installation update is not lost in the gap where the Room is stopped.
    */
   private async restartRunningRoomForRepositoryChange(roomId: string): Promise<void> {
+    if (this.repositoryRestartInFlight.has(roomId) || this.startingRooms.has(roomId)) {
+      this.repositoryRestartAgain.add(roomId);
+      return;
+    }
     const running = this.running.get(roomId);
     if (!running) return;
     if (running.body.isBusy()) {
       this.deferredRepositoryRestarts.add(roomId);
       return;
     }
-    await this.stopRunning(roomId, running);
-    if (!this.stopped) await this.startRoom(roomId);
+    this.repositoryRestartInFlight.add(roomId);
+    try {
+      await this.stopRunning(roomId, running);
+      if (!this.stopped) await this.startRoom(roomId);
+    } finally {
+      this.repositoryRestartInFlight.delete(roomId);
+    }
+    if (this.repositoryRestartAgain.delete(roomId) && !this.stopped)
+      await this.restartRunningRoomForRepositoryChange(roomId);
   }
 
   private async parentRepositoryState(roomId: string): Promise<RoomRepositoryStateResult> {

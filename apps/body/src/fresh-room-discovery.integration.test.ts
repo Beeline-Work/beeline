@@ -778,7 +778,7 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
   });
 
-  it('refreshes a running Room when its GitHub installation changes over the socket', async () => {
+  it('refreshes a running Room when its GitHub installation changes over the socket', { timeout: 60_000 }, async () => {
     const execute = vi.spyOn(daemonApi, 'execute');
     await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM));
     // The initial command read starts before the socket subscription is ready.

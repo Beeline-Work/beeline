@@ -96,6 +96,32 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it('MERGE-HANDOFF-AFTER-MERGE: a fresh checks event reconciles a provider-confirmed merge', async () => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    // GitHub merged the PR, but its pull_request/closed webhook has not arrived.
+    Object.assign(app, { readPullRequest: vi.fn(async () => ({
+      number: 1, headSha, headRef: 'feature/checks-1', baseRef: 'main',
+      url: 'https://github.com/owner/widgets/pull/1', merged: true,
+      mergedAt: '2026-10-30T12:00:00Z', mergeCommitSha: 'f'.repeat(40),
+      mergedBy: 'owner', state: 'closed', mergeability: 'unknown',
+    })) });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    await operations.processWebhook('check_run', payload);
+    const state = (await database.query(`SELECT fact.lifecycle, fact.workflow_state,
+      room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
+      WHERE fact.corner_id=$1`, [corner])).rows[0]!;
+    expect(state.lifecycle).toMatchObject({ outcome: 'landed',
+      pr: { mergeCommitSha: 'f'.repeat(40) } });
+    expect(state.workflow_state).toBe('landed');
+    expect(state.archived_at).not.toBeNull();
+    await operations.processWebhook('check_run', payload);
+    expect(app.mergePullRequest).not.toHaveBeenCalled();
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND state IN ('pending','claimed')`, [corner])).rows).toHaveLength(0);
+  });
+
   it.each(['before writes', 'after writes'] as const)(
     'CHECK-DEADLOCK-1: rolls back and retries %s without refetching or duplicate wakes', async boundary => {
       const { corners, app, payload } = await checksFixture();

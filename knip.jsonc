@@ -160,6 +160,8 @@
         "scripts/unread-controls-native-proof.tsx",
         "scripts/operation-deadline-native-proof.tsx",
         "scripts/unread-dot-clear-proof.tsx",
+        // anchored-corner-unread.browser.test.ts bundles this R1 entry by path.
+        "scripts/anchored-corner-unread-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/reply-recovery-proof.mjs",
         "scripts/workspace-picture-clip-proof.tsx",

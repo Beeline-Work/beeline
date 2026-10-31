@@ -1,13 +1,19 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import InternetReachability from '@react-native-community/netinfo/src/internal/internetReachability';
 
 const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
+const nativeModules = vi.hoisted(() => ({ RNCNetInfo: {} as object | null }));
+const netInfoImport = vi.hoisted(() => vi.fn());
 const netInfo = vi.hoisted(() => ({
   configure: vi.fn(),
-  addEventListener: vi.fn(() => vi.fn()),
+  addEventListener: vi.fn((_listener: () => void) => vi.fn()),
 }));
 vi.mock('react-native', () => ({
+  NativeModules: nativeModules,
+  Platform: { OS: 'android' },
   AppState: {
     currentState: 'active',
     addEventListener: (_event: string, listener: (state: string) => void) => {
@@ -16,7 +22,10 @@ vi.mock('react-native', () => ({
     },
   },
 }));
-vi.mock('@react-native-community/netinfo', () => ({ default: netInfo }));
+vi.mock('@react-native-community/netinfo', () => {
+  netInfoImport();
+  return { default: netInfo };
+});
 
 import { AppState } from 'react-native';
 import { beginRoomDraw, finishRoomDraw, observeVisibleRoomRows } from '@/buzz/room-draw-barrier';
@@ -126,6 +135,7 @@ describe('LiveConnection', () => {
   let sockets: TestSocket[];
 
   beforeEach(() => {
+    nativeModules.RNCNetInfo = {};
     appStateListeners.clear();
     AppState.currentState = 'active';
     sockets = stubSockets();
@@ -139,6 +149,51 @@ describe('LiveConnection', () => {
     netInfo.addEventListener.mockClear();
   });
 
+  it('NETINFO-7821938592: Metro reports the installed import failure before catch', async () => {
+    const reportFatalError = vi.fn();
+    const runtime: Record<string, any> = {
+      __DEV__: false, __METRO_GLOBAL_PREFIX__: '', console,
+      ErrorUtils: { reportFatalError },
+    };
+    runtime.global = runtime;
+    runInNewContext(readFileSync('node_modules/metro-runtime/src/polyfills/require.js', 'utf8'), runtime);
+    const source = readFileSync('node_modules/@react-native-community/netinfo/src/internal/nativeInterface.ts', 'utf8');
+    const compiled = ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS },
+    }).outputText;
+    const nativeFactory = runInNewContext(`(function(require, module, exports) { ${compiled} })`);
+    runtime.__d((_global: unknown, _require: unknown, _default: unknown, _all: unknown, module: any, exports: any) => {
+      nativeFactory((name: string) => name === 'react-native' ? {} : { default: null }, module, exports);
+    }, 1, []);
+    runtime.require = runtime.__r;
+    runtime.module = { exports: {} };
+    runInNewContext(readFileSync('node_modules/metro-runtime/src/modules/asyncRequire.js', 'utf8'), runtime);
+    await runtime.module.exports(1).catch(() => undefined);
+    expect(reportFatalError).toHaveBeenCalledOnce();
+    expect(reportFatalError.mock.calls[0]![0].message).toContain('NativeModule.RNCNetInfo is null');
+  });
+
+  it('NETINFO-7821938592: installed native interface rejects without RNCNetInfo', async () => {
+    nativeModules.RNCNetInfo = null;
+    await expect(import('@react-native-community/netinfo/src/internal/nativeInterface'))
+      .rejects.toThrow('NativeModule.RNCNetInfo is null');
+  });
+
+  it('NETINFO-7821938592: starts the shared socket without evaluating missing NetInfo', async () => {
+    nativeModules.RNCNetInfo = null;
+    netInfoImport.mockClear();
+    vi.spyOn(monolithSession, 'authorization').mockResolvedValue('phone-session');
+    const connection = sharedLiveConnection();
+    const room = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], room);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(netInfoImport).not.toHaveBeenCalled();
+    expect(netInfo.addEventListener).not.toHaveBeenCalled();
+    expect(room).toHaveBeenCalledWith({ monolithLive: { type: 'subscribed', roomId: ROOM_A } });
+  });
+
   it('disables NetInfo HTTP reachability before subscribing to native changes', async () => {
     sharedLiveConnection();
     await vi.waitFor(() => expect(netInfo.addEventListener).toHaveBeenCalledOnce());
@@ -146,6 +201,28 @@ describe('LiveConnection', () => {
     expect(netInfo.configure).toHaveBeenCalledBefore(netInfo.addEventListener);
     expect(netInfo.configure).toHaveBeenCalledWith({ reachabilityShouldRun: expect.any(Function) });
     expect(netInfo.configure.mock.calls[0]?.[0].reachabilityShouldRun()).toBe(false);
+  });
+
+  it('retains native network recovery and removes the subscription on disposal', async () => {
+    const unsubscribe = vi.fn();
+    netInfo.addEventListener.mockReturnValueOnce(unsubscribe);
+    vi.spyOn(monolithSession, 'authorization').mockResolvedValue('phone-session');
+    const connection = sharedLiveConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    await vi.waitFor(() => expect(netInfo.addEventListener).toHaveBeenCalledOnce());
+    const listener = netInfo.addEventListener.mock.calls[0]![0] as () => void;
+    listener();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    expect(sockets[0]!.closed).toBe(true);
+    connection.dispose();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('does not attach a native listener after disposal during import', async () => {
+    sharedLiveConnection().dispose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(netInfo.addEventListener).not.toHaveBeenCalled();
   });
 
   it('NetInfo fallback starts neither an HTTP probe nor a recurring timer when disabled', () => {

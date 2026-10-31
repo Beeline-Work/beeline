@@ -121,6 +121,46 @@ test('every other way to reach a network global counts, and types do not', () =>
   assert.deepEqual(lines('event-source'), [5, 9]);
 });
 
+test('fetch through another name for the global object fails the check, and cache.fetch does not', () => {
+  const root = copyOfRepo('global-alias');
+  // The exact file from review: an alias of globalThis, then fetch on the alias.
+  write(root, 'apps/mobile/sources/sync/review-side-channel.ts',
+    'const g = globalThis; export const sideChannel = (url: string) => g.fetch(url);\n');
+  const result = runCheck(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /new phone network call site \(global-object\) at apps\/mobile\/sources\/sync\/review-side-channel\.ts:1\./);
+  write(root, 'apps/mobile/sources/sync/review-side-channel.ts',
+    'const cache = { fetch: (key: string) => key }; export const read = (key: string) => cache.fetch(key);\n');
+  const clean = runCheck(root);
+  assert.equal(clean.status, 0, clean.stderr);
+});
+
+test('handing on the global object, eval and the native network modules count, and plain reads do not', () => {
+  const text = [
+    'const g = globalThis;',
+    'export const passed = Reflect.get(window, "fetch");',
+    'export const computed = globalThis[name];',
+    'export const nested = keep(globalThis.window);',
+    'const o = { self };',
+    'const { window: w } = globalThis;',
+    'const { ...rest } = global;',
+    'declare const self: any; export const declared = self;',
+    'export const typed = globalThis as unknown as { f: typeof fetch };',
+    'export const built = new Function("return 1"); eval("1"); globalThis.eval("1"); f.constructor; f["constructor"];',
+    'NativeModules.Networking; TurboModuleRegistry.get("WebSocketModule");',
+    'window.addEventListener("storage", f); globalThis.__DEV__; globalThis["x"];',
+    'if (typeof window !== "undefined" && "PushManager" in window) cache.eval(key);',
+    'const { addEventListener, location } = window;',
+    'function local(window: Target, self: Target) { return [window, self]; }',
+    'let handler: Function; const label = { window: 1, self: 2 }; x.window; x.self;',
+    '',
+  ].join('\n');
+  const lines = (kind) => scanSource('apps/mobile/sources/example.ts', text).filter((hit) => hit.kind === kind).map((hit) => hit.line);
+  assert.deepEqual(lines('global-object'), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(lines('dynamic-code'), [10, 10, 10, 10, 10]);
+  assert.deepEqual(lines('native-http'), [11, 11]);
+});
+
 test('a second socket in the transport module fails the check', () => {
   const root = copyOfRepo('second-main-socket');
   const file = path.join(root, TRANSPORT_FILE);

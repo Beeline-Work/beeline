@@ -47,8 +47,16 @@ const CALL_KINDS = [
 // Globals that open a connection. Every read of one as a value counts, so an
 // alias (`const S = WebSocket`), a qualified or quoted name, or passing it on
 // all count. Types, `typeof`, `instanceof` and names a file declares do not.
-const GLOBAL_KINDS = { fetch: 'fetch', WebSocket: 'websocket', XMLHttpRequest: 'xhr', EventSource: 'event-source' };
+// `eval` and `Function` count because they can build any of the others from text.
+const GLOBAL_KINDS = {
+  fetch: 'fetch', WebSocket: 'websocket', XMLHttpRequest: 'xhr', EventSource: 'event-source',
+  eval: 'dynamic-code', Function: 'dynamic-code',
+};
+// Names also common on ordinary objects (`cache.fetch`), so a member read counts only on the global object.
+const MEMBER_NAMES_ON_ANY_OBJECT = new Set(['fetch', 'eval', 'Function']);
 const GLOBAL_OBJECTS = new Set(['globalThis', 'window', 'self', 'global']);
+// React Native's own native modules behind fetch, XMLHttpRequest and WebSocket.
+const NATIVE_NETWORK_MODULES = new Set(['Networking', 'WebSocketModule']);
 // Read-only constants on the constructor, such as `WebSocket.OPEN`.
 const SOCKET_STATES = new Set(['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']);
 const DECLARATION_NAMES = new Set([
@@ -74,7 +82,69 @@ function isGlobalObject(node) {
 }
 
 /** Whether a member named `name` on `object` is the network global. `x.fetch` is often a cache; `x.WebSocket` never is. */
-const memberIsGlobal = (name, object) => name !== 'fetch' || isGlobalObject(object);
+const memberIsGlobal = (name, object) => !MEMBER_NAMES_ON_ANY_OBJECT.has(name) || isGlobalObject(object);
+
+/** Resolves names in one file on its own, so a local `window` or `self` is told apart from the global. */
+function fileChecker(file, source) {
+  const host = {
+    getSourceFile: (name) => (name === file ? source : undefined),
+    fileExists: (name) => name === file,
+    readFile: () => undefined,
+    writeFile() {},
+    getDefaultLibFileName: () => 'lib.d.ts',
+    getCurrentDirectory: () => '',
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => '\n',
+  };
+  return ts.createProgram([file], { noLib: true, noResolve: true, allowJs: true, types: [] }, host).getTypeChecker();
+}
+
+/** `globalThis`, or `window`, `self` or `global` that the file does not declare itself (a `declare` still means the global). */
+function namesGlobalObject(node, checker) {
+  if (ts.isIdentifier(node)) {
+    if (!GLOBAL_OBJECTS.has(node.text)) return false;
+    const parent = node.parent;
+    // A declared name, a member name (`x.window`, judged as a whole) or a destructured name (judged at its source).
+    if (DECLARATION_NAMES.has(parent.kind) && parent.name === node) return false;
+    if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+    if (ts.isBindingElement(parent)) return false;
+    const symbol = ts.isShorthandPropertyAssignment(parent)
+      ? checker().getShorthandAssignmentValueSymbol(parent)
+      : checker().getSymbolAtLocation(node);
+    const declarations = symbol?.declarations ?? [];
+    return declarations.every((d) => d.flags & ts.NodeFlags.Ambient || ts.getCombinedModifierFlags(d) & ts.ModifierFlags.Ambient);
+  }
+  return ts.isPropertyAccessExpression(node) && GLOBAL_OBJECTS.has(node.name.text) && isGlobalObject(node.expression);
+}
+
+/**
+ * Whether the global object at `node` is handed on whole: saved under another
+ * name, passed to a function, spread, or read with a computed key. Through
+ * any of those, `g.fetch(url)` opens a connection this check cannot see.
+ * Reading a named member, `typeof`, `in` and plain destructuring do not.
+ */
+function globalObjectEscapes(node) {
+  let child = node;
+  let parent = node.parent;
+  while (
+    ts.isParenthesizedExpression(parent) || ts.isNonNullExpression(parent) ||
+    ts.isAsExpression(parent) || ts.isSatisfiesExpression(parent) || ts.isTypeAssertionExpression(parent)
+  ) {
+    child = parent;
+    parent = parent.parent;
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === child) return false;
+  if (ts.isElementAccessExpression(parent) && parent.expression === child) return !ts.isStringLiteralLike(parent.argumentExpression);
+  if (ts.isTypeOfExpression(parent) || ts.isTypeQueryNode(parent) || ts.isQualifiedName(parent)) return false;
+  if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === child) return false;
+  if (ts.isVariableDeclaration(parent) && parent.initializer === child && ts.isObjectBindingPattern(parent.name))
+    return parent.name.elements.some((element) => {
+      const key = element.propertyName ?? element.name;
+      return element.dotDotDotToken || !ts.isIdentifier(key) || GLOBAL_OBJECTS.has(key.text);
+    });
+  return true;
+}
 
 /** Whether this mention of a network global reads its value, as opposed to naming a type or a declaration. */
 function readsGlobal(node) {
@@ -108,10 +178,21 @@ function scanGlobals(file, text) {
   const kind = /\.[jt]sx$/.test(file) ? ts.ScriptKind.TSX : /\.ts$/.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
   const hits = [];
-  const add = (name, node) =>
-    hits.push({ kind: GLOBAL_KINDS[name], line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 });
+  let checker;
+  const getChecker = () => (checker ??= fileChecker(file, source));
+  const lineOf = (node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+  const add = (name, node) => hits.push({ kind: GLOBAL_KINDS[name], line: lineOf(node) });
   const visit = (node) => {
     if (ts.isIdentifier(node) && Object.hasOwn(GLOBAL_KINDS, node.text) && readsGlobal(node)) add(node.text, node);
+    if ((ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) && namesGlobalObject(node, getChecker) && globalObjectEscapes(node))
+      hits.push({ kind: 'global-object', line: lineOf(node) });
+    // `(() => {}).constructor` is `Function`.
+    if ((ts.isPropertyAccessExpression(node) && node.name.text === 'constructor') ||
+      (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && node.argumentExpression.text === 'constructor'))
+      hits.push({ kind: 'dynamic-code', line: lineOf(node) });
+    // `NativeModules.Networking`, `TurboModuleRegistry.get('WebSocketModule')`
+    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && NATIVE_NETWORK_MODULES.has(node.text))
+      hits.push({ kind: 'native-http', line: lineOf(node) });
     // `globalThis['WebSocket']`
     if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
       const name = node.argumentExpression.text;

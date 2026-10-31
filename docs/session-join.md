@@ -54,7 +54,7 @@ Claude Code holds a peer message for its person when the session skips permissio
 
 The adapters are ported from [Reason Network](https://github.com/reason-machines/reason-network) 0.12.17, MIT OR Apache-2.0; `apps/body/src/session-join/NOTICE` keeps its copyright, and the npm bundle ships it as `NOTICE-reason-network`. `UPSTREAM.json` records the copied commit and files. Beeline uses no Reason binary, relay, account or web service; `no-reason-service.test.ts` fails on any.
 
-Each Monday `.github/workflows/reason-upstream.yml` runs `scripts/reason-upstream-check.mjs --open-issue`. When a recorded file changed upstream, it opens one issue titled `Port Reason adapter changes <from>..<to>`. Ruby's repository subscription on `issue.opened` opens a port corner from it.
+Each Monday `.github/workflows/reason-upstream.yml` runs `scripts/reason-upstream-check.mjs --open-issue`. When a recorded file changed upstream, it opens one issue titled `Port Reason adapter changes <from>..<to>`. Ruby's `issue.opened` subscription on `Beeline-Work/beeline`, in #beeline, opens a port corner from it; a title without that prefix wakes Ruby and ends the turn silently. `--compare-file <saved compare>` replays a fixture instead of fetching upstream; its issue ends in `(fixture proof)`, and the subscription opens a proof corner that closes the issue and itself.
 
 ## Proof
 

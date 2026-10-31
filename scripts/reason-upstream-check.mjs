@@ -2,10 +2,15 @@
 /**
  * Weekly: compares Reason Network's per-app adapter files with the commit Beeline copied
  * (apps/body/src/session-join/UPSTREAM.json). When any changed, it opens one GitHub issue titled
- * "Port Reason adapter changes …"; Ruby's repository subscription turns that issue into a port corner.
+ * "Port Reason adapter changes …"; Ruby's `issue.opened` subscription on this repository, in #beeline,
+ * turns that issue into a port corner (docs/session-join.md).
  *
  *   node scripts/reason-upstream-check.mjs            # print what changed, as JSON
  *   node scripts/reason-upstream-check.mjs --open-issue
+ *   node scripts/reason-upstream-check.mjs --open-issue --compare-file scripts/fixtures/reason-upstream-compare.json
+ *
+ * --compare-file replays a saved GitHub compare instead of fetching upstream. The issue it opens says so,
+ * and the subscription opens a proof corner that closes itself instead of a port corner.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -30,12 +35,13 @@ export function upstreamChanges(recorded, compare) {
 }
 
 /** The issue that becomes the port corner's brief. */
-export function portIssue(recorded, result) {
+export function portIssue(recorded, result, { fixture } = {}) {
   const head = result.head ? result.head.slice(0, 12) : 'upstream';
   const lines = result.files.map(f => `- \`${f.filename}\` ${f.status} (+${f.additions} −${f.deletions})${f.previous ? `, was \`${f.previous}\`` : ''}`);
   return {
-    title: `${TITLE_PREFIX} ${recorded.commit.slice(0, 12)}..${head}`,
+    title: `${TITLE_PREFIX} ${recorded.commit.slice(0, 12)}..${head}${fixture ? ' (fixture proof)' : ''}`,
     body: [
+      ...(fixture ? [`Fixture proof: replayed from \`${fixture}\`, not a real upstream change. Close this issue and its corner without porting.`, ''] : []),
       `Reason Network changed ${result.files.length} of the adapter files Beeline ported.`,
       '',
       ...lines,
@@ -61,13 +67,17 @@ async function github(path, init = {}) {
 
 async function main() {
   const recorded = readUpstream();
-  const compare = await github(`/repos/${recorded.repository}/compare/${recorded.commit}...main`);
+  const fileIndex = process.argv.indexOf('--compare-file');
+  const fixture = fileIndex > 0 ? process.argv[fileIndex + 1] : undefined;
+  if (fileIndex > 0 && !fixture) throw new Error('--compare-file needs a path');
+  const compare = fixture ? JSON.parse(readFileSync(resolve(fixture), 'utf8'))
+    : await github(`/repos/${recorded.repository}/compare/${recorded.commit}...main`);
   const result = upstreamChanges(recorded, compare);
   console.log(JSON.stringify(result, null, 2));
   if (!result.changed || !process.argv.includes('--open-issue')) return;
   const repository = process.env.GITHUB_REPOSITORY;
   if (!repository) throw new Error('GITHUB_REPOSITORY is required to open the port issue');
-  const issue = portIssue(recorded, result);
+  const issue = portIssue(recorded, result, { fixture });
   const open = await github(`/repos/${repository}/issues?state=open&per_page=100`);
   // One open port issue at a time: a newer upstream head waits for the open one to land.
   if (open.some(item => typeof item.title === 'string' && item.title.startsWith(TITLE_PREFIX))) {

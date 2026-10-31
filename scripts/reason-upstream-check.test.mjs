@@ -31,3 +31,11 @@ test('the recorded upstream names the copied commit and every ported adapter', (
     'src/setup/antigravity.rs', 'src/daemon/antigravity.rs', 'src/setup/gemini.rs', 'src/setup/hermes.rs', 'src/setup/zcode.rs', 'src/daemon/sessions.rs'])
     assert.ok(recorded.files.includes(file), file);
 });
+
+test('a replayed fixture marks the issue as a proof so no port is started', () => {
+  const issue = portIssue(recorded, upstreamChanges(recorded, fixture), { fixture: 'scripts/fixtures/reason-upstream-compare.json' });
+  assert.ok(issue.title.startsWith(TITLE_PREFIX));
+  assert.ok(issue.title.endsWith('(fixture proof)'));
+  assert.match(issue.body, /^Fixture proof: replayed from `scripts\/fixtures\/reason-upstream-compare\.json`/);
+  assert.doesNotMatch(portIssue(recorded, upstreamChanges(recorded, fixture)).body, /Fixture proof/);
+});

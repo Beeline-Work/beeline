@@ -763,6 +763,40 @@ it('lets the corner agent retitle its corner during its turn', async () => {
   await db.query(`UPDATE rooms SET name='Corner' WHERE id=$1`, [C]);
 });
 
+it.each(['room', 'corner', 'dm'])(
+  'Reproduction F1: a follow-up in a %s queues and the running turn stays the one shown working',
+  async (path) => {
+    const room = path === 'corner' ? C : R;
+    if (path === 'dm')
+      await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [R, JSON.stringify([H, A])]);
+    try {
+      await send(path === 'dm' ? 'start' : '@hoots start', room);
+      const [running] = await commands(A, room);
+      await claim(running!);
+      const followUp = await send(path === 'dm' ? 'one more thing' : '@hoots one more thing', room);
+      const shown = await phone.readRoom(room, H);
+      expect(shown?.latestAgentTurns?.filter((turn) => turn.agentPubkey === A)).toEqual([
+        expect.objectContaining({ requestId: running!.turnRequestId, status: 'working' }),
+      ]);
+      const [queued] = shown?.pendingAgentCommands ?? [];
+      expect(queued).toMatchObject({ agentPubkey: A });
+      expect(queued!.requestId).not.toBe(running!.turnRequestId);
+      expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2
+        AND request_id=$3`, [room, A, running!.turnRequestId])).rows).toEqual([{ status: 'working' }]);
+
+      // Once the running turn ends, the queued follow-up's claim paints its own turn.
+      await result(running!, 'Started');
+      const next = (await commands(A, room)).find((command) => command.sourceMessageId === followUp.messageId);
+      await claim(next!);
+      expect((await phone.readRoom(room, H))?.latestAgentTurns?.filter((turn) => turn.agentPubkey === A))
+        .toEqual([expect.objectContaining({ requestId: next!.turnRequestId, status: 'working' })]);
+      await result(next!, 'Done');
+    } finally {
+      await db.query(`UPDATE rooms SET direct_participants=NULL WHERE id=$1`, [R]);
+    }
+  },
+);
+
 describe.each([R, C])('server command authority in %s', (room) => {
   it('acknowledges a committed human steer only while its targeted turn is active', async () => {
     const first = await send('@hoots start', room);

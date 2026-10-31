@@ -15,13 +15,15 @@ test('safe actions persist and clean up; unsafe call is only recorded', { timeou
     const root = await mkdtemp(join(tmpdir(), 'discovery-service-'));
     const client = new Client({ name: 'discovery-controller', version: '1.0.0' });
     try {
-        const identities = await f.database.query(`SELECT id,kind FROM identities WHERE handle IN ('nerd','fixture-owner')`);
+        const identities = await f.database.query(`SELECT id,kind,handle FROM identities WHERE handle IN ('nerd','fixture-owner','fixture-member')`);
         const agent = identities.rows.find((r) => r.kind === 'agent').id;
-        const human = identities.rows.find((r) => r.kind === 'human').id;
+        const human = identities.rows.find((r) => r.handle === 'fixture-owner').id;
+        const member = identities.rows.find((r) => r.handle === 'fixture-member').id;
         const room = randomUUID();
         const workspace = (await f.database.query(`SELECT id FROM workspaces WHERE name='Discovery evaluation'`)).rows[0].id;
         await f.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Test actions')`, [room, workspace]);
-        await f.database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [workspace, room, human, agent]);
+        // Match runCase's multi-human Room so fixture context does not become solo-agent work.
+        await f.database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`, [workspace, room, human, agent, member]);
         const attachmentBindings = await prepareCaseFixtures(f, { id: 'earlier-file' }, room);
         const workflowBindings = await prepareCaseFixtures(f, { id: 'workflow-read' }, room);
         const messageId = createHash('sha256').update(room).digest('hex');

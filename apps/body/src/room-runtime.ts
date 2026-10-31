@@ -1802,6 +1802,7 @@ export class RoomRuntimeCoordinator {
   }): Promise<{ path: string; gitCommonDir: string }> {
     const worktree = await materializeCornerWorktree({
       ...input,
+      agentId: this.agent.publicKey,
       supervisorRoot: this.runtime.supervisorRoot,
       workspaceId: this.runtime.communityId,
       committer: { name: this.agent.name, publicKey: this.agent.publicKey },

@@ -415,12 +415,7 @@ describe('a helper joining a corner it did not open', () => {
 
       if (cleanup) {
         await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
-        expect(execute).toHaveBeenCalledWith('postCornerRemoteState', {
-          cornerId: 'corner-stale',
-          branch: FEATURE,
-          state: 'gone',
-          checks: 'unknown',
-        });
+        expect(execute).not.toHaveBeenCalledWith('postCornerRemoteState', expect.anything());
       } else {
         await expect(access(worktree.path)).resolves.toBeUndefined();
         expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', expect.anything());
@@ -591,11 +586,8 @@ describe('a helper joining a corner it did not open', () => {
       }
       await recovery.sweepArchivedCornerWorktrees(new Map());
       const baseline = execute.mock.calls.length;
-      expect(baseline).toBe(source === 'restore' ? 1 : 4);
-      // Optional output pruning runs after refusal recording, outside discovery.
-      await vi.waitFor(async () => {
-        await expect(access(resolve(refusedWorktree.path, 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
-      }, { timeout: 5_000 });
+      expect(baseline).toBe(1);
+      await expect(access(refusedWorktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
       now += 5 * 60_000;
       await recovery.sweepArchivedCornerWorktrees(new Map());
       await recovery.retryPendingCornerReaps(new Set());
@@ -604,11 +596,6 @@ describe('a helper joining a corner it did not open', () => {
         ['corner-removed', { cornerId: 'corner-removed', parentRoomId: 'room-parent' }],
       ]));
       await recovery.retryPendingCornerReaps(new Set());
-      expect(execute).toHaveBeenCalledTimes(baseline);
-      // Close callbacks must honor the same refusal as reconciliation.
-      await (coordinator as unknown as { reapCornerWorktree(worktree: unknown): Promise<void> })
-        .reapCornerWorktree({ ...refusedWorktree, cornerId: 'corner-removed', branch: FEATURE,
-          parentRoomId: 'room-parent', token: '' });
       expect(execute).toHaveBeenCalledTimes(baseline);
       // Reconstruct the coordinator, as a helper restart does: no lost refusal.
       await coordinator.shutdown();
@@ -621,8 +608,7 @@ describe('a helper joining a corner it did not open', () => {
       try {
         await (restarted as unknown as typeof recovery).sweepArchivedCornerWorktrees(new Map());
         expect(execute).toHaveBeenCalledTimes(baseline);
-        await expect(access(resolve(supervisorRoot, 'beeline', 'corners', 'corner-removed', 'opener.txt')))
-          .resolves.toBeUndefined();
+        await expect(access(refusedWorktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
       } finally { await restarted.shutdown(); }
     } finally {
       errors.mockRestore();

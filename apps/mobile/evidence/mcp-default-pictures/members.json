@@ -1,0 +1,14 @@
+[
+  {
+    "pubkey": "85849ae603bb8805e0391eee0b9cdcdef07d4cd9ffffafbce71216695b4204bf",
+    "name": "Firstmate",
+    "avatar": "/v1/agent-avatars/7d7a17f7-e766-4e11-ab36-dee44571365c",
+    "avatarUrl": "http://127.0.0.1:19783/v1/agent-avatars/7d7a17f7-e766-4e11-ab36-dee44571365c"
+  },
+  {
+    "pubkey": "b0ed97ac68dd9d3a6cf3205e2f44be23b06fcf90ba0a439b4fe5aa3fbafecc01",
+    "name": "Muse",
+    "avatar": "/v1/agent-avatars/af17b781-5bff-45a1-a0bf-4e7628aba7f5",
+    "avatarUrl": "http://127.0.0.1:19783/v1/agent-avatars/af17b781-5bff-45a1-a0bf-4e7628aba7f5"
+  }
+]

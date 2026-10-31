@@ -853,10 +853,9 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
             },
             "approval": {
               "type": "object",
-              "required": ["sourceMessageId"],
               "properties": {"sourceMessageId": {"type": "string"}, "text": {"type": "string"}, "approvedBy": {"type": "string"}, "approverName": {"type": "string"}},
               "additionalProperties": false,
-              "description": "Optional for the corner commander revising directly. Other agents must cite a human message or private commander order authorizing the revision. The server records the approver."
+              "description": "Optional for the corner commander revising directly. A copied approval with an empty or absent sourceMessageId is accepted only for that commander when the stored approval is commander-direct. Other agents must cite a human message or private commander order authorizing the revision. The server records the approver."
             },
             "attachments": {
               "type": "array",

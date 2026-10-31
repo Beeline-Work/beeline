@@ -76,6 +76,36 @@ try {
   assert.deepEqual(revised.attachments, brief.attachments);
   console.log('R1 PASS: built read → copied brief → revise → persisted revision with server-resolved approval');
 
+  for (const approval of [{ ...brief.approval, sourceMessageId: '' }, { approvedBy: commander }]) {
+    const forged = await request(commander, 'reviseCornerBrief', { ...authority, cornerId: corner,
+      expectedRevision: 2, brief: { ...brief, spec: 'Forged direct scope', change: 'Forge', approval } });
+    assert.equal(forged.status, 403, JSON.stringify(forged));
+  }
+  await callAgentTool('revise_corner', { action: 'brief', address: corner,
+    expectedRevision: 2, change: 'Direct revision', brief: { spec: 'Commander direct scope', repositoryWork: false } }, 'direct');
+  const directRead = JSON.parse(await callAgentTool('read', { facet: 'brief', address: corner }, 'direct-read')).revisions[0];
+  assert.equal(directRead.approval.sourceMessageId, '');
+  const copiedDirect = JSON.parse(await callAgentTool('revise_corner', { action: 'brief', address: corner,
+    expectedRevision: directRead.revision, change: 'Copy direct revision', brief: { ...directRead, spec: 'Edited commander direct scope' } }, 'direct-copy'));
+  assert.equal(copiedDirect.revision, 4);
+  assert.equal(copiedDirect.approval.approvedBy, commander);
+  const directAgain = JSON.parse(await callAgentTool('read', { facet: 'brief', address: corner }, 'direct-read-again')).revisions[0];
+  const { sourceMessageId: omitted, ...approvalWithoutMessage } = directAgain.approval;
+  const copiedAbsent = JSON.parse(await callAgentTool('revise_corner', { action: 'brief', address: corner,
+    expectedRevision: 4, change: 'Copy absent citation', brief: { ...directAgain,
+      spec: 'Edited again', approval: { ...approvalWithoutMessage, approvedBy: human, text: 'Forged metadata' } } }, 'direct-absent'));
+  assert.equal(copiedAbsent.revision, 5);
+  assert.equal(copiedAbsent.approval.approvedBy, commander);
+  assert.notEqual(copiedAbsent.approval.text, 'Forged metadata');
+  const workerCommand = await createAgentCommand(db, { roomId: parent, agentId: worker, sourceMessageId: source, reason: 'human_tag' });
+  await claimAgentCommand(db, parent, worker, workerCommand.id, 'worker-generation');
+  const stolen = await request(worker, 'reviseCornerBrief', { roomId: parent,
+    requestId: workerCommand.turn_request_id, generationId: 'worker-generation', cornerId: corner,
+    expectedRevision: 5, brief: { spec: 'Stolen direct scope', approval: copiedAbsent.approval, change: 'Steal' } });
+  assert.equal(stolen.status, 403, JSON.stringify(stolen));
+  console.log('R1-DIRECT-GUARDS PASS: message-backed projection cannot become direct; worker cannot reuse direct approval; metadata stays server-owned');
+  console.log('R1-DIRECT PASS: commander revise without citation → read → edit copied projection → revise');
+
   const own = await request(commander, 'createAgentSchedule', { ...authority, title: 'Check work',
     cadence: { kind: 'interval', everyMinutes: 60 }, prompt: 'Check work' });
   assert.equal(own.status, 200, JSON.stringify(own));

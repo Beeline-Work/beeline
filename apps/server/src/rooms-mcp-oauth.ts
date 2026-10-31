@@ -410,8 +410,15 @@ export class RoomsMcpOAuth {
           if (input.decision === 'allow') {
             await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name });
             const member = await mcpMemberId(db, flow.client_id, flow.identity_id);
-            if (member && (flow.joiner_name || flow.joiner_handle))
-              await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined }, false);
+            if (member && (flow.joiner_name || flow.joiner_handle)) {
+              try {
+                await setMcpMemberProfile(db, member, { name: flow.joiner_name ?? undefined, handle: flow.joiner_handle ?? undefined }, false);
+              } catch (error) {
+                if (error instanceof McpToolError && error.message === 'Handle already taken')
+                  throw new Refusal('invalid_request', 'handle_taken');
+                throw error;
+              }
+            }
             if (member && (input.wake_url || input.wake_key)) {
               try {
                 await setMcpMemberWebhook(db, member, { url: input.wake_url, secret: input.wake_key || undefined });
@@ -550,6 +557,7 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   body_too_large: 'The form sent more data than Beeline accepts.',
   body_not_object: 'The form data is not in a shape Beeline reads.',
   invalid_json: 'The form data is not valid JSON.',
+  handle_taken: 'Handle already taken. Choose a different handle for this connection; the existing member stays unchanged.',
   joiner_invalid: 'The name or handle is not valid. A handle uses only lowercase letters, digits and underscores.',
   flow_not_signed_in: 'You have not signed in to Beeline for this connection yet.',
   wake_unavailable: 'Auth tokens are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',

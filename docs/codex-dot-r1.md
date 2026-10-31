@@ -1,6 +1,6 @@
 # Codex dot connector reproduction R1
 
-Status: real dot identity, host subscription and autonomous Room reply proved under the GitHub owner; replyTo field verification remains outstanding. Earlier incomplete states below are investigation history.
+Status: real dot identity, verified host subscription and autonomous threaded Room reply proved under the GitHub owner. Earlier incomplete states below are investigation history.
 
 The supplied Pidoong screenshot reports that the new Beeline Rooms connector is
 absent, an older private bridge fails its check, and Beeline is absent from the
@@ -137,10 +137,21 @@ prompt was sent after the tag. The real dot autonomously posted `R1-pong`.
 | Observed latency | `27.110 seconds` |
 
 Screenshot: [live owner tag and dot reply](evidence/codex-dot-r1/live-reply.png).
-The bounded agent message read returns text and timestamps but no replyTo
-field. The screenshot proves the visible reply; it does not independently
-verify the stored replyTo field. Mounted Rooms `read_messages` returned
-`Unknown tool`, so that additional field check was not claimed.
+Read-only production SQL subsequently confirmed the reply's
+`reply_to_message_id` equals the tag id above and its Room/author ids match.
+The subscription row for member `f37de668…` has callback host
+`connectors.api.openai.com`, verified `2026-10-31 21:58:27.196+00`, expiring
+`2026-11-01 21:58:27.024+00`. Queries used the sealed Neon HTTP route and
+returned only these proof fields, never signing secrets or tokens.
 
 Squire session closed cleanly with `operate_finish`. No timer fallback was
 needed: the host subscription delivered this fresh tag.
+
+## Consent handle collision regression
+
+The 21:46:24 UTC Allow failure was reproduced through HTTP in
+`R1: explains a taken consent handle without granting or changing the existing member`.
+Before the fix it returned the generic `invalid_parameter` page. It now says
+"Handle already taken" and asks for a different handle, while the transaction
+leaves the existing member unchanged and issues no connection member or code
+for the conflicting grant. The focused consent/setup cases pass.

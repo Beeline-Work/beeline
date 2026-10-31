@@ -555,7 +555,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -2465,8 +2465,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown) => {
-    const result = await dispatchPhoneOperation(name, input, identityId!);
+  const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
+    invokeLegacy?: () => Promise<unknown>) => {
+    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy);
     if (result === undefined) {
       response.writeHead(204, { 'cache-control': 'private, no-store' });
       response.end();
@@ -2634,7 +2635,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
   match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
-    await operation(match[1]!, await body(request));
+    const name = match[1]!;
+    const input = await body(request);
+    await operation(name, input, undefined,
+      () => options.phone.execute(name as never, input as never, identityId!));
     return;
   }
 

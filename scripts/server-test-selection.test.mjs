@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  buildMap, changedFunctions, describeChange, MAP_VERSION, parseHunks, readsSourceText, selectTests,
+  buildMap, changedFunctions, describeChange, MAP_VERSION, parseHunks, readsSourceText, scriptsOnlyChange, selectTests,
   sourcePath, sourceTextTests, staleMapReason, unscannedSourceReaders,
 } from '../apps/server/scripts/test-selection.mjs';
 
@@ -18,11 +18,16 @@ const records = [
   { test: 'apps/server/src/a.test.ts', sources: { 'apps/server/src/rooms.ts': ['', 'createRoom', 'listRooms'] }, reads: [] },
   { test: 'apps/server/src/b.test.ts', sources: { 'apps/server/src/rooms.ts': ['', 'listRooms'], 'apps/server/src/wallet.ts': ['pay'] }, reads: ['docs/workflows/triage.json'] },
   { test: 'apps/server/src/c.test.ts', sources: { 'packages/nostr/dist/relay.js': ['connect'] }, reads: [] },
+  { test: 'apps/server/src/d.test.ts', sources: { 'apps/server/src/rooms.ts': [] }, reads: [] },
   { test: guard, sources: {}, reads: ['apps/server/src/rooms.ts', 'apps/server/src/wallet.ts'] },
 ];
-const testFiles = [...records.map((record) => record.test), 'apps/server/src/new.test.ts'].sort();
-const map = buildMap(records, { commit: 'abc', createdAt: '2026-10-31T00:00:00Z', exists: (path) => path === 'packages/nostr/src/relay.ts' });
-const select = (changes, alwaysRun = [guard]) => selectTests({ map, changes, alwaysRun, testFiles });
+const testFiles = records.map((record) => record.test).sort();
+// Tracked at the map's commit, though no test ran or read the last four.
+const files = ['apps/server/src/rooms.ts', 'apps/server/src/wallet.ts', 'docs/workflows/triage.json',
+  'apps/server/src/quiet.ts', 'knip.jsonc', '.github/workflows/desktop.yml', 'package.json'];
+const map = buildMap(records, { commit: 'abc', createdAt: '2026-10-31T00:00:00Z', files,
+  exists: (path) => path === 'packages/nostr/src/relay.ts' });
+const select = (changes, alwaysRun = [guard], tests = testFiles) => selectTests({ map, changes, alwaysRun, testFiles: tests });
 const modified = (path, names, fileLevel = false) => ({ path, status: 'M', names, fileLevel });
 
 test('a function change runs only the tests that ran that function, plus source-text tests', () => {
@@ -33,11 +38,22 @@ test('a function change runs only the tests that ran that function, plus source-
     ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', guard]);
 });
 
-test('module-level changes, deletions and unknown function names use every test that loaded the file', () => {
-  const loaders = ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', guard];
+test('exported or load-time changes, deletions and unknown function names use every test that loaded the file', () => {
+  const loaders = ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', 'apps/server/src/d.test.ts', guard];
   assert.deepEqual(select([modified('apps/server/src/rooms.ts', [], true)]).files, loaders);
   assert.deepEqual(select([{ path: 'apps/server/src/rooms.ts', status: 'D', names: [], fileLevel: true }]).files, loaders);
   assert.deepEqual(select([modified('apps/server/src/rooms.ts', ['get roomCount'])]).files, loaders);
+});
+
+test('a private module-level change runs every test that ran code in the file, not ones that only imported it', () => {
+  const change = { path: 'apps/server/src/rooms.ts', status: 'M', names: [], fileLevel: false, moduleLevel: true };
+  assert.deepEqual(select([change]).files, ['apps/server/src/a.test.ts', 'apps/server/src/b.test.ts', guard]);
+});
+
+test('test files main never ran have no coverage, so they always run', () => {
+  const selection = select([modified('apps/server/src/rooms.ts', ['createRoom'])], [guard], [...testFiles, 'apps/server/src/new.test.ts'].sort());
+  assert.deepEqual(selection.files, ['apps/server/src/a.test.ts', 'apps/server/src/new.test.ts', guard]);
+  assert.match(selection.reasons['apps/server/src/new.test.ts'], /no coverage recorded on main/);
 });
 
 test('type-only edits, new code files and phone files outside the map run only the always-run set', () => {
@@ -47,8 +63,8 @@ test('type-only edits, new code files and phone files outside the map run only t
 });
 
 test('changed and new test files run themselves; deleted ones do not', () => {
-  assert.deepEqual(select([{ path: 'apps/server/src/new.test.ts', status: 'A', names: [], fileLevel: true }]).files,
-    ['apps/server/src/new.test.ts', guard]);
+  assert.deepEqual(select([{ path: 'apps/server/src/new.test.ts', status: 'A', names: [], fileLevel: true }], [guard],
+    [...testFiles, 'apps/server/src/new.test.ts'].sort()).files, ['apps/server/src/new.test.ts', guard]);
   assert.deepEqual(select([{ path: 'apps/server/src/gone.test.ts', status: 'D', names: [], fileLevel: true }]).files, [guard]);
 });
 
@@ -66,6 +82,20 @@ test('the full suite runs for contract, CI, harness and dependency changes', () 
     assert.equal(selection.mode, 'full', path);
     assert.match(selection.reason, /changes how every server test runs/);
   }
+});
+
+test('workflows that do not run the server suite and npm scripts it never runs do not run everything', () => {
+  assert.deepEqual(select([modified('.github/workflows/desktop.yml', [], true)]).files, [guard]);
+  assert.deepEqual(select([{ ...modified('package.json', [], true), scriptsOnly: true }]).files, [guard]);
+  const manifest = (scripts, extra = {}) => JSON.stringify({ name: 'buzzy', scripts, ...extra });
+  assert.equal(scriptsOnlyChange(manifest({ build: 'turbo run build' }), manifest({ build: 'turbo run build', prove: 'node x.mjs' })), true);
+  assert.equal(scriptsOnlyChange(manifest({ build: 'turbo run build' }), manifest({ build: 'turbo run build --force' })), false);
+  assert.equal(scriptsOnlyChange(manifest({}), manifest({}, { overrides: { pg: '8' } })), false);
+  assert.equal(scriptsOnlyChange('{', manifest({})), false);
+});
+
+test('a tracked file no test ran or read on main selects nothing beyond the always-run set', () => {
+  for (const path of ['apps/server/src/quiet.ts', 'knip.jsonc']) assert.deepEqual(select([modified(path, [], true)]).files, [guard], path);
 });
 
 test('the full suite runs when a changed file is not in the coverage map', () => {
@@ -109,16 +139,19 @@ test('changed functions come from both sides of the diff and use the names V8 re
     'export function removed() { return 0; }',
   ].join('\n');
   const names = (lines) => changedFunctions(ts, 'rooms.ts', before, lines);
-  assert.deepEqual(names([4]), { fileLevel: false, names: ['createRoom'] });
-  assert.deepEqual(names([7, 8, 9]), { fileLevel: false, names: ['Store', 'get size', 'load'] });
-  assert.deepEqual(names([13]), { fileLevel: false, names: ['listRooms'] });
-  assert.deepEqual(names([1, 12]), { fileLevel: false, names: [] });
-  assert.deepEqual(names([2]), { fileLevel: true, names: [] });
+  assert.deepEqual(names([4]), { fileLevel: false, moduleLevel: false, names: ['createRoom'] });
+  assert.deepEqual(names([7, 8, 9]), { fileLevel: false, moduleLevel: false, names: ['Store', 'get size', 'load'] });
+  assert.deepEqual(names([13]), { fileLevel: false, moduleLevel: false, names: ['listRooms'] });
+  assert.deepEqual(names([1, 12]), { fileLevel: false, moduleLevel: false, names: [] });
+  // A private constant is seen only through this file's functions; an
+  // exported declaration line is seen by importers.
+  assert.deepEqual(names([2]), { fileLevel: false, moduleLevel: true, names: [] });
+  assert.deepEqual(names([6]), { fileLevel: true, moduleLevel: false, names: [] });
   const after = before.replace('\nexport function removed() { return 0; }', '').replace('x + 1', 'x + 2');
   const diff = '@@ -4 +4 @@\n-  return [1].map((x) => x + 1);\n+  return [1].map((x) => x + 2);\n@@ -15 +14,0 @@\n-export function removed() { return 0; }';
   assert.deepEqual(parseHunks(diff), [{ oldStart: 4, oldCount: 1, newStart: 4, newCount: 1 }, { oldStart: 15, oldCount: 1, newStart: 14, newCount: 0 }]);
   assert.deepEqual(describeChange(ts, { path: 'apps/server/src/rooms.ts', status: 'M', before, after, hunks: parseHunks(diff) }),
-    { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: false, names: ['createRoom', 'removed'] });
+    { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: false, moduleLevel: false, names: ['createRoom', 'removed'] });
 });
 
 test('the source-text scan finds guards that read code and ignores tests that read data', () => {

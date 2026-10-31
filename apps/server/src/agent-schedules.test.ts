@@ -3,8 +3,7 @@ import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 import {
   AgentScheduleLoop,
   nextScheduleOccurrence,
@@ -47,8 +46,7 @@ async function turnFrom(
 }
 
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
       ($1,'human','Owner'),($2,'human','Member'),($3,'agent','Worker'),($4,'agent','Rival')`,

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import {
   firstHealthyAgent,
   isConfiguredReviewer,
@@ -71,8 +70,7 @@ async function reportSuccess(agentId: string, ageSeconds = 0, roomId = ROOM) {
 }
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Owner'),($2,'agent','AgentOne'),($3,'agent','AgentTwo'),($4,'agent','AgentThree')`,

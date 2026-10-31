@@ -1,6 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
-import { migrate } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { dashboardDownloads } from './operator-dashboard-downloads.js';
 import { generateKeyPairSync } from 'node:crypto';
 import {
@@ -11,8 +10,7 @@ import {
 let db: PgliteDatabase;
 const now = '2026-10-20T12:00:00.000Z';
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
 });
 afterEach(async () => {
   await db.close();

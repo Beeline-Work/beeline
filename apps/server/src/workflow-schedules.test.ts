@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 import { migrate } from './database.js';
-import { describedWorkflow, PgliteDatabase } from './test-support.js';
+import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -26,8 +26,7 @@ let phone: PhoneService;
 let daemon: DaemonService;
 
 beforeAll(async () => {
-  const seed = new PgliteDatabase();
-  await migrate(seed);
+  const seed = await migratedDatabase();
   await seed.query(
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','Admin'),($3,'agent','Worker')`,
     [OWNER, ADMIN, AGENT],

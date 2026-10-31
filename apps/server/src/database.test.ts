@@ -28,13 +28,12 @@ import {
   isTransientDatabaseConnectionError,
   type SqlDatabase,
 } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 
 it('indexes delivered claims still awaiting a read-clear push', async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     const index = await database.query<{ indexdef: string }>(
       `SELECT indexdef FROM pg_indexes WHERE indexname='push_delivery_claims_read_clear_idx'`,
     );
@@ -47,9 +46,8 @@ it('indexes delivered claims still awaiting a read-clear push', async () => {
 });
 
 it('upgrades the question-only needs-you index to include commander reports', async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     await database.query('DROP INDEX messages_needs_you_actionable_idx');
     await database.query(`CREATE INDEX messages_needs_you_question_idx ON messages(created_at)
       WHERE presentation='message' AND deleted_at IS NULL AND text LIKE '%?'`);
@@ -206,8 +204,7 @@ describe('Room slugs', () => {
   });
 
   it('refuses a name another top-level Room in the Workspace already uses', async () => {
-    const db = new PgliteDatabase();
-    await migrate(db);
+    const db = await migratedDatabase();
     const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
     const otherWorkspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaab';
     const room = 'bbbbbbbb-bbbb-4bbb-bbbb-000000000001';
@@ -427,9 +424,8 @@ describe('a terminated checked-out connection never wedges the pool', () => {
 
 describe('message search vectors', () => {
   it('keeps release schema and resumable data work separate without losing historical search', async () => {
-    const database = new PgliteDatabase();
+    const database = await migratedDatabase();
     try {
-      await migrate(database);
       const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
       const room = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
       const author = 'a'.repeat(64);
@@ -461,8 +457,7 @@ describe('message search vectors', () => {
     }
   });
   it('maintains new writes by trigger and fills history in bounded batches', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     const workspace = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
     const room = 'dddddddd-dddd-4ddd-dddd-dddddddddddd';
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
@@ -600,8 +595,7 @@ describe('message search vectors', () => {
   });
 
   it('writes an empty vector rather than failing on an oversized or non-chat row', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     const workspace = 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee';
     const room = 'ffffffff-ffff-4fff-ffff-ffffffffffff';
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
@@ -671,8 +665,7 @@ describe('message search vectors', () => {
 
 describe('institutional cascades', () => {
   it('keeps a consolidated fact when an unrelated Room is deleted', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     const workspace = '11110000-0000-4000-8000-000000000002';
     const jobRoom = '22220000-0000-4000-8000-000000000002';
     const factRoom = '22220000-0000-4000-8000-000000000003';
@@ -730,8 +723,7 @@ describe('institutional cascades', () => {
   });
 
   it('lets a Workspace delete carry every institutional row with it', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     const workspace = '11110000-0000-4000-8000-000000000001';
     const room = '22220000-0000-4000-8000-000000000001';
     const human = 'a'.repeat(64);
@@ -793,8 +785,7 @@ describe('institutional cascades', () => {
 
 describe('cascade-path foreign keys stay indexed', () => {
   it('never lets a FK into messages, rooms, or workspaces lack a supporting index', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     // A workspace delete cascades through rooms and messages; an FK column
     // pointing at one of those three tables with no leading-column index
     // forces Postgres to sequentially scan the whole child table for the FK
@@ -1047,8 +1038,7 @@ describe('the message cursor index', () => {
   let database: PgliteDatabase;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [
       AUTHOR,
     ]);
@@ -1136,8 +1126,7 @@ describe('the membership inviter migration', () => {
   let database: PgliteDatabase;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
   });
 
   afterEach(() => database.close());
@@ -1177,8 +1166,7 @@ describe('the three-level push migration', () => {
   const OWNER = 'a'.repeat(64);
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
   });
   afterEach(() => database.close());
 
@@ -1211,8 +1199,7 @@ describe('the yolo default migration', () => {
   const FRESH_AGENT = '4'.repeat(64);
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
       OWNER,
     ]);
@@ -1266,8 +1253,7 @@ describe('the institutional memory rollout migration', () => {
   const PLAIN = '10000000-0000-4000-8000-000000000014';
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
   });
   afterEach(() => database.close());
 
@@ -1358,8 +1344,7 @@ it('keeps the previous server image able to read and write through migration and
 describe('the agent handle migration', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
   });
   afterEach(() => database.close());
 
@@ -1433,8 +1418,7 @@ describe('the per-item event subscription migration', () => {
   const ROOM = '22222222-2222-4222-8222-222222222222';
 
   it('strips exactly the per-item kinds, idempotently, and leaves Room-level kinds alone', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee'),($2,'agent','Owl')`,
       [AGENT_A, AGENT_B],
@@ -1466,8 +1450,7 @@ describe('the per-item event subscription migration', () => {
 
 describe('the top-level shared Room role migration', () => {
   it('repairs shared Room roles inherited by corners and preserves DM authority', async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     const workspace = '41111111-1111-4111-8111-111111111111';
     const room = '42222222-2222-4222-8222-222222222222';
     const corner = '43333333-3333-4333-8333-333333333333';
@@ -1509,8 +1492,7 @@ describe('the workspace_connectors machine_id migration ordering', () => {
   let database: PgliteDatabase;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
   });
 
   afterEach(() => database.close());
@@ -1569,9 +1551,8 @@ describe('the workspace_connectors machine_id migration ordering', () => {
   });
 
   it('keeps the connector uniqueness index in place across releases', async () => {
-    const database = new PgliteDatabase();
+    const database = await migratedDatabase();
     try {
-      await migrate(database);
       const oid = async () =>
         (
           await database.query<{ oid: number }>(
@@ -1594,8 +1575,7 @@ describe('the agent_grants kind vocabulary migration', () => {
   let database: PgliteDatabase;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
   });
 
   afterEach(() => database.close());

@@ -6,12 +6,12 @@ import type { TokenAuth } from './auth.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { MACHINE_SOCKET_PROTOCOL } from './daemon-live.js';
 import { DaemonService } from './daemon-service.js';
-import { migrate, type SqlDatabase } from './database.js';
+import { type SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
 import { ReleaseNotifier } from './release-notify.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 
 const AGENT_A = 'a'.repeat(64);
 const AGENT_B = 'b'.repeat(64);
@@ -301,8 +301,7 @@ describe('held presence for a live connection', () => {
   const HUMAN = 'e'.repeat(64);
 
   async function seeded() {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner',NULL),($2,'agent','Bee','bee')`,
       [HUMAN, AGENT_A],

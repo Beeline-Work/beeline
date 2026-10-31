@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 
 let db: PgliteDatabase;
@@ -10,8 +10,7 @@ const workspace = '11111111-1111-4111-8111-111111111111';
 const room = '22222222-2222-4222-8222-222222222222';
 const binding = { roomId: room, key: 'github:42', name: 'owner/project', remote: 'git://github.com/owner/project', targetBranch: 'main', githubInstallationId: 77 };
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   phone = new PhoneService(db, 'https://server.test');
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Production')`, [workspace]);

@@ -3,7 +3,6 @@ import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomHistoryOutline } from '@beeline/api-contract/phone';
 import type { TokenAuth } from './auth.js';
-import { migrate } from './database.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
@@ -11,7 +10,7 @@ import { HistoryOutlineCache } from './history-outline-cache.js';
 import { IdentityRateLimit, phoneReadLimits } from './phone-read-limit.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
@@ -27,9 +26,8 @@ const tokenOf = (identity: string) =>
   Object.entries(TOKENS).find(([, value]) => value === identity)![0];
 
 const DATABASE_SNAPSHOT = await (async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     return await database.snapshot();
   } finally {
     await database.close();

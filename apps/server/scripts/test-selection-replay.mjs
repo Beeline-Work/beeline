@@ -58,7 +58,7 @@ const fixture = {
   mapCommit: map.commit,
   alwaysRun,
   testFiles,
-  map: { ...map, sources: pick(map.sources), reads: pick(map.reads) },
+  map: { ...map, sources: pick(map.sources), reads: pick(map.reads), files: map.files.filter((path) => touched.has(path)) },
   prs: replayed,
 };
 writeFileSync(new URL('./test-selection-replay.json', import.meta.url), `${JSON.stringify(fixture)}\n`);

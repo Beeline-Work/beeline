@@ -2,7 +2,7 @@ import { systemLine } from './system-line.js';
 import { shortenAsk } from '@beeline/api-contract/phone';
 import { readWorkspaceListView } from '@beeline/api-contract/phone';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { backfillSquireApprovalExpiry, migrate } from './database.js';
+import { backfillSquireApprovalExpiry } from './database.js';
 import { PhoneService } from './phone-service.js';
 import {
   askSql,
@@ -12,7 +12,7 @@ import {
   signInService,
   withoutReaderTags,
 } from './needs-you.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 describe('the Needs-you ask rule', () => {
   it('asks when the text ends with a question mark or says please, approve or feedback', () => {
@@ -147,8 +147,7 @@ describe('PhoneService Needs-you tray', () => {
 
   beforeEach(async () => {
     sequence = 0;
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES
          ($1,'human','Ada','ada'),($2,'human','Juniper','juniper'),($3,'agent','Hoots','hoots')`,

@@ -1,7 +1,6 @@
-import { describedWorkflow } from './test-support.js';
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand } from './agent-command.js';
 import { saveWorkflow, startWorkflow, handoff } from './workflow-runs.js';
@@ -34,8 +33,7 @@ const contract = {
 let snapshot: Blob | File;
 let db: PgliteDatabase, daemon: DaemonService;
 beforeAll(async () => {
-  const seed = new PgliteDatabase();
-  await migrate(seed);
+  const seed = await migratedDatabase();
   await seed.query(
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Creator'),($2,'agent','Scanner'),($3,'agent','Peer')`,
     [HUMAN, SCANNER, OTHER],

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ConnectionPresence, recordAgentEvidence, claimAgentConnection } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { runMaintenance } from './background.js';
@@ -19,8 +18,7 @@ describe('delivery-driven presence', () => {
   let live: LiveHub;
   let presence: ConnectionPresence;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner',NULL),($2,'agent','Bee','bee')`,
       [HUMAN, AGENT],

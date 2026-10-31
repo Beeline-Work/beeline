@@ -1,6 +1,6 @@
 import type { QueryResultRow } from 'pg';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { migrate, type QueryResult, type SqlDatabase } from './database.js';
+import { type QueryResult, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import {
   assertHotRead,
@@ -9,7 +9,7 @@ import {
   type HotReadName,
   type HotReadResult,
 } from './production-corpus-performance.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000101';
 const VIEWER = 'c'.repeat(64);
@@ -28,8 +28,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
   let phone: PhoneService;
 
   beforeAll(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     hotReads = new HotReadDatabase(database);
     phone = new PhoneService(hotReads, 'http://local.test');
     await database.query(

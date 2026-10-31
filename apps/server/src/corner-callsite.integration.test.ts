@@ -1,8 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -20,8 +19,7 @@ const W = '11111111-1111-4111-8111-111111111111',
 let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService;
 const snapshots: Record<string, unknown> = {};
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Captain','captain'),($2,'agent','Ruby','ruby'),($3,'human','Room member','member')`,
     [H, A, OUTSIDER],

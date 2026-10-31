@@ -5,8 +5,7 @@ import { vaultSaveRequest } from '@beeline/api-contract/daemon';
 import { vaultSaveHttp } from './vault-save-http.js';
 import { VaultSaveRelay } from './vault-save-relay.js';
 import { storeVaultSubmission, type VaultSaveSubmission } from '../../body/src/vault-save.js';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import type { TokenAuth } from './auth.js';
@@ -29,9 +28,8 @@ const metadata = vaultSaveRequest({
   authStrategy: 'api_key',
 });
 const snapshot = await (async () => {
-  const db = new PgliteDatabase();
+  const db = await migratedDatabase();
   try {
-    await migrate(db);
     return await db.snapshot();
   } finally {
     await db.close();

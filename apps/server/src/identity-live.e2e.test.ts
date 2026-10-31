@@ -4,14 +4,13 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import type { TokenAuth } from './auth.js';
-import { migrate } from './database.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service-review.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 // Reproduction R-J28/R-J29/R-J30: one real database, LISTEN bridge, phone
 // socket server and phone operations. A write from one session must reach
@@ -24,9 +23,8 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ELSEWHERE = '22222222-2222-4222-8222-222222222222';
 
 const SNAPSHOT = await (async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     return await database.snapshot();
   } finally {
     await database.close();

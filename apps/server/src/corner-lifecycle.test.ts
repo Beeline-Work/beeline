@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
-import { describedWorkflow, PgliteDatabase } from './test-support.js';
+import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -95,8 +95,7 @@ let githubApp: {
 const recordedEdges = new Set<string>();
 
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
        ($1,'human','Human','human'),($2,'agent','Hoots','hoots'),($3,'agent','Goosy','goosy')`,

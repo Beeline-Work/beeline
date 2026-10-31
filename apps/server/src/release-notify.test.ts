@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { ReleaseNotifier } from './release-notify.js';
 import { PhoneService } from './phone-service.js';
@@ -15,8 +14,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
       ($1,'human','Owner'),($2,'human','Other'),($3,'agent','Worker')`,

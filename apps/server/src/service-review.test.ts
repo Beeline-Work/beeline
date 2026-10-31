@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { completeServiceReview, readServiceReviewPage, reserveServiceReviewWorkspaces } from './service-review.js';
 
 let db: PgliteDatabase;
@@ -10,8 +10,7 @@ const human = 'b'.repeat(64);
 const workspaces = ['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002'];
 const rooms = ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002'];
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Synthetic reader')`,[human]);
   for (let n=0;n<2;n++) {
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Synthetic workspace')`,[workspaces[n]]);

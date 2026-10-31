@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { Session } from 'node:inspector/promises';
 import { syncBuiltinESMExports } from 'node:module';
+import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, expect } from 'vitest';
@@ -13,6 +14,7 @@ import { afterAll, expect } from 'vitest';
 const output = process.env.SERVER_COVERAGE_MAP_DIR;
 const repo = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const sourcePattern = /\.(?:[cm]?[jt]sx?)$/;
+const ANONYMOUS = '(anonymous)';
 
 function repositoryFile(location) {
   let path = String(location);
@@ -54,11 +56,24 @@ if (!state.session) {
   await state.session.post('Profiler.takePreciseCoverage');
 }
 state.reads.clear();
+// Node child processes this file starts inherit the variable and write their
+// own coverage here on exit, so code a test runs out of process counts too.
+const childCoverage = fs.mkdtempSync(join(tmpdir(), 'server-child-coverage-'));
+process.env.NODE_V8_COVERAGE = childCoverage;
 
 afterAll(async () => {
   const testPath = expect.getState().testPath;
   if (!output || !testPath) return;
   const { result } = await state.session.post('Profiler.takePreciseCoverage');
+  for (const name of fs.readdirSync(childCoverage)) {
+    try {
+      result.push(...JSON.parse(fs.readFileSync(join(childCoverage, name), 'utf8')).result);
+    } catch {
+      // A child killed mid-write leaves a partial file; skip it.
+    }
+  }
+  fs.rmSync(childCoverage, { recursive: true, force: true });
+  delete process.env.NODE_V8_COVERAGE;
   const sources = {};
   for (const script of result) {
     const file = repositoryFile(script.url);
@@ -66,7 +81,12 @@ afterAll(async () => {
     const ran = script.functions.filter((fn) => fn.ranges[0]?.count > 0);
     if (!ran.length) continue;
     const names = new Set(sources[file] ?? []);
-    for (const fn of ran) if (fn.functionName) names.add(fn.functionName);
+    // The unnamed function at offset 0 is the module body, which runs on
+    // import; any other unnamed function means the test ran code in the file.
+    for (const fn of ran) {
+      if (fn.functionName) names.add(fn.functionName);
+      else if (fn.ranges[0].startOffset > 0) names.add(ANONYMOUS);
+    }
     sources[file] = [...names].sort();
   }
   const test = relative(repo, testPath);

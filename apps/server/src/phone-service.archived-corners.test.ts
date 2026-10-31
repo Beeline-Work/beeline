@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 
 const VIEWER = 'a'.repeat(64);
@@ -19,8 +18,7 @@ const OPENED_FIRST_CLOSED_AT = '2026-03-02T00:00:00Z';
 const OPENED_SECOND_CLOSED_AT = '2026-03-01T00:00:00Z';
 
 async function fixture(seed?: (database: PgliteDatabase) => Promise<unknown>) {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Ada','ada')`,
     [VIEWER],

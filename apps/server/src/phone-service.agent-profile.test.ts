@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const workspace = '11111111-1111-4111-8111-111111111111';
 const parent = '22222222-2222-4222-8222-222222222222';
@@ -13,8 +12,7 @@ afterEach(async () => database?.close());
 
 describe('agent profile recent work', () => {
   it('shows only merged, attributed work in readable corners, and revokes it with membership', async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name) VALUES ($1,'agent','Agent'),($2,'human','Viewer'),($3,'agent','Other')`,
       [agent, viewer, other],
@@ -105,8 +103,7 @@ describe('agent profile recent work', () => {
 
 describe('removing a human from the Workspace', () => {
   it('spends the invite on first use, so a removed person cannot rejoin with the old link', async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(`INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person')`, [
       viewer,
       other,
@@ -134,8 +131,7 @@ describe('removing a human from the Workspace', () => {
 });
 
 it('enforces strict role authority and spectator writes and lists Workspace-owned agents', async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person'),($3,'agent','Agent')`,
     [viewer, other, agent],
@@ -187,8 +183,7 @@ it('enforces strict role authority and spectator writes and lists Workspace-owne
 });
 
 it('Reproduction R12-1: exposes grant Room names only to authorized viewers', async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   const plain = 'd'.repeat(64);
   const corner = '66666666-6666-4666-8666-666666666666';
   await database.query(

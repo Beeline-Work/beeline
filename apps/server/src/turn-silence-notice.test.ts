@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { LiveHub } from './live.js';
@@ -16,8 +15,7 @@ const AGENT = 'b'.repeat(64);
 const HUMAN = 'a'.repeat(64);
 
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Candy','candy')`,
     [HUMAN, AGENT],

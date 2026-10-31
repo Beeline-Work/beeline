@@ -2,8 +2,7 @@ import { randomUUID, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 import {
   createAgentSubscription, deleteAgentSubscription, fireRepositorySubscriptions,
   deleteRoomSubscription, listAgentSubscriptions, listRoomSubscriptions, subscriptionPromptBody,
@@ -23,8 +22,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
 async function fixture() {
-  const db = new PgliteDatabase();
-  await migrate(db);
+  const db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Worker')`, [PERSON, AGENT]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
   await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`, [ROOM, WORKSPACE, PERSON]);

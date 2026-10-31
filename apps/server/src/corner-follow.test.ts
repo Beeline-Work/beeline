@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { backfillCornerFollows } from './corner-follow.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -40,8 +39,7 @@ async function mine() {
 
 beforeEach(async () => {
   sequence = 0;
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   phone = new PhoneService(database, ORIGIN);
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES ($1,'human','Person','person'),($2,'human','Teammate','teammate'),($3,'agent','Bee','bee')`,

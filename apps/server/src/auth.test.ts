@@ -1,15 +1,14 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate, migrateData } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth, tokenHash, verifierFromEnvironment, type PhoneTokens } from './auth.js';
 import { compactSigninAttempts, recordSigninAttempt } from './signin-attempts.js';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
   });
   afterEach(() => db.close());
   it.each(['google', 'github'] as const)('R-MCP-SIGNIN-LEDGER: %s exchange outside the phone route cannot expire after issuing a session', async provider => {

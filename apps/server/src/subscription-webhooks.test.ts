@@ -1,11 +1,10 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { claimAgentCommand, type CommandRow } from './agent-command.js';
 import { saveWorkflow, startWorkflow } from './workflow-runs.js';
-import { describedWorkflow, PgliteDatabase } from './test-support.js';
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA, subscriptionPromptBody } from './agent-subscriptions.js';
 import { webhookToken, webhookDetails, ingestSubscriptionWebhook, WEBHOOK_BODY_LIMIT } from './subscription-webhooks.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
@@ -17,8 +16,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111', ROOM = '22222222-2222-
 afterEach(() => vi.unstubAllEnvs());
 async function fixture() {
   vi.stubEnv('GITHUB_CLIENT_SECRET', 'isolated-webhook-fixture-encryption');
-  const db = new PgliteDatabase();
-  await migrate(db);
+  const db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Ruby'),($3,'human','Member')`, [OWNER, AGENT, MEMBER]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);

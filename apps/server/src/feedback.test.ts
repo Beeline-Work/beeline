@@ -2,12 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DAEMON_OPERATION_NAMES, DaemonService } from './daemon-service.js';
-import { migrate } from './database.js';
 import { feedbackConfigFromEnv, type FeedbackConfig, type FeedbackPullRequests } from './feedback.js';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ensureSystemIdentity } from './system-line.js';
 
 const PERSON = 'a'.repeat(64);
@@ -40,8 +39,7 @@ function hex(): string {
 
 beforeEach(async () => {
   merged = new Set([7]);
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Priya Raman','priya'),($2,'human','Other Person','other'),

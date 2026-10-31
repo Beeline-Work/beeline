@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
 
@@ -18,8 +17,7 @@ const otherId = (index: number) => `55555555-5555-4555-8555-${String(index).padS
  * recorded outcome while its PR checks fail.
  */
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Ada','ada'),($2,'agent','Bot','bot')`,
     [VIEWER, AGENT],

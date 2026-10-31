@@ -12,11 +12,10 @@ import {
   runMaintenance,
   type LeaderConnection,
 } from './background.js';
-import { migrate } from './database.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, migratedDatabase } from './test-support.js';
 import {
   ARTIFACT_TTL_HOURS,
   MEDIA_SWEEP_INTERVAL_MS,
@@ -145,9 +144,8 @@ describe('background advisory-lock ownership', () => {
     expect(second).toBeGreaterThan(1);
   });
   it('bounds push history before resolving tags and still delivers a fresh mention', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64);
       const workspace = '11111111-1111-4111-8111-111111111111';
@@ -228,9 +226,8 @@ describe('background advisory-lock ownership', () => {
   });
 
   it('sends claimed push candidates with bounded concurrency', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64);
       const agent = 'b'.repeat(64);
       const workspace = '11111111-1111-4111-8111-111111111121';
@@ -282,9 +279,8 @@ describe('background advisory-lock ownership', () => {
   });
 
   it('dispatches a direct message to a Chrome subscription without Firebase configured', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const recipient = 'a'.repeat(64),
         sender = 'b'.repeat(64);
       const workspace = '11111111-1111-4111-8111-111111111111';
@@ -328,9 +324,8 @@ describe('background advisory-lock ownership', () => {
   });
 
   it('persists an FCM failure without claiming a successful delivery', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -375,9 +370,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('removes an FCM-unregistered device after recording its failed delivery', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -421,9 +415,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('leaves a registered iOS device alone instead of feeding it to Firebase', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -469,9 +462,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('routes Android devices to Firebase and iOS devices to APNs', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -517,9 +509,8 @@ describe('background advisory-lock ownership', () => {
   // Audit 9.3: a Room read on another device must clear the phone's shade
   // and badge, not only a Room the phone opens itself.
   it('sends one batched silent read-clear push per iOS device when Rooms are read elsewhere', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -608,9 +599,8 @@ describe('background advisory-lock ownership', () => {
   // G9-R5: each push must also fit APNs's 4,096-byte payload limit; 50 Rooms
   // with 64-character message ids made 6,103 bytes.
   it('clears every read Room across throttled pushes that each fit the APNs limit', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -688,9 +678,8 @@ describe('background advisory-lock ownership', () => {
   // G9-R2: marking a Room unread moves its mark backwards. That is not a read,
   // so it must not send a silent push that dismisses the Room's notifications.
   it('sends no read-clear push when a Room is marked unread', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -769,9 +758,8 @@ describe('background advisory-lock ownership', () => {
   // G9-R3: two messages presented at the same second must not both clear when
   // only the first is read. The push names read messages in server order.
   it('names only the pushed messages at or before the read cursor, in server order', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -844,9 +832,8 @@ describe('background advisory-lock ownership', () => {
   // still clear them all. Ids left out by the per-Room cap or by the APNs
   // size limit go in a later push; a newer unread notification stays.
   it('clears every read notification past the per-Room id cap in later pushes', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -914,9 +901,8 @@ describe('background advisory-lock ownership', () => {
   // clear. The one-hour claim cleanup keeps an iOS or Android device's
   // delivered claims until a read-clear push names them.
   it('clears read notifications delivered more than an hour before the read', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -994,9 +980,8 @@ describe('background advisory-lock ownership', () => {
   // G9-R8: a read days old whose cursor message was delivered but never
   // named still clears it; a newer unread notification stays.
   it('clears an unnamed cursor notification of a read days old', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1059,9 +1044,8 @@ describe('background advisory-lock ownership', () => {
   // read mark (advanceAuthorReadMark), so it clears the notifications before
   // it like any other read.
   it('clears read notifications when the viewer replies from another device', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1124,9 +1108,8 @@ describe('background advisory-lock ownership', () => {
   });
   // Audit 9.3 Android: the same rule clears an Android phone's shade through FCM.
   it('clears an Android device through its own sender with the same read rule', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1192,9 +1175,8 @@ describe('background advisory-lock ownership', () => {
   // A token handed to another person must not clear the last person's
   // notifications when the new owner reads the same Room.
   it('names only claims for messages since the device registered', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1245,9 +1227,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64);
       const workspace = '11111111-1111-4111-8111-111111111111';
@@ -1354,9 +1335,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('routes test pushes by device platform and excludes iOS without APNs configuration', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         android = 'android-device-token-12345678901234567890',
         ios = 'c0ffee'.repeat(10) + 'abcd';
@@ -1387,9 +1367,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('deletes an APNs-unregistered device but retains a transiently failing one', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1451,9 +1430,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('delivers only new attention events to the addressed human device', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         otherHuman = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -1606,9 +1584,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('names the inline action a notification can answer, and only that one', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'c'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1698,9 +1675,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('sends a permission ask whole and stays quiet for an automatic access receipt', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'c'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -1765,9 +1741,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('delivers member-join pushes at Full', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         other = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111';
@@ -1813,9 +1788,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it("does not deliver another person's corner event to a Default member", async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         other = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -1869,9 +1843,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('keeps untagged corner completion quiet but preserves addressed wake decisions', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const commissioner = 'a'.repeat(64),
         other = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -1946,9 +1919,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('sends nothing for activity in a closed corner, even a tag', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const owner = 'a'.repeat(64),
         agent = 'c'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -2000,9 +1972,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('requires Full for untagged finished messages in commissioned corners', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const commissioner = 'a'.repeat(64),
         other = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -2099,9 +2070,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('pushes an open question card to the one human it addresses', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const owner = 'a'.repeat(64),
         other = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -2178,9 +2148,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('sends one push per recipient per agent turn', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const owner = 'a'.repeat(64),
         other = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -2243,9 +2212,8 @@ describe('background advisory-lock ownership', () => {
     ['attention', ['dm', 'tag', 'reply']],
     ['full', ['dm', 'tag', 'reply', 'join', 'plain', 'request']],
   ] as const)('selects the push candidate matrix for %s', async (level, expected) => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         other = 'b'.repeat(64),
         agent = 'c'.repeat(64),
@@ -2339,9 +2307,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   it('sweeps expired access tokens while retaining device sessions, including rows from a rolled-back server', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       let now = new Date('2026-09-01T00:00:00Z');
       const auth = new TokenAuth(db, async () => ({ subject: 'maintenance-owner', login: 'owner', name: 'Owner' }), () => now);
       const tokens = await auth.exchangeGitHubOidc('proof');
@@ -2356,9 +2323,8 @@ describe('background advisory-lock ownership', () => {
   });
 
   it('retains imported historical presence while expiring ordinary live output', async () => {
-    const db = new PgliteDatabase();
+    const db = await migratedDatabase();
     try {
-      await migrate(db);
       const human = 'a'.repeat(64),
         agent = 'b'.repeat(64),
         workspace = '11111111-1111-4111-8111-111111111111',
@@ -2394,8 +2360,7 @@ describe('media TTL sweep', () => {
   const stale = '44444444-4444-4444-8444-444444444444';
 
   async function seed() {
-    const db = new PgliteDatabase();
-    await migrate(db);
+    const db = await migratedDatabase();
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
     const storage = new MemoryObjectStorage();
     await storage.putObject(`media/${owner}/${'a'.repeat(64)}`, Buffer.from([0]), 'image/png');

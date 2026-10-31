@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -22,8 +21,7 @@ const reportPresence = async (agentId: string, status: string) => db.query(
   `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence',$3::jsonb)`,
   [R, agentId, JSON.stringify({ status, observedAt: Math.floor(Date.now()/1000) })]);
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
        ($1,'human','Human','human'),($2,'agent','Owner','owner'),

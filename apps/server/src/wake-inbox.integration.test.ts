@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { migrate, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { type SqlDatabase } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -35,8 +35,7 @@ async function wake(text: string, reason = 'corner_brief', roomId = ROOM, agentI
     privatePayload: { text, authorId: WORKER, fromRoomId: roomId, kind: 'lifecycle' } });
 }
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Owner','owner'),($2,'agent','Inbox','inbox'),($3,'agent','Worker','worker')`, [HUMAN, AGENT, WORKER]);
   await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)', [AGENT, WORKER, HUMAN]);

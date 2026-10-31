@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { migrate } from './database.js';
 import {
   recordSigninFunnelEvent,
@@ -24,8 +24,7 @@ const make = (patch: Partial<SigninFunnelEvent> = {}): SigninFunnelEvent => ({
   ...patch,
 });
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
 });
 afterEach(() => db.close());
 const today = () => new Date().toISOString().slice(0, 10);

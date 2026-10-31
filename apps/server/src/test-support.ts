@@ -1,9 +1,10 @@
+import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PGlite, type PGliteInterface, type Transaction } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import type { QueryResultRow } from 'pg';
-import type { SqlDatabase, QueryResult } from './database.js';
+import { migrate, type SqlDatabase, type QueryResult } from './database.js';
 import type { ObjectStorage } from './object-storage.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
 
@@ -59,6 +60,38 @@ export class PgliteDatabase implements SqlDatabase {
         work(this.executor(transaction)),
     };
   }
+}
+
+// A migrated schema, copied into each new test database. Vitest's global setup
+// migrates once per run (scripts/test-database-setup.ts); without it, or while
+// a coverage map is recorded, the first call in each file migrates, so the map
+// still sees every test run migrate().
+let migratedSnapshot: Promise<Blob> | undefined;
+
+declare module 'vitest' {
+  export interface ProvidedContext {
+    serverTestDatabaseSnapshot?: string;
+  }
+}
+
+async function loadMigratedSnapshot(): Promise<Blob> {
+  // Proof scripts also import this file outside Vitest.
+  const shared = process.env.VITEST && !process.env.SERVER_COVERAGE_MAP_DIR
+    ? (await import('vitest')).inject('serverTestDatabaseSnapshot') : undefined;
+  if (shared) return new Blob([await readFile(shared)]);
+  const template = new PgliteDatabase();
+  try {
+    await migrate(template);
+    return await template.snapshot();
+  } finally {
+    await template.close();
+  }
+}
+
+/** A new database with the current schema; each call is an independent copy. */
+export async function migratedDatabase(): Promise<PgliteDatabase> {
+  migratedSnapshot ??= loadMigratedSnapshot();
+  return PgliteDatabase.fromSnapshot(await migratedSnapshot);
 }
 
 /**

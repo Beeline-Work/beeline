@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { compactPushClaims, compactWebhookDeliveries, migrate } from './database.js';
+import { compactPushClaims, compactWebhookDeliveries } from './database.js';
 import { cancelArchivedCornerAssignments } from './corner-close.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PendingAttachmentCleanupLoop, sweepPendingAttachments } from './pending-attachment-cleanup.js';
 
 const HUMAN = 'a'.repeat(64);
@@ -13,8 +13,7 @@ const CORNER = '33333333-3333-4333-8333-333333333333';
 describe('release data cleanup', () => {
   let db: PgliteDatabase;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
   });
   afterEach(async () => { await db.close(); });
 

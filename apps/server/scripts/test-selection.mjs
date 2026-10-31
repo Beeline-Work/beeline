@@ -16,7 +16,7 @@ import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const MAP_VERSION = 1;
+export const MAP_VERSION = 2;
 // A map older than this, or this many commits behind, is too stale to trust.
 export const MAX_MAP_AGE_DAYS = 7;
 export const MAX_MAP_DISTANCE = 300;
@@ -26,10 +26,12 @@ const serverRoot = 'apps/server/';
 const codePattern = /\.(?:[cm]?[jt]sx?)$/;
 const testPattern = /\.test\.[cm]?[jt]sx?$/;
 
-// Changes here alter how every test runs or what the map means.
+// Changes here alter how every test runs or what the map means. Other
+// workflows do not run the server suite; tests that read them are in the map.
 const fullSuitePatterns = [
   /^packages\/api-contract\//,
-  /^\.github\//,
+  /^\.github\/workflows\/(?:checks|server-coverage-map)\.yml$/,
+  /^\.github\/actions\//,
   /^apps\/server\/scripts\//,
   /^apps\/server\/vitest\.config\./,
   /^apps\/server\/src\/test-support\.ts$/,
@@ -41,8 +43,26 @@ const fullSuitePatterns = [
 // checks.yml). If no test ran or read them on main, they cannot affect it.
 const outsideServerSuite = [/^apps\/mobile\//, /^apps\/body\//, /^docs\//, /\.md$/];
 
-export function fullSuiteReason(path) {
+const rootManifest = 'package.json';
+// CI setup runs these root scripts before the server suite.
+const setupScripts = ['preinstall', 'install', 'postinstall', 'prepare', 'build'];
+
+export function fullSuiteReason({ path, scriptsOnly }) {
+  if (scriptsOnly) return undefined;
   return fullSuitePatterns.some((pattern) => pattern.test(path)) ? `${path} changes how every server test runs` : undefined;
+}
+
+// True when a root package.json edit changes only npm scripts that the server
+// suite never runs; dependency, workspace or setup-script edits run everything.
+export function scriptsOnlyChange(before, after) {
+  try {
+    const [old, next] = [JSON.parse(before), JSON.parse(after)];
+    const kept = (manifest) => JSON.stringify({ ...manifest,
+      scripts: Object.fromEntries(setupScripts.map((name) => [name, manifest.scripts?.[name]])) });
+    return kept(old) === kept(next);
+  } catch {
+    return false;
+  }
 }
 
 // ---- Tests that read source code as text -----------------------------------
@@ -142,7 +162,9 @@ export function sourcePath(file, exists = (path) => existsSync(join(repo, path))
   return file;
 }
 
-export function buildMap(records, { commit, createdAt, exists } = {}) {
+// `files` lists every tracked path at the map's commit, so a changed file the
+// map knows but no test ran or read selects nothing instead of everything.
+export function buildMap(records, { commit, createdAt, exists, files = [] } = {}) {
   const tests = [...new Set(records.map((record) => record.test))].sort();
   const index = new Map(tests.map((test, position) => [test, position]));
   const sources = {};
@@ -159,7 +181,7 @@ export function buildMap(records, { commit, createdAt, exists } = {}) {
   }
   const sourceReaders = tests.filter((test) => records.some((record) => record.test === test
     && record.reads.some((file) => codePattern.test(file) && !testPattern.test(file))));
-  return { version: MAP_VERSION, commit, createdAt, tests, sources, reads, sourceReaders };
+  return { version: MAP_VERSION, commit, createdAt, tests, sources, reads, sourceReaders, files: [...files].sort() };
 }
 
 // Tests seen reading source on main that the static scan did not find.
@@ -204,13 +226,25 @@ function typeOnly(ts, statement) {
   return Boolean(ts.getModifiers?.(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword));
 }
 
-// Returns the runtime names of changed functions, or fileLevel when a change
-// lands outside every named function (module code, class fields, constants).
+// What importers can see or what runs on import: exports, re-exports,
+// side-effect imports and top-level statements other than declarations.
+function loadLevel(ts, statement) {
+  if (ts.isExportDeclaration(statement) || ts.isExportAssignment(statement)) return true;
+  if (ts.isImportDeclaration(statement)) return !statement.importClause;
+  if (ts.getModifiers?.(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) return true;
+  return !(ts.isVariableStatement(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)
+    || ts.isFunctionDeclaration(statement) || ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement));
+}
+
+// Returns the runtime names of changed functions. A change outside every
+// named function is moduleLevel when only this file's own code can observe it
+// (imports, private constants, class fields), else fileLevel.
 export function changedFunctions(ts, fileName, text, lines) {
   const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
   const starts = source.getLineStarts();
   const names = new Set();
   let fileLevel = false;
+  let moduleLevel = false;
   for (const line of lines) {
     if (line < 1 || line > starts.length) continue;
     const lineText = text.slice(starts[line - 1], starts[line] ?? text.length);
@@ -244,9 +278,11 @@ export function changedFunctions(ts, fileName, text, lines) {
       continue;
     }
     const statement = source.statements.find((node) => position >= node.getStart(source) && position < node.end);
-    if (statement && !typeOnly(ts, statement)) fileLevel = true;
+    if (!statement || typeOnly(ts, statement)) continue;
+    if (loadLevel(ts, statement)) fileLevel = true;
+    else moduleLevel = true;
   }
-  return { fileLevel, names: [...names].sort() };
+  return { fileLevel, moduleLevel, names: [...names].sort() };
 }
 
 function changedLines(start, count) {
@@ -258,7 +294,8 @@ export function describeChange(ts, { path, status, before, after, hunks }) {
   if (status !== 'M' || !codePattern.test(path)) return { path, status, fileLevel: true, names: [] };
   const old = changedFunctions(ts, path, before, hunks.flatMap((hunk) => changedLines(hunk.oldStart, hunk.oldCount)));
   const next = changedFunctions(ts, path, after, hunks.flatMap((hunk) => changedLines(hunk.newStart, hunk.newCount)));
-  return { path, status, fileLevel: old.fileLevel || next.fileLevel, names: [...new Set([...old.names, ...next.names])].sort() };
+  return { path, status, fileLevel: old.fileLevel || next.fileLevel, moduleLevel: old.moduleLevel || next.moduleLevel,
+    names: [...new Set([...old.names, ...next.names])].sort() };
 }
 
 // ---- Selection --------------------------------------------------------------
@@ -269,6 +306,12 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
   const selected = new Set(alwaysRun);
   for (const test of map.sourceReaders) selected.add(test);
   const reasons = {};
+  // Tests main ran in other jobs, or new ones, have no coverage to go by.
+  for (const test of testFiles) if (!map.tests.includes(test)) {
+    selected.add(test);
+    reasons[test] = 'no coverage recorded on main';
+  }
+  const known = new Set(map.files);
   const pick = (tests, reason) => {
     for (const test of tests) {
       if (!selected.has(test)) reasons[test] = reason;
@@ -277,7 +320,7 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
   };
   for (const change of changes) {
     const { path, status } = change;
-    const always = fullSuiteReason(path);
+    const always = fullSuiteReason(change);
     if (always) return full(always);
     if (path.startsWith(serverRoot) && testPattern.test(path)) {
       if (status !== 'D') pick([path], `${path} changed`);
@@ -292,17 +335,21 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
       // files changed too. Other new or unknown files may be read at runtime.
       if (status === 'A' && codePattern.test(path)) continue;
       if (outsideServerSuite.some((pattern) => pattern.test(path))) continue;
+      // On main no test ran or read this file, in process or in a child.
+      if (status !== 'A' && known.has(path)) continue;
       return full(`${path} is not in the coverage map`);
     }
     // Only types or comments changed: nothing that runs is different.
-    if (status === 'M' && !change.fileLevel && !change.names.length) continue;
-    const known = change.names.filter((name) => source.functions[name]);
+    if (status === 'M' && !change.fileLevel && !change.moduleLevel && !change.names.length) continue;
+    const ran = change.names.filter((name) => source.functions[name]);
     // A name no test ran may be a name V8 reports differently; use the file.
-    if (change.fileLevel || status !== 'M' || known.length < change.names.length) {
+    if (change.fileLevel || status !== 'M' || ran.length < change.names.length) {
       pick(source.tests.map((id) => map.tests[id]), `loads ${path}`);
       continue;
     }
-    for (const name of known) pick(source.functions[name].map((id) => map.tests[id]), `runs ${name} in ${path}`);
+    // Module code only this file's functions see: every test that ran any.
+    if (change.moduleLevel) pick([...new Set(Object.values(source.functions).flat())].map((id) => map.tests[id]), `runs code in ${path}`);
+    for (const name of ran) pick(source.functions[name].map((id) => map.tests[id]), `runs ${name} in ${path}`);
   }
   const files = [...selected].filter((test) => testFiles.includes(test)).sort();
   return { mode: 'subset', reason: `${files.length} of ${testFiles.length} test files`, files, reasons };
@@ -324,6 +371,11 @@ export function gitChanges(ts, base, head = 'HEAD') {
   for (const line of git(['diff', '--name-status', '--no-renames', base, head]).trim().split('\n').filter(Boolean)) {
     const [status, path] = line.split('\t');
     const change = { path, status: status[0], before: '', after: '', hunks: [] };
+    if (change.status === 'M' && path === rootManifest) {
+      changes.push({ path, status: 'M', fileLevel: true, names: [],
+        scriptsOnly: scriptsOnlyChange(git(['show', `${base}:${path}`]), git(['show', `${head}:${path}`])) });
+      continue;
+    }
     if (change.status === 'M' && codePattern.test(path)) {
       change.before = git(['show', `${base}:${path}`]);
       change.after = git(['show', `${head}:${path}`]);
@@ -364,7 +416,8 @@ function main() {
     const records = readdirSync(directory).filter((name) => name.endsWith('.json'))
       .map((name) => JSON.parse(readFileSync(join(directory, name), 'utf8')));
     assert.ok(records.length > 0, 'no coverage records');
-    const map = buildMap(records, { commit: argument('--commit'), createdAt: new Date().toISOString() });
+    const files = git(['ls-tree', '-r', '--full-tree', '--name-only', argument('--commit')]).trim().split('\n');
+    const map = buildMap(records, { commit: argument('--commit'), createdAt: new Date().toISOString(), files });
     writeFileSync(argument('--out'), JSON.stringify(map));
     console.log(`coverage map: ${map.tests.length} tests, ${Object.keys(map.sources).length} source files, ${Object.keys(map.reads).length} read files`);
     return;

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { claimAgentConnection, releaseAgentConnection, releaseStaleServerConnections } from './connection-presence.js';
 import { noteCornerAgentUnreachable } from './agent-command.js';
 import { PushDeliveryLoop } from './background.js';
@@ -16,8 +15,7 @@ describe('machine disconnect notices', () => {
   let db: PgliteDatabase;
   let live: LiveHub;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
     live = new LiveHub();
     await db.query(`INSERT INTO identities(id,kind,name,handle)
       VALUES($1,'human','Machine owner','owner'),($2,'human','Captain','captain')`, [OWNER, CAPTAIN]);

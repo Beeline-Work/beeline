@@ -4,11 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentCommand } from './agent-command.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -20,8 +19,7 @@ let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, origin: 
 const tokens = new Map<string, string>();
 
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   for (const [id, kind, name] of [
     [REQUESTER, 'human', 'Requester'], [ROLE_OWNER, 'human', 'Role owner'],
     [ROOM_ADMIN, 'human', 'Room admin'], [WORKSPACE_ADMIN, 'human', 'Workspace admin'],

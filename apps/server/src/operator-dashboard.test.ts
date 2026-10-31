@@ -3,8 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { recordSigninFunnelEvent } from './signin-funnel.js';
 import { createSigninFunnelClient } from '@beeline/api-contract/signin-funnel-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { createBeelineServer } from './server.js';
 import { dashboardHealth, dashboardOps } from './operator-dashboard.js';
 import { dashboardOverview } from './operator-dashboard-overview.js';
@@ -26,8 +25,7 @@ let server: ReturnType<typeof createBeelineServer>;
 let base: string;
 
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Dashboard test')`, [workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Main')`, [room, workspace]);
   server = createBeelineServer({

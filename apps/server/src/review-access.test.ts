@@ -2,8 +2,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { TokenAuth, type PhoneTokens } from './auth.js';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import {
   REVIEW_IDENTITY_ID,
   REVIEW_IDENTITY_NAME,
@@ -110,8 +109,7 @@ describe('the review identity', () => {
   let database: PgliteDatabase;
   let auth: TokenAuth;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     auth = new TokenAuth(database, async () => {
       throw new Error('the review identity never verifies a GitHub proof');
     });

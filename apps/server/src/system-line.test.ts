@@ -8,9 +8,9 @@ import {
   SYSTEM_IDENTITY_NAME,
 } from '@beeline/api-contract/system-identity';
 import { PushDeliveryLoop } from './background.js';
-import { backfillSystemEventKinds, migrate, type SqlDatabase } from './database.js';
+import { backfillSystemEventKinds, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { composeSystemLine, systemLine, ensureSystemDirectMessageRoom, type SystemLineInput } from './system-line.js';
 
 async function fixtureSystemNotice(database: SqlDatabase, input: Omit<SystemLineInput, 'roomId'> & { workspaceId: string }) {
@@ -119,8 +119,7 @@ const QUIET_AGENT = 'c'.repeat(64);
 describe('who an event line mentions', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada'),($2,'agent','Owl'),($3,'agent','Quiet')`,
       [HUMAN, GREETER, QUIET_AGENT],
@@ -262,8 +261,7 @@ describe('who an event line mentions', () => {
 describe('System DM identity and membership', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada')`, [HUMAN]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(
@@ -379,8 +377,7 @@ describe('System DM identity and membership', () => {
 describe('the scheduled-prompt kind backfill', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada')`, [HUMAN]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'welcome')`, [
@@ -438,8 +435,7 @@ describe('a caused line sorts after its cause', () => {
       )
     ).rows[0]!.woke;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada'),($2,'agent','Lumen')`,
       [HUMAN, GREETER],

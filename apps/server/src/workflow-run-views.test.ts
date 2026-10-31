@@ -1,10 +1,9 @@
 import { listRoomWorkflowRuns } from './workflow-run-views.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { describedWorkflow } from './test-support.js';
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, claimAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -83,8 +82,7 @@ beforeEach(async () => {
   vi.mocked(randomBytes).mockReset();
   const crypto = await vi.importActual<typeof import('node:crypto')>('node:crypto');
   vi.mocked(randomBytes).mockImplementation(crypto.randomBytes);
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Owner'),($2,'agent','Candy'),($3,'agent','Hoots'),($4,'human','Outsider')`,

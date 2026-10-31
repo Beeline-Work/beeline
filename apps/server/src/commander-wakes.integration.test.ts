@@ -3,8 +3,7 @@ import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -30,8 +29,7 @@ const checks = vi.fn(async () => ({ stage: 'waiting_for_yes' as const, checks: '
   reviewer: '@reviewer', reviewerExists: true, reviewerWake: { status: 'dispatched' as const, detail: '' },
   held, holds: [], mergeAllowed: ready && !held }));
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Captain','captain'),($2,'agent','Ruby','ruby'),($3,'agent','Worker','worker')`,
     [HUMAN, RUBY, WORKER]);

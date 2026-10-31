@@ -1,7 +1,6 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -18,8 +17,7 @@ const B = '44444444-4444-4444-8444-444444444444';
 const OTHER = '55555555-5555-4555-8555-555555555555';
 let db: PgliteDatabase, daemon: DaemonService;
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Watcher'),($2,'human','Owner')`,
     [W, H],

@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient, retryGitHubRead } from '@beeline/auth/github';
-import { migrate, type QueryResult, type SqlDatabase } from './database.js';
+import { type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { captureServerError } from './sentry.js';
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 import { GitHubOperations } from './github-operations.js';
@@ -39,20 +39,8 @@ const REVIEWER = 'b'.repeat(64);
 
 describe('GitHub phone operations', () => {
   let database: PgliteDatabase;
-  // Export only migrated schema; every test owns a new database and fresh seed rows.
-  let databaseSnapshot: Blob | File;
-  beforeAll(async () => {
-    const template = new PgliteDatabase();
-    try {
-      await migrate(template);
-      databaseSnapshot = await template.snapshot();
-    } finally {
-      await template.close();
-    }
-  });
-
   beforeEach(async () => {
-    database = PgliteDatabase.fromSnapshot(databaseSnapshot);
+    database = await migratedDatabase();
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
       HUMAN,
     ]);

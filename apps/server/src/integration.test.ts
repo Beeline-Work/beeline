@@ -16,7 +16,7 @@ import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-acces
 import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
-import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
@@ -105,9 +105,8 @@ describe('monolith integration', () => {
   // Export only migrated schema; every test owns a new database and fresh seed rows.
   let databaseSnapshot: Blob | File;
   beforeAll(async () => {
-    const template = new PgliteDatabase();
+    const template = await migratedDatabase();
     try {
-      await migrate(template);
       await new AuthStore(template as unknown as TransactionalDatabase).migrate();
       databaseSnapshot = await template.snapshot();
     } finally {

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { backfillCornerOwed, migrate, type SqlDatabase } from './database.js';
+import { backfillCornerOwed, type SqlDatabase } from './database.js';
 import { addressedToPersonSql, cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -127,8 +127,7 @@ describe('corner_owed', () => {
 
   beforeEach(async () => {
     clock = 0;
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     phone = new PhoneService(database, ORIGIN);
     for (const [id, kind, name, handle] of [
       [OWNER, 'human', 'Owner', 'owner'],

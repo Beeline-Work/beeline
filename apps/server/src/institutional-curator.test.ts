@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate, migrateData } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { migrateData } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
@@ -13,8 +13,7 @@ const config = { enabled: true, live: true } as const;
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human'),($2,'agent','Bee')`, [HUMAN, AGENT]);
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Memory')`, [WORKSPACE]);
   await database.query(`INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'host-1')`, [AGENT, HUMAN]);

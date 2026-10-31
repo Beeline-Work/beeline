@@ -1,3 +1,4 @@
+import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
@@ -3657,6 +3658,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
     workflowBackfillOnce(database, 'feedback-triage-prompt-cases-v1', backfillFeedbackTriageWorkflow));
+  await workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow);
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
   await dataStep('workspace walk history', () =>

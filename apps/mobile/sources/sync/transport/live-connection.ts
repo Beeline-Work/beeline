@@ -5,7 +5,6 @@ import { waitForRoomDraw } from '@/buzz/room-draw-barrier';
 import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-error';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { readSidebarPreview } from '@beeline/api-contract/phone';
-import { useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -83,18 +82,6 @@ function setConnectionState(next: ConnectionState): void {
   if (connectionState === next) return;
   connectionState = next;
   for (const listener of connectionStateListeners) listener();
-}
-
-/** The shared socket's single liveness source for status UI and Retry. */
-export function useConnectionState(): ConnectionState {
-  return useSyncExternalStore(
-    (listener) => {
-      connectionStateListeners.add(listener);
-      return () => connectionStateListeners.delete(listener);
-    },
-    () => connectionState,
-    () => 'disconnected',
-  );
 }
 
 const BACKGROUND_CLOSE_DELAY_MS = 120_000;
@@ -1002,11 +989,6 @@ export function sharedLiveConnection(): LiveConnection {
 /** Later request/reply code reports its own one-off deadline here. */
 export function reportRequestDeadlineMissed(): void {
   sharedLiveConnection().reportRequestDeadlineMissed();
-}
-
-/** Retry can revive the one shared socket without adding another channel. */
-export function reconnectNow(): void {
-  sharedLiveConnection().reconnectNow();
 }
 
 export function resetSharedLiveConnection(): void {

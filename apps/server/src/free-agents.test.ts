@@ -39,6 +39,7 @@ import { ObjectService } from './object-service.js';
 import { PgliteDatabase, MemoryObjectStorage } from './test-support.js';
 import { recordSigninFunnelEvent, recordOnboardingEvent } from './signin-funnel.js';
 import { dashboardPeriods } from './operator-dashboard-periods.js';
+import { reportSquireWork } from './squire-machine.js';
 
 const sentryCaptures = vi.hoisted(() => [] as { error: unknown; tags: Record<string, string> | undefined }[]);
 vi.mock('./sentry.js', async (importOriginal) => ({
@@ -811,6 +812,109 @@ describe('free starter agents', () => {
         )
       ).rows[0]!.body,
     ).toMatchObject({ status: 'online', held: true, asleep: true });
+  });
+
+  it('R-SQUIRE-SLEEP: phone pairing wakes a suspended Machine without an agent command', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
+    await vi.waitFor(() => expect(machines.states.get(agent.fly_machine_id!)).toBe('suspended'));
+    machines.calls.length = 0;
+    const pairing = await phone.execute('pairConnector', {
+      helperAgentId: agent.agent_id, connectorType: 'trusty-squire',
+    }, OWNER);
+    expect(pairing.status.status).toBe('installing');
+    await freeAgents.sweep();
+    expect(machines.states.get(agent.fly_machine_id!)).toBe('started');
+    expect(machines.calls).toEqual([`start ${agent.fly_machine_id}`]);
+  });
+
+  it.each(['complete', 'error', 'disconnect'] as const)('R-SQUIRE-SLEEP: protects sign-in from helper sleep and reaping until %s', async (ending) => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`DELETE FROM agent_commands WHERE agent_id=$1`, [agent.agent_id]);
+    const pairing = await phone.execute('pairConnector', {
+      helperAgentId: agent.agent_id, connectorType: 'trusty-squire',
+    }, OWNER);
+    await db.transaction(db => reportSquireWork(db, agent.agent_id, {
+      connectorId: pairing.connectorId, pairingGeneration: 1,
+      steps: [{ label: 'Install on helper', status: 'complete' }],
+      signIn: { method: 'streamed-page', url: 'https://signin.example.test' },
+    }));
+    await db.query(`UPDATE free_agents SET state='running',last_activity_at=now()-interval '10 minutes',
+      wake_requested_at=now()-interval '10 minutes' WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('pairing',now())`);
+    await claimAgentConnection(db, live, agent.agent_id, { lifecycleId: 'pairing' }, {
+      connectionId: 'pairing', instanceId: 'pairing',
+    });
+    await db.query(`UPDATE free_agents SET last_activity_at=now()-interval '10 minutes',
+      wake_requested_at=now()-interval '10 minutes' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.calls.length = 0;
+    expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: false });
+    await freeAgents.sweep();
+    expect(machines.calls).toEqual([]);
+    if (ending === 'disconnect') await phone.execute('unpairConnector', { connectorId: pairing.connectorId }, OWNER);
+    else await db.transaction(db => reportSquireWork(db, agent.agent_id, {
+      connectorId: pairing.connectorId, pairingGeneration: 1, steps: [],
+      ...(ending === 'error' ? { errorMessage: 'Sign-in cancelled' } : { signedInAs: 'owner' }),
+    }, ending === 'complete'));
+    await freeAgents.sweep();
+    expect(machines.calls).toEqual([`stop ${agent.fly_machine_id}`]);
+    // The normal helper sleep path also releases after the terminal report.
+    await db.query(`UPDATE free_agents SET state='running' WHERE agent_id=$1`, [agent.agent_id]);
+    expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: true });
+    await vi.waitFor(() => expect(machines.calls).toContain(`suspend ${agent.fly_machine_id}`));
+  });
+
+  it.each(['budget', 'start-limit'] as const)('R-SQUIRE-SLEEP: connector wakes respect the %s fence', async (fence) => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`DELETE FROM agent_commands WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='sleeping' WHERE agent_id=$1`, [agent.agent_id]);
+    if (fence === 'budget') await db.query(`INSERT INTO free_agent_budget(day,usd) VALUES(current_date,25)`);
+    else await db.query(`INSERT INTO free_agent_events(agent_id,kind) VALUES($1,'start_limit_reached')`, [agent.agent_id]);
+    await phone.execute('pairConnector', { helperAgentId: agent.agent_id, connectorType: 'trusty-squire' }, OWNER);
+    machines.calls.length = 0;
+    const off = freeAgents.subscribeToWakes(live);
+    try {
+      live.publish({ type: 'invalidate', roomId: '', reason: 'connector-assignment', targetAgentId: agent.agent_id });
+      await settle();
+      await freeAgents.sweep();
+      expect(machines.calls).toEqual([]);
+    } finally { off(); }
+  });
+
+  it.each(['trusty-squire', 'tailscale'] as const)('R-SQUIRE-SLEEP: %s assignment wakes immediately and holds idle sleep', async (connectorType) => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`DELETE FROM agent_commands WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE free_agents SET state='sleeping' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.states.set(agent.fly_machine_id!, 'suspended');
+    await phone.execute('pairConnector', { helperAgentId: agent.agent_id, connectorType }, OWNER);
+    machines.calls.length = 0;
+    const off = freeAgents.subscribeToWakes(live);
+    try {
+      live.publish({ type: 'invalidate', roomId: '', reason: 'connector-assignment', targetAgentId: agent.agent_id });
+      await vi.waitFor(() => expect(machines.calls).toEqual([`start ${agent.fly_machine_id}`]));
+      expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: false });
+    } finally { off(); }
+  });
+
+  it('R-SQUIRE-SLEEP: unrelated connector notifications do not provision an unused free agent', async () => {
+    const workspace = await phone.execute('createWorkspace', { name: 'Unused' }, OWNER);
+    const agent = await freeAgentOf(workspace.id);
+    const off = freeAgents.subscribeToWakes(live);
+    try {
+      live.publish({ type: 'invalidate', roomId: '', reason: 'connector-assignment', targetAgentId: agent.agent_id });
+      await settle();
+      expect(machines.calls).toEqual([]);
+    } finally { off(); }
   });
 
   it('sleeps only when no wake is pending, suspending and falling back to stop', async () => {

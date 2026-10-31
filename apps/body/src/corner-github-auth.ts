@@ -9,7 +9,8 @@ export interface CornerGitHubLaunchers {
   readonly env: Record<string, string>;
   /**
    * `host` when `gh` delegates to a real host binary, `rest` when this host has
-   * no `gh` and the launcher answers `gh pr create`/`gh pr view` itself.
+   * no `gh` and the launcher answers `gh pr create`, `gh pr view`, and a title
+   * or body `gh pr edit` itself.
    */
   readonly githubCli: CornerGitHubCli;
 }
@@ -20,8 +21,10 @@ export interface CornerGitHubLaunchers {
  *
  * `gh` is always installed. When a host `gh` exists the launcher delegates to
  * it with the refreshed token; when it does not, the launcher answers
- * `gh pr create` and `gh pr view` directly over the GitHub REST API with the
- * same token, so a corner can always open and read its pull request.
+ * `gh pr create`, `gh pr view`, and a title or body `gh pr edit` directly over
+ * the GitHub REST API with the same token. Host `gh` still asks GraphQL for
+ * retired classic Projects on every edit, so those edits never go to the host
+ * binary. A corner can always open, retitle, rewrite, and read its pull request.
  */
 export async function installCornerGitHubWrappers(input: {
   root: string;
@@ -510,13 +513,70 @@ async function runRest(args, value) {
     process.stdout.write((pr.html_url || '') + '\\n');
     return { status: 0, authenticationFailed: false };
   }
-  process.stderr.write('Beeline: this host has no gh binary; only gh pr create and gh pr view are provided through the app token. Use git for push and the Beeline read tool with facet checks.\\n');
+  if (action === 'edit') {
+    let body = flagValue(args, ['--body', '-b']);
+    const bodyFile = flagValue(args, ['--body-file', '-F']);
+    const title = flagValue(args, ['--title', '-t']);
+    if (bodyFile !== undefined && body === undefined) {
+      try { body = readFileSync(bodyFile, 'utf8'); } catch {
+        process.stderr.write('gh: could not read body file ' + bodyFile + '\\n');
+        return { status: 1, authenticationFailed: false };
+      }
+    }
+    if (title === undefined && body === undefined) {
+      process.stderr.write('gh: a title or body is required (--title, --body, or --body-file)\\n');
+      return { status: 1, authenticationFailed: false };
+    }
+    let number = args.slice(2).map((arg) => arg.match(/^([0-9]+)$/)).find(Boolean);
+    number = number ? Number(number[1]) : undefined;
+    if (number === undefined) {
+      const owner = slug.split('/')[0];
+      const listed = await github('/repos/' + slug + '/pulls?state=open&head=' + encodeURIComponent(owner + ':' + config.featureBranch), {}, value);
+      if (!listed.ok) return { status: 1, authenticationFailed: listed.status === 401 || listed.status === 403 };
+      const first = Array.isArray(listed.data) ? listed.data[0] : undefined;
+      if (!first) {
+        process.stderr.write('gh: no pull request found for branch ' + config.featureBranch + '\\n');
+        return { status: 1, authenticationFailed: false };
+      }
+      number = first.number;
+    }
+    const patch = {};
+    if (title !== undefined) patch.title = title;
+    if (body !== undefined) patch.body = body;
+    const updated = await github('/repos/' + slug + '/pulls/' + number, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }, value);
+    if (!updated.ok) return { status: 1, authenticationFailed: updated.status === 401 || updated.status === 403 };
+    process.stdout.write((updated.data.html_url || '') + '\\n');
+    return { status: 0, authenticationFailed: false };
+  }
+  process.stderr.write('Beeline: this host has no gh binary; only gh pr create, gh pr view, and gh pr edit of a title or body are provided through the app token. Use git for push and the Beeline read tool with facet checks.\\n');
   return { status: 1, authenticationFailed: false };
 }
 function isRestCommand(args) {
   return config.launcher === 'gh' && args[0] === 'pr' && (args[1] === 'create' || args[1] === 'view');
 }
+function isPullRequestBodyEdit(args) {
+  if (config.launcher !== 'gh' || args[0] !== 'pr' || args[1] !== 'edit') return false;
+  const valued = new Set(['--title', '-t', '--body', '-b', '--body-file', '-F', '--repo', '-R']);
+  let edits = false;
+  for (let index = 2; index < args.length; index += 1) {
+    const arg = args[index];
+    if (/^[0-9]+$/.test(arg)) continue;
+    const eq = arg.indexOf('=');
+    const name = eq === -1 ? arg : arg.slice(0, eq);
+    if (!valued.has(name)) return false;
+    if (name === '--title' || name === '-t' || name === '--body' || name === '-b' || name === '--body-file' || name === '-F')
+      edits = true;
+    if (eq === -1) index += 1;
+  }
+  return edits;
+}
 async function execute(args, value) {
+  // Host gh fetches retired classic Projects on every edit, including a body
+  // change, and GitHub rejects that query. Title and body edits skip it.
+  if (isPullRequestBodyEdit(args)) return runRest(args, value);
   if (isRestCommand(args)) {
     if (config.command) {
       const result = await runCommand(config.command, args, value).catch(() => ({ status: 1, authenticationFailed: true }));

@@ -629,6 +629,67 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     }
   });
 
+  it('rewrites a pull request title and body over REST when host gh would query classic projects', async () => {
+    const requests: Array<{ method: string; url: string; body: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push({ method: request.method, url: request.url, body: request.body });
+      if (request.method === 'GET' && request.url?.startsWith('/repos/acme/widget/pulls?')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify([{ number: 12, html_url: 'https://github.com/acme/widget/pull/12' }]));
+        return;
+      }
+      if (request.method === 'PATCH' && request.url === '/repos/acme/widget/pulls/12') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/12' }));
+        return;
+      }
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ message: 'Not Found' }));
+    });
+    try {
+      const { root, gh } = await fixture(
+        '/usr/bin/git',
+        `process.stderr.write('GraphQL: Projects (classic) is being deprecated (repository.pullRequest.projectCards)\\n'); process.exit(1);`,
+      );
+      const bodyFile = join(root, 'body.md');
+      await writeFile(bodyFile, 'Rewritten body\n');
+      const env = { ...process.env, GITHUB_API_URL: api.url };
+      const edited = await execFileAsync(
+        gh,
+        ['pr', 'edit', '--repo', 'acme/widget', '--title', 'Renamed', '--body-file', bodyFile],
+        { env },
+      );
+      expect(edited.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+      expect(edited.stderr).toBe('');
+      expect(requests[0]).toMatchObject({
+        method: 'GET',
+        url: `/repos/acme/widget/pulls?state=open&head=${encodeURIComponent(`acme:${featureBranch}`)}`,
+      });
+      expect(requests[1]).toMatchObject({ method: 'PATCH', url: '/repos/acme/widget/pulls/12' });
+      expect(JSON.parse(requests[1]!.body)).toEqual({ title: 'Renamed', body: 'Rewritten body\n' });
+      const numbered = await execFileAsync(
+        gh,
+        ['pr', 'edit', '12', '--repo', 'acme/widget', '--body-file', bodyFile],
+        { env },
+      );
+      expect(numbered.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+      expect(requests[2]).toMatchObject({ method: 'PATCH', url: '/repos/acme/widget/pulls/12' });
+      expect(JSON.parse(requests[2]!.body)).toEqual({ body: 'Rewritten body\n' });
+      console.log('gh pr edit --body-file: REST patch, host gh not called');
+    } finally {
+      await api.close();
+    }
+  });
+
+  it('still sends reviewer and label edits to the host gh binary', async () => {
+    const { gh } = await fixture(
+      '/usr/bin/git',
+      `process.stdout.write(process.argv.slice(2).join(' ') + '\\n');`,
+    );
+    const result = await execFileAsync(gh, ['pr', 'edit', '12', '--add-label', 'bug']);
+    expect(result.stdout.trim()).toBe('pr edit 12 --add-label bug');
+  });
+
   it('creates the feature branch remote-tracking ref after a launcher push', async () => {
     const { root, git } = await fixture();
     const repo = join(root, 'repo');

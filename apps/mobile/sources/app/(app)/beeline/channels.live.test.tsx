@@ -18,6 +18,7 @@ const deck = vi.hoisted(() => ({
   workspaceFailures: [] as Error[],
   workspaceReads: 0,
   useRealWorkspaceRead: false,
+  socketRequest: vi.fn(),
   selectedWorkspace: 'workspace' as string | null,
   chatsResponse: null as unknown,
   reconnects: 0,
@@ -220,6 +221,7 @@ vi.mock('@/sync/transport', () => ({
 // The app-level Room list store watches through the shared live connection.
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
+    request: deck.socketRequest,
     register: async (
       filters: readonly { readonly '#h'?: readonly string[] }[],
       listener: (event: MonolithSurfaceEvent) => void,
@@ -376,6 +378,7 @@ beforeEach(() => {
   deck.workspaceFailures = [];
   deck.workspaceReads = 0;
   deck.useRealWorkspaceRead = false;
+  deck.socketRequest.mockReset();
   deck.selectedWorkspace = 'workspace';
   deck.reconnects = 0;
   deck.storedInvite = null;
@@ -409,14 +412,15 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('demonstrates the landing through the real guarded workspace HTTP reader', async () => {
+  it('demonstrates the landing through the real guarded workspace socket reader', async () => {
     const { monolithSession, MonolithRequestTimeoutError } = await import('@/auth/monolith-session');
-    const request = vi.spyOn(monolithSession, 'fetch')
+    const http = vi.spyOn(monolithSession, 'fetch');
+    const request = deck.socketRequest
       .mockRejectedValueOnce(new MonolithRequestTimeoutError())
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      .mockResolvedValueOnce({
         workspaces: [], viewer: { pubkey: 'a'.repeat(64), name: 'New user', kind: 'human' },
         watchFilters: [], truncated: false,
-      }), { status: 200 }));
+      });
     deck.selectedWorkspace = null;
     deck.useRealWorkspaceRead = true;
     let renderer!: ReactTestRenderer;
@@ -424,12 +428,13 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
       await quiet();
       expect(request).toHaveBeenCalledTimes(2);
-      expect(request.mock.calls.every(([url]) => url.endsWith('/v1/phone/workspaces'))).toBe(true);
+      expect(request.mock.calls.every(([operation]) => operation === 'readWorkspaces')).toBe(true);
+      expect(http).not.toHaveBeenCalled();
       expect(router.replace).toHaveBeenCalledWith('/beeline/community');
       expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
     } finally {
       if (renderer) await act(async () => renderer.unmount());
-      request.mockRestore();
+      http.mockRestore();
     }
   });
 

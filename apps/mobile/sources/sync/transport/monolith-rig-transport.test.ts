@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const controls = vi.hoisted(() => ({
   fetch: vi.fn(),
+  request: vi.fn(),
   activation: vi.fn(),
   authorization: vi.fn(),
   identityListeners: new Set<() => void>(),
@@ -64,7 +65,9 @@ vi.mock('react-native-mmkv', () => ({
 }));
 
 import { MonolithRigTransport } from './monolith-rig-transport';
-import { resetSharedLiveConnection } from './live-connection';
+import { sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
+import { PhoneSocketError } from './phone-socket-error';
+import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { BuzzRigTransport } from './buzz-rig-transport';
 import { MonolithPhoneOperationError, monolithPhoneOperation } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
@@ -98,12 +101,28 @@ async function driveHandleSendPath(
   return preparedEvent;
 }
 
+// HTTP-shaped response fixtures feed the socket seam; uploads keep their HTTP seam.
+beforeEach(() => {
+  controls.request.mockReset();
+  controls.request.mockImplementation(async (name, input) => {
+    const response = await controls.fetch(name, input);
+    if (!response.ok) {
+      const body = await response.json();
+      const code = response.status === 409 ? 'conflict' : response.status === 403 ? 'access_denied' : 'unavailable';
+      throw new PhoneSocketError(code, body.error, response.status >= 500);
+    }
+    return response.status === 204 ? undefined : response.json();
+  });
+  vi.spyOn(sharedLiveConnection(), 'request').mockImplementation(controls.request);
+});
+afterEach(() => { resetSharedLiveConnection(); });
+
 describe('monolith Room send path', () => {
   beforeEach(() => {
     clearMobileSurfaceStorage();
     controls.fetch.mockReset();
     controls.fetch.mockImplementation(async (_url: string, init: RequestInit) => {
-      const input = JSON.parse(String(init.body)) as { messageId: string };
+      const input = init as { messageId: string };
       return new Response(JSON.stringify({ messageId: input.messageId }), { status: 200 });
     });
     controls.authorization.mockReset();
@@ -253,9 +272,7 @@ describe('monolith Room send path', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(999);
-    expect(sockets).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
 
     stop();
@@ -382,10 +399,10 @@ describe('monolith Room send path', () => {
     expect(verifyEvent(event)).toBe(false);
     expect(publish).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledWith(event);
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/sendRoomMessage',
-      expect.objectContaining({ method: 'POST' }),
-      { timeoutMs: 15_000, idempotent: true },
+    expect(controls.request).toHaveBeenCalledWith(
+      "sendRoomMessage",
+      expect.any(Object),
+      { timeoutMs: 15_000 },
     );
   });
 
@@ -421,12 +438,12 @@ describe('monolith Room send path', () => {
     expect(event.tags).toContainEqual(['monolith-parent', 'parent-message-id']);
     expect(publish).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledWith(event);
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/sendRoomReply',
-      expect.objectContaining({ method: 'POST' }),
-      { timeoutMs: 15_000, idempotent: true },
+    expect(controls.request).toHaveBeenCalledWith(
+      "sendRoomReply",
+      expect.any(Object),
+      { timeoutMs: 15_000 },
     );
-    expect(JSON.parse(String(controls.fetch.mock.calls[0]![1]?.body))).toEqual({
+    expect(controls.request.mock.calls[0]![1]).toEqual({
       roomId: ROOM,
       messageId: event.id,
       text: 'Reply from the Room',
@@ -459,7 +476,7 @@ describe('monolith Room send path', () => {
       ),
     );
 
-    expect(JSON.parse(String(controls.fetch.mock.calls[0]![1]?.body))).toEqual({
+    expect(controls.request.mock.calls[0]![1]).toEqual({
       roomId: ROOM,
       messageId: event.id,
       text: '@Terra What is your soul?',
@@ -546,10 +563,10 @@ describe('monolith Room send path', () => {
       handle: 'monolith-person',
       avatar: 'https://images.example/person.png',
     });
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/getManagedIdentity',
-      expect.objectContaining({ method: 'POST' }),
-      { timeoutMs: 15_000, idempotent: true },
+    expect(controls.request).toHaveBeenCalledWith(
+      "getManagedIdentity",
+      expect.any(Object),
+      { timeoutMs: 15_000 },
     );
   });
 
@@ -569,24 +586,19 @@ describe('monolith Room send path', () => {
     );
   });
 
-  it('R1: bounds a Close corner transport that ignores abort', async () => {
-    vi.useFakeTimers();
-    try {
-      controls.fetch.mockImplementation(() => new Promise(() => {}));
-      const result = new MonolithRigTransport(identity).closeCorner(ROOM).catch((error: unknown) => error);
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(await result).toBeInstanceOf(Error);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally { vi.useRealTimers(); }
+  it('propagates a socket deadline failure on Close corner without retrying', async () => {
+    controls.fetch.mockRejectedValueOnce(new MonolithRequestTimeoutError());
+    await expect(new MonolithRigTransport(identity).closeCorner(ROOM)).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+    expect(controls.request).toHaveBeenCalledOnce();
   });
 
   it('persists the corner lock through the human operation', async () => {
     controls.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
     const transport = new MonolithRigTransport(identity);
     await expect(transport.setCornerLocked(ROOM, true)).resolves.toBeUndefined();
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/setCornerLocked',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ roomId: ROOM, locked: true }) }),
+    expect(controls.request).toHaveBeenCalledWith(
+      "setCornerLocked",
+      { roomId: ROOM, locked: true },
       expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
@@ -597,15 +609,12 @@ describe('monolith Room send path', () => {
 
     await expect(transport.closeCorner(ROOM)).resolves.toBeUndefined();
 
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/requestCornerClose',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ roomId: ROOM }),
-      }),
+    expect(controls.request).toHaveBeenCalledWith(
+      "requestCornerClose",
+      { roomId: ROOM },
       expect.objectContaining({ timeoutMs: 20_000 }),
     );
-    expect(String(controls.fetch.mock.calls[0]![1]?.body)).not.toContain('Close this corner.');
+    expect(JSON.stringify(controls.request.mock.calls[0]![1])).not.toContain('Close this corner.');
   });
 
   it('creates a title-only human corner through the phone operation', async () => {
@@ -617,12 +626,9 @@ describe('monolith Room send path', () => {
     await expect(transport.createHumanCorner(ROOM, 'Release notes')).resolves.toBe(
       'human-corner-id',
     );
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/createHumanCorner',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ roomId: ROOM, title: 'Release notes' }),
-      }),
+    expect(controls.request).toHaveBeenCalledWith(
+      "createHumanCorner",
+      { roomId: ROOM, title: 'Release notes' },
       { timeoutMs: 15_000 },
     );
   });
@@ -635,11 +641,9 @@ describe('monolith Room send path', () => {
     const appInstallationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
     await transport.createHumanCorner(ROOM, 'Release board', appInstallationId);
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/createHumanCorner',
-      expect.objectContaining({
-        body: JSON.stringify({ roomId: ROOM, title: 'Release board', appInstallationId }),
-      }),
+    expect(controls.request).toHaveBeenCalledWith(
+      "createHumanCorner",
+      { roomId: ROOM, title: 'Release board', appInstallationId },
       { timeoutMs: 15_000 },
     );
   });
@@ -660,18 +664,16 @@ describe('monolith Room send path', () => {
       true,
       cornerId,
     );
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/createHumanCorner',
-      expect.objectContaining({
-        body: JSON.stringify({
+    expect(controls.request).toHaveBeenCalledWith(
+      "createHumanCorner",
+      {
           roomId: ROOM,
           title: 'quiet amber corner',
           sourceMessageId,
           titleGenerated: true,
           cornerId,
-        }),
-      }),
-      { timeoutMs: 15_000, idempotent: true },
+        },
+      { timeoutMs: 15_000 },
     );
   });
 
@@ -702,18 +704,15 @@ describe('monolith Room send path', () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/updateAgentSoul',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
+    expect(controls.request).toHaveBeenCalledWith(
+      "updateAgentSoul",
+      {
           workspaceId: 'workspace-id',
           agentId: 'agent-id',
           name: 'Honeybee',
           instructions: 'Be precise and practical.',
           avatarSeed: 'honeybee-seed',
-        }),
-      }),
+        },
       expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
@@ -735,15 +734,13 @@ describe('monolith Room send path', () => {
       },
     });
 
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/createRoom',
-      expect.objectContaining({
-        body: JSON.stringify({
+    expect(controls.request).toHaveBeenCalledWith(
+      "createRoom",
+      {
           workspaceId: 'workspace-id',
           name: 'Repository Room',
           repositoryId: 77,
-        }),
-      }),
+        },
       expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
@@ -756,18 +753,16 @@ describe('monolith Room send path', () => {
 
     await transport.createRoom('Chat Room', { communityId: 'workspace-id' });
 
-    expect(controls.fetch).toHaveBeenCalledWith(
-      'https://server.example/v1/phone/operations/createRoom',
-      expect.objectContaining({
-        body: JSON.stringify({ workspaceId: 'workspace-id', name: 'Chat Room' }),
-      }),
+    expect(controls.request).toHaveBeenCalledWith(
+      "createRoom",
+      { workspaceId: 'workspace-id', name: 'Chat Room' },
       expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
 
   it('preserves the shared repository and installation shapes used by the repo picker', async () => {
     controls.fetch.mockImplementation(async (url: string, init: RequestInit) => {
-      if (url.endsWith('/listGitHubRepositories')) {
+      if (url === 'listGitHubRepositories') {
         return Response.json({
           installed: true,
           installations: [
@@ -787,7 +782,7 @@ describe('monolith Room send path', () => {
           ],
         });
       }
-      const input = JSON.parse(String(init.body));
+      const input = init;
       return Response.json({
         channelId: ROOM,
         binding: {
@@ -827,7 +822,7 @@ describe('monolith Room send path', () => {
       githubInstallationId: 77,
     });
     expect(linked.binding.name).toBe('owner/widgets');
-    expect(JSON.parse(String(controls.fetch.mock.calls.at(-1)?.[1]?.body))).toEqual({
+    expect(controls.request.mock.calls.at(-1)?.[1]).toEqual({
       roomId: ROOM,
       key: 'github:101',
       name: 'owner/widgets',
@@ -839,7 +834,7 @@ describe('monolith Room send path', () => {
 
   it('unassigns the Room repository through the void phone operation', async () => {
     controls.fetch.mockImplementation(async (_url: string, init: RequestInit) => {
-      expect(JSON.parse(String(init.body))).toEqual({ roomId: ROOM });
+      expect(init).toEqual({ roomId: ROOM });
       return new Response(undefined, { status: 204 });
     });
     const transport = new MonolithRigTransport(identity);

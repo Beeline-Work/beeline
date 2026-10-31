@@ -44,10 +44,12 @@ describe.runIf(enabled)('isolated launchd restart contract', () => {
     await writeFile(modePath, 'run');
     await writeFile(resolve(home, '.local/bin/beeline'), `#!/bin/sh
 count_file=${JSON.stringify(countPath)}
+mode=$(cat ${JSON.stringify(modePath)})
 count=0
 test ! -f "$count_file" || count=$(cat "$count_file")
+# Capture this generation's mode before publishing its start to the test.
 printf '%s\n' "$((count+1))" > "$count_file"
-test "$(cat ${JSON.stringify(modePath)})" != terminal || exit 79
+test "$mode" != terminal || exit 79
 trap 'exit 0' TERM INT
 while :; do sleep 1; done
 `, { mode: 0o700 });

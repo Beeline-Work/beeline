@@ -1,12 +1,12 @@
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
+import { sharedLiveConnection } from './live-connection';
+import { PhoneSocketError } from './phone-socket-error';
 
 /**
  * Reads Beeline answers from its own database in well under a second. They
- * get the phone's read deadline and may be repeated on a fresh connection
- * when the first attempt stalls. Reads that wait on GitHub or a connector
+ * get the phone's read deadline. Reads that wait on GitHub or a connector
  * are slow by nature and keep their callers' own bounds.
  */
 const DATABASE_READS: ReadonlySet<string> = new Set<keyof PhoneOperationMap>([
@@ -35,7 +35,7 @@ const DATABASE_READS: ReadonlySet<string> = new Set<keyof PhoneOperationMap>([
 /**
  * Writes the server answers the same however often they arrive: one keyed by
  * the id the phone chose (a corner, a message), or one that sets a state.
- * A stalled one is repeated on a fresh connection before anyone sees an error.
+ * Their existing read deadline remains unchanged on the socket.
  */
 function repeatableWrite(name: string, input: unknown): boolean {
   const fields = (input ?? {}) as Record<string, unknown>;
@@ -56,15 +56,15 @@ function repeatableWrite(name: string, input: unknown): boolean {
   }
 }
 
-/** How one phone operation is sent: its deadline, and whether a stall may repeat it. */
+/** Keep each operation’s existing deadline when moving it to the socket. */
 export function phoneOperationRequestOptions(
   name: string,
   input: unknown,
   options?: { timeoutMs?: number },
-): { timeoutMs?: number; idempotent?: boolean } | undefined {
+): { timeoutMs: number } {
   // Repository installation may wait for GitHub's installation propagation;
   // retain its existing longer deadline rather than cutting it to the default.
-  if (name === 'actOnRepositoryCard') return { timeoutMs: options?.timeoutMs ?? 60_000, idempotent: !['install', 'organization'].includes(String((input as { action?: unknown })?.action)) };
+  if (name === 'actOnRepositoryCard') return { timeoutMs: options?.timeoutMs ?? 60_000 };
   // Creation can rotate a user grant, mint an installation grant, then create
   // the repository: 3 sequential GitHub calls × 15s, plus local work.
   if (name === 'createGitHubRepository') return { timeoutMs: options?.timeoutMs ?? 60_000 };
@@ -72,9 +72,9 @@ export function phoneOperationRequestOptions(
   // each) and two bounded retry-read backoffs (90s each). Keep 30s for local
   // work. The call-count table in evidence/operation-deadlines documents it.
   if (name === 'approveCornerMerge') return { timeoutMs: options?.timeoutMs ?? 540_000 };
-  const idempotent = DATABASE_READS.has(name) || repeatableWrite(name, input);
-  if (!idempotent) return { timeoutMs: options?.timeoutMs ?? 20_000 };
-  return { timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS, idempotent: true };
+  const readDeadline = DATABASE_READS.has(name) || repeatableWrite(name, input);
+  if (!readDeadline) return { timeoutMs: options?.timeoutMs ?? 20_000 };
+  return { timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS };
 }
 
 export class MonolithPhoneOperationError extends Error {
@@ -101,55 +101,19 @@ export function phoneOperationFailureReason(error: unknown): string {
 export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name,
   input: PhoneOperationMap[Name]['input'],
-  options?: { timeoutMs?: number; baseUrl?: string },
+  options?: { timeoutMs?: number },
 ): Promise<PhoneOperationMap[Name]['output']> {
-  const request = phoneOperationRequestOptions(name, input, options);
-  // Bound authorization, transport and response decoding together. Native
-  // transports may ignore abort, so the caller also races the deadline.
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      performPhoneOperation(name, input, request, controller.signal, options?.baseUrl),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(new MonolithRequestTimeoutError());
-          controller.abort();
-        }, request?.timeoutMs ?? 20_000);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    const result = await sharedLiveConnection().request(name,
+      name === 'createWorkspace' ? { ...input, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : input,
+      phoneOperationRequestOptions(name, input, options),
+    );
+    if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
+      void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
+    return result;
+  } catch (error) {
+    if (error instanceof PhoneSocketError)
+      throw new MonolithPhoneOperationError(name, error.status, error.message);
+    throw error;
   }
-}
-
-async function performPhoneOperation<Name extends keyof PhoneOperationMap>(
-  name: Name,
-  input: PhoneOperationMap[Name]['input'],
-  request: ReturnType<typeof phoneOperationRequestOptions>,
-  signal: AbortSignal,
-  baseUrl = getBuzzRuntimeConfig().monolithUrl,
-): Promise<PhoneOperationMap[Name]['output']> {
-  const response = await monolithSession.fetch(
-    `${baseUrl}/v1/phone/operations/${name}`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(name === 'createWorkspace' ? { ...input, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : input),
-      signal,
-    },
-    request,
-  );
-  if (!response.ok) {
-    let code = 'request_failed';
-    try {
-      const body = (await response.json()) as { error?: unknown };
-      if (typeof body.error === 'string' && body.error) code = body.error;
-    } catch {}
-    throw new MonolithPhoneOperationError(name, response.status, code);
-  }
-  if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
-    void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
-  if (response.status === 204) return undefined as PhoneOperationMap[Name]['output'];
-  return (await response.json()) as PhoneOperationMap[Name]['output'];
 }

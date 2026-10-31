@@ -9,9 +9,9 @@ import { resetClientState } from '@/sync/client-reset';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
-import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
-import { beginNetworkResponseTiming, type NetworkResponseTiming } from './network-response-timing';
+import { beginNetworkResponseTiming } from './network-response-timing';
 import { isOptionalRoomRequest, waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import { reportRequestDeadlineMissed } from '@/sync/transport/request-deadline';
 
 // Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
 loadXPixel(readWebXAttribution());
@@ -22,20 +22,10 @@ const ACCESS_KEY = 'buzzy.monolith.access.v1';
 
 async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isDesktopShell()) {
-    return (init?.method ?? 'GET').toUpperCase() === 'GET' && /\/v1\/phone\/rooms\/[^/?]+$/.test(String(input))
-      ? fetchOpeningRoom(input, init)
-      : fetch(input, init);
+    return fetch(input, init);
   }
   const { fetch: desktopFetch } = await import('@tauri-apps/plugin-http');
   return desktopFetch(input, init);
-}
-
-/** Native arrival and JS handling times for the winning Room HTTP attempt. */
-const responseTimings = new WeakMap<Response, NetworkResponseTiming>();
-
-export function monolithResponseTiming(response: Response):
-  NetworkResponseTiming | null {
-  return responseTimings.get(response) ?? null;
 }
 
 export interface MonolithTokens {
@@ -51,34 +41,15 @@ export interface MonolithTokens {
 export const MONOLITH_REQUEST_TIMEOUT_MS = 15_000;
 /** Shorter than a read's deadline, so a read that waited on it can retry. */
 const MONOLITH_REFRESH_TIMEOUT_MS = 10_000;
-/**
- * A repeatable request still unanswered after this long is sent again on a
- * fresh connection, and whichever answers first is used. The server answers
- * a phone read in well under a second.
- */
-export const MONOLITH_STALL_PROBE_MS = 4_000;
-
-/**
- * Another origin for the same server, whose certificate the primary's does
- * not cover. React Native's Android HTTP client (OkHttp, configured with no
- * read timeout) keeps a pooled HTTP/2 connection that went silently dead (a
- * NAT mapping lost while the phone slept, a network change) and multiplexes
- * every later request onto it; aborting a request never evicts it. A request
- * to a host the pooled connection's certificate cannot serve must open a new
- * connection, so the alternate origin is the one path guaranteed fresh.
- */
-const ALTERNATE_MONOLITH_ORIGINS: Readonly<Record<string, string>> = {
-  'https://server.usebeeline.app': 'https://beeline-server.fly.dev',
-};
-
 export function monolithOrigins(baseUrl: string): readonly string[] {
-  const alternate = ALTERNATE_MONOLITH_ORIGINS[baseUrl];
-  return alternate ? [baseUrl, alternate] : [baseUrl];
+  return [baseUrl];
 }
 
 export class MonolithRequestTimeoutError extends Error {
   constructor() {
-    super('The server did not answer in time. The result is unknown. Refresh to check before trying again.');
+    super(
+      'The server did not answer in time. The result is unknown. Refresh to check before trying again.',
+    );
     this.name = 'MonolithRequestTimeoutError';
   }
 }
@@ -133,49 +104,19 @@ export class MonolithSession {
   private credentialRevision = 0;
   private sessionRevision = 0;
   private credentialMutation: Promise<void> = Promise.resolve();
-  /** Each origin with when a request on it last went unanswered (0: never). */
-  private readonly origins: { readonly origin: string; stalledAt: number }[];
-  private currentOrigin = 0;
-
   constructor(
     private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl,
     private readonly fetchImpl: typeof fetch = monolithFetch,
     private readonly secureStorage: () => Promise<MonolithSecureStorage> = monolithSecureStorage,
-    origins: readonly string[] = monolithOrigins(baseUrl),
-  ) {
-    this.origins = origins.map((origin) => ({ origin, stalledAt: 0 }));
-  }
+    _origins: readonly string[] = monolithOrigins(baseUrl),
+  ) {}
 
   /**
-   * A request on the origin `input` names went unanswered past its deadline
-   * (headers or body): the connection under it is presumed dead, so every
-   * later request moves to another origin.
+   * A request past its deadline makes the shared socket suspect. HTTP keeps
+   * its configured primary origin; recovery rides the one live socket.
    */
-  noteStalled(input: string): void {
-    const index = this.origins.findIndex(({ origin }) => input.startsWith(origin));
-    this.markStalled(index >= 0 ? index : this.currentOrigin);
-  }
-
-  private markStalled(index: number): void {
-    this.origins[index]!.stalledAt = Date.now();
-    if (index === this.currentOrigin) this.currentOrigin = this.freshestOther(index);
-  }
-
-  /** The other origin that stalled longest ago (or never); `index` when there is none. */
-  private freshestOther(index: number): number {
-    let best = index;
-    for (let candidate = 0; candidate < this.origins.length; candidate += 1) {
-      if (candidate === index) continue;
-      if (best === index || this.origins[candidate]!.stalledAt < this.origins[best]!.stalledAt)
-        best = candidate;
-    }
-    return best;
-  }
-
-  private onOrigin(input: string, index: number): string {
-    return input.startsWith(this.baseUrl)
-      ? `${this.origins[index]!.origin}${input.slice(this.baseUrl.length)}`
-      : input;
+  noteStalled(_input: string): void {
+    reportRequestDeadlineMissed();
   }
 
   async exchangeGitHubTicket(ticket: string, funnel?: SigninFunnelEvent): Promise<string> {
@@ -211,10 +152,15 @@ export class MonolithSession {
 
   async linkGoogleTicket(ticket: string): Promise<void> {
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/google/link`, {
-      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${await this.authorization()}` },
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${await this.authorization()}`,
+      },
       body: JSON.stringify({ oidcToken: ticket }),
     });
-    if (response.status === 409) throw new Error('That Google account belongs to another Beeline account.');
+    if (response.status === 409)
+      throw new Error('That Google account belongs to another Beeline account.');
     if (!response.ok) throw new Error('Could not connect Google. Try again.');
   }
 
@@ -250,10 +196,17 @@ export class MonolithSession {
     const acceptedRevision = this.credentialRevision;
     await this.mutateCredentials(async () => {
       if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
-      await (await this.secureStorage()).setItemAsync(ACCESS_KEY, JSON.stringify({
-        token: tokens.accessToken, expiresAt: tokens.accessExpiresAt, identityId: tokens.identityId,
-        reviewSecretHash: bytesToHex(sha256(utf8ToBytes(secret))),
-      }));
+      await (
+        await this.secureStorage()
+      ).setItemAsync(
+        ACCESS_KEY,
+        JSON.stringify({
+          token: tokens.accessToken,
+          expiresAt: tokens.accessExpiresAt,
+          identityId: tokens.identityId,
+          reviewSecretHash: bytesToHex(sha256(utf8ToBytes(secret))),
+        }),
+      );
       if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
     });
     return tokens.identityId;
@@ -267,10 +220,15 @@ export class MonolithSession {
     try {
       const saved = JSON.parse(raw) as { reviewSecretHash?: unknown; identityId?: unknown };
       const identityId = await this.identityId();
-      return identityId && saved.identityId === identityId &&
+      return identityId &&
+        saved.identityId === identityId &&
         saved.reviewSecretHash === bytesToHex(sha256(utf8ToBytes(secret))) &&
-        await storage.getItemAsync(REFRESH_KEY) ? identityId : null;
-    } catch { return null; }
+        (await storage.getItemAsync(REFRESH_KEY))
+        ? identityId
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Current account only when this process has already authenticated it. */
@@ -306,8 +264,11 @@ export class MonolithSession {
    */
   watchOtherTabs(target: Pick<Window, 'addEventListener'>, storage: Storage): void {
     target.addEventListener('storage', (event) => {
-      if (event.storageArea !== storage ||
-        (event.key !== null && event.key !== IDENTITY_KEY && event.key !== REFRESH_KEY)) return;
+      if (
+        event.storageArea !== storage ||
+        (event.key !== null && event.key !== IDENTITY_KEY && event.key !== REFRESH_KEY)
+      )
+        return;
       this.credentialRevision += 1;
       this.sessionRevision += 1;
       this.access = undefined;
@@ -336,16 +297,22 @@ export class MonolithSession {
   }
 
   async signOut(): Promise<void> {
-    const credential = this.refreshToken ?? await (await this.secureStorage()).getItemAsync(REFRESH_KEY);
+    const credential =
+      this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
     await this.clear();
     if (!credential) return;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2_000);
     try {
-      await untilAborted(this.fetchImpl(`${this.origins[this.currentOrigin]!.origin}/v1/auth/logout`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken: credential }), signal: controller.signal,
-      }), controller.signal);
+      await untilAborted(
+        this.fetchImpl(`${this.baseUrl}/v1/auth/logout`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refreshToken: credential }),
+          signal: controller.signal,
+        }),
+        controller.signal,
+      );
     } catch {
       // Signing out also works offline: the device has already erased its credential.
     } finally {
@@ -404,28 +371,32 @@ export class MonolithSession {
     try {
       const value: unknown = JSON.parse(raw);
       if (
-        value && typeof value === 'object' &&
+        value &&
+        typeof value === 'object' &&
         typeof (value as { token?: unknown }).token === 'string' &&
         typeof (value as { expiresAt?: unknown }).expiresAt === 'number' &&
         typeof (value as { identityId?: unknown }).identityId === 'string' &&
         (value as { identityId: string }).identityId === identityId
-      ) this.access = value as { token: string; expiresAt: number; identityId: string };
+      )
+        this.access = value as { token: string; expiresAt: number; identityId: string };
     } catch {
       // An old or partial secure-store value simply takes the refresh path.
     }
   }
 
   /**
-   * `idempotent` marks a request the server answers the same however often
-   * it arrives (a read, or a write keyed by its own id). With a deadline, one
-   * still unanswered after {@link MONOLITH_STALL_PROBE_MS} is repeated on the
-   * alternate origin's fresh connection. Any request that reaches its
-   * deadline moves every later request off its origin.
+   * A request gets its one configured deadline. It is never hedged to another
+   * origin; a missed deadline marks the shared live socket suspect instead.
    */
   async fetch(
     input: string,
     init: RequestInit = {},
-    options: { timeoutMs?: number; idempotent?: boolean; fetchImpl?: typeof fetch; afterRoomDraw?: boolean } = {},
+    options: {
+      timeoutMs?: number;
+      idempotent?: boolean;
+      fetchImpl?: typeof fetch;
+      afterRoomDraw?: boolean;
+    } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
     if (options.afterRoomDraw ?? isOptionalRoomRequest(input)) {
@@ -433,9 +404,10 @@ export class MonolithSession {
       if (draw) await draw;
       if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
     }
-    const dispatch = () => options.fetchImpl
-      ? this.perform(input, init, options.timeoutMs, options.fetchImpl)
-      : this.dispatch(input, init, options);
+    const dispatch = () =>
+      options.fetchImpl
+        ? this.perform(input, init, options.timeoutMs, options.fetchImpl)
+        : this.dispatch(input, init, options);
     let response = await dispatch();
     if (response.status !== 401) return response;
     if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
@@ -445,99 +417,17 @@ export class MonolithSession {
     return response;
   }
 
-  private dispatch(
+  private async dispatch(
     input: string,
     init: RequestInit,
     options: { timeoutMs?: number; idempotent?: boolean },
   ): Promise<Response> {
-    const first = this.currentOrigin;
-    if (
-      !options.idempotent ||
-      options.timeoutMs === undefined ||
-      this.origins.length < 2 ||
-      !input.startsWith(this.baseUrl)
-    )
-      return this.attempt(input, first, init, options.timeoutMs);
-    return this.hedged(input, first, init, options.timeoutMs);
-  }
-
-  private async attempt(
-    input: string,
-    index: number,
-    init: RequestInit,
-    timeoutMs: number | undefined,
-  ): Promise<Response> {
     try {
-      return await this.perform(this.onOrigin(input, index), init, timeoutMs);
+      return await this.perform(input, init, options.timeoutMs);
     } catch (error) {
-      if (error instanceof MonolithRequestTimeoutError) this.markStalled(index);
+      if (error instanceof MonolithRequestTimeoutError) reportRequestDeadlineMissed();
       throw error;
     }
-  }
-
-  /** The request on its origin, then again on the alternate if the first is still silent. */
-  private hedged(
-    input: string,
-    first: number,
-    init: RequestInit,
-    timeoutMs: number,
-  ): Promise<Response> {
-    return new Promise<Response>((resolve, reject) => {
-      const startedAt = Date.now();
-      const attempts: { index: number; controller: AbortController; failed: boolean }[] = [];
-      let settled = false;
-      let probe: ReturnType<typeof setTimeout> | undefined;
-      const abortAll = () => attempts.forEach(({ controller }) => controller.abort());
-      init.signal?.addEventListener('abort', abortAll);
-      const finish = () => {
-        settled = true;
-        if (probe) clearTimeout(probe);
-        init.signal?.removeEventListener('abort', abortAll);
-      };
-      const launch = (index: number, budgetMs: number) => {
-        const entry = { index, controller: new AbortController(), failed: false };
-        attempts.push(entry);
-        if (init.signal?.aborted) entry.controller.abort();
-        this.attempt(input, index, { ...init, signal: entry.controller.signal }, budgetMs).then(
-          (response) => {
-            if (settled) return;
-            finish();
-            for (const other of attempts) {
-              if (other === entry) continue;
-              other.controller.abort();
-              // The alternate answered while this one stayed silent.
-              if (!other.failed) this.markStalled(other.index);
-            }
-            resolve(response);
-          },
-          (error: unknown) => {
-            entry.failed = true;
-            if (settled) return;
-            // The first attempt failed outright: try the other path at once.
-            if (attempts.length === 1 && !init.signal?.aborted) {
-              const other = this.freshestOther(index);
-              if (other !== index) {
-                if (probe) clearTimeout(probe);
-                launch(other, Math.max(1, timeoutMs - (Date.now() - startedAt)));
-                return;
-              }
-            }
-            if (attempts.every((attempt) => attempt.failed)) {
-              finish();
-              reject(error);
-            }
-          },
-        );
-      };
-      launch(first, timeoutMs);
-      probe = setTimeout(() => {
-        probe = undefined;
-        if (settled || attempts.length > 1) return;
-        const other = this.freshestOther(first);
-        if (other === first) return;
-        launch(other, Math.max(1, timeoutMs - (Date.now() - startedAt)));
-      }, Math.min(MONOLITH_STALL_PROBE_MS, timeoutMs));
-    });
   }
 
   private async perform(
@@ -565,9 +455,10 @@ export class MonolithSession {
       // A warm Room tap must dispatch before navigation starts rendering.
       // Awaiting an already available token lets that render hold the GET.
       const available = this.validAccessToken();
-      const authorized = available && !controller.signal.aborted
-        ? available
-        : await untilAborted(this.authorization(fetchImpl), controller.signal);
+      const authorized =
+        available && !controller.signal.aborted
+          ? available
+          : await untilAborted(this.authorization(fetchImpl), controller.signal);
       const finishTiming = tracingRoom ? beginNetworkResponseTiming(input) : undefined;
       if (tracingRoom) markRoomOpen('wire-dispatch');
       let response: Response;
@@ -584,9 +475,9 @@ export class MonolithSession {
         finishTiming?.();
         throw error;
       }
-      const timing = finishTiming?.();
+      finishTiming?.();
       if (tracingRoom) markRoomOpen('wire-headers');
-      if (timing) responseTimings.set(response, timing);
+
       return response;
     } catch (error) {
       if (timedOut) throw new MonolithRequestTimeoutError();
@@ -617,14 +508,16 @@ export class MonolithSession {
       controller.abort();
     }, MONOLITH_REFRESH_TIMEOUT_MS);
     let response: Response;
-    const origin = this.currentOrigin;
     try {
-      response = await untilAborted(fetchImpl(`${this.origins[origin]!.origin}/v1/auth/refresh`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-        signal: controller.signal,
-      }), controller.signal);
+      response = await untilAborted(
+        fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+          signal: controller.signal,
+        }),
+        controller.signal,
+      );
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
       this.assertSharedRefresh(refreshToken);
       if (response.status === 401) {
@@ -632,13 +525,15 @@ export class MonolithSession {
         throw new MonolithSessionRequiredError();
       }
       if (!response.ok) throw new MonolithRefreshError(response.status);
-      const tokens = await untilAborted(response.json() as Promise<MonolithTokens>, controller.signal);
+      const tokens = await untilAborted(
+        response.json() as Promise<MonolithTokens>,
+        controller.signal,
+      );
       await this.accept(tokens, false, revision, refreshToken);
       return tokens.accessToken;
     } catch (error) {
       if (timedOut) {
-        // The next renewal uses a fresh connection and the same durable credential.
-        this.markStalled(origin);
+        reportRequestDeadlineMissed();
         throw new MonolithRequestTimeoutError();
       }
       throw error;
@@ -647,7 +542,12 @@ export class MonolithSession {
     }
   }
 
-  private async accept(tokens: MonolithTokens, signedIn = false, expectedRevision = this.credentialRevision, previousRefresh?: string): Promise<void> {
+  private async accept(
+    tokens: MonolithTokens,
+    signedIn = false,
+    expectedRevision = this.credentialRevision,
+    previousRefresh?: string,
+  ): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
     if (expectedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
@@ -661,8 +561,11 @@ export class MonolithSession {
       let reviewSecretHash: string | undefined;
       if (!signedIn && previousId === tokens.identityId) {
         try {
-          const saved = JSON.parse(await storage.getItemAsync(ACCESS_KEY) ?? 'null') as { reviewSecretHash?: unknown } | null;
-          if (typeof saved?.reviewSecretHash === 'string') reviewSecretHash = saved.reviewSecretHash;
+          const saved = JSON.parse((await storage.getItemAsync(ACCESS_KEY)) ?? 'null') as {
+            reviewSecretHash?: unknown;
+          } | null;
+          if (typeof saved?.reviewSecretHash === 'string')
+            reviewSecretHash = saved.reviewSecretHash;
         } catch {
           // An older or partial access record has no review-link metadata.
         }
@@ -671,12 +574,15 @@ export class MonolithSession {
       await Promise.all([
         storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),
         storage.setItemAsync(IDENTITY_KEY, tokens.identityId),
-        storage.setItemAsync(ACCESS_KEY, JSON.stringify({
-          token: tokens.accessToken,
-          expiresAt: tokens.accessExpiresAt,
-          identityId: tokens.identityId,
-          ...(reviewSecretHash ? { reviewSecretHash } : {}),
-        })),
+        storage.setItemAsync(
+          ACCESS_KEY,
+          JSON.stringify({
+            token: tokens.accessToken,
+            expiresAt: tokens.accessExpiresAt,
+            identityId: tokens.identityId,
+            ...(reviewSecretHash ? { reviewSecretHash } : {}),
+          }),
+        ),
       ]);
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
       this.refreshToken = tokens.refreshToken;
@@ -688,7 +594,10 @@ export class MonolithSession {
       // A new sign-in may repair an expired session for the same identity.
       // Token refresh alone must not start another registration/refresh loop.
       if (signedIn || previousId !== tokens.identityId) this.identityChanged();
-      if (signedIn) void import('./signin-funnel').then(module=>module.funnelSignedIn(tokens.accessToken)).catch(()=>undefined);
+      if (signedIn)
+        void import('./signin-funnel')
+          .then((module) => module.funnelSignedIn(tokens.accessToken))
+          .catch(() => undefined);
     });
   }
 }
@@ -698,4 +607,4 @@ monolithSession.subscribeIdentityChange(resetClientState);
 
 const sharedSessionStorage = isDesktopShell() ? undefined : webRuntimeStorage()?.storage;
 if (sharedSessionStorage && typeof window.addEventListener === 'function')
-  monolithSession.watchOtherTabs(window, sharedSessionStorage);
+  monolithSession.watchOtherTabs({ addEventListener: ((type: string, listener: EventListenerOrEventListenerObject) => window.addEventListener(type, listener)) as Window['addEventListener'] }, sharedSessionStorage);

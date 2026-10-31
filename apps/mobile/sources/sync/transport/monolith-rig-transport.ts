@@ -278,7 +278,7 @@ export class MonolithRigTransport {
     return monolithPhoneOperation(
       name as keyof import('@beeline/api-contract/phone').PhoneOperationMap,
       input as never,
-      { ...options, baseUrl: this.baseUrl },
+      options,
     );
   }
 

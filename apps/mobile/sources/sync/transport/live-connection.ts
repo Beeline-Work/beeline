@@ -1,4 +1,11 @@
+import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
+import { waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-error';
+import { markRoomOpen } from '@/buzz/room-open-trace';
 import { readSidebarPreview } from '@beeline/api-contract/phone';
+import { useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -13,6 +20,20 @@ import {
   noteRoomCornersChanged,
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
+import { setRequestDeadlineHandler } from './request-deadline';
+
+type PendingRequest = {
+  frame: string;
+  socket?: WebSocket;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+};
+
+type SocketRequestOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  afterRoomDraw?: boolean;
+};
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -49,15 +70,39 @@ type LiveConnectionDeps = {
   liveUrl: () => string;
   /** Fires on an identity or relay change. */
   subscribeIdentityChange: (listener: () => void) => () => void;
-  /** Fires when the app returns to the foreground from the background. */
-  subscribeForeground: (listener: () => void) => () => void;
+  /** Optional native reachability event; absent on older OTA runtimes. */
+  subscribeNetworkChange?: (listener: () => void) => () => void;
 };
+
+export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
+
+let connectionState: ConnectionState = 'disconnected';
+const connectionStateListeners = new Set<() => void>();
+
+function setConnectionState(next: ConnectionState): void {
+  if (connectionState === next) return;
+  connectionState = next;
+  for (const listener of connectionStateListeners) listener();
+}
+
+/** The shared socket's single liveness source for status UI and Retry. */
+export function useConnectionState(): ConnectionState {
+  return useSyncExternalStore(
+    (listener) => {
+      connectionStateListeners.add(listener);
+      return () => connectionStateListeners.delete(listener);
+    },
+    () => connectionState,
+    () => 'disconnected',
+  );
+}
 
 /** A socket stuck opening on a bad network fires no close on its own. */
 const LIVE_CONNECT_TIMEOUT_MS = 15_000;
-/** One tiny foreground frame; allow slow mobile paths ten seconds to answer. */
-const LIVE_PING_INTERVAL_MS = 20_000;
-const LIVE_PING_TIMEOUT_MS = 10_000;
+/** A foreground sync is a one-off liveness check, never a periodic ping. */
+const FOREGROUND_SYNC_TIMEOUT_MS = 3_000;
+const BACKGROUND_CLOSE_DELAY_MS = 120_000;
+const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000] as const;
 /** A push can beat the socket frame for the same message; past this, the
  *  socket missed it. */
 const PUSH_MISS_GRACE_MS = 5_000;
@@ -111,6 +156,8 @@ export class LiveConnection {
   private readonly workspaceCursors = new Map<string, RoomCursor>();
   private readonly traceOwners = new Map<string, Registration>();
   private readonly connectedListeners = new Set<() => void>();
+  private readonly requests = new Map<string, PendingRequest>();
+  private nextRequestId = 0;
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -119,26 +166,27 @@ export class LiveConnection {
   private readonly heardMessages = new Set<string>();
   private readonly subscribeWaiters = new Set<() => void>();
   private foregroundSyncTimer: ReturnType<typeof setTimeout> | undefined;
-  private pingTimer: ReturnType<typeof setTimeout> | undefined;
-  private pingTimeout: ReturnType<typeof setTimeout> | undefined;
-  private livenessRetryMs = 0;
+  private backgroundCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  private backgroundSocketClosed = false;
   private readonly unsubscribeAppState: () => void;
-  private reconnectDelayMs = 1_000;
+  private readonly unsubscribeNetworkChange: () => void;
+  private reconnectAttempt = 0;
   private nextRegistrationId = 1;
   private generation = 0;
   /** Bumped only by `dispose`; a held view survives an identity change. */
   private viewEpoch = 0;
   private readonly unsubscribeIdentity: () => void;
-  private readonly unsubscribeForeground: () => void;
 
   constructor(private readonly deps: LiveConnectionDeps) {
+    setRequestDeadlineHandler(() => this.reportRequestDeadlineMissed());
     const appState = AppState.addEventListener('change', (state) => {
-      if (state === 'active') this.schedulePing();
-      else this.clearPing();
+      if (state === 'active') this.handleForeground();
+      else if (state === 'background') this.handleBackground();
     });
     this.unsubscribeAppState = () => appState.remove();
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
-    this.unsubscribeForeground = deps.subscribeForeground(() => this.handleForeground());
+    this.unsubscribeNetworkChange =
+      deps.subscribeNetworkChange?.(() => this.handleNetworkChange()) ?? (() => undefined);
   }
 
   register(filters: SurfaceFilters, listener: SurfaceListener): Promise<() => void> {
@@ -170,6 +218,93 @@ export class LiveConnection {
     return Promise.resolve(() => this.stop(registration));
   }
 
+  /** Each call owns one deadline and one reply; reconnect never resends it. */
+  request<Name extends keyof PhoneOperationMap>(
+    op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
+  ): Promise<PhoneOperationMap[Name]['output']> {
+    const generation = this.generation;
+    const start = () => {
+      if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
+      return this.startRequest(op, args, options) as Promise<PhoneOperationMap[Name]['output']>;
+    };
+    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad'].includes(op);
+    const draw = (options.afterRoomDraw ?? optional) ? waitForRoomDraw(options.signal) : undefined;
+    return draw ? draw.then(start) : start();
+  }
+
+  private startRequest(op: string, args: unknown, options: SocketRequestOptions): Promise<unknown> {
+    if (options.signal?.aborted) return Promise.reject(this.requestAbortError());
+    if (this.requests.size >= PHONE_SOCKET_MAX_IN_FLIGHT)
+      return Promise.reject(new PhoneSocketError('busy', 'Too many phone requests in flight', true));
+    const id = `phone-${++this.nextRequestId}`;
+    let frame: string;
+    try {
+      frame = JSON.stringify({ t: 'req', id, op, args });
+      if (utf8ToBytes(frame).length > PHONE_SOCKET_MAX_FRAME_BYTES)
+        return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
+    } catch (error) { return Promise.reject(error); }
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
+        this.requests.delete(id);
+      };
+      const request: PendingRequest = { frame,
+        resolve: value => { finish(); resolve(value); },
+        reject: error => { finish(); reject(error); },
+      };
+      const abort = () => request.reject(this.requestAbortError());
+      const timer = setTimeout(() => {
+        request.reject(new MonolithRequestTimeoutError());
+        this.reportRequestDeadlineMissed();
+      }, options.timeoutMs ?? 20_000);
+      this.requests.set(id, request);
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (op === 'readRoom') markRoomOpen('wire-authorizing');
+      if (this.socket && isSocketOpen(this.socket)) this.sendRequests(this.socket);
+      else void this.ensureSocket();
+    });
+  }
+
+  private requestAbortError(): Error {
+    const error = new Error('The request was aborted.');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  private sendRequests(socket: WebSocket): void {
+    for (const request of this.requests.values()) {
+      if (request.socket) continue;
+      request.socket = socket;
+      try {
+        if (JSON.parse(request.frame).op === 'readRoom') markRoomOpen('wire-dispatch');
+        socket.send(request.frame);
+      } catch (error) {
+        request.reject(error);
+        this.reconnectNow();
+        return;
+      }
+    }
+  }
+
+  private receiveReply(value: unknown, socket: WebSocket): boolean {
+    if (!value || typeof value !== 'object' || (value as { t?: unknown }).t !== 'res') return false;
+    const frame = value as { id?: unknown; ok?: unknown; result?: unknown;
+      error?: { code?: unknown; message?: unknown; retryable?: unknown } };
+    if (typeof frame.id !== 'string') return true;
+    const request = this.requests.get(frame.id);
+    if (!request || request.socket !== socket) return true;
+    if (frame.ok === true && Object.hasOwn(frame, 'result')) request.resolve(frame.result);
+    else if (frame.ok === false && typeof frame.error?.code === 'string' &&
+      typeof frame.error.message === 'string' && typeof frame.error.retryable === 'boolean')
+      request.reject(new PhoneSocketError(frame.error.code, frame.error.message, frame.error.retryable));
+    return true;
+  }
+
+  private rejectRequests(): void {
+    for (const request of this.requests.values()) request.reject(new PhoneSocketDisconnectedError());
+  }
+
   /** Safe transport metadata for a recovery receipt; no URL or authorization. */
   diagnostics(): { state: number | null; connecting: boolean } {
     return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connectInFlight) };
@@ -183,8 +318,9 @@ export class LiveConnection {
     this.viewEpoch += 1;
     this.viewing.clear();
     this.unsubscribeIdentity();
-    this.unsubscribeForeground();
+    this.unsubscribeNetworkChange();
     this.unsubscribeAppState();
+    setRequestDeadlineHandler(undefined);
   }
 
   /**
@@ -223,7 +359,8 @@ export class LiveConnection {
     if (!cache) return texts;
     dropExpiredOverlays(cache, Date.now());
     for (const { event } of cache.drafts.values())
-      if (event.latestChunk?.trim()) texts.set(overlayKey(event.agentId, event.turnId), event.latestChunk);
+      if (event.latestChunk?.trim())
+        texts.set(overlayKey(event.agentId, event.turnId), event.latestChunk);
     return texts;
   }
 
@@ -280,6 +417,11 @@ export class LiveConnection {
    * the current socket missed events.
    */
   reconnect(): void {
+    this.reconnectNow();
+  }
+
+  /** Explicit Retry, foreground, network and deadline recovery entry point. */
+  reconnectNow(): void {
     if (this.connectInFlight) {
       // Registration can return while the first connect promise is still
       // settling. Keep a foreground/read recovery request made in that gap.
@@ -292,10 +434,13 @@ export class LiveConnection {
       return;
     }
     if (this.socket?.readyState === 0) return;
-    if (!this.socket && !this.reconnectTimer) return;
+    this.reconnectAttempt = 0;
+    if (!this.socket && !this.reconnectTimer) {
+      if (this.registrations.size) void this.ensureSocket();
+      return;
+    }
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
-    this.reconnectDelayMs = 1_000;
     const current = this.socket;
     this.socket = undefined;
     this.dropSocketState();
@@ -303,57 +448,53 @@ export class LiveConnection {
     void this.ensureSocket();
   }
 
-  private clearPing(): void {
-    if (this.pingTimer) clearTimeout(this.pingTimer);
-    if (this.pingTimeout) clearTimeout(this.pingTimeout);
-    this.pingTimer = undefined;
-    this.pingTimeout = undefined;
-  }
-
-  private schedulePing(): void {
-    if (AppState.currentState !== 'active' || this.pingTimer || this.pingTimeout ||
-        !this.socket || !isSocketOpen(this.socket)) return;
-    const current = this.socket;
-    this.pingTimer = setTimeout(() => {
-      this.pingTimer = undefined;
-      if (AppState.currentState !== 'active' || this.socket !== current) return;
-      this.pingTimeout = setTimeout(() => {
-        this.pingTimeout = undefined;
-        if (this.socket !== current || AppState.currentState !== 'active') return;
-        this.socket = undefined;
-        this.dropSocketState();
-        // A liveness failure needs one covering Room read on resubscribe.
-        this.roomCursors.clear();
-        current.close();
-        // Opening a TCP socket alone does not prove delivery. Repeated silent
-        // replacements back off until a frame answers a foreground probe.
-        const delay = this.livenessRetryMs;
-        this.livenessRetryMs = Math.min(delay ? delay * 2 : 1_000, 30_000);
-        if (delay) this.scheduleReconnect(delay);
-        else void this.ensureSocket();
-      }, LIVE_PING_TIMEOUT_MS);
-      try {
-        current.send('{"type":"ping"}');
-      } catch {
-        // The same bounded deadline replaces a socket that cannot queue data.
-      }
-    }, LIVE_PING_INTERVAL_MS);
+  /** A request deadline proves the shared socket suspect. */
+  reportRequestDeadlineMissed(): void {
+    this.roomCursors.clear();
+    this.reconnectNow();
   }
 
   private handleForeground(): void {
+    this.backgroundSocketClosed = false;
+    if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
+    this.backgroundCloseTimer = undefined;
     // A one-shot ordered socket echo proves the background connection still
     // carries its subscriptions. Replace it only when that path is silent.
     if (this.socket && isSocketOpen(this.socket)) {
       if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
       const current = this.socket;
-      current.send(JSON.stringify({ type: 'sync' }));
+      try {
+        current.send(JSON.stringify({ type: 'sync' }));
+      } catch {
+        this.reconnectNow();
+        return;
+      }
       this.foregroundSyncTimer = setTimeout(() => {
         this.foregroundSyncTimer = undefined;
         if (this.socket === current) this.reconnect();
-      }, 3_000);
+      }, FOREGROUND_SYNC_TIMEOUT_MS);
       return;
     }
-    this.reconnect();
+    this.reconnectNow();
+  }
+
+  private handleBackground(): void {
+    if (this.backgroundCloseTimer) return;
+    this.backgroundSocketClosed = false;
+    this.backgroundCloseTimer = setTimeout(() => {
+      this.backgroundCloseTimer = undefined;
+      if (AppState.currentState === 'background') {
+        this.backgroundSocketClosed = true;
+        this.dropConnection();
+      }
+    }, BACKGROUND_CLOSE_DELAY_MS);
+  }
+
+  private handleNetworkChange(): void {
+    // Background traffic ends at its original deadline. A network change can
+    // replace a socket before then, but cannot bring one back after shutdown.
+    if (AppState.currentState === 'background' && this.backgroundSocketClosed) return;
+    this.reconnectNow();
   }
 
   /**
@@ -374,12 +515,14 @@ export class LiveConnection {
   }
 
   private dropConnection(): void {
-    this.clearPing();
-    this.livenessRetryMs = 0;
+    this.rejectRequests();
+    setConnectionState('disconnected');
     this.generation += 1;
     this.connectInFlight = undefined;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
+    this.backgroundCloseTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
     current?.close();
@@ -392,7 +535,7 @@ export class LiveConnection {
     this.workspaceCursors.clear();
     this.traceOwners.clear();
     this.heardMessages.clear();
-    this.reconnectDelayMs = 1_000;
+    this.reconnectAttempt = 0;
   }
 
   private stop(registration: Registration): void {
@@ -422,6 +565,7 @@ export class LiveConnection {
     if (this.socket) return Promise.resolve();
     if (this.connectInFlight) return this.connectInFlight;
     // A connect from before an identity change settles after the next one starts.
+    setConnectionState('connecting');
     const flight: Promise<void> = this.connect().finally(() => {
       if (this.connectInFlight === flight) this.connectInFlight = undefined;
     });
@@ -442,16 +586,18 @@ export class LiveConnection {
         this.socket = undefined;
         this.dropSocketState();
         next.close();
+        setConnectionState('disconnected');
         this.scheduleReconnect();
       }, LIVE_CONNECT_TIMEOUT_MS);
       next.onopen = () => {
         clearTimeout(connectTimer);
         if (this.socket !== next) return;
-        this.reconnectDelayMs = 1_000;
-        this.schedulePing();
+        this.reconnectAttempt = 0;
+        setConnectionState('connected');
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
         this.sendWorkspaceSync();
+        this.sendRequests(next);
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
@@ -463,20 +609,17 @@ export class LiveConnection {
         } catch {
           return;
         }
-        if (this.pingTimeout) {
-          clearTimeout(this.pingTimeout);
-          this.pingTimeout = undefined;
-          this.livenessRetryMs = 0;
-          this.schedulePing();
-        }
-        if (live.type === 'pong') return;
+        if (this.receiveReply(live, next)) return;
         if (live.type === 'sync-ok') {
           if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
           this.foregroundSyncTimer = undefined;
           return;
         }
         noteLiveFrame();
-        if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) { this.reconnect(); return; }
+        if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) {
+          this.reconnect();
+          return;
+        }
         this.dispatch(live, next);
       };
       next.onclose = () => {
@@ -484,16 +627,31 @@ export class LiveConnection {
         if (this.socket !== next) return;
         this.socket = undefined;
         this.dropSocketState();
-        this.scheduleReconnect();
+        setConnectionState('disconnected');
+        this.scheduleReconnect(this.reconnectAttempt === 0);
+      };
+      next.onerror = () => {
+        if (this.socket !== next) return;
+        // Some WebSocket implementations emit another error while `close()`
+        // tears down a failed handshake. Drop ownership first so that error
+        // cannot recursively close the same socket.
+        this.socket = undefined;
+        this.dropSocketState();
+        setConnectionState('disconnected');
+        // Only the first recovery skips the backoff. A handshake that keeps
+        // failing must consume the same finite retry budget as a close.
+        this.scheduleReconnect(this.reconnectAttempt === 0);
+        next.close();
       };
     } catch {
       if (generation !== this.generation) return;
+      setConnectionState('disconnected');
       this.scheduleReconnect();
     }
   }
 
   private dropSocketState(): void {
-    this.clearPing();
+    this.rejectRequests();
     if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
     this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
@@ -504,10 +662,11 @@ export class LiveConnection {
     this.traceOwners.clear();
   }
 
-  private scheduleReconnect(livenessDelayMs?: number): void {
+  private scheduleReconnect(immediately = false): void {
     if (this.reconnectTimer) return;
-    const delayMs = livenessDelayMs ?? this.reconnectDelayMs;
-    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 30_000);
+    const delayMs = immediately ? 0 : RECONNECT_BACKOFF_MS[this.reconnectAttempt++];
+    if (delayMs === undefined) return;
+    if (immediately) this.reconnectAttempt = 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       void this.ensureSocket();
@@ -551,13 +710,31 @@ export class LiveConnection {
     for (let offset = 0; offset < roomIds.length; offset += 32) {
       const batch = roomIds.slice(offset, offset + 32);
       for (const roomId of batch) this.pendingSubscribe.add(roomId);
-      const cursors = Object.fromEntries(batch.flatMap((roomId) => {
-        const cursor = this.roomCursors.get(roomId);
-        return cursor ? [[roomId, { epoch: cursor.epoch, base: cursor.base,
-          seen: [...cursor.seen].sort((a, b) => a - b) }]] : [];
-      }));
-      this.socket.send(JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: batch,
-        ...(Object.keys(cursors).length ? { cursors } : {}) }));
+      const cursors = Object.fromEntries(
+        batch.flatMap((roomId) => {
+          const cursor = this.roomCursors.get(roomId);
+          return cursor
+            ? [
+                [
+                  roomId,
+                  {
+                    epoch: cursor.epoch,
+                    base: cursor.base,
+                    seen: [...cursor.seen].sort((a, b) => a - b),
+                  },
+                ],
+              ]
+            : [];
+        }),
+      );
+      this.socket.send(
+        JSON.stringify({
+          type: 'subscribe',
+          sidebarPreviews: true,
+          roomIds: batch,
+          ...(Object.keys(cursors).length ? { cursors } : {}),
+        }),
+      );
     }
   }
 
@@ -571,8 +748,13 @@ export class LiveConnection {
 
   private replayLateJoin(registration: Registration, roomId: string): void {
     const cursor = this.roomCursors.get(roomId);
-    registration.listener({ monolithLive: { type: 'subscribed', roomId,
-      ...(cursor ? { epoch: cursor.epoch, cursor: cursor.base, resumed: true } : {}) } });
+    registration.listener({
+      monolithLive: {
+        type: 'subscribed',
+        roomId,
+        ...(cursor ? { epoch: cursor.epoch, cursor: cursor.base, resumed: true } : {}),
+      },
+    });
     const cache = this.overlays.get(roomId);
     if (!cache) return;
     dropExpiredOverlays(cache, Date.now());
@@ -639,10 +821,14 @@ export class LiveConnection {
     if (live.type === 'draft-append' || live.type === 'thought-append') {
       const kind = live.type === 'draft-append' ? 'draft' : 'thought';
       const cache = this.overlays.get(live.roomId);
-      const previous = (kind === 'draft' ? cache?.drafts : cache?.thoughts)
-        ?.get(overlayKey(live.agentId, live.turnId))?.event;
-      if (!previous || previous.text.length !== live.offset ||
-          (previous.revision ?? 0) + 1 !== live.revision) {
+      const previous = (kind === 'draft' ? cache?.drafts : cache?.thoughts)?.get(
+        overlayKey(live.agentId, live.turnId),
+      )?.event;
+      if (
+        !previous ||
+        previous.text.length !== live.offset ||
+        (previous.revision ?? 0) + 1 !== live.revision
+      ) {
         // An out-of-sequence append cannot paint. The reconnect's full
         // subscribe snapshot restores this lane and covers other missed rows.
         this.roomCursors.delete(live.roomId);
@@ -651,8 +837,11 @@ export class LiveConnection {
         return;
       }
       live = {
-        type: kind, roomId: live.roomId, agentId: live.agentId,
-        turnId: live.turnId, revision: live.revision,
+        type: kind,
+        roomId: live.roomId,
+        agentId: live.agentId,
+        turnId: live.turnId,
+        revision: live.revision,
         text: previous.text + live.chunk,
         ...(live.sequence !== undefined ? { sequence: live.sequence } : {}),
         ...(live.epoch !== undefined ? { epoch: live.epoch } : {}),
@@ -660,10 +849,15 @@ export class LiveConnection {
       };
     }
     if (!('roomId' in live)) return;
-    if (live.roomId === '' &&
-        (live.type === 'bookmark-delta' || live.type === 'needs-you-delta' ||
-          live.type === 'resource-change' || live.type === 'invalidate' ||
-          live.type === 'workspace-changed' || live.type === 'person-changed')) {
+    if (
+      live.roomId === '' &&
+      (live.type === 'bookmark-delta' ||
+        live.type === 'needs-you-delta' ||
+        live.type === 'resource-change' ||
+        live.type === 'invalidate' ||
+        live.type === 'workspace-changed' ||
+        live.type === 'person-changed')
+    ) {
       for (const registration of this.registrations.values()) {
         if (!registration.closed && registration.roomIds.size === 0)
           registration.listener({ monolithLive: live });
@@ -685,7 +879,11 @@ export class LiveConnection {
         const previous = this.roomCursors.get(live.roomId);
         resumed = Boolean(live.resumed) && previous?.epoch === live.epoch;
         if (!resumed) {
-          this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.cursor!, seen: new Set() });
+          this.roomCursors.set(live.roomId, {
+            epoch: live.epoch,
+            base: live.cursor!,
+            seen: new Set(),
+          });
           this.overlays.delete(live.roomId);
         }
       }
@@ -798,19 +996,29 @@ export function sharedLiveConnection(): LiveConnection {
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: subscribeClientReset,
-    subscribeForeground: (listener) => {
-      let backgrounded = AppState.currentState === 'background';
-      const subscription = AppState.addEventListener('change', (state) => {
-        if (state === 'background') backgrounded = true;
-        else if (state === 'active' && backgrounded) {
-          backgrounded = false;
-          listener();
-        }
-      });
-      return () => subscription.remove();
+    subscribeNetworkChange: (listener) => {
+      let unsubscribe: (() => void) | undefined;
+      // Older native runtimes do not contain this optional module. Loading it
+      // asynchronously lets an OTA bundle retain its normal socket behavior.
+      void import('@react-native-community/netinfo')
+        .then(({ default: NetInfo }) => {
+          unsubscribe = NetInfo.addEventListener(() => listener());
+        })
+        .catch(() => undefined);
+      return () => unsubscribe?.();
     },
   });
   return shared;
+}
+
+/** Later request/reply code reports its own one-off deadline here. */
+export function reportRequestDeadlineMissed(): void {
+  sharedLiveConnection().reportRequestDeadlineMissed();
+}
+
+/** Retry can revive the one shared socket without adding another channel. */
+export function reconnectNow(): void {
+  sharedLiveConnection().reconnectNow();
 }
 
 export function resetSharedLiveConnection(): void {

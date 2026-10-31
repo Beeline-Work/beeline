@@ -1,5 +1,4 @@
-import { monolithSession } from '@/auth/monolith-session';
-import { getBuzzRuntimeConfig } from './runtime-config';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 
 /** One content-free observation after a real Room frame or failed read. */
 export async function reportRoomPageObservation(
@@ -8,14 +7,8 @@ export async function reportRoomPageObservation(
   network?: { requestToFirstByteMs: number; serverProcessingMs: number; jsResponseDelayMs?: number },
 ): Promise<void> {
   try {
-    await monolithSession.fetch(
-      `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/observations/page-load`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ durationMs, failed, ...(network ? { network } : {}) }),
-      },
-      // Failed reads still report immediately when there is no Room to draw.
+    await sharedLiveConnection().request('reportPageLoad',
+      { durationMs, failed, ...(network ? { network } : {}) },
       { timeoutMs: 5_000, afterRoomDraw: !failed },
     );
   } catch {

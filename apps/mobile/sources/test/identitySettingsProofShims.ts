@@ -28,7 +28,9 @@ export function identitySettingsProofShims(mobile: string): Record<string, strin
     export const resumeGoogleSignIn = async () => null;
     export const runGoogleSignIn = async () => { throw new Error('OAuth must not run in the identity picture geometry proof'); };
     export const completeGoogleAccountLink = async () => { throw new Error('OAuth must not run in the identity picture geometry proof'); };`,
-    '@/auth/monolith-session': `export const monolithSession = { signOut: async () => undefined };`,
+    '@/auth/monolith-session': `export class MonolithRequestTimeoutError extends Error {}
+    export class MonolithSessionChangedError extends Error {}
+    export const monolithSession = { signOut: async () => undefined };`,
     '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;
     export const watchActiveCommunityId = (_pubkey, listener) => {
       void Promise.resolve(null).then(listener);

@@ -1,4 +1,3 @@
-import { groupMessageSendStates } from '@/buzz/message-outbox';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
@@ -4219,7 +4218,6 @@ export function BuzzChatSurface({
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(attachments.length ? { attachments } : {}),
         });
-        setPendingAck(null); // The durable outbox now owns the Sending line.
         landAtOwnSend(optimistic.id);
         if (!provisionalId) addMessages([optimistic]);
         if (!sendShortcut) {
@@ -6170,12 +6168,11 @@ export function BuzzChatSurface({
   // Resolve changing transcript-wide indexes before the memo boundary. A new
   // hint, byline opener, working speaker, or this row's roster paint changes
   // only that row's props.
-  const groupedSendStates = useMemo(() => groupMessageSendStates(visibleMessages, outbox.states ?? new Map()), [visibleMessages, outbox.states]);
   const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
     firstBylineOfDay: bylineOpeners.has(item.id),
     untaggedHint: hintMessageIds.has(item.id),
     deliveryFailed: failedOutboxIds.has(item.id),
-    sendState: groupedSendStates.get(item.id),
+    sendState: outbox.states?.get(item.id),
     speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
     cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
     cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
@@ -6213,7 +6210,7 @@ export function BuzzChatSurface({
     bylineOpeners,
     hintMessageIds,
     failedOutboxIds,
-    groupedSendStates,
+    outbox.states,
     speakerWorking,
     answerByMessageId,
     cornerProposalAction,

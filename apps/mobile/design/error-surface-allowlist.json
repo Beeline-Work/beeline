@@ -2,9 +2,9 @@
   {
     "layoutHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
-    "line": 1691,
+    "line": 1687,
     "tag": "ErrorBanner",
-    "source": "<ErrorBanner inline\n              title={sendState.text}\n              icon={<Ionicons name=\"alert-circle-outline\" size={13} color={styles.sendFailure.color} />}\n              secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}\n              testID={`outbox-delivery-failed-${message.id}`}\n            />",
+    "source": "<ErrorBanner inline\n            title={sendState.text}\n            icon={<Ionicons name=\"alert-circle-outline\" size={13} color={styles.sendFailure.color} />}\n            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}\n            testID={`outbox-delivery-failed-${message.id}`}\n          />",
     "ancestors": [
       "<View>",
       "<NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>"

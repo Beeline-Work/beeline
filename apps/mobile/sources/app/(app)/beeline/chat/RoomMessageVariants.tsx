@@ -1562,7 +1562,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       <View>
         {isSelfSteer ? (
           <LedgerSteer
-            pending={sendState?.kind === 'sending'}
             itemId={message.id}
             continued={continuedRun}
             chronological={desktopLayout}
@@ -1643,7 +1642,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             continued={continuedRun}
             chronological={desktopLayout}
             precededByDayCaption={dayOpener}
-            pending={sendState?.kind === 'sending'}
             luminous={isAgent && !announcementFeed}
             typewriter={isAgent && !announcementFeed && Boolean(message.isNew)}
             settleFrom={settleFrom}
@@ -1684,17 +1682,14 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           (message.pubkey ?? indexedAuthor?.pubkey) === viewerPubkey ? (
           <LedgerUntaggedHint messageId={message.id} />
         ) : null}
-        {message.isUser && sendState && sendState.showStatus !== false ? (
-          sendState.kind === 'sending' ? (
-            <Text style={styles.forwardCaption} testID={`outbox-sending-${message.id}`}><Ionicons name="time-outline" size={13} color={styles.forwardCaption.color} /> {sendState.text}</Text>
-          ) : (
-            <ErrorBanner inline
-              title={sendState.text}
-              icon={<Ionicons name="alert-circle-outline" size={13} color={styles.sendFailure.color} />}
-              secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
-              testID={`outbox-delivery-failed-${message.id}`}
-            />
-          )
+        {/* A pending send looks sent; only a failure gets a line. */}
+        {message.isUser && sendState && sendState.kind !== 'sending' ? (
+          <ErrorBanner inline
+            title={sendState.text}
+            icon={<Ionicons name="alert-circle-outline" size={13} color={styles.sendFailure.color} />}
+            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
+            testID={`outbox-delivery-failed-${message.id}`}
+          />
         ) : null}
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>

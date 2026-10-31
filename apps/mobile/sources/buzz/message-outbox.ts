@@ -4,7 +4,7 @@ import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 
 export type MessageOutboxRecord = SignedOutboxRecord & { queuedAt: number; reason?: string; offlineSince?: number; seen?: boolean };
-export type MessageSendState = { kind: 'sending' | 'offline' | 'refused'; text: string; showStatus?: boolean };
+export type MessageSendState = { kind: 'sending' | 'offline' | 'refused'; text: string };
 export const OUTBOX_OFFLINE_CUTOFF_MS = 120_000;
 export const outboxRoomId = (record: Pick<MessageOutboxRecord, 'event'>) => record.event.tags.find(tag => tag[0] === 'h')?.[1];
 
@@ -134,22 +134,4 @@ export class MessageOutbox {
     this.cutoff = setTimeout(() => { this.records = [...this.records]; this.publish(); this.scheduleCutoff(); }, Math.min(...future));
   }
   dispose() { this.disposed = true; if (this.cutoff) clearTimeout(this.cutoff); this.listeners.clear(); }
-}
-
-/** One status line at the end of a contiguous run of pending own messages. */
-export function groupMessageSendStates(messages: readonly { id: string; isUser?: boolean }[], states: ReadonlyMap<string, MessageSendState>): ReadonlyMap<string, MessageSendState> {
-  const grouped = new Map(states);
-  let run: string[] = [];
-  const finish = () => {
-    for (const id of run.slice(0, -1)) grouped.set(id, { ...states.get(id)!, showStatus: false });
-    const last = run.at(-1);
-    if (last && run.length > 1) grouped.set(last, { kind: 'sending', text: `Sending ${run.length} messages` });
-    run = [];
-  };
-  for (const message of messages) {
-    if (message.isUser && states.get(message.id)?.kind === 'sending') run.push(message.id);
-    else finish();
-  }
-  finish();
-  return grouped;
 }

@@ -13,6 +13,7 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 }) }));
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => React.createElement('BeelineMarkSpinner') }));
 vi.mock('./Button', () => ({ Button: (p: any) => React.createElement('Button', p, p.label) }));
+vi.mock('@expo/vector-icons', () => ({ Ionicons: (p: any) => React.createElement('Ionicons', p) }));
 import { ConnectionStatus } from './ConnectionStatus';
 
 describe('ConnectionStatus', () => {
@@ -27,6 +28,7 @@ describe('ConnectionStatus', () => {
     state.value = 'disconnected';
     act(() => { view = create(<ConnectionStatus />); });
     expect(view.root.findByProps({ testID: 'connection-status-disconnected' })).toBeTruthy();
+    expect(view.root.findByProps({ testID: 'connection-status-disconnected-glyph' }).props.name).toBe('ban-outline');
     act(() => view.root.findByProps({ testID: 'connection-status-reconnect' }).props.onPress());
     expect(state.reconnect).toHaveBeenCalledOnce();
   });

@@ -163,12 +163,21 @@ async function agentReportVersions(database: SqlDatabase, agentId: string): Prom
 }
 
 /**
- * App release and platform from the builds this person already reported with
- * `reportRunningUpdate`. A field is stored only when every receipt agrees.
- * Disagreeing devices, or no receipt, stay null. The sign-in funnel's package
- * version is a different number and is not used here.
+ * App release and platform from the Beeline installation that filed this
+ * report. Receipts come from `reportRunningUpdate` on that installation.
+ * An external client, such as a Rooms MCP source client, is a different
+ * client: its app fields stay null. Copying another installation's receipt
+ * would mark that report as latest when it is not. Among this installation's
+ * own receipts, a field is stored only when every receipt agrees. Disagreeing
+ * devices, or no receipt, stay null. The sign-in funnel's package version is
+ * a different number and is not used here.
  */
-async function humanReportVersions(database: SqlDatabase, reporterId: string): Promise<ReportVersions> {
+async function humanReportVersions(
+  database: SqlDatabase,
+  reporterId: string,
+  externalClient: boolean,
+): Promise<ReportVersions> {
+  if (externalClient) return { ...UNKNOWN_VERSIONS };
   const row = (
     await database.query<{ app_platform: string | null; app_version: string | null }>(
       `SELECT
@@ -384,10 +393,12 @@ async function insertHumanReport(
     reporterId: string;
     summary: string;
     note?: string;
+    /** Set when a client other than the Beeline app filed this report. */
+    externalClient?: boolean;
   },
 ): Promise<ReportFeedbackResult> {
   const id = feedbackItemId();
-  const versions = await humanReportVersions(database, input.reporterId);
+  const versions = await humanReportVersions(database, input.reporterId, input.externalClient === true);
   const inserted = await database.query(
     `INSERT INTO feedback_items(
        id,source_kind,reporter_identity_id,workspace_id,room_id,trigger_message_id,
@@ -458,12 +469,21 @@ export async function recordSystemReportMention(
     ])
   ).rows[0];
   if (author?.kind !== 'human' || input.authorId === SYSTEM_IDENTITY_ID) return undefined;
+  // The message row already records the client that wrote it. A Rooms MCP
+  // source client is not the app installation in device_update_receipts.
+  const filed = (
+    await database.query<{ external: boolean }>(
+      `SELECT source_client IS NOT NULL AS external FROM messages WHERE id=$1 AND room_id=$2`,
+      [input.messageId, input.roomId],
+    )
+  ).rows[0];
   return insertHumanReport(database, {
     roomId: input.roomId,
     messageId: input.messageId,
     reporterId: input.authorId,
     summary: TAG_SUMMARY,
     note: clipBytes(input.text.trim(), FEEDBACK_DETAIL_MAX_BYTES),
+    externalClient: filed?.external === true,
   });
 }
 
@@ -472,6 +492,7 @@ export async function reportMessageIssue(
   database: SqlDatabase,
   input: { roomId: string; messageId: string; note?: string },
   reporterId: string,
+  reportingClient?: { id: string; name: string } | null,
 ): Promise<ReportFeedbackResult> {
   if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
   const note = optionalText(input.note, 'note', FEEDBACK_DETAIL_MAX_BYTES);
@@ -493,6 +514,9 @@ export async function reportMessageIssue(
       reporterId,
       summary: ACTION_SUMMARY,
       ...(note ? { note } : {}),
+      // The reported message may belong to someone else. The caller's client
+      // is the one filing, and an external client has no app receipt.
+      externalClient: reportingClient != null,
     }),
   );
 }

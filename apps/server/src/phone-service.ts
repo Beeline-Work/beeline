@@ -4295,6 +4295,7 @@ export class PhoneService {
           this.database,
           input as Input<'reportMessageIssue'>,
           viewerId,
+          sourceClient,
         )) as Output<Name>;
       case 'setMessageBookmark':
         return (await this.setMessageBookmark(

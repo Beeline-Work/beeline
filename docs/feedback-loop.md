@@ -102,7 +102,7 @@ Each run reads two things:
   and agent reports with a new occurrence in the last 24 hours. Each row
   includes the helper, app, platform and harness versions stored at filing
   time, and whether that helper or app version is the one the release pipeline
-  last delivered. A missing version is null. `latest_released_version` is that
+  last delivered. A missing version is null. A report from an external client does not copy a Beeline app installation's version. `latest_released_version` is that
   bundle. The grouping script keeps every row and counts only latest-version
   evidence: the original report when its latest flag is true, and each later
   occurrence whose helper version equals that bundle. Older reports stay in

@@ -510,6 +510,93 @@ describe('report versions', () => {
     });
   });
 
+  it('does not copy an app installation onto a report filed by another client', async () => {
+    await database.query(
+      `INSERT INTO helper_release_notifications(singleton,version,sha) VALUES(true,'v0.1.94',$1)`,
+      ['c'.repeat(40)],
+    );
+    const phone = new PhoneService(database, 'http://local.test');
+    const external = { id: 'mcp-local-reviewer', name: 'Local MCP reviewer' };
+    await phone.execute(
+      'reportRunningUpdate',
+      {
+        deviceId: '44444444-4444-4444-8444-444444444444',
+        platform: 'ios',
+        releaseVersion: 'v0.1.94',
+      },
+      PERSON,
+    );
+    const externalReport = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system external client send failed' },
+      PERSON,
+      external,
+    );
+    const appReport = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system the keyboard covers send on this phone' },
+      PERSON,
+    );
+    const externalIssue = await phone.execute(
+      'reportMessageIssue',
+      { roomId: ROOM, messageId: await message('card from another client') },
+      PERSON,
+      external,
+    );
+    const appIssue = await phone.execute(
+      'reportMessageIssue',
+      { roomId: ROOM, messageId: await message('card from this phone') },
+      PERSON,
+    );
+    const stored = await items();
+    const externalId = stored.find((row) => row.trigger_message_id === externalReport.messageId)!.id;
+    const appId = stored.find((row) => row.trigger_message_id === appReport.messageId)!.id;
+    const rows = (await database.query<{
+      id: string;
+      app_version: string | null;
+      app_platform: string | null;
+      app_is_latest: boolean | null;
+      helper_version: string | null;
+      harness: string | null;
+      harness_version: string | null;
+    }>(FEEDBACK_TRIAGE_PULL_SQL)).rows;
+    const row = (id: string) => rows.find((item) => item.id === id)!;
+    expect(row(externalId)).toMatchObject({
+      app_version: null,
+      app_platform: null,
+      app_is_latest: null,
+      helper_version: null,
+      harness: null,
+      harness_version: null,
+    });
+    expect(row(appId)).toMatchObject({
+      app_version: 'v0.1.94',
+      app_platform: 'ios',
+      app_is_latest: true,
+    });
+    expect(await versions(externalIssue.itemId)).toEqual({
+      helper_version: null,
+      app_version: null,
+      app_platform: null,
+      harness: null,
+      harness_version: null,
+    });
+    expect(await versions(appIssue.itemId)).toEqual({
+      helper_version: null,
+      app_version: 'v0.1.94',
+      app_platform: 'ios',
+      harness: null,
+      harness_version: null,
+    });
+    const groups = groupFeedback(rows);
+    expect(groups.find((group) => group.itemIds.includes(externalId))).toMatchObject({
+      count: 0, humanCount: 0, eligible: false,
+    });
+    expect(groups.find((group) => group.itemIds.includes(appId))).toMatchObject({
+      count: 1, humanCount: 1, eligible: true,
+    });
+  });
+
   it('marks a report from an older helper not latest and a current one latest', async () => {
     await database.query(
       `INSERT INTO helper_release_notifications(singleton,version,sha) VALUES(true,'v0.1.94',$1)`,

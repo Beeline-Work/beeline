@@ -1017,7 +1017,203 @@ function scan(files: Map<string, string>): Entry[] {
       return values.length > 0 && values.every((value) => arrayData(value, new Set(seen)));
     });
   };
+  // A local helper that only builds the phrase is the message text, not another
+  // producer. Inlining it keeps a move or rename on the same wording fingerprint.
+  type PhraseFunction = ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+  const isPhraseFunction = (fn: ts.Node): fn is PhraseFunction =>
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) &&
+    !!fn.body;
+  const returnExpressions = (fn: PhraseFunction): ts.Expression[] => {
+    if (!ts.isBlock(fn.body!)) return [fn.body as ts.Expression];
+    const found: ts.Expression[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isReturnStatement(node)) {
+        if (node.expression) found.push(node.expression);
+      } else if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(fn.body!, visit);
+    return found;
+  };
+  const sinkCalls = new Map<ts.Node, boolean>();
+  const callsSink = (fn: PhraseFunction): boolean => {
+    const cached = sinkCalls.get(fn);
+    if (cached !== undefined) return cached;
+    let found = false;
+    const visit = (node: ts.Node) => {
+      if (found || (node !== fn && ts.isFunctionLike(node))) return;
+      if (ts.isCallExpression(node) && (named(node, 'systemLine') || named(node, 'restateSystemLine') || writes.has(node)))
+        found = true;
+      else ts.forEachChild(node, visit);
+    };
+    visit(fn);
+    sinkCalls.set(fn, found);
+    return found;
+  };
+  // Only straight phrase helpers. Inlining arbitrary functions rewalks the program.
+  const simplePhraseBody = (fn: PhraseFunction) => {
+    if (!fn.body) return false;
+    if (!ts.isBlock(fn.body)) return true;
+    return fn.body.statements.some((statement) => ts.isReturnStatement(statement)) &&
+      fn.body.statements.every((statement) => ts.isReturnStatement(statement) || ts.isVariableStatement(statement));
+  };
+  // A helper may call another local helper. Follow that chain to the literal,
+  // but only when every step just hands the phrase on. Stop at a fixed depth
+  // so nested calls cannot rewalk the program. Builders that do more than
+  // forward, such as composeSystemLine, stay on the old walk.
+  const PHRASE_HELPER_CHAIN_LIMIT = 8;
+  const PHRASE_CHAIN_TRUNCATED = -1;
+  const straightPhrase = (fn: PhraseFunction) =>
+    simplePhraseBody(fn) &&
+    !callsSink(fn) &&
+    fn.parameters.every((parameter) => !parameter.dotDotDotToken && ts.isIdentifier(parameter.name));
+  const phraseCalleeCache = new Map<ts.Node, PhraseFunction[]>();
+  const localPhraseCallees = (fn: PhraseFunction): PhraseFunction[] => {
+    const cached = phraseCalleeCache.get(fn);
+    if (cached) return cached;
+    const found: PhraseFunction[] = [];
+    const visit = (node: ts.Node) => {
+      if (node !== fn && ts.isFunctionLike(node)) return;
+      if (ts.isCallExpression(node)) {
+        const seen = new Set<ts.Node>();
+        for (const declaration of callableDeclarations(node.expression)) {
+          const target = functions.get(declaration) ?? declaration;
+          if (target === fn || seen.has(target) || !isPhraseFunction(target)) continue;
+          seen.add(target);
+          found.push(target);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(fn);
+    phraseCalleeCache.set(fn, found);
+    return found;
+  };
+  const pureForward = (node: ts.Node): boolean => {
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isAwaitExpression(node)
+    )
+      return pureForward(node.expression);
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isNumericLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      node.kind === ts.SyntaxKind.TrueKeyword ||
+      node.kind === ts.SyntaxKind.FalseKeyword ||
+      node.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isIdentifier(node)
+    )
+      return true;
+    if (ts.isTemplateExpression(node))
+      return node.templateSpans.every((span) => pureForward(span.expression));
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
+      return pureForward(node.left) && pureForward(node.right);
+    if (!ts.isCallExpression(node) || node.arguments.some((argument) => ts.isSpreadElement(argument)))
+      return false;
+    const targets = new Set<ts.Node>();
+    for (const declaration of callableDeclarations(node.expression)) {
+      const target = functions.get(declaration) ?? declaration;
+      if (isPhraseFunction(target)) targets.add(target);
+    }
+    return targets.size === 1 && node.arguments.every((argument) => pureForward(argument));
+  };
+  const forwardingPhrase = (fn: PhraseFunction): boolean => {
+    if (!straightPhrase(fn) || !fn.body) return false;
+    if (!ts.isBlock(fn.body)) return pureForward(fn.body);
+    return fn.body.statements.every((statement) =>
+      ts.isReturnStatement(statement)
+        ? !statement.expression || pureForward(statement.expression)
+        : ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.every(
+            (declaration) => !declaration.initializer || pureForward(declaration.initializer),
+          ),
+    );
+  };
+  const phraseChainDepths = new Map<ts.Node, number | undefined>();
+  const phraseChainVisiting = new Set<ts.Node>();
+  // Undefined means a cycle or a callee that is not itself a straight phrase helper.
+  // Truncation means the walk stopped at the depth limit and must not be cached:
+  // the same helper can still be short when reached from a shallower call.
+  const phraseChainDepth = (fn: PhraseFunction): number | undefined | typeof PHRASE_CHAIN_TRUNCATED => {
+    if (phraseChainVisiting.has(fn)) return undefined;
+    if (phraseChainDepths.has(fn)) return phraseChainDepths.get(fn);
+    if (phraseChainVisiting.size >= PHRASE_HELPER_CHAIN_LIMIT) return PHRASE_CHAIN_TRUNCATED;
+    phraseChainVisiting.add(fn);
+    let depth = 1;
+    let failed = false;
+    let truncated = false;
+    for (const callee of localPhraseCallees(fn)) {
+      if (!straightPhrase(callee)) {
+        failed = true;
+        break;
+      }
+      const nestedCallees = localPhraseCallees(callee);
+      if (nestedCallees.length > 0 && !forwardingPhrase(callee)) {
+        failed = true;
+        break;
+      }
+      const nested = phraseChainDepth(callee);
+      if (nested === undefined) {
+        failed = true;
+        break;
+      }
+      if (nested === PHRASE_CHAIN_TRUNCATED) {
+        truncated = true;
+        break;
+      }
+      depth = Math.max(depth, 1 + nested);
+    }
+    phraseChainVisiting.delete(fn);
+    if (truncated) return PHRASE_CHAIN_TRUNCATED;
+    const result = failed || depth > PHRASE_HELPER_CHAIN_LIMIT ? undefined : depth;
+    phraseChainDepths.set(fn, result);
+    return result;
+  };
+  const phraseBuilder = (call: ts.CallExpression): PhraseFunction | undefined => {
+    if (call.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
+    const found: PhraseFunction[] = [];
+    const seen = new Set<ts.Node>();
+    for (const declaration of callableDeclarations(call.expression)) {
+      const fn = functions.get(declaration) ?? declaration;
+      if (seen.has(fn) || !isPhraseFunction(fn) || !straightPhrase(fn)) continue;
+      seen.add(fn);
+      if (localPhraseCallees(fn).length > 0) {
+        if (!forwardingPhrase(fn)) continue;
+        const depth = phraseChainDepth(fn);
+        if (depth === undefined || depth === PHRASE_CHAIN_TRUNCATED || depth > PHRASE_HELPER_CHAIN_LIMIT)
+          continue;
+      }
+      found.push(fn);
+    }
+    return found.length === 1 ? found[0] : undefined;
+  };
+  const inlinedPhraseFunctions = new Set<ts.Node>();
+  const inlineStack = new Set<ts.Node>();
+  // A parameter is one syntax node shared by every call, and each call supplies its own argument.
+  // Reuse a walk only within that call's substitution scope.
+  const wordingCache = new Map<ts.Node, Map<Map<ts.Node, ts.Node>, string[]>>();
+  let substitutions = new Map<ts.Node, ts.Node>();
+  let argumentScope = new Map<ts.Node, ts.Node>();
+  const ancestorInlined = (node: ts.Node) => {
+    for (let current: ts.Node | undefined = node; current; current = current.parent)
+      if (inlinedPhraseFunctions.has(current)) return true;
+    return false;
+  };
   for (const [node, kind] of direct) {
+    if (kind === 'system-card' && ancestorInlined(node)) continue;
+    if (
+      kind === 'wrapper' &&
+      ts.isCallExpression(node) &&
+      callableDeclarations(node.expression).some((declaration) =>
+        inlinedPhraseFunctions.has(functions.get(declaration) ?? declaration),
+      )
+    )
+      continue;
+    substitutions = new Map();
+    argumentScope = new Map();
     const file = relative(server, node.getSourceFile().fileName).replaceAll('\\', '/');
     const template = writes.get(node)?.template ?? templatePrint(node);
     const scope: string[] = [];
@@ -1105,6 +1301,7 @@ function scan(files: Map<string, string>): Entry[] {
         }
         // Member/callee identities choose what people see, even without fixed words.
         // Omit the root local name so person.name and recipient.name stay equivalent.
+        // A local phrase builder is inlined, so the helper call itself is not wording.
         if (ts.isBinaryExpression(part))
           literals.push(`binary:${ts.tokenToString(part.operatorToken.kind)}`);
         if (ts.isPrefixUnaryExpression(part) || ts.isPostfixUnaryExpression(part))
@@ -1117,14 +1314,38 @@ function scan(files: Map<string, string>): Entry[] {
         const localCallable = (target: ts.Node) => callableDeclarations(target).some((declaration) =>
           (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration) ||
             ts.isArrowFunction(declaration) || ts.isFunctionExpression(declaration)) && !!declaration.body);
-        if (ts.isPropertyAccessExpression(part))
-          literals.push(localCallable(part) ? '.$local' : `.${part.name.text}`);
         if (ts.isCallExpression(part)) {
+          const builder = phraseBuilder(part);
+          // inlineStack is the cycle guard. The size check is the depth bound.
+          if (builder && !inlineStack.has(builder) && inlineStack.size < PHRASE_HELPER_CHAIN_LIMIT) {
+            const savedSubstitutions = substitutions;
+            const savedArguments = argumentScope;
+            const calleeMap = new Map<ts.Node, ts.Node>();
+            builder.parameters.forEach((parameter, index) => {
+              const argument = part.arguments[index];
+              if (argument && !ts.isSpreadElement(argument)) calleeMap.set(parameter, argument);
+              else if (parameter.initializer) calleeMap.set(parameter, parameter.initializer);
+            });
+            substitutions = calleeMap;
+            argumentScope = savedSubstitutions;
+            inlineStack.add(builder);
+            inlinedPhraseFunctions.add(builder);
+            try {
+              for (const expression of returnExpressions(builder)) collect(expression);
+            } finally {
+              inlineStack.delete(builder);
+              substitutions = savedSubstitutions;
+              argumentScope = savedArguments;
+            }
+            return;
+          }
           const callee = part.expression;
           if (localCallable(callee)) literals.push('$local()');
           else if (ts.isIdentifier(callee)) literals.push(`${callee.text}()`);
           else if (ts.isPropertyAccessExpression(callee)) literals.push(`.${callee.name.text}()`);
         }
+        if (ts.isPropertyAccessExpression(part))
+          literals.push(localCallable(part) ? '.$local' : `.${part.name.text}`);
         if (ts.isStringLiteralLike(part)) literals.push(JSON.stringify(part.text));
         if (ts.isTemplateExpression(part)) {
           literals.push(JSON.stringify([part.head.text, ...part.templateSpans.map((span) => span.literal.text)]));
@@ -1134,6 +1355,35 @@ function scan(files: Map<string, string>): Entry[] {
           !(ts.isPropertyAccessExpression(part.parent) && part.parent.name === part) &&
           !(ts.isPropertyAssignment(part.parent) && part.parent.name === part)
         ) {
+          if (ts.isIdentifier(part)) {
+            for (const declaration of declarations(part)) {
+              const replacement = substitutions.get(declaration);
+              if (!replacement) continue;
+              const scope = argumentScope;
+              const cached = wordingCache.get(replacement)?.get(scope);
+              if (cached) {
+                for (const token of cached) literals.push(token);
+                return;
+              }
+              if (active.has(replacement)) return;
+              const savedSubstitutions = substitutions;
+              const savedArguments = argumentScope;
+              substitutions = savedArguments;
+              argumentScope = savedArguments;
+              const start = literals.length;
+              try {
+                collect(replacement);
+              } finally {
+                substitutions = savedSubstitutions;
+                argumentScope = savedArguments;
+              }
+              const scopes =
+                wordingCache.get(replacement) ?? new Map<Map<ts.Node, ts.Node>, string[]>();
+              wordingCache.set(replacement, scopes);
+              scopes.set(scope, literals.slice(start));
+              return;
+            }
+          }
           for (const declaration of declarations(part)) {
             if (!files.has(declaration.getSourceFile().fileName)) continue;
             if (ts.isVariableDeclaration(declaration) && declaration.initializer)
@@ -2004,6 +2254,70 @@ it('SYSTEM-REFACTOR-2: moves strings and producers, renames locals, and reformat
   const changed = new Map([...moved].map(([path,text])=>[path,text.replace("'hello'","'goodbye'")]));
   expect(() => enforce(scan(changed),scan(base))).toThrow(failure);
 });
+
+it('R1: moving a guarded message into another function or file with the same text passes', () => {
+  const base = fixture("line(db, { verb: 'hello there' });");
+  const moved = fixture(`
+    function buildNotice() { return { verb: 'hello there' }; }
+    line(db, buildNotice());
+  `);
+  expect(() => enforce(scan(moved), scan(base))).not.toThrow();
+  const renamed = fixture(`
+    function renderNotice(name: string) { return { verb: 'hello ' + name }; }
+    line(db, renderNotice('there'));
+  `);
+  const inPlace = fixture("line(db, { verb: 'hello ' + 'there' });");
+  expect(() => enforce(scan(renamed), scan(inPlace))).not.toThrow();
+  const otherFile = fixture();
+  otherFile.set('/fixtures/builder.ts', "export function buildNotice() { return { verb: 'hello there' }; }");
+  otherFile.set(
+    '/fixtures/producer.ts',
+    `import { systemLine as line } from './system-line.js';
+     import { buildNotice } from './builder.js';
+     const phrase = 'joined';
+     export function existing(db: unknown) { return line(db, { verb: phrase }); }
+     line(db, buildNotice());`,
+  );
+  expect(() => enforce(scan(otherFile), scan(base))).not.toThrow();
+  const addedCall = fixture(`
+    function identity(text: string) { return text; }
+    line(db, { verb: identity('hello there') });
+  `);
+  expect(() => enforce(scan(addedCall), scan(base))).not.toThrow();
+  const changed = fixture("line(db, { verb: 'hello world' });");
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('rejects one changed word in a later call through the same helper chain', () => {
+  const source = `import { systemLine as line } from './system-line.js';
+    function identity(text: string) { return text; }
+    function phrase(text: string) { return identity(text); }
+    line(db, {verb: phrase('hello')});
+    line(db, {verb: phrase('joined')});`;
+  const base = fixture();
+  base.set('/fixtures/system-line.ts', 'export function systemLine(db: unknown, input: unknown) {}');
+  base.set('/fixtures/producer.ts', source);
+  const changed = new Map(base);
+  changed.set('/fixtures/producer.ts', source.replace("phrase('joined')", "phrase('left')"));
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('R1: a chain of local helpers that only returns the voice-call verb keeps the same wording', () => {
+  const base = sources(resolve(server, 'src'));
+  const path = resolve(server, 'src/voice-service.ts');
+  const source = base.get(path)!;
+  const before = "verb: 'started'";
+  expect(source.match(/verb: 'started'/g)).toEqual([before]);
+  const moved = new Map(base);
+  moved.set(path, `${source.replace(before, 'verb: voiceStart()')}
+    function voiceIdentity(text: string) { return text; }
+    function voiceStart() { return voiceIdentity('started'); }
+  `);
+  expect(() => enforce(scan(moved), scan(base))).not.toThrow();
+  const reworded = new Map(base);
+  reworded.set(path, moved.get(path)!.replace("voiceIdentity('started')", "voiceIdentity('stopped')"));
+  expect(() => enforce(scan(reworded), scan(base))).toThrow(failure);
+}, 60_000);
 
 it('SYSTEM-REFACTOR-2: keeps SQL projected parameters locked across forwarding helpers', () => {
   const base=fixture("function notice(word:string) { line(db,{verb:db.query('SELECT $1 AS phrase',[word]).rows[0].phrase}); } notice('hello');");

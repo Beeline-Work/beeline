@@ -8,7 +8,7 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
@@ -159,6 +159,7 @@ import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-gith
 import { agentGitIdentityEnv } from './agent-git-identity.js';
 import {
   harvestWarmNodeModules,
+  seedWarmNodeModules,
   mobileNodeModulesStoreDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
@@ -492,7 +493,39 @@ export class MonolithCornerTurnLoop {
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
+  private reviewerCheckout = false;
   private checkoutBackgroundDone?: () => void;
+  private readonly retiredClients = new Map<AcpClient, { done: Promise<void>; check: () => void; stop: () => void }>();
+
+  /** Retire the conversation immediately, but keep its existing tools and wake callbacks alive. */
+  private retainBackgroundClient(client: AcpClient): Promise<void> {
+    const existing = this.retiredClients.get(client);
+    if (existing) return existing.done;
+    let resolveDone!: () => void;
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    let stopping = false;
+    const finish = async () => {
+      if (stopping) return;
+      stopping = true;
+      clearTimeout(timer);
+      client.off('session/update', check);
+      client.off('exit', exited);
+      this.options.signal?.removeEventListener('abort', exited);
+      try { await client.stop(); }
+      finally { this.retiredClients.delete(client); resolveDone(); }
+    };
+    const check = () => { if (!client.hasBackgroundTools) void finish().catch(console.error); };
+    const exited = () => { void finish().catch(console.error); };
+    const timer = setTimeout(() => { void finish().catch(console.error); }, 2 * 60 * 60 * 1000);
+    timer.unref();
+    this.retiredClients.set(client, { done, check, stop: exited });
+    client.on('session/update', check);
+    client.once('exit', exited);
+    this.options.signal?.addEventListener('abort', exited, { once: true });
+    if (this.options.signal?.aborted) exited();
+    check();
+    return done;
+  }
   private recoverIntake?: () => void;
 
   configurationChanged(): void {
@@ -673,6 +706,7 @@ export class MonolithCornerTurnLoop {
   /** corner-complete on the wire: wake intake so `closed()` reaps now. */
   requestClose(): void {
     this.closePushed = true;
+    for (const retired of this.retiredClients.values()) retired.stop();
     this.wakeIntake?.();
   }
 
@@ -836,7 +870,10 @@ export class MonolithCornerTurnLoop {
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     this.sessionModel = null;
-    if (client) await client.stop();
+    const cancelled = this.closePushed || this.forcedStop || this.options.signal?.aborted ||
+      (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
+    if (client?.hasBackgroundTools && !cancelled) void this.retainBackgroundClient(client);
+    else if (client) await client.stop();
     this.checkoutBackgroundDone?.();
     this.checkoutBackgroundDone = undefined;
   }
@@ -1572,7 +1609,7 @@ export class MonolithCornerTurnLoop {
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
-      hasBackgroundWork: () => this.client?.hasBackgroundTools ?? false,
+      hasBackgroundWork: () => Boolean(this.client?.hasBackgroundTools || this.retiredClients.size),
       suspend: () => this.discardSession(true),
     };
   }
@@ -1627,7 +1664,8 @@ export class MonolithCornerTurnLoop {
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
-    if (client) await client.stop();
+    if (client?.hasBackgroundTools) void this.retainBackgroundClient(client);
+    else if (client) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
@@ -1646,20 +1684,76 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
-    return withCornerCheckoutLock(this.options.worktreePath, async () => {
+  private async withCheckout<T>(work: () => Promise<T>, reviewWaitMs = 60_000): Promise<T> {
+    const repository = this.options.repository;
+    const configuration = repository ? await this.options.api.execute('getAgentConfiguration', {
+      agentId: this.agent.publicKey, roomId: this.options.cornerId,
+    }) : undefined;
+    if (!configuration?.isReviewer || !repository) return this.runWithCheckout(work);
+    const source = this.options.worktreePath;
+    this.reviewerCheckout = true;
+    const fallback = async () => {
+      const copy = resolve(this.options.config.agentHomeRoot ?? dirname(source),
+        'review-checkout', this.options.cornerId, this.agent.publicKey + '-' + randomUUID());
+      await mkdir(dirname(copy), { recursive: true });
+      await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`,
+        'worktree', 'add', '--detach', copy, 'HEAD']);
+      try {
+        this.options.worktreePath = copy;
+        await this.syncBranch();
+        await seedWarmNodeModules({ worktreePath: copy,
+          storeRoot: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
+        await seedWarmNodeModules({ worktreePath: resolve(copy, 'apps/mobile'),
+          storeRoot: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
+        return await this.runWithCheckout(work);
+      } finally {
+        await this.discardSession();
+        this.options.worktreePath = source;
+        await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`, 'worktree', 'remove', '--force', copy]);
+        await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`, 'worktree', 'prune']);
+      }
+    };
+    let entered = false;
+    try {
+      return await withCornerCheckoutLock(source, async () => {
+        entered = true;
+        const dirty = (await execFileAsync('git', ['-C', source, 'status', '--porcelain'])).stdout.trim();
+        if (dirty) return fallback();
+        const head = (await execFileAsync('git', ['-C', source, 'rev-parse', 'HEAD'])).stdout.trim();
+        const branch = (await execFileAsync('git', ['-C', source, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+          .catch(() => ({ stdout: '' }))).stdout.trim();
+        try { return await this.runWithCheckout(work, true); }
+        finally {
+          await this.discardSession();
+          await execFileAsync('git', ['-C', source, 'checkout', branch || head]);
+        }
+      // One minute lets ordinary turns finish without holding review behind a two-hour job.
+      }, reviewWaitMs);
+    } catch (error) {
+      if (entered || !(error instanceof Error) || !error.message.includes('timed out waiting')) throw error;
+      return await fallback();
+    } finally {
+      this.reviewerCheckout = false;
+    }
+  }
+
+  private async runWithCheckout<T>(work: () => Promise<T>, locked = false): Promise<T> {
+    const run = async () => {
       try {
         return await work();
       } catch (error) {
-        // A failed turn cannot keep mutating after handing off ownership.
+        // End the conversation while retaining tools until checkout ownership can transfer.
         await this.discardSession(true);
         throw error;
       } finally {
         // A detached Bash build still owns the checkout after end_turn.
         // Its pushed completion (or session teardown) releases ownership.
+        await Promise.all([...this.retiredClients.values()].map(retired => retired.done));
         const client = this.client;
         if (client?.hasBackgroundTools) {
           let finished!: () => void;
+          const cap = setTimeout(() => { void client.stop().finally(() => finished()); }, 2 * 60 * 60 * 1000);
+          cap.unref();
           try {
             await new Promise<void>(done => {
               finished = done;
@@ -1667,12 +1761,14 @@ export class MonolithCornerTurnLoop {
               client.once('exit', done);
             });
           } finally {
+            clearTimeout(cap);
             client.off('exit', finished);
             this.checkoutBackgroundDone = undefined;
           }
         }
       }
-    });
+    };
+    return locked ? run() : withCornerCheckoutLock(this.options.worktreePath, run);
   }
 
   private async prompt(
@@ -2172,11 +2268,12 @@ export class MonolithCornerTurnLoop {
                 trace.promptSent();
                 const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
                 const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
+                const promptClient = this.client!;
                 try {
                   const result = await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
                   () =>
-                    this.client!.sessionPrompt(
+                    promptClient.sessionPrompt(
                       this.sessionId!,
                       promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
                       ROOM_PROMPT_BACKSTOP_MS,
@@ -2211,7 +2308,8 @@ export class MonolithCornerTurnLoop {
                         publishToolCalls(calls, false, lastNarratedToolCall);
                       },
                       (call) => {
-                        if (!this.client?.hasBackgroundTools) this.checkoutBackgroundDone?.();
+                        this.retiredClients.get(promptClient)?.check();
+                        if (this.client === promptClient && !promptClient.hasBackgroundTools) this.checkoutBackgroundDone?.();
                         if (!requestId || !backgroundGeneration || !call.id) return;
                         void api.execute('postBackgroundToolCompletion', {
                           roomId: this.options.cornerId, requestId,
@@ -2679,6 +2777,14 @@ export class MonolithCornerTurnLoop {
     };
     checkStop();
     try {
+      if (this.reviewerCheckout) {
+        const env = { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
+        const ref = `refs/remotes/origin/${repository.featureBranch}`;
+        await execFileAsync('git', ['-C', this.options.worktreePath, 'fetch', 'origin',
+          `+refs/heads/${repository.featureBranch}:${ref}`], { env });
+        await execFileAsync('git', ['-C', this.options.worktreePath, 'checkout', '--detach', ref], { env });
+        return;
+      }
       await syncCornerBranch({
         worktreePath: this.options.worktreePath,
         featureBranch: repository.featureBranch,

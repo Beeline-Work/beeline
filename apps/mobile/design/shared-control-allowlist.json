@@ -397,20 +397,20 @@
   },
   {
     "file": "components/buzz/RoomCornersList.tsx",
-    "line": 221,
+    "line": 225,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "bacab502deef0d4d764d",
-    "control": "<Pressable accessibilityLabel={`${label}. ${display.word}${objective ? `. ${objective}` : ''}`} accessibilityRole=\"button\" onPress={() => openCorner(item)} style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]} testID={`room-corner-${item.corner.id}`} > <View style={styles.cellRail} testID={`room-corner-rail-${item.corner.id}`} /> <View style={styles.cellTitle}> {ownerMark(item)} <T",
+    "id": "14e23935ec676d694211",
+    "control": "<Pressable accessibilityLabel={`${label}. ${display.queueNote ? `${display.word}. ${display.queueNote}` : display.word}${objective ? `. ${objective}` : ''}`} accessibilityRole=\"button\" onPress={() => openCorner(item)} style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]} testID={`room-corner-${item.corner.id}`} > <View style={styles.cellRail} testID={`room-corner-rail-${item.corner",
     "reason": "Corner content navigation or archived-section disclosure; standalone More now uses Button."
   },
   {
     "file": "components/buzz/RoomCornersList.tsx",
-    "line": 259,
+    "line": 263,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "a4c71d54f99d0f346d3a",
-    "control": "<Pressable accessibilityLabel={`${label}. ${display.word}. ${line}`} accessibilityRole=\"button\" onPress={() => openCorner(item)} style={styles.row} testID={`room-corner-${item.corner.id}`} > {ownerMark(item)} <View style={styles.rowCopy}> {/* Captain 2026-09-20: a corner's name is never truncated. It wraps to as many lines as it needs and the row grows with it; uneven row heights are the accepted ",
+    "id": "3443b502e345628643bf",
+    "control": "<Pressable accessibilityLabel={`${label}. ${display.queueNote ? `${display.word}. ${display.queueNote}` : display.word}. ${line}`} accessibilityRole=\"button\" onPress={() => openCorner(item)} style={styles.row} testID={`room-corner-${item.corner.id}`} > {ownerMark(item)} <View style={styles.rowCopy}> {/* Captain 2026-09-20: a corner's name is never truncated. It wraps to as many lines as it needs a",
     "reason": "Corner content navigation or archived-section disclosure; standalone More now uses Button."
   },
   {

@@ -162,38 +162,39 @@ async function agentReportVersions(database: SqlDatabase, agentId: string): Prom
   };
 }
 
+/** One sign-in family, the same shape `phone_sessions.family_id` stores. */
+const PHONE_FAMILY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * App release and platform from the Beeline installation that filed this
- * report. Receipts come from `reportRunningUpdate` on that installation.
- * An external client, such as a Rooms MCP source client, is a different
- * client: its app fields stay null. Copying another installation's receipt
- * would mark that report as latest when it is not. Among this installation's
- * own receipts, a field is stored only when every receipt agrees. Disagreeing
- * devices, or no receipt, stay null. The sign-in funnel's package version is
- * a different number and is not used here.
+ * App release and platform from the device session that filed this report.
+ * That session is the sign-in family that called `reportRunningUpdate`.
+ * A browser never does, and `source_client` being absent does not name an
+ * installation, so those reports stay null. An external client, such as a
+ * Rooms MCP source client, is a different client and stays null even when
+ * the call rides a family that has a receipt. Copying another installation's
+ * receipt would mark the report as latest when it is not. The sign-in
+ * funnel's package version is a different number and is not used here.
  */
 async function humanReportVersions(
   database: SqlDatabase,
   reporterId: string,
   externalClient: boolean,
+  familyId?: string,
 ): Promise<ReportVersions> {
-  if (externalClient) return { ...UNKNOWN_VERSIONS };
+  if (externalClient || !familyId || !PHONE_FAMILY_ID.test(familyId)) return { ...UNKNOWN_VERSIONS };
   const row = (
     await database.query<{ app_platform: string | null; app_version: string | null }>(
       `SELECT
-         CASE WHEN count(*)>0 AND count(DISTINCT platform)=1 AND bool_and(platform IS NOT NULL)
-           THEN min(platform) END AS app_platform,
-         CASE WHEN count(*)>0 AND bool_and(version IS NOT NULL) AND count(DISTINCT version)=1
-           THEN min(version) END AS app_version
-       FROM (
-         SELECT CASE WHEN receipt->>'platform' IN ('ios','android','web','macos','windows','linux')
-                     THEN receipt->>'platform' END AS platform,
-                CASE WHEN receipt->>'releaseVersion' ~ '^v[0-9]+\\.[0-9]+\\.[0-9]+$'
-                     THEN receipt->>'releaseVersion' END AS version
-         FROM device_update_receipts
-         WHERE identity_id=$1
-       ) reported`,
-      [reporterId],
+         CASE WHEN reported.receipt->>'platform' IN ('ios','android','web','macos','windows','linux')
+              THEN reported.receipt->>'platform' END AS app_platform,
+         CASE WHEN reported.receipt->>'releaseVersion' ~ '^v[0-9]+\\.[0-9]+\\.[0-9]+$'
+              THEN reported.receipt->>'releaseVersion' END AS app_version
+       FROM phone_update_devices installation
+       JOIN device_update_receipts reported
+         ON reported.identity_id=installation.identity_id
+        AND reported.device_id=installation.device_id
+       WHERE installation.family_id=$2::uuid AND installation.identity_id=$1`,
+      [reporterId, familyId],
     )
   ).rows[0];
   return {
@@ -395,10 +396,17 @@ async function insertHumanReport(
     note?: string;
     /** Set when a client other than the Beeline app filed this report. */
     externalClient?: boolean;
+    /** Sign-in family of the device session filing this report. Absent when unknown. */
+    familyId?: string;
   },
 ): Promise<ReportFeedbackResult> {
   const id = feedbackItemId();
-  const versions = await humanReportVersions(database, input.reporterId, input.externalClient === true);
+  const versions = await humanReportVersions(
+    database,
+    input.reporterId,
+    input.externalClient === true,
+    input.familyId,
+  );
   const inserted = await database.query(
     `INSERT INTO feedback_items(
        id,source_kind,reporter_identity_id,workspace_id,room_id,trigger_message_id,
@@ -460,7 +468,7 @@ function clipBytes(text: string, maxBytes: number): string {
  */
 export async function recordSystemReportMention(
   database: SqlDatabase,
-  input: { roomId: string; messageId: string; authorId: string; text: string },
+  input: { roomId: string; messageId: string; authorId: string; text: string; familyId?: string },
 ): Promise<ReportFeedbackResult | undefined> {
   if (!hasSystemReportMention(input.text) || containsSecret(input.text)) return undefined;
   const author = (
@@ -471,6 +479,8 @@ export async function recordSystemReportMention(
   if (author?.kind !== 'human' || input.authorId === SYSTEM_IDENTITY_ID) return undefined;
   // The message row already records the client that wrote it. A Rooms MCP
   // source client is not the app installation in device_update_receipts.
+  // A missing source client is not an installation either: the browser sends
+  // that way and never files a running-update receipt.
   const filed = (
     await database.query<{ external: boolean }>(
       `SELECT source_client IS NOT NULL AS external FROM messages WHERE id=$1 AND room_id=$2`,
@@ -484,6 +494,7 @@ export async function recordSystemReportMention(
     summary: TAG_SUMMARY,
     note: clipBytes(input.text.trim(), FEEDBACK_DETAIL_MAX_BYTES),
     externalClient: filed?.external === true,
+    ...(input.familyId ? { familyId: input.familyId } : {}),
   });
 }
 
@@ -493,6 +504,7 @@ export async function reportMessageIssue(
   input: { roomId: string; messageId: string; note?: string },
   reporterId: string,
   reportingClient?: { id: string; name: string } | null,
+  familyId?: string,
 ): Promise<ReportFeedbackResult> {
   if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
   const note = optionalText(input.note, 'note', FEEDBACK_DETAIL_MAX_BYTES);
@@ -517,6 +529,7 @@ export async function reportMessageIssue(
       // The reported message may belong to someone else. The caller's client
       // is the one filing, and an external client has no app receipt.
       externalClient: reportingClient != null,
+      ...(familyId ? { familyId } : {}),
     }),
   );
 }

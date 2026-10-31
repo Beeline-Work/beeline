@@ -749,6 +749,15 @@ CREATE TABLE IF NOT EXISTS phone_access_tokens (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS phone_access_tokens_expiry_idx ON phone_access_tokens(expires_at);
+-- The device session that called reportRunningUpdate. A later report on that
+-- same sign-in family uses this installation only. Another family, including
+-- a browser that never reports an update, has no row.
+CREATE TABLE IF NOT EXISTS phone_update_devices (
+  family_id uuid PRIMARY KEY,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  device_id text NOT NULL,
+  reported_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS daemon_token_exchanges (
   exchange_hash text PRIMARY KEY CHECK (exchange_hash ~ '^[0-9a-f]{64}$'),

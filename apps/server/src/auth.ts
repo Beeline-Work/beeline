@@ -338,6 +338,7 @@ export class TokenAuth {
       );
       const familyId = found.rows[0]?.family_id;
       if (!familyId) return;
+      await database.query('DELETE FROM phone_update_devices WHERE family_id=$1', [familyId]);
       await database.query('DELETE FROM phone_access_tokens WHERE family_id=$1', [familyId]);
       await database.query('DELETE FROM phone_sessions WHERE family_id=$1', [familyId]);
     });
@@ -355,14 +356,21 @@ export class TokenAuth {
   }
 
   async authenticatePhone(token: string): Promise<string | null> {
+    return (await this.authenticatePhoneSession(token))?.identityId ?? null;
+  }
+
+  /** The sign-in family of this access token. One family is one device session. */
+  async authenticatePhoneSession(token: string): Promise<{ identityId: string; familyId: string } | null> {
     const hash = tokenHash(token);
-    const result = await this.database.query<{ identity_id: string; token_hash: string }>(
-      `SELECT identity_id, token_hash FROM phone_access_tokens
+    const result = await this.database.query<{ identity_id: string; family_id: string; token_hash: string }>(
+      `SELECT identity_id, family_id, token_hash FROM phone_access_tokens
        WHERE token_hash = $1 AND expires_at > $2`,
       [hash, this.now()],
     );
     const row = result.rows[0];
-    return row && sameHash(row.token_hash, hash) ? row.identity_id : null;
+    return row && sameHash(row.token_hash, hash)
+      ? { identityId: row.identity_id, familyId: row.family_id }
+      : null;
   }
 
   async createDaemonExchange(

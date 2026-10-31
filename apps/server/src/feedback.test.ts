@@ -418,10 +418,21 @@ describe('report versions', () => {
     );
   }
 
-  async function receipt(identityId: string, deviceId: string, body: { platform: string; releaseVersion?: string }) {
-    await database.query(
-      `INSERT INTO device_update_receipts(identity_id,device_id,receipt) VALUES($1,$2,$3::jsonb)`,
-      [identityId, deviceId, JSON.stringify({ deviceId, ...body })],
+  const PERSON_SESSION = '55555555-5555-4555-8555-555555555555';
+  const OTHER_SESSION = '66666666-6666-4666-8666-666666666666';
+
+  async function runningUpdate(
+    identityId: string,
+    familyId: string,
+    deviceId: string,
+    body: { platform: 'ios' | 'android' | 'macos' | 'windows' | 'linux'; releaseVersion?: string },
+  ) {
+    await new PhoneService(database, 'http://local.test').execute(
+      'reportRunningUpdate',
+      { deviceId, ...body },
+      identityId,
+      undefined,
+      familyId,
     );
   }
 
@@ -474,12 +485,14 @@ describe('report versions', () => {
   });
 
   it('stores the app release and platform a person already reported, and leaves helper fields null', async () => {
-    await receipt(PERSON, 'phone', { platform: 'ios', releaseVersion: 'v0.1.94' });
+    await runningUpdate(PERSON, PERSON_SESSION, 'phone', { platform: 'ios', releaseVersion: 'v0.1.94' });
     const phone = new PhoneService(database, 'http://local.test');
     const sent = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system the keyboard covers send' },
       PERSON,
+      undefined,
+      PERSON_SESSION,
     );
     const item = (await items()).find((row) => row.trigger_message_id === sent.messageId)!;
     expect(await versions(item.id)).toEqual({
@@ -491,19 +504,21 @@ describe('report versions', () => {
     });
   });
 
-  it('leaves an app version null when the person\'s devices disagree', async () => {
-    await receipt(PERSON, 'phone', { platform: 'ios', releaseVersion: 'v0.1.90' });
-    await receipt(PERSON, 'tablet', { platform: 'ios', releaseVersion: 'v0.1.94' });
+  it('uses the reporting session when the person\'s other devices disagree', async () => {
+    await runningUpdate(PERSON, PERSON_SESSION, 'phone', { platform: 'ios', releaseVersion: 'v0.1.90' });
+    await runningUpdate(PERSON, OTHER_SESSION, 'tablet', { platform: 'ios', releaseVersion: 'v0.1.94' });
     const phone = new PhoneService(database, 'http://local.test');
     const sent = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system two phones disagree' },
       PERSON,
+      undefined,
+      PERSON_SESSION,
     );
     const item = (await items()).find((row) => row.trigger_message_id === sent.messageId)!;
     expect(await versions(item.id)).toEqual({
       helper_version: null,
-      app_version: null,
+      app_version: 'v0.1.90',
       app_platform: 'ios',
       harness: null,
       harness_version: null,
@@ -517,39 +532,50 @@ describe('report versions', () => {
     );
     const phone = new PhoneService(database, 'http://local.test');
     const external = { id: 'mcp-local-reviewer', name: 'Local MCP reviewer' };
-    await phone.execute(
-      'reportRunningUpdate',
-      {
-        deviceId: '44444444-4444-4444-8444-444444444444',
-        platform: 'ios',
-        releaseVersion: 'v0.1.94',
-      },
-      PERSON,
-    );
+    await runningUpdate(PERSON, PERSON_SESSION, '44444444-4444-4444-8444-444444444444', {
+      platform: 'ios', releaseVersion: 'v0.1.94',
+    });
     const externalReport = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system external client send failed' },
       PERSON,
       external,
+      PERSON_SESSION,
+    );
+    const browserReport = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system browser send is broken' },
+      PERSON,
     );
     const appReport = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system the keyboard covers send on this phone' },
       PERSON,
+      undefined,
+      PERSON_SESSION,
     );
     const externalIssue = await phone.execute(
       'reportMessageIssue',
       { roomId: ROOM, messageId: await message('card from another client') },
       PERSON,
       external,
+      PERSON_SESSION,
+    );
+    const browserIssue = await phone.execute(
+      'reportMessageIssue',
+      { roomId: ROOM, messageId: await message('card from the browser') },
+      PERSON,
     );
     const appIssue = await phone.execute(
       'reportMessageIssue',
       { roomId: ROOM, messageId: await message('card from this phone') },
       PERSON,
+      undefined,
+      PERSON_SESSION,
     );
     const stored = await items();
     const externalId = stored.find((row) => row.trigger_message_id === externalReport.messageId)!.id;
+    const browserId = stored.find((row) => row.trigger_message_id === browserReport.messageId)!.id;
     const appId = stored.find((row) => row.trigger_message_id === appReport.messageId)!.id;
     const rows = (await database.query<{
       id: string;
@@ -569,12 +595,24 @@ describe('report versions', () => {
       harness: null,
       harness_version: null,
     });
+    expect(row(browserId)).toMatchObject({
+      app_version: null,
+      app_platform: null,
+      app_is_latest: null,
+    });
     expect(row(appId)).toMatchObject({
       app_version: 'v0.1.94',
       app_platform: 'ios',
       app_is_latest: true,
     });
     expect(await versions(externalIssue.itemId)).toEqual({
+      helper_version: null,
+      app_version: null,
+      app_platform: null,
+      harness: null,
+      harness_version: null,
+    });
+    expect(await versions(browserIssue.itemId)).toEqual({
       helper_version: null,
       app_version: null,
       app_platform: null,
@@ -590,6 +628,9 @@ describe('report versions', () => {
     });
     const groups = groupFeedback(rows);
     expect(groups.find((group) => group.itemIds.includes(externalId))).toMatchObject({
+      count: 0, humanCount: 0, eligible: false,
+    });
+    expect(groups.find((group) => group.itemIds.includes(browserId))).toMatchObject({
       count: 0, humanCount: 0, eligible: false,
     });
     expect(groups.find((group) => group.itemIds.includes(appId))).toMatchObject({
@@ -608,18 +649,22 @@ describe('report versions', () => {
     await presence(AGENT, 'v0.1.94');
     const current = await report({ summary: 'current helper dropped the socket' });
     const quiet = await report({ summary: 'helper never announced a version' }, ROOM, OUTSIDER);
-    await receipt(PERSON, 'phone', { platform: 'android', releaseVersion: 'v0.1.90' });
-    await receipt(OTHER, 'phone', { platform: 'android', releaseVersion: 'v0.1.94' });
+    await runningUpdate(PERSON, PERSON_SESSION, 'phone', { platform: 'android', releaseVersion: 'v0.1.90' });
+    await runningUpdate(OTHER, OTHER_SESSION, 'phone', { platform: 'android', releaseVersion: 'v0.1.94' });
     const phone = new PhoneService(database, 'http://local.test');
     const oldApp = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system old app froze' },
       PERSON,
+      undefined,
+      PERSON_SESSION,
     );
     const newApp = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system current app froze' },
       OTHER,
+      undefined,
+      OTHER_SESSION,
     );
     const rows = (await database.query<{
       id: string;
@@ -683,18 +728,22 @@ describe('report versions', () => {
     await presence(AGENT, 'v0.1.94');
     expect((await report({ summary: 'current and old helpers lost the send', errorExcerpt, toolName: 'read' })).itemId)
       .toBe(mixed.itemId);
-    await receipt(PERSON, 'phone', { platform: 'android', releaseVersion: 'v0.1.90' });
-    await receipt(OTHER, 'tablet', { platform: 'android', releaseVersion: 'v0.1.94' });
+    await runningUpdate(PERSON, PERSON_SESSION, 'phone', { platform: 'android', releaseVersion: 'v0.1.90' });
+    await runningUpdate(OTHER, OTHER_SESSION, 'tablet', { platform: 'android', releaseVersion: 'v0.1.94' });
     const phone = new PhoneService(database, 'http://local.test');
     const oldApp = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system old app froze the composer' },
       PERSON,
+      undefined,
+      PERSON_SESSION,
     );
     const newApp = await phone.execute(
       'sendRoomMessage',
       { roomId: ROOM, text: '@system current app froze the composer' },
       OTHER,
+      undefined,
+      OTHER_SESSION,
     );
     const rows = (await database.query<Record<string, unknown>>(FEEDBACK_TRIAGE_PULL_SQL)).rows;
     const mixedRow = rows.find((item) => item.id === mixed.itemId)!;

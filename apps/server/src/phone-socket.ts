@@ -13,6 +13,8 @@ export function phoneSocketRequests(
   dispatch: PhoneOperationDispatcher,
   send: (frame: string) => unknown,
   errorStatus: (error: unknown) => number,
+  /** Sign-in family of this socket, when the access token named one. */
+  familyId?: string,
 ): (message: unknown) => boolean {
   const active = new Map<string, AbortController>();
   const abandon = () => {
@@ -46,7 +48,7 @@ export function phoneSocketRequests(
     }
     const controller = new AbortController();
     active.set(id, controller);
-    void dispatch(request.op, request.args as Record<string, unknown>, viewerId, controller.signal)
+    void dispatch(request.op, request.args as Record<string, unknown>, viewerId, controller.signal, undefined, familyId)
       .then(result => {
         if (!controller.signal.aborted) reply({ t: 'res', id, ok: true, result: result ?? null });
       }, error => {

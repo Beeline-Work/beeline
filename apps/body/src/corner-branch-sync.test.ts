@@ -324,7 +324,7 @@ describe('a helper joining a corner it did not open', () => {
   });
 
   it.each([
-    { protocol: 'old server archive list', listed: true, metadata: false, cleanup: true },
+    { protocol: 'old server archive list', listed: true, metadata: false, cleanup: false },
     { protocol: 'new server restore tombstone', listed: false, metadata: true, cleanup: true },
     {
       protocol: 'stale archived list',
@@ -406,6 +406,7 @@ describe('a helper joining a corner it did not open', () => {
         ): Promise<void>;
       };
 
+      const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       await recovery.sweepArchivedCornerWorktrees(
         listed
           ? new Map([['corner-stale', { cornerId: 'corner-stale', parentRoomId: 'room-parent' }]])
@@ -424,6 +425,8 @@ describe('a helper joining a corner it did not open', () => {
         await expect(access(worktree.path)).resolves.toBeUndefined();
         expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', expect.anything());
       }
+      if (!metadata) expect(warnings).toHaveBeenCalledTimes(1);
+      warnings.mockRestore();
       await coordinator.shutdown();
     },
   );
@@ -486,12 +489,15 @@ describe('a helper joining a corner it did not open', () => {
     const archived = new Map([
       ['corner-wrong-repo', { cornerId: 'corner-wrong-repo', parentRoomId: 'room-parent' }],
     ]);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await recovery.sweepArchivedCornerWorktrees(archived);
     await recovery.sweepArchivedCornerWorktrees(archived);
     expect(execute).toHaveBeenCalledTimes(2);
     now += 2_001;
     await recovery.sweepArchivedCornerWorktrees(archived);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(warnings).toHaveBeenCalledTimes(3);
+    warnings.mockRestore();
 
     await expect(access(worktree.path)).resolves.toBeUndefined();
     // A stale checkout is background cleanup. It must not turn every failed

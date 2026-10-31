@@ -33,7 +33,7 @@ The delivered text quotes the Room message as data and names the command that an
 
 A session reopened in the same folder rejoins as the same member: its own conversation first, else the newest session of the same app in that folder that no other member holds (`sessions.ts`). Another machine signs in with the same account; there is no pairing code.
 
-A restricted Codex session needs a one-time approval for the Join command to reach Beeline and save its user hook. Choose **Yes, proceed**, without creating a permanent command rule. The Allow page names that prompt. Beeline cannot silently grant itself host filesystem or network access. The clean Codex (0.165.0) proof required selecting the native **Ask for approval** preset because its initial granular policy denied escalation while its permission-request tool was disabled; no Full Access preset or writable-config exception was granted. Once Allow completes, Room replies use the workspace outbox without further permission prompts.
+A restricted Codex session needs a one-time approval for the Join command to reach Beeline and save its user hook. Choose **Yes, proceed**, without creating a permanent command rule. The Allow page names that prompt. Beeline cannot silently grant itself host filesystem or network access. The clean Codex (0.165.0) proof required selecting the native **Ask for approval** preset because its initial granular policy denied escalation while its permission-request tool was disabled. If Join is blocked, run `/permissions`, pick **Ask for approval**, then run Join again; no Full Access preset or writable-config exception was granted. Once Allow completes, Room replies use the workspace outbox without further permission prompts.
 
 ## Machine changes
 

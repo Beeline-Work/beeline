@@ -314,6 +314,21 @@ function readStdin(limitMs: number): Promise<string> {
 }
 
 export async function runSessionCommand(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  if (args[0] === 'join') return joinCommand(args.slice(1), env);
+  if (args[0] === 'join') {
+    try {
+      return await joinCommand(args.slice(1), env);
+    } catch (error) {
+      // Codex can deny mkdir with ENOENT rather than a permission errno.
+      const failure = error as NodeJS.ErrnoException;
+      const cause = failure?.cause as NodeJS.ErrnoException | undefined;
+      const denied = [failure, cause].some(e => e && (
+        ['EACCES', 'EPERM', 'EROFS'].includes(e.code ?? '') || (e.code === 'ENOENT' && e.syscall === 'mkdir')
+      ));
+      if (detectAgent(env)?.agent === 'codex' && denied) {
+        throw new Error('Codex blocked access needed to join Beeline. Run /permissions, pick "Ask for approval", then run Join again. Choose "Yes, proceed" for the Join command once; no permanent allowance or Full Access is needed.', { cause: error });
+      }
+      throw error;
+    }
+  }
   return session(args.slice(1), env);
 }

@@ -1,6 +1,6 @@
 # SESSION-JOIN-CODEX-CLEAN-1
 
-Clean first-join follow-up to merge gate c15e4c7f. This supersedes the full-access Codex proof caveat in the original evidence. It does **not** claim the untouched initial Codex permission policy can complete Join.
+Clean first-join follow-up to merge gate c15e4c7f. This supersedes the full-access Codex proof caveat in the original evidence. Ruby accepted the native preset limit in brief revision 2. It does **not** claim the untouched initial Codex permission policy can complete Join.
 
 ## Isolation and stock failure
 
@@ -30,7 +30,7 @@ Native thread: `01a193d5-9316-7cd2-9ce0-0baac6d235ed`.
 
 Beeline retains only its own content-pinned hook trust through Codex’s official config API. That removes the separate hook-trust prompt. The API does not grant a sandboxed command access to user config or the network. The clean run proves both restrictions block setup before that API can help. Moving state into the workspace cannot grant user-hook access and did not remove the network denial. No native permission bypass or silent mutation of Codex’s permission policy is shipped.
 
-The permitted fallback is the single plain Codex sentence on Allow, naming the native one-time command approval. Documentation describes the initial policy/menu limitation separately. The strict untouched initial-policy path remains unavailable on this Codex installation; reviewers must assess that explicit limitation before merging.
+The permitted fallback is the single plain Codex sentence on Allow, naming the native one-time command approval. Documentation describes the initial policy/menu limitation separately. The strict untouched initial-policy path remains unavailable on this Codex installation; revision 2 accepts this explicit limitation.
 
 ## Allow screenshots
 
@@ -41,4 +41,12 @@ Only the added consent paragraph changes. The before fixture is the same Codex A
 | Before | [view](codex-clean/before-bone-phone.png) | [view](codex-clean/before-obsidian-phone.png) | [view](codex-clean/before-bone-web.png) | [view](codex-clean/before-obsidian-web.png) |
 | Codex prompt disclosure | [view](codex-clean/after-codex-bone-phone.png) | [view](codex-clean/after-codex-obsidian-phone.png) | [view](codex-clean/after-codex-bone-web.png) | [view](codex-clean/after-codex-obsidian-web.png) |
 
-Validation: full Rooms MCP HTTP suite passed (113); root typecheck passed, including mobile and scripts; whitespace check passed. Both proof members were disconnected with session leave and their native sessions closed after capture.
+Validation: body session-join regressions passed (57), including blocked state-write and network guidance plus unrelated connection-error preservation; full Rooms MCP HTTP suite passed (113); root typecheck passed, including mobile and scripts; whitespace check passed. Both proof members were disconnected with session leave and their native sessions closed after capture.
+
+## Revision 2 blocked-policy guidance
+
+Reproduction SESSION-JOIN-CODEX-CLEAN-1, blocked branch: the original native thread printed only a raw mkdir error. On the new built bundle, a new native Codex thread in the isolated proof home kept its initial granular policy and denied the setup write. The CLI printed:
+
+> Codex blocked access needed to join Beeline. Run /permissions, pick "Ask for approval", then run Join again. Choose "Yes, proceed" for the Join command once; no permanent allowance or Full Access is needed.
+
+[Native transcript and policy](codex-clean/blocked-guidance-native.txt), [terminal capture](codex-clean/blocked-guidance-terminal.txt). No retry, permission selection or config change was made in this error-guidance proof. The earlier accepted fresh-home end-to-end proof remains the passing recovery path. Unit regressions exercise both the sandbox's mkdir ENOENT and the network's nested EPERM; an unrelated ECONNREFUSED remains unchanged.

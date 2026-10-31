@@ -1,3 +1,6 @@
+import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
+import { phoneSocketRequests } from './phone-socket.js';
+import { PHONE_SOCKET_MAX_FRAME_BYTES } from '@beeline/api-contract/phone';
 import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
 import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
 import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
@@ -7,7 +10,6 @@ import type { RoomsMcp } from './rooms-mcp.js';
 import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
-import { VoiceBudgetExceeded } from './voice-budget.js';
 import { runnableOrigin, serveRunnableArtifact } from './runnable-artifact.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
@@ -47,10 +49,7 @@ import {
   SPENDING_OWNER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE,
-  PHONE_OPERATION_NAMES,
   YOLO_AUTHORITY_MESSAGE,
-  MessageSearchTooBroadError,
-  parseArchivedCornerCursor,
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
@@ -61,9 +60,6 @@ import {
   projectSidebarPreview,
   offscreenMessageFits,
   readSidebarPreview,
-  MESSAGE_SEARCH_QUERY_MAX_BYTES,
-  PHONE_READ_OPERATIONS,
-  messageSearchTerms,
   type MessageBookmarkView,
   type RoomHistoryView,
   type RoomLiveDelta,
@@ -80,7 +76,7 @@ import { connectorLogo } from './workbench.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
-import { IdentityRateLimit, phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
+import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import {
   parseDashboardPlatforms,
@@ -117,7 +113,6 @@ const MAX_LIVE_SOCKET_TASKS = 8_192;
 const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
 const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
-/** A phone pings its open socket while foreground; any answer proves the path is alive. */
 /** Rows one socket remembers for `admitRow`; rows with a read in flight stay. */
 const SENT_ROW_LIMIT = 256;
 /** A message's version, or the live epoch and sequence a corner status was read for. */
@@ -135,21 +130,6 @@ const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
 const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Machine sockets authenticate per agent after upgrade; cap them per client address. */
 const MAX_MACHINE_SOCKETS_PER_CLIENT = 8;
-/**
- * Operations after which no Room read changes for anybody, so they publish no
- * Room invalidation. A read changes nothing, and a phone rereads on that
- * signal: a read that announced itself (listRoomWorkflowRuns in an open
- * corner) made every phone in the Room read again, its own included, in a
- * loop that never ended. Clearing a chat-list dismissal and a Room's push
- * state are per-viewer state that no Room read projects; their writer is the
- * Room that was just opened, and a Room-wide invalidation bounced the write
- * straight back to the opener's own socket as a full Room read.
- */
-const QUIET_PHONE_OPERATIONS: ReadonlySet<string> = new Set([
-  ...PHONE_READ_OPERATIONS,
-  'reopenChat',
-  'updateRoomPushState',
-]);
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
@@ -270,11 +250,6 @@ function isWebAppCorsPath(pathname: string): boolean {
   );
 }
 
-function historyRead(result: RoomHistoryView | null, compact: boolean): unknown {
-  if (!result) return { error: 'not_found' };
-  return compact ? compactRoomHistoryView(result) : result;
-}
-
 /** What each request accepts for a JSON answer, read once where it arrives. */
 const jsonEncodings = new WeakMap<ServerResponse, JsonEncoding>();
 const roomRequestStartedAt = new WeakMap<ServerResponse, number>();
@@ -321,7 +296,6 @@ async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer>
   return Buffer.concat(chunks);
 }
 const funnelRateLimit = new FunnelRateLimit();
-const clientErrorLimit = new IdentityRateLimit('client-error', 12);
 async function body(request: IncomingMessage, allowEmptyVoiceBody = false): Promise<Record<string, unknown>> {
   const raw = await bytes(request, MAX_JSON_BYTES);
   if (!raw.length) return {};
@@ -345,18 +319,6 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
     .find((item) => item.startsWith('bearer.'));
   return value ? value.slice('bearer.'.length) : null;
 }
-/** A named zone such as `Asia/Kolkata`, never a bare offset: Postgres reads
- * `+05:30` with the POSIX sign, the opposite of ISO. */
-function isIanaTimeZone(value: string): boolean {
-  if (value !== 'UTC' && !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+$/.test(value)) return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function isMachineSocket(request: IncomingMessage): boolean {
   const protocol = request.headers['sec-websocket-protocol'];
   return (
@@ -484,7 +446,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   };
   const helperVersionGate =
     options.helperVersionGate ?? new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
-  const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const webSockets = new WebSocketServer({ noServer: true, maxPayload: PHONE_SOCKET_MAX_FRAME_BYTES });
   const liveDbTaskLimit = maxLiveDbTasks(options.databaseBudget?.app);
   let liveDbTasks = 0;
   const liveDbWaiters: Array<() => void> = [];
@@ -593,6 +555,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -663,52 +626,14 @@ export function createBeelineServer(options: ServerOptions): Server {
       response,
       options,
       invitePreview,
-      readLimits,
       liveHealth,
       helperVersionGate,
+      dispatchPhoneOperation,
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
-      let status =
-        error instanceof WorkflowAuthorizationError ||
-        error instanceof CommandRefusalError ||
-        error instanceof WorkspaceSkillNotFoundError
-          ? error.status
-          : institutionalMemoryErrorStatus(message) ??
-            ((message.startsWith('corner brief attachment ') &&
-                message.endsWith('is missing or unavailable in this Room')) ||
-              message.includes('required') ||
-              message.includes('invalid') ||
-              message.includes('too large') ||
-              message.includes('size is outside')
-            ? 400
-            : message === 'github_account_mismatch' ||
-                message.includes('already linked') ||
-                message.includes('already claimed') ||
-                message.includes('conflict') ||
-                message.includes('checks are failing')
-              ? 409
-              : message.includes('access denied') ||
-                  message.includes('command output authority rejected') ||
-                  message.includes('command turn cancelled') ||
-                  message.includes('command already completed') ||
-                  message.includes('manager') ||
-                  message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
-                  message.includes(WORKSPACE_ADMIN_AUTHORITY_MESSAGE) ||
-                  message.includes(SPENDING_OWNER_AUTHORITY_MESSAGE) ||
-                  message.includes('yolo cannot be enabled in a public workspace') ||
-                  message.includes(YOLO_AUTHORITY_MESSAGE) ||
-                  message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
-                  message.includes(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE)
-                ? 403
-                : message.includes('not found')
-                  ? 404
-                  : 503);
-      // GitHub's own outage or rate limit is a bad gateway, not this server
-      // being unavailable; the message already names GitHub's status.
-      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
-        status = 502;
-        if (error.rateLimited && error.retryAfter) response.setHeader('retry-after', error.retryAfter);
-      }
+      const status = requestErrorStatus(error);
+      if (error instanceof GitHubHttpError && error.rateLimited && error.retryAfter)
+        response.setHeader('retry-after', error.retryAfter);
       // A failing Telegram delivery must not create another alert to itself.
       if (status >= 500 && !['/api/webhooks/sentry', '/v1/sentry/webhook'].includes(url.pathname)) captureServerError(error);
       console.error(
@@ -718,7 +643,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         `status=${status}`,
         error instanceof Error ? error.stack || error.message : String(error),
       );
-      json(response, status, { error: message });
+      json(response, status, error instanceof PhoneOperationError ? error.payload : { error: message });
     });
   });
   // HTTP `close` waits for upgraded sockets. Terminate them before starting
@@ -827,7 +752,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         raw && !raw.startsWith('bdt_') ? await options.auth.authenticatePhone(raw) : null;
       const identityId = daemonId ?? phoneId;
       if (!identityId) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        const payload = JSON.stringify({ error: 'phone_token_required' });
+        socket.write(`HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`);
         socket.destroy();
         return;
       }
@@ -1117,6 +1043,8 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (oldest) pendingPaintTraces.delete(oldest);
         }
       };
+      const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
+        dispatchPhoneOperation, sendLive, requestErrorStatus);
       client.on('message', (raw) => {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
@@ -1129,6 +1057,12 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
         if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
           sendLive('{"type":"sync-ok"}');
+          return;
+        }
+        try {
+          if (handlePhoneRequest(JSON.parse(raw.toString()))) return;
+        } catch {
+          liveErrors.invalid++;
           return;
         }
         if (
@@ -1609,9 +1543,9 @@ async function route(
   response: ServerResponse,
   options: ServerOptions,
   invitePreview: InvitePreviewAccess,
-  readLimits: PhoneReadLimits,
   liveHealth: () => object,
   helperVersionGate: HelperVersionGate,
+  dispatchPhoneOperation: PhoneOperationDispatcher,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
@@ -2531,274 +2465,87 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
+  const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
+    invokeLegacy?: () => Promise<unknown>) => {
+    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy);
+    if (result === undefined) {
+      response.writeHead(204, { 'cache-control': 'private, no-store' });
+      response.end();
+    } else json(response, 200, project ? project(result) : result);
+  };
+
   const profileVoiceMatch = url.pathname.match(
     /^\/v1\/phone\/workspaces\/([0-9a-f-]{36})\/agents\/([a-f0-9]{64})\/(voices|voice-preview)$/,
   );
   if (profileVoiceMatch) {
-    if (!options.voice) {
-      json(response, 503, { error: 'The Workspace voice provider is unavailable' });
-      return;
-    }
     const [, workspaceId, agentId, action] = profileVoiceMatch;
     if (method === 'GET' && action === 'voices')
-      json(
-        response,
-        200,
-        await options.voice.profiles.catalog(
-          workspaceId!,
-          agentId!,
-          identityId!,
-          url.searchParams.get('roomId') ?? undefined,
-        ),
-      );
-    else if (method === 'POST') {
-      const input = await body(request);
-      if (
-        typeof input.voiceId !== 'string' ||
-        input.voiceId.length > 128
-      ) {
-        json(response, 400, { error: 'Invalid voice selection' });
-        return;
-      }
-      if (action === 'voice-preview')
-        json(
-          response,
-          200,
-          await options.voice.profiles.preview(
-            workspaceId!,
-            agentId!,
-            identityId!,
-            input.voiceId,
-          ),
-        );
-      else
-        json(
-          response,
-          200,
-          await options.voice.profiles.save(
-            workspaceId!,
-            agentId!,
-            identityId!,
-            input.voiceId,
-          ),
-        );
-    } else json(response, 405, { error: 'method_not_allowed' });
+      await operation('readAgentVoices', { workspaceId, agentId, ...(url.searchParams.has('roomId') ? { roomId: url.searchParams.get('roomId') } : {}) });
+    else if (method === 'POST')
+      await operation(action === 'voice-preview' ? 'previewAgentVoice' : 'saveAgentVoice', { ...(await body(request)), workspaceId, agentId });
+    else json(response, 405, { error: 'method_not_allowed' });
     return;
   }
-
   const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume)$/);
   if (voiceMatch) {
-    if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
-    if (voiceMatch[2] === 'current' && method === 'GET') {
-      json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
-    } else if (voiceMatch[2] === 'join' && method === 'POST') {
-      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request, true)).expectedCallId as string | undefined)); }
-      catch (error) {
-        if (!(error instanceof VoiceBudgetExceeded)) throw error;
-        json(response, 429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });
-      }
-
-    } else if (voiceMatch[2] === 'state' && method === 'GET') {
-      json(response, 200, await options.voice.idleState(voiceMatch[1]!, identityId!, undefined, url.searchParams.get('sessionId') ?? undefined));
-    } else if (voiceMatch[2] === 'idle' && method === 'POST') {
-      json(response, 200, await options.voice.idle(voiceMatch[1]!, identityId!, (await body(request, true)).sessionId as string | undefined));
-    } else if (voiceMatch[2] === 'resume' && method === 'POST') {
-      await options.voice.resume(voiceMatch[1]!, identityId!, (await body(request, true)).sessionId as string); json(response, 200, { resumed: true });
-    } else if (voiceMatch[2] === 'leave' && method === 'POST') {
-      await options.voice.leave(voiceMatch[1]!, identityId!, false, (await body(request, true)).sessionId as string | undefined); json(response, 200, { left: true });
-    } else { json(response, 405, { error: 'method_not_allowed' }); }
-    return;
-  }
-
-  if (method === 'GET' && url.pathname === '/v1/phone/workspaces') {
-    json(response, 200, await options.phone.readWorkspaces(identityId!));
-    return;
-  }
-  let match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)$/);
-  if (method === 'GET' && match) {
-    const result = await options.phone.readWorkspace(match[1]!, identityId!);
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/members$/);
-  if (method === 'GET' && match) {
-    const rawKind = url.searchParams.get('kind');
-    const rawOffset = url.searchParams.get('offset');
-    const offset = rawOffset === null || rawOffset === '' ? undefined : Number(rawOffset);
-    const result = await options.phone.readWorkspaceMembers(match[1]!, identityId!, {
-      ...(url.searchParams.get('ownerId') ? { ownerId: url.searchParams.get('ownerId')! } : {}),
-      ...(url.searchParams.get('memberId') ? { memberId: url.searchParams.get('memberId')! } : {}),
-      ...(url.searchParams.get('q') ? { q: url.searchParams.get('q')! } : {}),
-      ...(rawKind === 'human' || rawKind === 'agent' ? { kind: rawKind } : {}),
-      ...(Number.isSafeInteger(offset) && (offset as number) >= 0 ? { offset } : {}),
+    const [, id, action] = voiceMatch;
+    if (method !== (action === 'current' || action === 'state' ? 'GET' : 'POST')) {
+      json(response, 405, { error: 'method_not_allowed' }); return;
+    }
+    const name = { current: 'voiceCurrent', join: 'voiceJoin', leave: 'voiceLeave', idle: 'voiceIdle', state: 'voiceState', resume: 'voiceResume' }[action!];
+    await operation(name!, {
+      ...(method === 'POST' ? await body(request, true) : Object.fromEntries(url.searchParams)),
+      ...(action === 'current' || action === 'join' ? { roomId: id } : { callId: id }),
     });
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
-  match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/chats$/);
-  if (method === 'GET' && match) {
-    const result = await options.phone.readChats(match[1]!, identityId!);
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
-    return;
+  if (method === 'GET' && url.pathname === '/v1/phone/workspaces') {
+    await operation('readWorkspaces', {}); return;
   }
-  match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/search$/);
+  let match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)(?:\/(members|chats|search))?$/);
   if (method === 'GET' && match) {
-    if (!readLimits.search.admit(identityId!)) {
-      json(response, 429, { error: 'too_many_requests' });
-      return;
-    }
-    const query = (url.searchParams.get('q') ?? '').trim();
-    const before = url.searchParams.get('before');
-    if (!query || Buffer.byteLength(query, 'utf8') > MESSAGE_SEARCH_QUERY_MAX_BYTES) {
-      json(response, 400, { error: 'invalid_query' });
-      return;
-    }
-    if (!messageSearchTerms(query)) {
-      json(response, 400, { error: 'query_too_short' });
-      return;
-    }
-    if (before !== null && !/^[0-9a-f]{64}$/.test(before)) {
-      json(response, 400, { error: 'invalid_cursor' });
-      return;
-    }
-    let result;
-    try {
-      result = await options.phone.searchMessages(
-        match[1]!,
-        identityId!,
-        query,
-        before ?? undefined,
-      );
-    } catch (error) {
-      if (!(error instanceof MessageSearchTooBroadError)) throw error;
-      json(response, 422, { error: 'query_too_broad' });
-      return;
-    }
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    const [, workspaceId, action] = match;
+    const query = Object.fromEntries(url.searchParams);
+    if (action === 'members')
+      await operation('readWorkspaceMembers', { ...query, workspaceId, offset: query.offset ? Number(query.offset) : undefined });
+    else if (action === 'chats') await operation('readChats', { workspaceId });
+    else if (action === 'search') await operation('searchMessages', { workspaceId, query: query.q ?? '', ...(query.before !== undefined ? { before: query.before } : {}) });
+    else await operation('readWorkspace', { workspaceId });
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/agents\/([0-9a-f]{64})$/);
   if (method === 'GET' && match) {
-    const result = await options.phone.readAgent(
-      match[1]!,
-      match[2]!,
-      identityId!,
-      url.searchParams.get('workCursor') ?? undefined,
-    );
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
-    return;
+    await operation('readAgent', { workspaceId: match[1], agentId: match[2], ...(url.searchParams.has('workCursor') ? { workCursor: url.searchParams.get('workCursor') } : {}) }); return;
   }
   match = url.pathname.match(/^\/v1\/phone\/message-links\/([0-9a-f]{64})$/);
   if (method === 'GET' && match) {
-    const result = await options.phone.resolveMessageLink(match[1]!, identityId!);
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
-    return;
+    await operation('resolveMessageLink', { messageId: match[1] }); return;
   }
-  // A phone that rebuilds derivable fields asks for Room reads without them.
   const compact = wantsCompactView(request.headers[COMPACT_VIEW_HEADER]);
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)$/);
-  if (method === 'GET' && match) {
-    const result = await options.phone.readRoom(match[1]!, identityId!);
-    json(
-      response,
-      result ? 200 : 404,
-      result ? (compact ? compactRoomView(result) : result) : { error: 'not_found' },
-    );
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/history$/);
-  if (method === 'GET' && match) {
-    if (!readLimits.history.admit(identityId!)) {
-      json(response, 429, { error: 'too_many_requests' });
-      return;
+  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)(?:\/(history|outline|corners|read|unread))?$/);
+  if (match) {
+    const [, roomId, action] = match;
+    if (method === 'GET' && !action) {
+      await operation('readRoom', { roomId }, result => compact ? compactRoomView(result as import('@beeline/api-contract/phone').RoomView) : result); return;
     }
-    const after = url.searchParams.get('after');
-    if (after !== null) {
-      if (!/^[0-9a-f]{64}$/.test(after)) {
-        json(response, 400, { error: 'invalid_message_id' });
-        return;
-      }
-      const result = await options.phone.readHistoryAfter(match[1]!, identityId!, after);
-      json(response, result ? 200 : 404, historyRead(result, compact));
-      return;
+    if (method === 'GET' && action === 'history') {
+      const query = Object.fromEntries(url.searchParams);
+      const parsed = query.before?.match(/^(\d+),([0-9a-f]{64})$/);
+      const name = query.after !== undefined ? 'readHistoryAfter' : query.around !== undefined ? 'readHistoryAround' : 'readHistory';
+      await operation(name, { roomId,
+        ...(name !== 'readHistory' ? { messageId: query.after ?? query.around } :
+          parsed ? { before: { createdAt: Number(parsed[1]), id: parsed[2] } } : {}),
+      }, result => compact ? compactRoomHistoryView(result as RoomHistoryView) : result); return;
     }
-    const around = url.searchParams.get('around');
-    if (around !== null) {
-      if (!/^[0-9a-f]{64}$/.test(around)) {
-        json(response, 400, { error: 'invalid_message_id' });
-        return;
-      }
-      const result = await options.phone.readHistoryAround(match[1]!, identityId!, around);
-      json(response, result ? 200 : 404, historyRead(result, compact));
-      return;
+    if (method === 'GET' && action === 'outline') {
+      await operation('readHistoryOutline', { roomId, timeZone: url.searchParams.get('tz') ?? '' }); return;
     }
-    const beforeRaw = url.searchParams.get('before');
-    const parsed = beforeRaw?.match(/^(\d+),([0-9a-f]{64})$/);
-    const result = await options.phone.readHistory(
-      match[1]!,
-      identityId!,
-      parsed ? { createdAt: Number(parsed[1]), id: parsed[2]! } : undefined,
-    );
-    json(response, result ? 200 : 404, historyRead(result, compact));
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);
-  if (method === 'GET' && match) {
-    if (!readLimits.outline.admit(identityId!)) {
-      json(response, 429, { error: 'too_many_requests' });
-      return;
+    if (method === 'GET' && action === 'corners') {
+      await operation('readCorners', { ...Object.fromEntries(url.searchParams), roomId, archived: url.searchParams.get('archived') === '1' }); return;
     }
-    const timeZone = url.searchParams.get('tz') ?? '';
-    if (!isIanaTimeZone(timeZone)) {
-      json(response, 400, { error: 'invalid_time_zone' });
-      return;
+    if (method === 'POST' && (action === 'read' || action === 'unread')) {
+      await operation(action === 'read' ? 'markRead' : 'markUnread', { ...(await body(request)), roomId }); return;
     }
-    const result = await options.phone.readHistoryOutline(match[1]!, identityId!, timeZone);
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/corners$/);
-  if (method === 'GET' && match) {
-    const before = url.searchParams.get('before');
-    const archived = url.searchParams.get('archived') === '1';
-    const archivedBefore = parseArchivedCornerCursor(before);
-    if (before !== null && !archivedBefore) {
-      json(response, 400, { error: 'invalid_cursor' });
-      return;
-    }
-    const openBeforeRaw = url.searchParams.get('openBefore');
-    const openBefore = parseArchivedCornerCursor(openBeforeRaw);
-    if ((openBeforeRaw !== null && !openBefore) || (archived && openBeforeRaw !== null)
-      || (!archived && before !== null)) {
-      json(response, 400, { error: 'invalid_cursor' });
-      return;
-    }
-    const result = await options.phone.readCorners(
-      match[1]!,
-      identityId!,
-      false,
-      archived,
-      archivedBefore,
-      openBefore,
-    );
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/read$/);
-  if (method === 'POST' && match) {
-    const input = await body(request);
-    if (typeof input.messageId !== 'string') throw new Error('messageId is required');
-    await options.phone.markRead(match[1]!, input.messageId, identityId!);
-    json(response, 204, {});
-    return;
-  }
-  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/unread$/);
-  if (method === 'POST' && match) {
-    const input = await body(request);
-    if (typeof input.messageId !== 'string') throw new Error('messageId is required');
-    await options.phone.markUnread(match[1]!, input.messageId, identityId!);
-    json(response, 204, {});
-    return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/media') {
     if (!options.objectService) {
@@ -2871,66 +2618,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/observations/client-error') {
-    if (!clientErrorLimit.admit(identityId!)) { json(response, 429, { error: 'too_many_requests' }); return; }
-    const input = await body(request);
-    const limits = { message: 2048, stack: 4096, platform: 32, platformVersion: 64, releaseSha: 128, runtimeVersion: 64, updateId: 64 };
-    const nativeLimits = { device: 128, appVersion: 64, crashTimestamp: 32 };
-    if (!['app', 'conversation', 'voice-join', 'voice-cleanup', 'native-crash'].includes(String(input.scope)) ||
-      Object.entries(limits).some(([key, limit]) => typeof input[key] !== 'string' || (input[key] as string).length > limit) ||
-      Object.entries(nativeLimits).some(([key, limit]) => input[key] !== undefined &&
-        (typeof input[key] !== 'string' || (input[key] as string).length > limit)) || !input.message) {
-      json(response, 400, { error: 'invalid_observation' }); return;
-    }
-    const clean = (value: unknown) => String(value)
-      .replace(/https?:\/\/[^\s)]+/gi, '[url]')
-      .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-      .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, '[token]');
-    console.warn('[client-error]', JSON.stringify({ identityId, scope: input.scope,
-      ...Object.fromEntries(Object.keys(limits).map(key => [key, clean(input[key])])),
-      ...Object.fromEntries(Object.keys(nativeLimits).filter(key => input[key] !== undefined).map(key => [key, clean(input[key])])) }));
-    response.writeHead(204, { 'cache-control': 'private, no-store' }); response.end(); return;
+    await operation('reportClientError', await body(request)); return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {
-    const input = await body(request);
-    const duration = input.durationMs;
-    const network = input.network;
-    const jsResponseDelay = network && typeof network === 'object'
-      ? (network as { jsResponseDelayMs?: unknown }).jsResponseDelayMs : undefined;
-    const validNetwork = network === undefined || (
-      network !== null && typeof network === 'object' &&
-      Number.isFinite((network as { requestToFirstByteMs?: unknown }).requestToFirstByteMs) &&
-      Number.isFinite((network as { serverProcessingMs?: unknown }).serverProcessingMs) &&
-      (network as { requestToFirstByteMs: number }).requestToFirstByteMs >= 0 &&
-      (network as { requestToFirstByteMs: number }).requestToFirstByteMs <= 15_000 &&
-      (network as { serverProcessingMs: number }).serverProcessingMs >= 0 &&
-      (network as { serverProcessingMs: number }).serverProcessingMs <=
-        (network as { requestToFirstByteMs: number }).requestToFirstByteMs
-    );
-    if (
-      !Number.isInteger(duration) ||
-      (duration as number) < 0 ||
-      (duration as number) > 600_000 ||
-      typeof input.failed !== 'boolean' ||
-      !validNetwork || (jsResponseDelay !== undefined &&
-        (typeof jsResponseDelay !== 'number' || !Number.isFinite(jsResponseDelay) ||
-          jsResponseDelay < 0 || jsResponseDelay > 600_000))
-    ) {
-      json(response, 400, { error: 'invalid_observation' });
-      return;
-    }
-    await recordOperatorFunctionEvent(
-      options.database,
-      'page_load',
-      duration as number,
-      input.failed,
-      network === undefined ? undefined :
-        Math.round((network as { requestToFirstByteMs: number }).requestToFirstByteMs -
-          (network as { serverProcessingMs: number }).serverProcessingMs),
-      jsResponseDelay as number | undefined,
-    );
-    response.writeHead(204, { 'cache-control': 'private, no-store' });
-    response.end();
-    return;
+    await operation('reportPageLoad', await body(request)); return;
   }
   match = url.pathname.match(/^\/v1\/phone\/github\/room-token\/([0-9a-f-]+)$/);
   if (method === 'GET' && match) {
@@ -2945,56 +2636,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const name = match[1]!;
-    const operationStartedAt = Date.now();
-    console.log('[phone-op]', name, `identity=${identityId}`, 'start');
-    if (!PHONE_OPERATION_NAMES.has(name as never)) {
-      json(response, 404, { error: 'unknown_phone_operation' });
-      return;
-    }
     const input = await body(request);
-    const result = await options.phone.execute(name as never, input as never, identityId!);
-    console.log('[phone-op]', name, `identity=${identityId}`, 'ok');
-    if (
-      (name === 'sendRoomMessage' || name === 'sendRoomReply') &&
-      typeof input.roomId === 'string'
-    )
-      void options.github
-        ?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
-        .catch((error) => console.error('[server] human-triggered merge recovery failed:', error));
-    const invalidatedRoom =
-      typeof input.roomId === 'string'
-        ? input.roomId
-        : result && typeof (result as { roomId?: unknown }).roomId === 'string'
-          ? (result as { roomId: string }).roomId
-          : undefined;
-    if (invalidatedRoom && !QUIET_PHONE_OPERATIONS.has(name)) {
-      const messageId =
-        result && typeof (result as { messageId?: unknown }).messageId === 'string'
-          ? (result as { messageId: string }).messageId
-          : undefined;
-      options.live.publish({
-        type: 'invalidate',
-        roomId: invalidatedRoom,
-        reason: 'phone-write',
-        ...(messageId ? { messageId } : {}),
-        ...(messageId && (name === 'sendRoomMessage' || name === 'sendRoomReply')
-          ? {
-              trace: {
-                id: randomUUID(),
-                databaseAt: Date.now(),
-                emittedAt: Date.now(),
-                startedAt: operationStartedAt,
-              },
-            }
-          : {}),
-      });
-    }
-    if (result === undefined) {
-      response.writeHead(204, { 'cache-control': 'private, no-store' });
-      response.end();
-      return;
-    }
-    json(response, 200, result);
+    await operation(name, input, undefined,
+      () => options.phone.execute(name as never, input as never, identityId!));
     return;
   }
 
@@ -3125,4 +2769,50 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
   json(response, 404, { error: 'not_found' });
+}
+
+function requestErrorStatus(error: unknown): number {
+  if (error instanceof PhoneOperationError) return error.status;
+  const message = error instanceof Error ? error.message : 'request failed';
+  let status =
+    error instanceof WorkflowAuthorizationError ||
+    error instanceof CommandRefusalError ||
+    error instanceof WorkspaceSkillNotFoundError
+      ? error.status
+      : institutionalMemoryErrorStatus(message) ??
+        ((message.startsWith('corner brief attachment ') &&
+            message.endsWith('is missing or unavailable in this Room')) ||
+          message.includes('required') ||
+          message.includes('invalid') ||
+          message.includes('too large') ||
+          message.includes('size is outside')
+        ? 400
+        : message === 'github_account_mismatch' ||
+            message.includes('already linked') ||
+            message.includes('already claimed') ||
+            message.includes('conflict') ||
+            message.includes('checks are failing')
+          ? 409
+          : message.includes('access denied') ||
+              message.includes('command output authority rejected') ||
+              message.includes('command turn cancelled') ||
+              message.includes('command already completed') ||
+              message.includes('manager') ||
+              message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
+              message.includes(WORKSPACE_ADMIN_AUTHORITY_MESSAGE) ||
+              message.includes(SPENDING_OWNER_AUTHORITY_MESSAGE) ||
+              message.includes('yolo cannot be enabled in a public workspace') ||
+              message.includes(YOLO_AUTHORITY_MESSAGE) ||
+              message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
+              message.includes(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE)
+            ? 403
+            : message.includes('not found')
+              ? 404
+              : 503);
+  // GitHub's own outage or rate limit is a bad gateway, not this server
+  // being unavailable; the message already names GitHub's status.
+  if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
+    status = 502;
+  }
+  return status;
 }

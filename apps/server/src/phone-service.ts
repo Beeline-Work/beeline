@@ -1,3 +1,4 @@
+import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
 import { setMcpMemberWebhook, McpToolError } from './rooms-mcp-members.js';
@@ -11060,6 +11061,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  ...PHONE_ROUTE_OPERATION_NAMES,
   'disconnectAiClient',
   'openComputerSession',
   'handbackComputerSession',

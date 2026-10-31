@@ -82,8 +82,8 @@
       "file": "apps/mobile/sources/components/buzz/VaultSaveCard.tsx",
       "kind": "session-fetch",
       "count": 1,
-      "fate": "moves-to-socket",
-      "why": "Vault save request from the save card."
+      "fate": "exception",
+      "why": "Must reach the server holding the target helper socket via Fly replay; secrets never transit PostgreSQL; no approved cross-server private relay exists."
     },
     {
       "file": "apps/mobile/sources/sync/transport/monolith-operation.ts",

@@ -95,6 +95,54 @@ it('accepts Android NUL-only bodies on authenticated Room call joins', async () 
   }
 });
 
+it('SOCKET-OPS-1: joins, reads, resumes and leaves a real voice session over the phone socket', async () => {
+  const roomId = '55555555-5555-4555-8555-555555555555';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Socket voice proof')`, [roomId, W]);
+  for (const id of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$3,'member')`, [W, roomId, id]);
+  const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
+  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+    VALUES('github','socket-voice-proof',$1,'https://github.com','beeline','socket-voice-proof')`, [H]);
+  const { accessToken } = await auth.exchangeGitHubOidc('socket-voice-proof');
+  const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
+    daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const socket = new WebSocket(`${origin.replace('http:', 'ws:')}/v1/phone/live`, [`bearer.${accessToken}`]);
+  await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+  let sequence = 0;
+  const request = (op: string, args: object) => new Promise<any>(resolve => {
+    const id = `voice-${++sequence}`;
+    const receive = (raw: WebSocket.RawData) => {
+      const frame = JSON.parse(String(raw));
+      if (frame.t === 'res' && frame.id === id) { socket.off('message', receive); resolve(frame); }
+    };
+    socket.on('message', receive); socket.send(JSON.stringify({ t: 'req', id, op, args }));
+  });
+  try {
+    expect(await request('voiceCurrent', { roomId })).toMatchObject({ ok: true, result: null });
+    const joined = await request('voiceJoin', { roomId });
+    expect(joined).toMatchObject({ ok: true, result: { call: { roomId } } });
+    const callId = joined.result.call.id, sessionId = joined.result.sessionId;
+    expect(await request('voiceCurrent', { roomId })).toMatchObject({ ok: true, result: { id: callId } });
+    const state = await request('voiceState', { callId, sessionId });
+    const webState = await fetch(`${origin}/v1/phone/voice/${callId}/state?sessionId=${sessionId}`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(state).toMatchObject({ ok: true, result: await webState.json() });
+    expect(await request('voiceIdle', { callId, sessionId })).toMatchObject({ ok: true, result: { state: 'ready' } });
+    expect(await request('voiceResume', { callId, sessionId })).toMatchObject({ ok: true, result: { resumed: true } });
+    expect(await request('voiceLeave', { callId, sessionId })).toMatchObject({ ok: true, result: { left: true } });
+    expect(await service.current(roomId, H)).toBeNull();
+  } finally {
+    socket.terminate();
+    const active = await service.current(roomId, H);
+    if (active) await service.leave(active.id, H);
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await db.query('DELETE FROM rooms WHERE id=$1', [roomId]);
+  }
+});
+
 it('finds the last eligible agent message within the exact Room or corner', async () => {
   const corner = '44444444-4444-4444-8444-444444444444';
   await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`, [corner, W, R]);

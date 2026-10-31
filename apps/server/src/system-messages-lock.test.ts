@@ -1056,24 +1056,121 @@ function scan(files: Map<string, string>): Entry[] {
     return fn.body.statements.some((statement) => ts.isReturnStatement(statement)) &&
       fn.body.statements.every((statement) => ts.isReturnStatement(statement) || ts.isVariableStatement(statement));
   };
-  const localHelperCalls = new Map<ts.Node, boolean>();
-  // Formatters that call other helpers stay on the old walk. Inlining those
-  // repeats each argument once per use and rewalks the program.
-  const callsLocalHelper = (fn: PhraseFunction): boolean => {
-    const cached = localHelperCalls.get(fn);
-    if (cached !== undefined) return cached;
-    let found = false;
+  // A helper may call another local helper. Follow that chain to the literal,
+  // but only when every step just hands the phrase on. Stop at a fixed depth
+  // so nested calls cannot rewalk the program. Builders that do more than
+  // forward, such as composeSystemLine, stay on the old walk.
+  const PHRASE_HELPER_CHAIN_LIMIT = 8;
+  const PHRASE_CHAIN_TRUNCATED = -1;
+  const straightPhrase = (fn: PhraseFunction) =>
+    simplePhraseBody(fn) &&
+    !callsSink(fn) &&
+    fn.parameters.every((parameter) => !parameter.dotDotDotToken && ts.isIdentifier(parameter.name));
+  const phraseCalleeCache = new Map<ts.Node, PhraseFunction[]>();
+  const localPhraseCallees = (fn: PhraseFunction): PhraseFunction[] => {
+    const cached = phraseCalleeCache.get(fn);
+    if (cached) return cached;
+    const found: PhraseFunction[] = [];
     const visit = (node: ts.Node) => {
-      if (found || (node !== fn && ts.isFunctionLike(node))) return;
-      if (ts.isCallExpression(node) && callableDeclarations(node.expression).some((declaration) => {
-        const target = functions.get(declaration) ?? declaration;
-        return target !== fn && isPhraseFunction(target);
-      })) found = true;
-      else ts.forEachChild(node, visit);
+      if (node !== fn && ts.isFunctionLike(node)) return;
+      if (ts.isCallExpression(node)) {
+        const seen = new Set<ts.Node>();
+        for (const declaration of callableDeclarations(node.expression)) {
+          const target = functions.get(declaration) ?? declaration;
+          if (target === fn || seen.has(target) || !isPhraseFunction(target)) continue;
+          seen.add(target);
+          found.push(target);
+        }
+      }
+      ts.forEachChild(node, visit);
     };
     visit(fn);
-    localHelperCalls.set(fn, found);
+    phraseCalleeCache.set(fn, found);
     return found;
+  };
+  const pureForward = (node: ts.Node): boolean => {
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isAwaitExpression(node)
+    )
+      return pureForward(node.expression);
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isNumericLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      node.kind === ts.SyntaxKind.TrueKeyword ||
+      node.kind === ts.SyntaxKind.FalseKeyword ||
+      node.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isIdentifier(node)
+    )
+      return true;
+    if (ts.isTemplateExpression(node))
+      return node.templateSpans.every((span) => pureForward(span.expression));
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
+      return pureForward(node.left) && pureForward(node.right);
+    if (!ts.isCallExpression(node) || node.arguments.some((argument) => ts.isSpreadElement(argument)))
+      return false;
+    const targets = new Set<ts.Node>();
+    for (const declaration of callableDeclarations(node.expression)) {
+      const target = functions.get(declaration) ?? declaration;
+      if (isPhraseFunction(target)) targets.add(target);
+    }
+    return targets.size === 1 && node.arguments.every((argument) => pureForward(argument));
+  };
+  const forwardingPhrase = (fn: PhraseFunction): boolean => {
+    if (!straightPhrase(fn) || !fn.body) return false;
+    if (!ts.isBlock(fn.body)) return pureForward(fn.body);
+    return fn.body.statements.every((statement) =>
+      ts.isReturnStatement(statement)
+        ? !statement.expression || pureForward(statement.expression)
+        : ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.every(
+            (declaration) => !declaration.initializer || pureForward(declaration.initializer),
+          ),
+    );
+  };
+  const phraseChainDepths = new Map<ts.Node, number | undefined>();
+  const phraseChainVisiting = new Set<ts.Node>();
+  // Undefined means a cycle or a callee that is not itself a straight phrase helper.
+  // Truncation means the walk stopped at the depth limit and must not be cached:
+  // the same helper can still be short when reached from a shallower call.
+  const phraseChainDepth = (fn: PhraseFunction): number | undefined | typeof PHRASE_CHAIN_TRUNCATED => {
+    if (phraseChainVisiting.has(fn)) return undefined;
+    if (phraseChainDepths.has(fn)) return phraseChainDepths.get(fn);
+    if (phraseChainVisiting.size >= PHRASE_HELPER_CHAIN_LIMIT) return PHRASE_CHAIN_TRUNCATED;
+    phraseChainVisiting.add(fn);
+    let depth = 1;
+    let failed = false;
+    let truncated = false;
+    for (const callee of localPhraseCallees(fn)) {
+      if (!straightPhrase(callee)) {
+        failed = true;
+        break;
+      }
+      const nestedCallees = localPhraseCallees(callee);
+      if (nestedCallees.length > 0 && !forwardingPhrase(callee)) {
+        failed = true;
+        break;
+      }
+      const nested = phraseChainDepth(callee);
+      if (nested === undefined) {
+        failed = true;
+        break;
+      }
+      if (nested === PHRASE_CHAIN_TRUNCATED) {
+        truncated = true;
+        break;
+      }
+      depth = Math.max(depth, 1 + nested);
+    }
+    phraseChainVisiting.delete(fn);
+    if (truncated) return PHRASE_CHAIN_TRUNCATED;
+    const result = failed || depth > PHRASE_HELPER_CHAIN_LIMIT ? undefined : depth;
+    phraseChainDepths.set(fn, result);
+    return result;
   };
   const phraseBuilder = (call: ts.CallExpression): PhraseFunction | undefined => {
     if (call.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
@@ -1081,10 +1178,14 @@ function scan(files: Map<string, string>): Entry[] {
     const seen = new Set<ts.Node>();
     for (const declaration of callableDeclarations(call.expression)) {
       const fn = functions.get(declaration) ?? declaration;
-      if (seen.has(fn) || !isPhraseFunction(fn) || !simplePhraseBody(fn)) continue;
+      if (seen.has(fn) || !isPhraseFunction(fn) || !straightPhrase(fn)) continue;
       seen.add(fn);
-      if (fn.parameters.some((parameter) => parameter.dotDotDotToken || !ts.isIdentifier(parameter.name))) continue;
-      if (callsSink(fn) || callsLocalHelper(fn)) continue;
+      if (localPhraseCallees(fn).length > 0) {
+        if (!forwardingPhrase(fn)) continue;
+        const depth = phraseChainDepth(fn);
+        if (depth === undefined || depth === PHRASE_CHAIN_TRUNCATED || depth > PHRASE_HELPER_CHAIN_LIMIT)
+          continue;
+      }
       found.push(fn);
     }
     return found.length === 1 ? found[0] : undefined;
@@ -1214,7 +1315,8 @@ function scan(files: Map<string, string>): Entry[] {
             ts.isArrowFunction(declaration) || ts.isFunctionExpression(declaration)) && !!declaration.body);
         if (ts.isCallExpression(part)) {
           const builder = phraseBuilder(part);
-          if (builder && !inlineStack.has(builder)) {
+          // inlineStack is the cycle guard. The size check is the depth bound.
+          if (builder && !inlineStack.has(builder) && inlineStack.size < PHRASE_HELPER_CHAIN_LIMIT) {
             const savedSubstitutions = substitutions;
             const savedArguments = argumentScope;
             const calleeMap = new Map<ts.Node, ts.Node>();
@@ -2180,6 +2282,23 @@ it('R1: moving a guarded message into another function or file with the same tex
   const changed = fixture("line(db, { verb: 'hello world' });");
   expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
 });
+
+it('R1: a chain of local helpers that only returns the voice-call verb keeps the same wording', () => {
+  const base = sources(resolve(server, 'src'));
+  const path = resolve(server, 'src/voice-service.ts');
+  const source = base.get(path)!;
+  const before = "verb: 'started'";
+  expect(source.match(/verb: 'started'/g)).toEqual([before]);
+  const moved = new Map(base);
+  moved.set(path, `${source.replace(before, 'verb: voiceStart()')}
+    function voiceIdentity(text: string) { return text; }
+    function voiceStart() { return voiceIdentity('started'); }
+  `);
+  expect(() => enforce(scan(moved), scan(base))).not.toThrow();
+  const reworded = new Map(base);
+  reworded.set(path, moved.get(path)!.replace("voiceIdentity('started')", "voiceIdentity('stopped')"));
+  expect(() => enforce(scan(reworded), scan(base))).toThrow(failure);
+}, 60_000);
 
 it('SYSTEM-REFACTOR-2: keeps SQL projected parameters locked across forwarding helpers', () => {
   const base=fixture("function notice(word:string) { line(db,{verb:db.query('SELECT $1 AS phrase',[word]).rows[0].phrase}); } notice('hello');");

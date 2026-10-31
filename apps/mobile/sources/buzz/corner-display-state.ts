@@ -10,7 +10,8 @@ export type CornerDisplayState = {
   readonly status: CornerState;
   readonly visual: CornerVisualState;
   readonly glyph: string;
-  readonly word: CornerState;
+  /** Painted on the row and spoken by its existing label. A queue note joins this phrase; `status` stays the server state. */
+  readonly word: string;
   /** Why a working corner has not started: the order is queued, or the helper is offline. */
   readonly queueNote?: string;
   readonly detail?: string;
@@ -89,7 +90,7 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
-    word: state,
+    word: queueNote ? `${state} · ${queueNote}` : state,
     visual,
     glyph: state === 'working' ? '◌' : state === 'review' ? '●' : state === 'waiting' ? 'Ⅱ' : '○',
     ...(queueNote ? { queueNote } : {}),

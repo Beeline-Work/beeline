@@ -45,12 +45,21 @@ describe('server-owned corner display state', () => {
   });
 
   it('says a queued order is waiting, and an offline helper has to come back', () => {
-    expect(cornerDisplayState({ ...item('working'), queue: 'queued' }).queueNote).toBe('queued');
-    expect(cornerDisplayState({ ...item('working'), queue: 'offline' }).queueNote)
-      .toBe('waiting for the agent to come back');
+    expect(cornerDisplayState({ ...item('working'), queue: 'queued' })).toMatchObject({
+      status: 'working',
+      word: 'working · queued',
+      queueNote: 'queued',
+    });
+    expect(cornerDisplayState({ ...item('working'), queue: 'offline' })).toMatchObject({
+      word: 'working · waiting for the agent to come back',
+      queueNote: 'waiting for the agent to come back',
+    });
     expect(cornerDisplayState({
       ...item('working'), queue: 'queued', queueBehind: 'codex-dot-connect',
-    }).queueNote).toBe('queued behind codex-dot-connect');
+    })).toMatchObject({
+      word: 'working · queued behind codex-dot-connect',
+      queueNote: 'queued behind codex-dot-connect',
+    });
     expect(cornerHeaderAgent({
       status: 'working',
       queueNote: 'waiting for the agent to come back',

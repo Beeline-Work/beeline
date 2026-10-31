@@ -562,7 +562,7 @@
     "line": 393,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "1c5d737eaeb1f08cfb74",
+    "id": "a105e67b4c96c57e83ba",
     "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> {failed ? ( <> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label=\"Try again\" fullWidth onPress={retry} testID=\"connect-retry\" /> <Text style={styles.footNote}> {failedIndex <= 0 ? `Sign in unlocks once ${machineName} answers.` : 'Sign in unlocks when pairing finishes.'} </Tex",
     "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
   }

@@ -34,18 +34,21 @@ try {
     owner.once('error', reject);
     owner.once('exit', code => { if (!output.includes('editing')) reject(new Error(`owner exited ${code}`)); });
   });
-  await assert.rejects(withCornerCheckoutLock(checkout, async () => {
-    await writeFile(join(checkout, 'input.txt'), 'clobbered\n');
-  }), /in use by another agent/);
+  let entered = false;
+  const waiting = withCornerCheckoutLock(checkout, async () => { entered = true; });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(entered, false);
   assert.equal(await readFile(join(checkout, 'input.txt'), 'utf8'), 'unfinished build input\n');
   const exited = once(owner, 'exit'); owner.kill('SIGKILL'); await exited;
+  await waiting;
+  assert.equal(entered, true);
   await writeFile(join(peer, 'input.txt'), 'peer push\n');
   git(peer, 'add', '.'); git(peer, 'commit', '-m', 'peer push'); git(peer, 'push', 'origin', 'feature/proof');
   await withCornerCheckoutLock(checkout, async () => {
     await assert.rejects(syncCornerBranch({ worktreePath:checkout, featureBranch:'feature/proof' }), /uncommitted/);
     assert.equal(await readFile(join(checkout, 'input.txt'), 'utf8'), 'unfinished build input\n');
   });
-  console.log('Reproduction checkout-1 PASS: competing writer refused, crash releases ownership, peer sync preserves unfinished build input');
+  console.log('Reproduction checkout-1 PASS: competing writer waits, crash releases ownership, peer sync preserves unfinished build input');
 } finally {
   owner?.kill('SIGKILL');
   await rm(root, { recursive:true, force:true });

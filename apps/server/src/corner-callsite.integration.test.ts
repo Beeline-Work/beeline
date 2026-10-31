@@ -189,12 +189,104 @@ it.each(['schedule', 'workflow', 'order', 'report', 'judgment'] as const)(
     const opened = await open(DM, { turnRequestId: command!.turn_request_id });
     expect(await facts(opened.cornerId)).toEqual([
       expect.objectContaining({
-        room_id: R,
+        room_id: DM,
         card: expect.not.objectContaining({ sourceMessageId: expect.anything() }),
+        system_event: expect.not.objectContaining({ kind: 'corner-opened' }),
       }),
     ]);
+    expect(
+      (await phone.readRoom(R, OUTSIDER))!.messages.some(
+        (message) => message.daemonFact?.cornerId === opened.cornerId,
+      ),
+    ).toBe(false);
   },
 );
+
+it.each(['dm', 'corner'] as const)(
+  'Reproduction 2026-10-31: an opening with no dispatching message stays in the %s command room',
+  async (kind) => {
+    const commandRoom = kind === 'dm' ? DM : await sourceFor('parent');
+    const previous = await request(commandRoom);
+    const parent = (
+      await db.query<any>(`SELECT * FROM agent_commands WHERE turn_request_id=$1`, [
+        previous.turnRequestId,
+      ])
+    ).rows[0];
+    const command = await createAgentCommand(db, {
+      roomId: commandRoom,
+      agentId: A,
+      sourceMessageId: null,
+      reason: 'schedule',
+      parent,
+      retainDepth: true,
+    });
+    expect(command).toBeDefined();
+    await daemon.execute(
+      'claimAgentCommand',
+      { roomId: commandRoom, commandId: command!.id, generationId: 'proof' },
+      A,
+    );
+    const opened = await open(commandRoom, { turnRequestId: command!.turn_request_id }, 'fleet-parity-deps');
+    const written = await facts(opened.cornerId);
+    expect(written).toEqual([
+      expect.objectContaining({
+        room_id: commandRoom,
+        card: expect.not.objectContaining({ sourceMessageId: expect.anything() }),
+        system_event: expect.not.objectContaining({ kind: 'corner-opened' }),
+      }),
+    ]);
+    const transcript = (await phone.readRoom(commandRoom, H))!.messages;
+    const opening = transcript.find((message) => message.daemonFact?.cornerId === opened.cornerId);
+    expect(opening?.daemonFact).toMatchObject({ type: 'corner-open', name: 'fleet-parity-deps' });
+    expect(opening?.daemonFact?.sourceMessageId).toBeUndefined();
+    expect(transcript.at(-1)?.id).toBe(opening?.id);
+    expect(transcript.findIndex((message) => message.id === previous.sourceMessageId)).toBeLessThan(
+      transcript.findIndex((message) => message.id === opening?.id),
+    );
+    expect(
+      (await phone.readRoom(R, OUTSIDER))!.messages.some(
+        (message) => message.daemonFact?.cornerId === opened.cornerId,
+      ),
+    ).toBe(false);
+    const listed = await phone.readCorners(R, H);
+    expect(listed?.corners.some((item) => item.corner.id === opened.cornerId)).toBe(true);
+  },
+);
+
+it('Reproduction 2026-10-31: an opening in the parent Room with no dispatching message stays there', async () => {
+  const previous = await request(R);
+  const parent = (
+    await db.query<any>(`SELECT * FROM agent_commands WHERE turn_request_id=$1`, [
+      previous.turnRequestId,
+    ])
+  ).rows[0];
+  const command = await createAgentCommand(db, {
+    roomId: R,
+    agentId: A,
+    sourceMessageId: null,
+    reason: 'schedule',
+    parent,
+    retainDepth: true,
+  });
+  expect(command).toBeDefined();
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: command!.id, generationId: 'proof' },
+    A,
+  );
+  const opened = await open(R, { turnRequestId: command!.turn_request_id }, 'room-local-work');
+  expect(await facts(opened.cornerId)).toEqual([
+    expect.objectContaining({
+      room_id: R,
+      card: expect.not.objectContaining({ sourceMessageId: expect.anything() }),
+      system_event: expect.objectContaining({ kind: 'corner-opened' }),
+    }),
+  ]);
+  const transcript = (await phone.readRoom(R, OUTSIDER))!.messages;
+  const opening = transcript.find((message) => message.daemonFact?.cornerId === opened.cornerId);
+  expect(opening?.daemonFact?.sourceMessageId).toBeUndefined();
+  expect(transcript.at(-1)?.id).toBe(opening?.id);
+});
 
 it('keeps both opening projections out of push notifications', async () => {
   await db.query(
@@ -238,9 +330,12 @@ it('does not treat an automatic workflow card as a dispatching message', async (
     A,
   );
   const opened = await open(DM, { turnRequestId: command!.turn_request_id });
-  expect(await facts(opened.cornerId)).toHaveLength(1);
-  expect((await facts(opened.cornerId))[0].room_id).toBe(R);
-  expect((await phone.readRoom(R, OUTSIDER))!.messages.filter(m => m.daemonFact?.cornerId === opened.cornerId)).toHaveLength(1);
+  const written = await facts(opened.cornerId);
+  expect(written).toHaveLength(1);
+  expect(written[0].room_id).toBe(DM);
+  expect(written[0].card.sourceMessageId).toBeUndefined();
+  expect((await phone.readRoom(DM, H))!.messages.filter(m => m.daemonFact?.cornerId === opened.cornerId)).toHaveLength(1);
+  expect((await phone.readRoom(R, OUTSIDER))!.messages.filter(m => m.daemonFact?.cornerId === opened.cornerId)).toHaveLength(0);
 });
 
 it.each(['dm', 'room', 'parent'] as const)('Reproduction CORNER-ROOM-2: keeps the %s Room opening static and reports the PR once', async (kind) => {

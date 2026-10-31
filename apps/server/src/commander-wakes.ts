@@ -104,7 +104,7 @@ export async function refreshWakeDigests(
       await tx.query<{ id: string; coalesced_context: string }>(
         `SELECT id,coalesced_context FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND coalesced_context IS NOT NULL
        AND (state='pending' OR (state='claimed' AND lease_expires_at<=now())
-         OR (state='cancelled' AND cancellation_reason IN ('workflow_attempt_expired','stop')))
+         OR (state='cancelled' AND cancellation_reason IN ('workflow_attempt_expired','answered_report','stop')))
        ORDER BY inbox_sequence FOR UPDATE`,
         [roomId, agentId],
       )

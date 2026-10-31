@@ -402,8 +402,8 @@ function ConnectToolFlow() {
             </>
           ) : (
             <>
-              {/* Locked, the primary keeps its fill at a third of its strength (mock v3). */}
-              <View pointerEvents={signInReady ? 'auto' : 'none'} style={!signInReady && styles.locked}>
+              {/* Composite fill and border together before fading on Android (mock v3). */}
+              <View needsOffscreenAlphaCompositing={!signInReady} pointerEvents={signInReady ? 'auto' : 'none'} style={!signInReady && styles.locked}>
                 <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={signInLabel} fullWidth disabled={!signInReady} accessibilityState={{ disabled: !signInReady }}
                   onPress={signInReady ? openSignIn : () => undefined} testID="connect-sign-in" />
               </View>

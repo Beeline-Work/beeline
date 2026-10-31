@@ -417,6 +417,8 @@ export interface SandboxSessionSpec {
   gitCommonDir?: string;
   /** Hygiene denylist overlaid read-only in an edit session. */
   protectedPaths?: string[];
+  /** Dependency trees are sealed after every writable parent mount. */
+  dependencyPaths?: string[];
   /** Explicit capabilities restored writable after protected parent mounts. */
   additionalWritablePaths?: string[];
   /** Per-session quota workbench mounted at this stable path. */
@@ -583,6 +585,15 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
       add(source('package-cache', 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
     }
     for (const name of ['tools', 'avd-base']) add(resolve(assetRoot, name), 'ro-bind');
+  }
+  for (const tree of spec.dependencyPaths ?? []) {
+    // npm --package-lock-only unlinks its private hidden lockfile. Keep that
+    // metadata and tool caches writable, sealing the shared package bytes.
+    for (const entry of readdirSync(tree, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === '.cache') continue;
+      const path = resolve(tree, entry.name);
+      requiredMounts.push({ source: path, target: path, mode: 'ro-bind' });
+    }
   }
   return {
     ...(spec.mode === 'edit' ? { rootWritable: true } : {}),

@@ -1,3 +1,5 @@
+import { collectDependencyStore } from './dependency-generation.js';
+import { warmNodeModulesStoreDir, mobileNodeModulesStoreDir } from './warm-node-modules.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -40,11 +42,6 @@ import { cornerStarts, isStandingRuntimeFault, retryNotBefore } from './retry-ba
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
-import {
-  mobileNodeModulesStoreDir,
-  seedWarmNodeModules,
-  warmNodeModulesStoreDir,
-} from './warm-node-modules.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { withKernelLock } from './kernel-lock.js';
 import {
@@ -222,37 +219,10 @@ export async function materializeCornerWorktree(input: {
         ],
         { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
       );
-      // A worktree cut from a bare clone has no `node_modules`, so this is the
-      // one moment a warm tree can be hardlinked in before anything reads it.
-      // Never fatal: a cold store just means the corner installs as before.
-      const seed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
-        worktreePath: path,
-        storeRoot: warmNodeModulesStoreDir(input.supervisorRoot),
-      });
-      if (seed.reason !== 'no-lockfile') {
-        console.log(
-          `[thin-core] corner ${input.cornerId} warm node_modules: ${seed.reason}${
-            seed.detail ? ` (${seed.detail})` : ''
-          }`,
-        );
-      }
-      // `apps/mobile` is deliberately outside the root workspaces and has its
-      // own lockfile, so its tree is warmed from a second store. Without it a
-      // fresh corner cannot run the mobile vitest suite at all.
-      const mobilePath = resolve(path, 'apps/mobile');
-      if (existsSync(resolve(mobilePath, 'package-lock.json'))) {
-        const mobileSeed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
-          worktreePath: mobilePath,
-          storeRoot: mobileNodeModulesStoreDir(input.supervisorRoot),
-        });
-        if (mobileSeed.reason !== 'no-lockfile') {
-          console.log(
-            `[thin-core] corner ${input.cornerId} warm mobile node_modules: ${mobileSeed.reason}${
-              mobileSeed.detail ? ` (${mobileSeed.detail})` : ''
-            }`,
-          );
-        }
-      }
+      // Installed dependencies are prepared at harness activation, when a
+      // read-only mount is guaranteed. Materialization alone must not expose
+      // writable aliases of shared inodes.
+
     }
     await execFileAsync('git', [
       `--git-dir=${gitCommonDir}`,
@@ -1950,6 +1920,7 @@ export class RoomRuntimeCoordinator {
       progress: () => this.yieldReconciliation(),
       log: entry => console.log(`[body] archived corner ${entry.roomId} deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
     });
+    await this.collectDependencyStores();
     this.pendingCornerReaps.delete(worktree.cornerId);
     this.archiveCleanupFaults.delete(worktree.cornerId);
     (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
@@ -2032,10 +2003,19 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private async collectDependencyStores(): Promise<void> {
+    for (const store of new Set([warmNodeModulesStoreDir(this.runtime.supervisorRoot), mobileNodeModulesStoreDir(this.runtime.supervisorRoot), resolve(this.runtime.supervisorRoot, 'beeline/node-modules-mobile')])) {
+      await collectDependencyStore(store);
+    }
+  }
+
   /** Local maintenance consumes only facts delivered by successful discovery.
    * Archive is terminal; uncertainty never synthesizes an archive fact. */
   async reclaimKnownPrivateStorage(): Promise<void> {
-    if (!this.stopped) await this.sweepRoomPrivateStorage(this.knownStorageStates);
+    if (!this.stopped) {
+      await this.sweepRoomPrivateStorage(this.knownStorageStates);
+      await this.collectDependencyStores();
+    }
   }
 
   private notePoll(roomId: string): void {

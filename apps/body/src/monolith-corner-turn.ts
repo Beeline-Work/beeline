@@ -1,3 +1,6 @@
+import type { SandboxSessionSpec } from './bwrap-sandbox.js';
+import { withKernelLock } from './kernel-lock.js';
+import { dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
 import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { modelContextWindowTokens } from './model-context-window.js';
@@ -8,7 +11,7 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
@@ -159,6 +162,7 @@ import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-gith
 import { agentGitIdentityEnv } from './agent-git-identity.js';
 import {
   harvestWarmNodeModules,
+  seedWarmNodeModules,
   mobileNodeModulesStoreDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
@@ -492,7 +496,39 @@ export class MonolithCornerTurnLoop {
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
+  private reviewerCheckout = false;
   private checkoutBackgroundDone?: () => void;
+  private readonly retiredClients = new Map<AcpClient, { done: Promise<void>; check: () => void; stop: () => void }>();
+
+  /** Retire the conversation immediately, but keep its existing tools and wake callbacks alive. */
+  private retainBackgroundClient(client: AcpClient): Promise<void> {
+    const existing = this.retiredClients.get(client);
+    if (existing) return existing.done;
+    let resolveDone!: () => void;
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    let stopping = false;
+    const finish = async () => {
+      if (stopping) return;
+      stopping = true;
+      clearTimeout(timer);
+      client.off('session/update', check);
+      client.off('exit', exited);
+      this.options.signal?.removeEventListener('abort', exited);
+      try { await client.stop(); }
+      finally { this.retiredClients.delete(client); resolveDone(); }
+    };
+    const check = () => { if (!client.hasBackgroundTools) void finish().catch(console.error); };
+    const exited = () => { void finish().catch(console.error); };
+    const timer = setTimeout(() => { void finish().catch(console.error); }, 2 * 60 * 60 * 1000);
+    timer.unref();
+    this.retiredClients.set(client, { done, check, stop: exited });
+    client.on('session/update', check);
+    client.once('exit', exited);
+    this.options.signal?.addEventListener('abort', exited, { once: true });
+    if (this.options.signal?.aborted) exited();
+    check();
+    return done;
+  }
   private recoverIntake?: () => void;
 
   configurationChanged(): void {
@@ -673,6 +709,7 @@ export class MonolithCornerTurnLoop {
   /** corner-complete on the wire: wake intake so `closed()` reaps now. */
   requestClose(): void {
     this.closePushed = true;
+    for (const retired of this.retiredClients.values()) retired.stop();
     this.wakeIntake?.();
   }
 
@@ -836,7 +873,10 @@ export class MonolithCornerTurnLoop {
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     this.sessionModel = null;
-    if (client) await client.stop();
+    const cancelled = this.closePushed || this.forcedStop || this.options.signal?.aborted ||
+      (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
+    if (client?.hasBackgroundTools && !cancelled) void this.retainBackgroundClient(client);
+    else if (client) await client.stop();
     this.checkoutBackgroundDone?.();
     this.checkoutBackgroundDone = undefined;
   }
@@ -864,6 +904,7 @@ export class MonolithCornerTurnLoop {
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
+      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath),
       devices: grantedDevices,
       isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
@@ -1223,14 +1264,14 @@ export class MonolithCornerTurnLoop {
     if (attachScratchRoot) await mkdir(attachScratchRoot, { recursive: true });
     const kvm = prepareKvmAccess(grantedDevices);
     if ('advice' in kvm) console.error(`[body] ${kvm.advice}`);
-    const spawnCommand = wrapAgentCommand({
-      bwrapPath: this.options.config.bwrapPath,
-      spec: {
+    const dependencyPaths: string[] = [];
+    const sandboxSpec: SandboxSessionSpec = {
         mode: 'edit',
         cwd: this.options.worktreePath,
         worktreePath: this.options.worktreePath,
         ...(repository ? { gitCommonDir: repository.gitCommonDir } : {}),
         protectedPaths: [this.options.runtime.supervisorRoot],
+        dependencyPaths,
         harnessStateDirs: stateDirs,
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
@@ -1268,7 +1309,36 @@ export class MonolithCornerTurnLoop {
               isolatedCategories,
             } }
           : {}),
-      },
+      };
+    if (!this.options.config.bwrapPath && ['', 'apps/mobile'].some(part =>
+      existsSync(resolve(this.options.worktreePath, part, 'node_modules/.beeline-generation')))) {
+      throw new Error('Beeline shared dependencies require a working bubblewrap sandbox. Restore sandbox support before resuming this checkout.');
+    }
+    if (repository && this.options.config.bwrapPath && (this.repositoryWork || existsSync(resolve(this.options.worktreePath, 'node_modules')))) {
+      const npm = (await execFileAsync('which', ['npm'])).stdout.trim();
+      const install = (cwd: string) => async () => {
+        const command = wrapAgentCommand({ bwrapPath: this.options.config.bwrapPath,
+          spec: { ...sandboxSpec, cwd }, command: npm, args: ['ci', '--no-audit', '--no-fund'] });
+        await execFileAsync(command.command, command.args, {
+          cwd, env: { ...process.env, ...agentEnv }, maxBuffer: 16 * 1024 * 1024,
+        });
+      };
+      dependencyPaths.push(...await prepareDependencyGeneration({
+        root: this.options.worktreePath, store: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(this.options.worktreePath),
+      }));
+      const mobile = resolve(this.options.worktreePath, 'apps/mobile');
+      if (existsSync(resolve(mobile, 'node_modules')) || existsSync(resolve(this.options.worktreePath, dependencyRequest))) dependencyPaths.push(...await prepareDependencyGeneration({
+        root: mobile, store: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(mobile),
+      }));
+      if (dependencyPaths.length && this.options.config.agentHomeRoot) {
+        agentEnv.PATH = await installDependencyNpmGuard(this.options.config.agentHomeRoot, npm, agentEnv.PATH ?? process.env.PATH ?? '');
+        agentEnv.BEELINE_READONLY_DEPENDENCIES = '1';
+      }
+    }
+
+    const spawnCommand = wrapAgentCommand({
+      bwrapPath: this.options.config.bwrapPath,
+      spec: sandboxSpec,
       command: selectedCommand,
       args: agentArgs,
     });
@@ -1309,6 +1379,7 @@ export class MonolithCornerTurnLoop {
       this.options.worktreePath,
     );
     const fingerprint = sessionConfigFingerprint({
+      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath),
       devices: grantedDevices,
       isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
@@ -1572,7 +1643,7 @@ export class MonolithCornerTurnLoop {
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
-      hasBackgroundWork: () => this.client?.hasBackgroundTools ?? false,
+      hasBackgroundWork: () => Boolean(this.client?.hasBackgroundTools || this.retiredClients.size),
       suspend: () => this.discardSession(true),
     };
   }
@@ -1627,7 +1698,8 @@ export class MonolithCornerTurnLoop {
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
-    if (client) await client.stop();
+    if (client?.hasBackgroundTools) void this.retainBackgroundClient(client);
+    else if (client) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
@@ -1646,20 +1718,76 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
-    return withCornerCheckoutLock(this.options.worktreePath, async () => {
+  private async withCheckout<T>(work: () => Promise<T>, reviewWaitMs = 60_000): Promise<T> {
+    const repository = this.options.repository;
+    const configuration = repository ? await this.options.api.execute('getAgentConfiguration', {
+      agentId: this.agent.publicKey, roomId: this.options.cornerId,
+    }) : undefined;
+    if (!configuration?.isReviewer || !repository) return this.runWithCheckout(work);
+    const source = this.options.worktreePath;
+    this.reviewerCheckout = true;
+    const fallback = async () => {
+      const copy = resolve(this.options.config.agentHomeRoot ?? dirname(source),
+        'review-checkout', this.options.cornerId, this.agent.publicKey + '-' + randomUUID());
+      await mkdir(dirname(copy), { recursive: true });
+      await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`,
+        'worktree', 'add', '--detach', copy, 'HEAD']);
+      try {
+        this.options.worktreePath = copy;
+        await this.syncBranch();
+        if (this.options.config.bwrapPath) await seedWarmNodeModules({ worktreePath: copy,
+          storeRoot: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
+        if (this.options.config.bwrapPath) await seedWarmNodeModules({ worktreePath: resolve(copy, 'apps/mobile'),
+          storeRoot: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot) });
+        return await this.runWithCheckout(work);
+      } finally {
+        await this.discardSession();
+        this.options.worktreePath = source;
+        await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`, 'worktree', 'remove', '--force', copy]);
+        await execFileAsync('git', [`--git-dir=${repository.gitCommonDir}`, 'worktree', 'prune']);
+      }
+    };
+    let entered = false;
+    try {
+      return await withCornerCheckoutLock(source, async () => {
+        entered = true;
+        const dirty = (await execFileAsync('git', ['-C', source, 'status', '--porcelain'])).stdout.trim();
+        if (dirty) return fallback();
+        const head = (await execFileAsync('git', ['-C', source, 'rev-parse', 'HEAD'])).stdout.trim();
+        const branch = (await execFileAsync('git', ['-C', source, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+          .catch(() => ({ stdout: '' }))).stdout.trim();
+        try { return await this.runWithCheckout(work, true); }
+        finally {
+          await this.discardSession();
+          await execFileAsync('git', ['-C', source, 'checkout', branch || head]);
+        }
+      // One minute lets ordinary turns finish without holding review behind a two-hour job.
+      }, reviewWaitMs);
+    } catch (error) {
+      if (entered || !(error instanceof Error) || !error.message.includes('timed out waiting')) throw error;
+      return await fallback();
+    } finally {
+      this.reviewerCheckout = false;
+    }
+  }
+
+  private async runWithCheckout<T>(work: () => Promise<T>, locked = false): Promise<T> {
+    const run = async () => {
       try {
         return await work();
       } catch (error) {
-        // A failed turn cannot keep mutating after handing off ownership.
+        // End the conversation while retaining tools until checkout ownership can transfer.
         await this.discardSession(true);
         throw error;
       } finally {
         // A detached Bash build still owns the checkout after end_turn.
         // Its pushed completion (or session teardown) releases ownership.
+        await Promise.all([...this.retiredClients.values()].map(retired => retired.done));
         const client = this.client;
         if (client?.hasBackgroundTools) {
           let finished!: () => void;
+          const cap = setTimeout(() => { void client.stop().finally(() => finished()); }, 2 * 60 * 60 * 1000);
+          cap.unref();
           try {
             await new Promise<void>(done => {
               finished = done;
@@ -1667,12 +1795,14 @@ export class MonolithCornerTurnLoop {
               client.once('exit', done);
             });
           } finally {
+            clearTimeout(cap);
             client.off('exit', finished);
             this.checkoutBackgroundDone = undefined;
           }
         }
       }
-    });
+    };
+    return locked ? run() : withCornerCheckoutLock(this.options.worktreePath, run);
   }
 
   private async prompt(
@@ -2172,11 +2302,12 @@ export class MonolithCornerTurnLoop {
                 trace.promptSent();
                 const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
                 const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
+                const promptClient = this.client!;
                 try {
                   const result = await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
                   () =>
-                    this.client!.sessionPrompt(
+                    promptClient.sessionPrompt(
                       this.sessionId!,
                       promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
                       ROOM_PROMPT_BACKSTOP_MS,
@@ -2211,7 +2342,8 @@ export class MonolithCornerTurnLoop {
                         publishToolCalls(calls, false, lastNarratedToolCall);
                       },
                       (call) => {
-                        if (!this.client?.hasBackgroundTools) this.checkoutBackgroundDone?.();
+                        this.retiredClients.get(promptClient)?.check();
+                        if (this.client === promptClient && !promptClient.hasBackgroundTools) this.checkoutBackgroundDone?.();
                         if (!requestId || !backgroundGeneration || !call.id) return;
                         void api.execute('postBackgroundToolCompletion', {
                           roomId: this.options.cornerId, requestId,
@@ -2590,19 +2722,20 @@ export class MonolithCornerTurnLoop {
    * where a later corner could read it as complete.
    */
   private harvestWarmNodeModules(): void {
-    if (this.harvest || !this.options.repository || this.options.config.agentSharedAssetRoot) return;
+    if (this.harvest || !this.options.repository) return;
     const { cornerId, worktreePath, runtime } = this.options;
     // `apps/mobile` has its own lockfile and store; harvesting it is what lets
     // the next fresh corner skip the whole mobile install.
     const mobilePath = resolve(worktreePath, 'apps/mobile');
+    const harvest = (input: { worktreePath: string; storeRoot: string }) => withKernelLock(`dependency-store:${resolve(input.storeRoot)}`, () => harvestWarmNodeModules(input));
     const jobs = [
-      harvestWarmNodeModules({
+      harvest({
         worktreePath,
         storeRoot: warmNodeModulesStoreDir(runtime.supervisorRoot),
       }),
       ...(existsSync(resolve(mobilePath, 'package-lock.json'))
         ? [
-            harvestWarmNodeModules({
+            harvest({
               worktreePath: mobilePath,
               storeRoot: mobileNodeModulesStoreDir(runtime.supervisorRoot),
             }),
@@ -2679,6 +2812,14 @@ export class MonolithCornerTurnLoop {
     };
     checkStop();
     try {
+      if (this.reviewerCheckout) {
+        const env = { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
+        const ref = `refs/remotes/origin/${repository.featureBranch}`;
+        await execFileAsync('git', ['-C', this.options.worktreePath, 'fetch', 'origin',
+          `+refs/heads/${repository.featureBranch}:${ref}`], { env });
+        await execFileAsync('git', ['-C', this.options.worktreePath, 'checkout', '--detach', ref], { env });
+        return;
+      }
       await syncCornerBranch({
         worktreePath: this.options.worktreePath,
         featureBranch: repository.featureBranch,

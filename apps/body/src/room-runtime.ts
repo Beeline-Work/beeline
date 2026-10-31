@@ -625,6 +625,7 @@ export class RoomRuntimeCoordinator {
   private stopped = false;
   /** Runtime refusals wait for a server configuration/sign-in change. */
   private readonly standingRuntimeStartFaults = new Set<string>();
+  private readonly cornerStartScope: string;
   private cornerStartRetryAt = 0;
   private cornerStartRetryTimer?: ReturnType<typeof setTimeout>;
   /** Per corner, the requests whose start failure has already been said out loud. */
@@ -675,6 +676,7 @@ export class RoomRuntimeCoordinator {
   ) {
     if (!runtime.transport) throw new Error('thin daemon requires monolith transport');
     this.runtime = runtime;
+    this.cornerStartScope = JSON.stringify([runtime.supervisorRoot, runtime.transport.baseUrl]);
     this.agent = runtimeIdentity(runtime.agent);
     this.now = options.now ?? Date.now;
     this.grantRunner = new GrantCommandRunner({
@@ -1358,6 +1360,24 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private deferCornerStarts(retryAt: number): void {
+    this.cornerStartRetryAt = Math.max(this.cornerStartRetryAt, retryAt);
+    cornerStarts.defer(this.cornerStartScope, this.cornerStartRetryAt);
+    clearTimeout(this.cornerStartRetryTimer);
+    this.cornerStartRetryTimer = setTimeout(() => {
+      this.cornerStartRetryTimer = undefined;
+      if (!this.stopped) this.wakeDiscovery();
+    }, Math.min(2_147_483_647, Math.max(0, this.cornerStartRetryAt - Date.now()) + 50 + Math.floor(Math.random() * 250)));
+    this.cornerStartRetryTimer.unref?.();
+  }
+
+  private cornerStartsDeferred(): boolean {
+    const retryAt = Math.max(this.cornerStartRetryAt, cornerStarts.retryAt(this.cornerStartScope));
+    if (retryAt <= Date.now()) return false;
+    if (retryAt !== this.cornerStartRetryAt || !this.cornerStartRetryTimer) this.deferCornerStarts(retryAt);
+    return true;
+  }
+
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
@@ -1365,13 +1385,13 @@ export class RoomRuntimeCoordinator {
       this.storageDeferredStarts.add(corner.cornerId);
       return;
     }
-    if (this.cornerStartRetryAt > Date.now() || this.standingRuntimeStartFaults.has(corner.cornerId)) return;
+    if (this.cornerStartsDeferred() || this.standingRuntimeStartFaults.has(corner.cornerId)) return;
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
     const releaseStart = await cornerStarts.acquire();
     let configKey: string | undefined;
     try {
-      if (this.stopped || this.cornerStartRetryAt > Date.now()) return;
+      if (this.stopped || this.cornerStartsDeferred()) return;
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
         this.parentRepositoryState(corner.parentRoomId),
@@ -1530,13 +1550,7 @@ export class RoomRuntimeCoordinator {
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
       const retryAt = retryNotBefore(error instanceof CornerCredentialLookupError ? error.cause : error);
       if (retryAt !== undefined) {
-        this.cornerStartRetryAt = Math.max(this.cornerStartRetryAt, retryAt);
-        clearTimeout(this.cornerStartRetryTimer);
-        this.cornerStartRetryTimer = setTimeout(() => {
-          this.cornerStartRetryTimer = undefined;
-          if (!this.stopped) this.wakeDiscovery();
-        }, Math.min(2_147_483_647, Math.max(0, this.cornerStartRetryAt - Date.now()) + 50 + Math.floor(Math.random() * 250)));
-        this.cornerStartRetryTimer.unref?.();
+        this.deferCornerStarts(retryAt);
         // Keep the authoritative command pending until its provider recovers.
         return;
       }

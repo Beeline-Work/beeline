@@ -19,6 +19,10 @@ describe('idle corner discovery', () => {
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-storm-'));
     roots.push(supervisorRoot);
     vi.useFakeTimers();
+    // One coordinator fails while the other's slower initial reads remain in flight.
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+      .mockReturnValueOnce(0).mockReturnValueOnce(0.99)
+      .mockReturnValueOnce(0).mockReturnValueOnce(0.99);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const reset = Date.now() + 600_000;
     let inFlight = 0;

@@ -7,6 +7,7 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { claimAgentConnection } from './connection-presence.js';
 import {
   createAgentCommand,
   renudgeStrandedPendingCommands,
@@ -463,6 +464,48 @@ it('shows an accepted tagged command until claim and re-nudges a connected idle 
   expect(await renudgeStrandedPendingCommands(db)).toBe(0);
   await claim(command!);
   expect((await phone.readRoom(R, H))?.pendingAgentCommands).toEqual([]);
+});
+
+it('Reproduction R2: an order accepted while the helper is offline runs when it reconnects', async () => {
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('r2-offline') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,released_at)
+    VALUES($1,1,'r2-offline','r2-offline',now())`, [A]);
+  const command = await createAgentCommand(db, {
+    roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
+    privatePayload: { kind: 'order', text: 'Do the work', authorId: B, fromRoomId: R },
+  });
+  const stored = (await db.query<{ state: string; created_offline: boolean; claimed_at: Date | null; renudged_at: Date | null }>(
+    `SELECT state,created_offline,claimed_at,renudged_at FROM agent_commands WHERE id=$1`, [command!.id],
+  )).rows[0];
+  expect(stored).toMatchObject({ state: 'pending', created_offline: true, claimed_at: null, renudged_at: null });
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
+  await claimAgentConnection(db, live, A, { lifecycleId: 'back' }, { connectionId: 'r2-back', instanceId: 'r2-offline' });
+  expect((await db.query<{ renudged_at: Date | null }>(
+    `SELECT renudged_at FROM agent_commands WHERE id=$1`, [command!.id],
+  )).rows[0]?.renudged_at).toBeTruthy();
+  const delivered = await commands(A, C);
+  expect(delivered.map((item) => item.id)).toContain(command!.id);
+  await claim(delivered.find((item) => item.id === command!.id)!);
+  expect((await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows[0]?.state)
+    .toBe('claimed');
+});
+
+it('re-nudges an order while the helper is claimed in a different room', async () => {
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('r2-busy') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+    VALUES($1,1,'r2-busy','r2-busy') ON CONFLICT(agent_id) DO UPDATE
+    SET instance_id=EXCLUDED.instance_id,released_at=NULL`, [A]);
+  const order = await createAgentCommand(db, {
+    roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
+    privatePayload: { kind: 'order', text: 'Queued behind another corner', authorId: B, fromRoomId: R },
+  });
+  await db.query(`UPDATE agent_commands SET created_at=now()-interval '31 seconds' WHERE id=$1`, [order!.id]);
+  const busy = await send('@hoots busy elsewhere');
+  await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
+    WHERE source_message_id=$1`, [busy.messageId]);
+  expect(await renudgeStrandedPendingCommands(db)).toBe(1);
+  await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour',renudged_at=NULL WHERE id=$1`, [order!.id]);
+  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
 });
 async function claim(c: AgentCommand, generationId = 'g1') {
   await daemon.execute(

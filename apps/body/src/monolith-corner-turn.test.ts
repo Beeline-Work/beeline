@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import type { CornerBrief } from '@beeline/api-contract/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AcpClient, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
+import { AcpClient, AcpTurnBackstopError, TURN_BACKSTOP_MS, backgroundProcessStillLive } from './acp.js';
 import type { BodyConfig } from './config.js';
 import { DaemonApiError, type DaemonApiClient, type InboxItem } from './daemon-api-client.js';
 import {
@@ -2094,6 +2094,39 @@ describe('corner close-request delivery', () => {
       });
       expect(stdout.trim().split('\n')).toEqual(['List of devices attached', 'emulator-5574\tdevice']);
     } finally { fixture.abort.abort(); await fixture.scheduler.dispose(); }
+  });
+
+  it('a session baseline with no extra process is not a live background tool', () => {
+    expect(backgroundProcessStillLive([10, 11], new Set([10, 11]))).toBe(false);
+    expect(backgroundProcessStillLive([10, 11, 40], new Set([10, 11]))).toBe(true);
+    expect(backgroundProcessStillLive([], new Set([10]))).toBe(false);
+  });
+
+  it('checkout-stale: a background flag with no live process releases the checkout', async () => {
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false };
+      return { id: 'write', createdAt: 1 };
+    });
+    const first = await cornerHarness(execute, 5);
+    const second = await cornerHarness(execute, 5);
+    (second.loop as unknown as { options: { worktreePath: string } }).options.worktreePath = first.root;
+    vi.spyOn(first.acp, 'hasBackgroundTools', 'get').mockReturnValue(true);
+    Object.assign(first.acp, { hasLiveBackgroundProcess: () => false });
+    vi.mocked(first.acp.sessionPrompt).mockImplementation(async () => {
+      await writeFile(join(first.root, 'uncommitted.txt'), 'first agent edits');
+      return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+    });
+    try {
+      await first.loop.run();
+      await second.loop.run();
+      expect(second.acp.sessionPrompt).toHaveBeenCalled();
+    } finally {
+      first.abort.abort(); second.abort.abort();
+      await first.scheduler.dispose(); await second.scheduler.dispose();
+    }
   });
 
   it.each([false, true])('checkout-1: queues another agent during foreground/background work (%s)', async (background) => {

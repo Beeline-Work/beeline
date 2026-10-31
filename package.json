@@ -123,6 +123,7 @@
     "measure:agent-tools": "node --import tsx scripts/measure-agent-tool-surface.ts",
     "measure:corner-wake": "node --import tsx scripts/measure-corner-wake.ts",
     "mobile:install": "npm install --prefix apps/mobile",
+    "prove:shared-dependencies": "npx turbo run build --filter=@beeline/body... && node scripts/prove-shared-dependencies.mjs",
     "corner:prepare": "node scripts/prepare-corner.mjs",
     "prove:runnable-server": "node --import tsx scripts/serve-runnable-artifact-proof.mjs",
     "game-host": "node scripts/runnable-artifact-proxy.mjs",

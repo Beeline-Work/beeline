@@ -23,3 +23,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 ## Product naming
 
 **Naming.** The product is **Beeline**; write "Beeline" in prose, docs, and UI copy. `buzz`/`Buzz` survives only as a legacy code identifier (`apps/mobile/sources/buzz/`, `components/buzz/`, `@beeline/buzz-client`, `BuzzClient`, `BuzzRigTransport`, `theme.buzz`, the `buzz-dm`/`buzz-community-invite` wire tags). Quote those verbatim; never call the app Buzz or Buzzy. Wire tags must not be renamed.
+
+## Preparing a corner
+
+`npm run corner:prepare` installs root dependencies only. Add `-- --mobile` for mobile work, `-- --build` when compiled workspace outputs are needed, or `-- --mobile --build` for both. Root typecheck includes mobile, so its first run in a fresh checkout needs both options. Preparation still performs a private root `npm ci`; immutable shared dependency storage is separate work.

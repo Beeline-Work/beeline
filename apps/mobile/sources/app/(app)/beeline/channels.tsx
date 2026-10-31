@@ -1,4 +1,4 @@
-import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
@@ -865,7 +865,9 @@ export default function BuzzChannels() {
   if (landing.kind === 'error') {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
+        {error === connectionErrorTitle
+          ? <ConnectionStatus />
+          : <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />}
       </View>
     );
   }
@@ -967,7 +969,7 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && <View style={styles.failureInset}><IndexRow inset="flush" title={error!} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
+        {!!error && error !== connectionErrorTitle && <View style={styles.failureInset}><IndexRow inset="flush" title={error} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions

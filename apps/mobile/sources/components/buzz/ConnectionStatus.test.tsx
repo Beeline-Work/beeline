@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -23,5 +25,13 @@ describe('ConnectionStatus', () => {
     expect(view.root.findByProps({ testID: 'connection-status-disconnected' })).toBeTruthy();
     act(() => view.root.findByProps({ testID: 'connection-status-reconnect' }).props.onPress());
     expect(state.reconnect).toHaveBeenCalledOnce();
+  });
+
+  it('replaces the Room-list offline error row and its retired copy', () => {
+    const source = readFileSync(new URL('../../app/(app)/beeline/channels.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('<ConnectionStatus />');
+    expect(source).not.toContain("Couldn't reach Beeline");
+    expect(source).not.toContain('No internet');
+    expect(source).not.toContain("Beeline isn't answering");
   });
 });

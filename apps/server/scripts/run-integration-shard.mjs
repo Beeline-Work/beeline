@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSelection, selected as runs } from './selected-tests.mjs';
 
@@ -24,14 +27,20 @@ const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', 
 const testFile = 'src/integration.test.ts';
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Vitest writes the list to a file: global setup logs migrations to stdout.
 function listTests(args = []) {
-  const result = spawnSync(process.execPath, [vitest, 'list', testFile, '--json', ...args], {
-    encoding: 'utf8',
-    maxBuffer: 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
-  if (result.status !== 0) throw new Error(`vitest list failed: ${result.status}`);
-  return JSON.parse(result.stdout);
+  const directory = mkdtempSync(join(tmpdir(), 'integration-shard-'));
+  const output = join(directory, 'tests.json');
+  try {
+    const result = spawnSync(process.execPath, [vitest, 'list', testFile, `--json=${output}`, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
+    if (result.status !== 0) throw new Error(`vitest list failed: ${result.status}`);
+    return JSON.parse(readFileSync(output, 'utf8'));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 const all = listTests();

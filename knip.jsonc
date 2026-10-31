@@ -57,6 +57,8 @@
         "scripts/prove-corner-stall.mjs",
         // The development guide invokes the built storage retention proof by path.
         "scripts/prove-corner-proof-retention.mjs",
+        // The server selection runbook invokes these proof and measured-history CLIs.
+        "scripts/{prove-server-test-selection,replay-measured-server-selection}.mjs",
         // The dashboard runbook invokes the recorded Cloudflare HTTP proof by path.
         "scripts/prove-x-site-visits.mjs",
         "scripts/check-acp-adapters.mjs",
@@ -339,6 +341,9 @@
       "entry": [
         "src/{index,measure-cli,corner-cleanup-cli}.ts",
         "scripts/{copy-postgres-data,verify-fly-cutover}.mjs",
+        // The collector selects this config by argv; Vitest loads its provider and setup by path.
+        "vitest.function-coverage.config.ts",
+        "scripts/{function-coverage-provider,observe-source-reads}.mjs",
       ],
     },
     "packages/buzz-client": {

@@ -102,8 +102,11 @@ Each run reads two things:
   and agent reports with a new occurrence in the last 24 hours. Each row
   includes the helper, app, platform and harness versions stored at filing
   time, and whether that helper or app version is the one the release pipeline
-  last delivered. A missing version is null. Count only latest-version reports;
-  older ones stay in the list.
+  last delivered. A missing version is null. `latest_released_version` is that
+  bundle. The grouping script keeps every row and counts only latest-version
+  evidence: the original report when its latest flag is true, and each later
+  occurrence whose helper version equals that bundle. Older reports stay in
+  the group and do not change the count or eligibility.
 - Each report's context. Every report stores `message_ids`: the trigger
   message plus up to 20 messages before it in the same Room. Human `@system`
   reports often have an empty `detail`, so the triager always reads this
@@ -147,9 +150,11 @@ feedback into one ranked card. Server-seeded schedules preserve their assigned
 agent; team-authored workflows and prompts are not overwritten.
 
 Agent feedback is grouped by tool, normalized error and category using
-`scripts/feedback-signals.mjs`. Groups retain occurrence count and first/last
-seen. Confirmed distinct humans affected outrank agent volume. Single agent
-occurrences without human impact cannot open fix corners. Each dispatch records
+`scripts/feedback-signals.mjs`. Groups keep every report, including older
+versions, plus first and last seen. Ranking and eligibility use the
+latest-version count, not the raw occurrence total. Confirmed distinct humans
+on a latest-version report outrank that count. A single latest agent
+occurrence without human impact cannot open a fix corner. Each dispatch records
 a stable signal; the next day's verification checks whether it stopped after
 release, still occurs, or has not been released. See the
 [step procedure](workflows/feedback-triage-steps.md).

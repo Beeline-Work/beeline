@@ -5,6 +5,7 @@ import { DAEMON_OPERATION_NAMES, DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
 import { feedbackConfigFromEnv, type FeedbackConfig, type FeedbackPullRequests } from './feedback.js';
 import { FEEDBACK_TRIAGE_PULL_SQL } from './feedback-triage-workflow.js';
+import { groupFeedback } from '../../../scripts/feedback-signals.mjs';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
@@ -541,6 +542,7 @@ describe('report versions', () => {
       app_is_latest: boolean | null;
       harness: string | null;
       harness_version: string | null;
+      latest_released_version: string | null;
     }>(FEEDBACK_TRIAGE_PULL_SQL)).rows;
     const row = (id: string) => rows.find((item) => item.id === id)!;
     expect(row(older.itemId)).toMatchObject({
@@ -552,6 +554,89 @@ describe('report versions', () => {
     const newHuman = (await items()).find((item) => item.trigger_message_id === newApp.messageId)!.id;
     expect(row(oldHuman)).toMatchObject({ app_version: 'v0.1.90', app_is_latest: false, helper_is_latest: null });
     expect(row(newHuman)).toMatchObject({ app_version: 'v0.1.94', app_is_latest: true });
+    expect(row(current.itemId).latest_released_version).toBe('v0.1.94');
+  });
+
+  it('counts latest occurrences on a mixed-version item and leaves older reports out of eligibility', async () => {
+    await database.query(
+      `INSERT INTO helper_release_notifications(singleton,version,sha) VALUES(true,'v0.1.94',$1)`,
+      ['b'.repeat(40)],
+    );
+    await database.query(`UPDATE agents SET harness='codex' WHERE agent_id=ANY($1::text[])`, [[AGENT, OUTSIDER, TRIAGE]]);
+    const errorExcerpt = 'socket reset while sending';
+    await presence(AGENT, 'v0.1.90');
+    const older = await report({ summary: 'old helper lost the send', errorExcerpt, toolName: 'read' });
+    await database.query(
+      `UPDATE feedback_items SET occurrence_count=40, occurrences=$2::jsonb WHERE id=$1`,
+      [older.itemId, JSON.stringify([{ helperVersion: 'v0.1.90', harness: 'codex', harnessVersion: null }])],
+    );
+    const mixed = await report({ summary: 'current and old helpers lost the send', errorExcerpt, toolName: 'read' });
+    await database.query(`UPDATE feedback_items SET created_at=now()-interval '2 hours' WHERE id=$1`, [mixed.itemId]);
+    await presence(OUTSIDER, 'v0.1.90');
+    expect((await report(
+      { summary: 'current and old helpers lost the send', errorExcerpt, toolName: 'read' },
+      ROOM,
+      OUTSIDER,
+    )).itemId).toBe(mixed.itemId);
+    await presence(TRIAGE, 'v0.1.94');
+    expect((await report(
+      { summary: 'current and old helpers lost the send', errorExcerpt, toolName: 'read' },
+      ROOM,
+      TRIAGE,
+    )).itemId).toBe(mixed.itemId);
+    await database.query(
+      `UPDATE feedback_items SET created_at=now()-interval '3 hours',
+         occurrences=(
+           SELECT jsonb_agg(occurrence || jsonb_build_object('createdAt', now()-interval '3 hours'))
+           FROM jsonb_array_elements(occurrences) occurrence
+         )
+       WHERE id=$1`,
+      [mixed.itemId],
+    );
+    await presence(AGENT, 'v0.1.94');
+    expect((await report({ summary: 'current and old helpers lost the send', errorExcerpt, toolName: 'read' })).itemId)
+      .toBe(mixed.itemId);
+    await receipt(PERSON, 'phone', { platform: 'android', releaseVersion: 'v0.1.90' });
+    await receipt(OTHER, 'tablet', { platform: 'android', releaseVersion: 'v0.1.94' });
+    const phone = new PhoneService(database, 'http://local.test');
+    const oldApp = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system old app froze the composer' },
+      PERSON,
+    );
+    const newApp = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system current app froze the composer' },
+      OTHER,
+    );
+    const rows = (await database.query<Record<string, unknown>>(FEEDBACK_TRIAGE_PULL_SQL)).rows;
+    const mixedRow = rows.find((item) => item.id === mixed.itemId)!;
+    expect(mixedRow).toMatchObject({
+      helper_version: 'v0.1.90',
+      helper_is_latest: false,
+      latest_released_version: 'v0.1.94',
+      occurrence_count: 4,
+    });
+    const occurred = (mixedRow.occurrences as Array<{ helperVersion: string }>).map((item) => item.helperVersion);
+    expect(occurred.filter((version) => version === 'v0.1.94')).toHaveLength(2);
+    expect(occurred.filter((version) => version === 'v0.1.90')).toHaveLength(1);
+    const groups = groupFeedback(rows);
+    const agents = groups.find((group) => group.itemIds.includes(mixed.itemId))!;
+    expect(agents.itemIds).toEqual(expect.arrayContaining([mixed.itemId, older.itemId]));
+    expect(agents.count).toBe(2);
+    expect(agents.agentCount).toBe(2);
+    expect(agents.eligible).toBe(true);
+    expect(agents.humanCount).toBe(0);
+    expect(agents.versionReports.map((report) => report.id)).toEqual(expect.arrayContaining([mixed.itemId, older.itemId]));
+    const stored = await items();
+    const oldHumanId = stored.find((item) => item.trigger_message_id === oldApp.messageId)!.id;
+    const newHumanId = stored.find((item) => item.trigger_message_id === newApp.messageId)!.id;
+    expect(groups.find((group) => group.itemIds.includes(oldHumanId))).toMatchObject({
+      count: 0, humanCount: 0, eligible: false, itemIds: [oldHumanId],
+    });
+    expect(groups.find((group) => group.itemIds.includes(newHumanId))).toMatchObject({
+      count: 1, humanCount: 1, eligible: true, itemIds: [newHumanId],
+    });
   });
 });
 

@@ -19,10 +19,11 @@ it('read-only assignments reuse the Room checkout, then select a private copy af
     rooms: [], communityId: 'workspace', supervisorRoot: root,
     transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'fixture' } } as AgentRuntimeRecord;
   let writable = false;
+  let assignedBrief = true;
   const remote = resolve(root, 'remote.git'), roomCheckout = resolve(root, 'room');
   const execute = vi.fn(async (name: string) => {
     if (name === 'getCornerRestoreState') return { cornerId: 'corner', objective: 'Read source', closeRequested: false,
-      implementerAgentId: identity.publicKey, brief: { repositoryWork: writable } };
+      implementerAgentId: identity.publicKey, ...(assignedBrief ? { brief: { repositoryWork: writable } } : {}) };
     if (name === 'getRoomRepositoryState') return { resolution: 'repository', key: 'owner/repo', remote: `file://${remote}` };
     if (name === 'getRoomGitHubToken') return { token: 'fixture', expiresAt: Date.now() + 60_000 };
     return {};
@@ -64,6 +65,11 @@ it('read-only assignments reuse the Room checkout, then select a private copy af
     expect(await readStorageOwners(root)).toContainEqual(expect.objectContaining({ roomId: 'corner', agentId: identity.publicKey }));
     writable = false;
     await turn.withCheckout(async () => expect(turn.options.worktreePath).toBe(roomCheckout));
+    assignedBrief = false;
+    await turn.withCheckout(async () => {
+      expect(turn.options.worktreePath).toBe(own.path);
+      expect(turn.options.repository.readOnly).toBe(false);
+    });
   } finally { run.mockRestore(); await coordinator.shutdown(); await rm(root, { recursive: true, force: true }); }
 });
 

@@ -28,6 +28,7 @@ import {
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import { cornerHasRepositoryWork } from './prompt-assembly.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
@@ -1391,7 +1392,8 @@ export class RoomRuntimeCoordinator {
         }
         return worktree;
       };
-      const checkout = repositoryBacked ? await prepareCheckout(restore.brief?.repositoryWork !== false) : undefined;
+      const repositoryReadOnly = Boolean(restore.brief) && !cornerHasRepositoryWork(restore.brief);
+      const checkout = repositoryBacked ? await prepareCheckout(!repositoryReadOnly) : undefined;
       const workspacePath = checkout?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!checkout) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       await writePrivateFileAtomically(
@@ -1425,7 +1427,7 @@ export class RoomRuntimeCoordinator {
                 featureBranch: featureBranch!,
                 targetBranch: targetBranch!,
                 gitCommonDir: checkout.gitCommonDir,
-                readOnly: restore.brief?.repositoryWork === false,
+                readOnly: repositoryReadOnly,
                 githubToken: granted!.token,
               },
             }

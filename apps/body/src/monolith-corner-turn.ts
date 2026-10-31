@@ -1739,7 +1739,9 @@ export class MonolithCornerTurnLoop {
     this.reviewerCheckout = configuration?.isReviewer === true;
     if (this.options.prepareCheckout && this.options.repository) {
       const restored = await this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId });
-      const writable = cornerHasRepositoryWork(restored.brief);
+      // An unbriefed human corner still bootstraps on its feature branch;
+      // repository publication remains gated by its first assigned brief.
+      const writable = !restored.brief || cornerHasRepositoryWork(restored.brief);
       const checkout = await this.options.prepareCheckout(writable, restored.implementerAgentId);
       if (checkout.path !== this.options.worktreePath) await this.discardSession(true);
       this.options.worktreePath = checkout.path;

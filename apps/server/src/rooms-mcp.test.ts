@@ -1576,10 +1576,17 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     beforeAll(async () => {
       await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'big','public')`, [BIG, WORKSPACE]);
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, BIG, USER, AGENT]);
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
-        SELECT encode(sha256(('big'||g)::bytea),'hex'),$1,CASE WHEN g%3=0 THEN $3 ELSE $2 END,
-          'message '||g||' about @demo-agent and the release plan, with body text long enough to look real',
-          now()-((20001-g)||' seconds')::interval FROM generate_series(1,20000) g`, [BIG, USER, AGENT]);
+      // Seed pre-cutover history without replay fanout. Fresh MCP sends below
+      // retain all triggers and exercise the live write path against this history.
+      await db.query('ALTER TABLE messages DISABLE TRIGGER beeline_notify_live_messages');
+      try {
+        await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+          SELECT encode(sha256(('big'||g)::bytea),'hex'),$1,CASE WHEN g%3=0 THEN $3 ELSE $2 END,
+            'message '||g||' about @demo-agent and the release plan, with body text long enough to look real',
+            now()-((20001-g)||' seconds')::interval FROM generate_series(1,20000) g`, [BIG, USER, AGENT]);
+      } finally {
+        await db.query('ALTER TABLE messages ENABLE TRIGGER beeline_notify_live_messages');
+      }
       // The long seed outlives the server's keep-alive; drop the stale pooled socket.
       await fetch(origin + '/.well-known/oauth-authorization-server').catch(() => undefined);
     }, 120_000);
@@ -1592,6 +1599,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(Date.now() - started).toBeLessThan(3_000);
       expect(sent.woken).toEqual(['demo-agent']);
       expect(await commands(sent.messageId)).toBe(1);
+      expect((await db.query(`SELECT 1 FROM live_journal
+        WHERE stream_id=$1 AND event->>'messageId'=$2`, [`room:${BIG}`, sent.messageId])).rowCount).toBe(1);
     }, 60_000);
     it('returns one message to a retry sent while the first call is in flight, and wakes once', async () => {
       const { client } = await connected();

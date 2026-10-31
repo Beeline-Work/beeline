@@ -41,8 +41,11 @@ class FunctionCoverageProvider extends V8CoverageProvider {
     const directory = process.env.BEELINE_FUNCTION_COVERAGE_DIR;
     if (!directory) throw new Error('BEELINE_FUNCTION_COVERAGE_DIR is required');
     await mkdir(directory, { recursive: true });
-    const key = createHash('sha256').update(JSON.stringify(entries.map(e => e.test))).digest('hex');
-    await writeFile(resolve(directory, `${key}-${process.pid}.json`), JSON.stringify(entries));
+    // Integration batches share a test filename and runners can reuse PIDs.
+    // Distinct packets must survive merging artifacts from different hosts.
+    const payload = JSON.stringify(entries);
+    const key = createHash('sha256').update(payload).digest('hex');
+    await writeFile(resolve(directory, `${key}-${process.pid}.json`), payload);
     return this.createCoverageMap();
   }
   async generateReports() {}

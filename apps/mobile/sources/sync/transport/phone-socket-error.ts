@@ -8,6 +8,7 @@ export class PhoneSocketError extends Error {
       : code === 'access_denied' ? 403
       : code === 'not_found' || code === 'unknown_phone_operation' ? 404
       : code === 'conflict' ? 409
+      : code === 'query_too_broad' ? 422
       : code === 'busy' || code === 'too_many_requests' || code === 'voice-daily-limit' ? 429
       : code === 'invalid_args' || code === 'invalid_request' || code.startsWith('invalid_') ? 400
       : retryable ? 503 : 400;

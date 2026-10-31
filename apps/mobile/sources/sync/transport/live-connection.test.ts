@@ -13,6 +13,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { AppState } from 'react-native';
+import { beginRoomDraw, finishRoomDraw, observeVisibleRoomRows } from '@/buzz/room-draw-barrier';
 import { LiveConnection } from './live-connection';
 import { liveFrameEpoch } from './live-frame-epoch';
 import { getRoomCornerSummary, getRoomCorners } from '@/buzz/room-corner-store';
@@ -1633,6 +1634,27 @@ describe('phone socket request/reply', () => {
     expect(await pending[0]).toMatchObject({ status: 403, message: 'Owner only' });
     const next = connection.request('readWorkspaces', {}).catch(e => e);
     connection.dispose(); await Promise.all([...pending, next]); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('sends the opening Room before optional socket reads and starts their deadline after draw', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open(); beginRoomDraw('r');
+    const required = connection.request('readRoom', { roomId: 'r' });
+    const optional = connection.request('readChats', { workspaceId: 'w' });
+    const frames = () => sockets[0]!.sent.map(v => JSON.parse(v)).filter(v => v.t === 'req');
+    expect(frames().map(v => v.op)).toEqual(['readRoom']);
+    sockets[0]!.emit({ t: 'res', id: frames()[0].id, ok: true, result: {} }); await required;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(frames().map(v => v.op)).toEqual(['readRoom']);
+    observeVisibleRoomRows('r', ['newest']); finishRoomDraw('newest', 'r'); await vi.advanceTimersByTimeAsync(0);
+    expect(frames().map(v => v.op)).toEqual(['readRoom', 'readChats']);
+    sockets[0]!.emit({ t: 'res', id: frames()[1].id, ok: true, result: {} }); await optional; connection.dispose();
+  });
+  it('bounds authorization and a socket that never opens with the same request deadline', async () => {
+    const sockets = stubSockets(), { connection } = createConnection(vi.fn(() => new Promise(() => {})));
+    const result = connection.request('readWorkspaces', {}, { timeoutMs: 15_000 }).catch(e => e);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await result).name).toBe('MonolithRequestTimeoutError'); expect(sockets).toHaveLength(0);
+    connection.dispose(); expect(vi.getTimerCount()).toBe(0);
   });
   it('rejects oversized UTF-8 frames before opening a socket', async () => {
     const sockets = stubSockets(), { connection } = createConnection();

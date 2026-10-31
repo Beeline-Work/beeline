@@ -29,7 +29,7 @@ type PendingRequest = {
   reject: (error: unknown) => void;
 };
 
-export type SocketRequestOptions = {
+type SocketRequestOptions = {
   timeoutMs?: number;
   signal?: AbortSignal;
   afterRoomDraw?: boolean;
@@ -283,7 +283,11 @@ export class LiveConnection {
       try {
         if (JSON.parse(request.frame).op === 'readRoom') markRoomOpen('wire-dispatch');
         socket.send(request.frame);
-      } catch (error) { request.reject(error); }
+      } catch (error) {
+        request.reject(error);
+        this.reconnectNow();
+        return;
+      }
     }
   }
 

@@ -1,4 +1,3 @@
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { PhoneSocketError } from '@/sync/transport/phone-socket-error';
 
 /** Voice control shares the app socket; audio still uses LiveKit. */
@@ -8,6 +7,7 @@ export async function voiceFetch(input: string, init: RequestInit): Promise<Resp
   if (!match) throw new Error('Invalid voice request');
   const [, id, action] = match;
   const body = init.body ? JSON.parse(String(init.body)) : {};
+  const { sharedLiveConnection } = await import('@/sync/transport/live-connection');
   const connection = sharedLiveConnection();
   const options = { timeoutMs: 20_000, signal: init.signal ?? undefined };
   try {

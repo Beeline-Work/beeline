@@ -1,9 +1,12 @@
 import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+// @ts-expect-error The vendored app has no test-renderer declarations.
+import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { VaultSaveCard as Card } from '@beeline/api-contract/phone';
 
-const http = vi.hoisted(() => vi.fn()), socket = vi.hoisted(() => vi.fn());
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const { http, socket } = vi.hoisted(() => ({ http: vi.fn(), socket: vi.fn() }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: http } }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ request: socket }) }));
 vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://proof.test' }) }));
@@ -19,7 +22,7 @@ it('keeps Save to vault on HTTP and clears the submitted secret', async () => {
     allowedHosts: ['example.com'], fields: [{ name: 'password', label: 'Password', secret: true }],
     agentId: 'agent', ownerId: 'owner', ownerName: 'Owner', status: 'pending' };
   http.mockResolvedValueOnce(Response.json({ status: 'saved', card: { ...card, status: 'saved', savedAt: 123, reference: 'vault://proof/example' } }));
-  let renderer!: ReactTestRenderer;
+  let renderer: any;
   try {
     await act(async () => { renderer = create(<VaultSaveCard card={card} cardId="card" roomId="room" viewerId="owner" agentName="Agent" />); });
     await act(async () => { renderer.root.findByType('Input' as any).props.onChangeText('throwaway-secret'); });

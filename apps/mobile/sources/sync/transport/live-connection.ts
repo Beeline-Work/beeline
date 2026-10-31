@@ -102,7 +102,6 @@ const LIVE_CONNECT_TIMEOUT_MS = 15_000;
 /** A foreground sync is a one-off liveness check, never a periodic ping. */
 const FOREGROUND_SYNC_TIMEOUT_MS = 3_000;
 const BACKGROUND_CLOSE_DELAY_MS = 120_000;
-const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000] as const;
 /** A push can beat the socket frame for the same message; past this, the
  *  socket missed it. */
 const PUSH_MISS_GRACE_MS = 5_000;
@@ -161,7 +160,6 @@ export class LiveConnection {
   private nextRequestId = 0;
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
-  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** Rooms on screen, counted per holder; the server holds their pushes. */
   private readonly viewing = new Map<string, number>();
   private readonly heardMessages = new Set<string>();
@@ -171,7 +169,6 @@ export class LiveConnection {
   private backgroundSocketClosed = false;
   private readonly unsubscribeAppState: () => void;
   private readonly unsubscribeNetworkChange: () => void;
-  private reconnectAttempt = 0;
   private nextRegistrationId = 1;
   private generation = 0;
   /** Bumped only by `dispose`; a held view survives an identity change. */
@@ -427,12 +424,15 @@ export class LiveConnection {
     this.reconnectNow();
   }
 
-  /** Explicit Retry, foreground, network and deadline recovery entry point. */
+  /**
+   * Next socket for an explicit Retry, a foreground return, a network change,
+   * or a request deadline. A failed attempt does not schedule another.
+   */
   reconnectNow(): void {
     if (this.connectInFlight) {
       // Registration can return while the first connect promise is still
       // settling. Keep a foreground/read recovery request made in that gap.
-      if (this.socket || this.reconnectTimer) {
+      if (this.socket) {
         const generation = this.generation;
         void this.connectInFlight.then(() => {
           if (generation === this.generation) this.reconnect();
@@ -441,13 +441,10 @@ export class LiveConnection {
       return;
     }
     if (this.socket?.readyState === 0) return;
-    this.reconnectAttempt = 0;
-    if (!this.socket && !this.reconnectTimer) {
+    if (!this.socket) {
       if (this.registrations.size) void this.ensureSocket();
       return;
     }
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
     this.dropSocketState();
@@ -526,8 +523,6 @@ export class LiveConnection {
     setConnectionState('disconnected');
     this.generation += 1;
     this.connectInFlight = undefined;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
     if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
     this.backgroundCloseTimer = undefined;
     const current = this.socket;
@@ -542,7 +537,6 @@ export class LiveConnection {
     this.workspaceCursors.clear();
     this.traceOwners.clear();
     this.heardMessages.clear();
-    this.reconnectAttempt = 0;
   }
 
   private stop(registration: Registration): void {
@@ -580,6 +574,11 @@ export class LiveConnection {
     return flight;
   }
 
+  /**
+   * Opens one socket. An authorization failure, a hung open, a handshake
+   * error, or a close ends that attempt. The next socket waits for
+   * foreground, a network change, or an explicit Retry.
+   */
   private async connect(): Promise<void> {
     const generation = this.generation;
     try {
@@ -594,12 +593,10 @@ export class LiveConnection {
         this.dropSocketState();
         next.close();
         setConnectionState('disconnected');
-        this.scheduleReconnect();
       }, LIVE_CONNECT_TIMEOUT_MS);
       next.onopen = () => {
         clearTimeout(connectTimer);
         if (this.socket !== next) return;
-        this.reconnectAttempt = 0;
         setConnectionState('connected');
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
@@ -635,7 +632,6 @@ export class LiveConnection {
         this.socket = undefined;
         this.dropSocketState();
         setConnectionState('disconnected');
-        this.scheduleReconnect(this.reconnectAttempt === 0);
       };
       next.onerror = () => {
         if (this.socket !== next) return;
@@ -645,15 +641,11 @@ export class LiveConnection {
         this.socket = undefined;
         this.dropSocketState();
         setConnectionState('disconnected');
-        // Only the first recovery skips the backoff. A handshake that keeps
-        // failing must consume the same finite retry budget as a close.
-        this.scheduleReconnect(this.reconnectAttempt === 0);
         next.close();
       };
     } catch {
       if (generation !== this.generation) return;
       setConnectionState('disconnected');
-      this.scheduleReconnect();
     }
   }
 
@@ -668,17 +660,6 @@ export class LiveConnection {
     // Keep the last painted overlays and Room cursors across a transport
     // reconnect. A resumed server lane only replays what changed.
     this.traceOwners.clear();
-  }
-
-  private scheduleReconnect(immediately = false): void {
-    if (this.reconnectTimer) return;
-    const delayMs = immediately ? 0 : RECONNECT_BACKOFF_MS[this.reconnectAttempt++];
-    if (delayMs === undefined) return;
-    if (immediately) this.reconnectAttempt = 1;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = undefined;
-      void this.ensureSocket();
-    }, delayMs);
   }
 
   /**

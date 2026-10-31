@@ -182,7 +182,10 @@ describe('monolith Room send path', () => {
     expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
 
     sockets[0]!.onclose?.();
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(1);
+    sharedLiveConnection().reconnectNow();
+    await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
     sockets[1]!.onopen?.();
     expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
@@ -238,7 +241,7 @@ describe('monolith Room send path', () => {
     stopSecond();
   });
 
-  it('retries authorization and resets reconnect backoff after opening', async () => {
+  it('reconnects after an authorization failure only when asked, not on a timer', async () => {
     vi.useFakeTimers();
     const sockets: Array<{
       sent: string[];
@@ -269,10 +272,16 @@ describe('monolith Room send path', () => {
       () => {},
     );
     expect(sockets).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(0);
+    sharedLiveConnection().reconnectNow();
+    await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(1);
+    sharedLiveConnection().reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
 

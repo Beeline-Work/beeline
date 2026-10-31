@@ -13,6 +13,7 @@ const controls = vi.hoisted(() => ({
   reconnects: 0,
   working: false,
   failures: 0,
+  appStateListeners: [] as Array<(state: string) => void>,
   emit: (_event: unknown) => {},
 }));
 
@@ -22,7 +23,15 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 vi.mock('react-native', () => ({
   AppState: {
-    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    addEventListener: (_event: string, listener: (state: string) => void) => {
+      controls.appStateListeners.push(listener);
+      return {
+        remove: () => {
+          const index = controls.appStateListeners.indexOf(listener);
+          if (index >= 0) controls.appStateListeners.splice(index, 1);
+        },
+      };
+    },
     get currentState() {
       return controls.appState;
     },
@@ -169,6 +178,7 @@ beforeEach(() => {
   controls.reconnects = 0;
   controls.working = false;
   controls.failures = 0;
+  controls.appStateListeners.length = 0;
 });
 
 afterEach(() => {
@@ -200,6 +210,14 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
       await act(async () => controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }));
       await advance(1_100);
+      if (failures > 0) {
+        expect(controls.roomReads).toBe(2);
+        expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
+        await advance(60_000);
+        expect(controls.roomReads).toBe(2);
+        await act(async () => controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }));
+        await advance(0);
+      }
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('hidden-reply');
       expect(latest!.roomSurface!.latestAgentTurns![0]!.status).toBe('complete');
       const reads = controls.roomReads;
@@ -236,7 +254,7 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
     });
     await advance(60_000);
-    expect(controls.roomReads).toBe(4);
+    expect(controls.roomReads).toBe(1);
     expect(latest!.hydrationFailed).toBe(true);
     expect(latest!.roomSurface).toBeNull();
     controls.failures = 0;
@@ -244,19 +262,28 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       monolithLive: { type: 'subscribed', roomId: 'experiments', resumed: false },
     }));
     await advance(0);
-    expect(controls.roomReads).toBe(5);
+    expect(controls.roomReads).toBe(2);
     expect(latest!.roomSurface?.messages.at(-1)?.id).toBe('m-2042');
     expect(latest!.hydrationFailed).toBe(false);
     console.log('R1 stand-in: failed open left Retry; reconnect subscribe painted the Room and cleared it');
     await act(async () => renderer.unmount());
   });
 
-  it('bounds failed refresh retries to three after the opening read', async () => {
+  it('does not retry a failed refresh on a timer, and reads once on foreground', async () => {
     controls.failures = 100;
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(Harness, { capture: () => {} })); });
     await advance(60_000);
-    expect(controls.roomReads).toBe(4);
+    expect(controls.roomReads).toBe(1);
+    controls.failures = 0;
+    controls.appState = 'active';
+    await act(async () => {
+      for (const listener of controls.appStateListeners) listener('active');
+    });
+    await advance(0);
+    expect(controls.roomReads).toBe(2);
+    await advance(60_000);
+    expect(controls.roomReads).toBe(2);
     await act(async () => renderer.unmount());
   });
 

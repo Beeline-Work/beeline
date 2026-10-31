@@ -125,6 +125,10 @@ export function beelineCornersSkillMarkdown(releaseId: string): string {
 - After a fix pull request merges, notify_feedback_fixed(item_ids, title, pr_url) resolves the feedback items it lists. The feedback-triage-steps procedure says when to send Fixed notices.
 - For an operator notice explicitly commanded by lunchboxfortwo, use send_operator_system_dm({recipients,text}) through their own agent. recipients is one exact human id/handle, a list, or all. The server enforces owner-command provenance and audits each send. Keep the returned sendId; pending delivery is not a reason to resend. Read completion counts with read_operator_system_dm({sendId}). Delivered means committed to the System thread, not read by the person. Never substitute an ad-hoc production database write.
 
+## Frontend proof in the PR
+
+For every user-visible frontend change (new or changed component, screen, sheet, card, copy, layout or web page), supply a Mock provenance block per change. The brief approval must be the human's reply to the mock message, and that same mock objectId must be in the brief attachment manifest. Name the brief revision, mock objectId and approval sourceMessageId in the PR; put a rendered screenshot of the built change next to the mock. List intentional differences and their human approval evidence. For a change commanded in words with no mock, cite the brief approval and quote the exact human command line instead; keep the rendered proof. Agent or commander authorization alone does not establish visual approval. Logic-only edits in UI files with no visible change are exempt; explain each exempt file.
+
 ## Landing a pull request
 
 1. Read the gate with read(facet:checks, address): checks, reviewerWake and mergeAllowed.
@@ -308,6 +312,11 @@ For commands that need the tree, use a detached temporary worktree; never the wo
 Check every story and criterion, confirm non-goals stayed out, and resolve or explicitly accept each risk. Keep your working notes private; do not post an outline ledger.
 
 For UI changes, reject visual changes outside the brief's Visual scope and PRs missing its listed screenshots. Any visual change the owner has not approved fails review: the approved state is the supplied mock and Visual scope, or the current UI where neither covers it.
+
+For each visible frontend change in the diff, read(facet:brief), paging through every revision covering the change. Verify the server-recorded approval kind is explicit-human-answer, replyToMessageId identifies the mock message, replyToAttachmentIds contains the PR's mock objectId, the same objectId is in that revision's attachment manifest, and approvedAt is after replyToCreatedAt. Open the mock with read(facet:attachment, attachmentId) using that objectId and compare it with the rendered screenshot of the built change next to the mock. Differences not listed as intentional and approved fail. For a change commanded in words with no mock, verify the quoted exact command against the brief's human approval text and sourceMessageId (explicit-human-answer or initiating-command), and confirm it covers that visible change. Do not read private messages for provenance or widen message access.
+
+FAIL any visible frontend change with missing, unverifiable, mismatched or agent-only provenance, quoting the diff line. A bare "approved", an agent message, a brief summary, a commander-order, commander-direct or agent-initiated approval, or a mock the human never replied to is not provenance for a visual change. Old briefs without reply evidence need a revised brief citing the human reply before mock-based changes can pass. Logic-only edits in UI files with no visible change are exempt; state why each exempt file has no visible change. These are reviewer checks, not server merge gates.
+
 
 For a bug, reproduce the reported behavior on the target branch and repeat the recorded reproduction on the PR head. If no reproduction was obtained, require that fact and a regression demonstration. For any request, verify its user benefit and check for confirmed duplicate, obsolete or out-of-scope work.
 

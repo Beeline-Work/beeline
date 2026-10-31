@@ -10106,6 +10106,7 @@ describe('monolith integration', () => {
         spec: folded,
         change: 'Old change',
         approval: {
+          kind: 'explicit-human-answer',
           sourceMessageId: approval,
           text: 'Yes, build that.',
           approvedBy: HUMAN,
@@ -10115,6 +10116,8 @@ describe('monolith integration', () => {
       expect.objectContaining({ revision: 1, spec: 'Revision one.' }),
     ]);
     expect(history.revisions[0]).not.toHaveProperty('approval');
+    for (const field of ['replyToMessageId', 'replyToAttachmentIds', 'replyToCreatedAt', 'approvedAt'])
+      expect(history.revisions[1].approval).not.toHaveProperty(field);
     await database.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1 AND revision=3`, [
       cornerId,
     ]);

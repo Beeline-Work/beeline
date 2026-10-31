@@ -286,3 +286,35 @@ test('native argv and shell command routes share positive and safety rules', () 
   const suite = JSON.parse(readFileSync('docs/prompts/cases/checks-runs-suite-before-push.json', 'utf8'));
   assert.equal(evaluateRule(suite.pass, { calls: [{ name: 'run_granted_command', args: { argv: ['npm', '--prefix', 'apps/mobile', 'test'] } }], text: '' }).pass, true);
 });
+
+test('unapproved frontend case grades the worker order, not incidental assistant prose', () => {
+  const saved = JSON.parse(readFileSync(join(__dirname, '../docs/prompts/cases/review-unapproved-component-fails.json'), 'utf8'));
+  const finding = { name: 'order', args: { address: '13dd83e5-e17f-599c-8054-c4ce8cdab974',
+    text: 'FAIL: apps/mobile/StatusCard.tsx:1 has agent-only mock approval. Obtain a human reply.' } };
+  assert.equal(evaluateRule(saved.pass, {calls: [finding], text: ''}).pass, true);
+  assert.equal(evaluateRule(saved.pass, {calls: [finding, {name: 'approve_merge', args: {}}], text: ''}).pass, false);
+  assert.equal(evaluateRule(saved.pass, {calls: [], text: finding.args.text}).pass, false);
+  assert.equal(evaluateRule(saved.pass, {calls: [{...finding, args: {...finding.args, text: 'FAIL: missing provenance'}}], text: ''}).pass, false);
+});
+
+test('mock provenance cases record review operations and refuse unknown shell or file facts', async () => {
+  const nightlyModule = './prompt-nightly.mjs';
+  const { scenarioResult: replayScenarioResult } = await import(nightlyModule);
+  for (const id of ['review-unapproved-component-fails', 'review-mock-reply-passes']) {
+    const saved = JSON.parse(readFileSync(join(__dirname, `../docs/prompts/cases/${id}.json`), 'utf8'));
+    const get = (name: string, args: Record<string, unknown>) => replayScenarioResult(saved, {name, args}, {});
+    const view = get('Bash', {command: 'gh pr view 88 --json headRefOid,files'});
+    assert.equal(view.unrecorded, undefined);
+    assert.equal(JSON.parse(view.result.stdout).files[0].path, 'apps/mobile/StatusCard.tsx');
+    assert.match(get('Bash', {command: 'gh pr diff 88'}).result.stdout, /StatusCard.tsx/);
+    assert.equal(get('read', {facet: 'message', messageId: 'approval-1'}).result.status, 403);
+    const accepted = get('approve_merge', {address: '13dd83e5-e17f-599c-8054-c4ce8cdab974', headSha: saved.scenario.checks.headSha});
+    assert.equal(accepted.unrecorded, undefined);
+    assert.equal(accepted.result.approved, true);
+    for (const [name, args] of [['Bash', {command: 'invent an operation'}], ['Read', {file_path: '/missing/file'}], ['read', {facet: 'unknown'}]] as const) {
+      const missing = get(name, args);
+      assert.equal(missing.boundary, 'error');
+      assert.match(missing.result.error, /Stop this replay as incomplete/);
+    }
+  }
+});

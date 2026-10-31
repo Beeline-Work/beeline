@@ -1069,10 +1069,7 @@ async function queueReviewerCommand(
  * a new PR/check event cannot repair credentials or a missing model. */
 function reviewerConfigurationSql(agent: string): string {
   return `SELECT jsonb_build_object('harness',harness,'model',selected_model,'effort',selected_effort,
-    'unavailable',model_unavailable,'helper',(SELECT jsonb_build_object(
-      'release',body->>'releaseVersion','source',body->>'sourceSha') FROM live_outputs
-      WHERE agent_id=${agent} AND kind='presence' ORDER BY updated_at DESC LIMIT 1),
-    'signIn',(SELECT card->>'attemptId' FROM messages
+    'unavailable',model_unavailable,'signIn',(SELECT card->>'attemptId' FROM messages
       WHERE card_type='agent-sign-in' AND card->>'agentId'=${agent} AND card->>'status'='signed-in'
       ORDER BY created_at DESC,id DESC LIMIT 1))
     FROM agents WHERE agent_id=${agent}`;
@@ -1084,6 +1081,7 @@ async function reviewerStandingFailure(db: SqlDatabase, agentId: string): Promis
      JOIN agent_turns turn ON turn.room_id=command.room_id AND turn.agent_id=command.agent_id
        AND turn.request_id=command.turn_request_id
      WHERE command.agent_id=$1 AND command.review_context IS NOT NULL AND turn.status='failed'
+       AND NOT command.review_context ? 'helperRecoveredAt'
        AND (command.review_context->'reviewerConfiguration' IS NULL
          OR command.review_context->'reviewerConfiguration'=(${reviewerConfigurationSql('$1')}))
        AND NOT EXISTS (SELECT 1 FROM agent_turns recovered WHERE recovered.agent_id=$1

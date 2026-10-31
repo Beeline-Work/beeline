@@ -5,6 +5,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
+import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
@@ -285,9 +286,16 @@ describe('corner message attribution', () => {
     await greenHead(8, 'b'.repeat(40));
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(0);
+    if (reason.includes('-32602')) {
+      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'reconnect', releaseVersion: 'v0.1.113' });
+      await announceAgentLifecycle(db, new LiveHub(), R, B, { lifecycleId: 'missing-version' });
+      await reconcileConfiguredCornerReviewers(db, R);
+      expect(await commands(B, C)).toHaveLength(0);
+    }
     // A helper upgrade repairs an adapter rejection; model selection repairs
     // the other standing provider conditions. A reconnect alone repairs neither.
-    if (reason.includes('-32602')) await db.query(`UPDATE live_outputs SET body='{"releaseVersion":"v0.1.114"}' WHERE agent_id=$1`, [B]);
+    if (reason.includes('-32602')) await announceAgentLifecycle(db, new LiveHub(), R, B,
+      { lifecycleId: 'upgraded-helper', releaseVersion: 'v0.1.114' });
     else await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(1);

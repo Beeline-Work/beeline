@@ -1,3 +1,4 @@
+import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
 import { CommanderWakeDeadlines } from './commander-wakes.js';
 import { CornerAttentionDeadlines } from './corner-attention.js';
 import { isServerEventKind } from '@beeline/api-contract/phone';
@@ -764,6 +765,7 @@ async function writeAgentAnnouncement(
       [agentId],
     )
   ).rows[0];
+  await recoverAdapterReviewsOnHelperChange(db, agentId, previous?.body, metadata);
   const targetRoomId =
     previous?.room_id ??
     roomId ??

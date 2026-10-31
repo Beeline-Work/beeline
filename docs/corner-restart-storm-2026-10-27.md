@@ -97,8 +97,10 @@ Three mechanisms amplified the outage:
   reconnects and discovery do not clear it; stop/restart commands remain usable.
 - Invalid ACP requests classify as `helper-out-of-date`, including legacy
   receipts labeled `hiccup`. Review dispatch waits for a configuration/sign-in
-  change, helper version change, or demonstrated recovery. Presence refreshes
-  preserve version metadata. Standing protocol/auth failures and dated GitHub
+  change, helper version change, or demonstrated recovery. Presence records
+  helper-version recovery separately from reviewer configuration and leaves
+  authentication failures standing; unchanged reconnects do not clear failures.
+  Presence refreshes preserve version metadata. Standing protocol/auth failures and dated GitHub
   failures share one notice until a successful turn ends the span, including
   resets longer than ten minutes and newly generated wakes.
 
@@ -123,3 +125,23 @@ one notice per span, and recovery after helper version changes. Existing
 live-check/merge, transient checkout recovery and command authority tests are
 included in validation. Tests use provider fixtures and isolated databases;
 there was no live helper restart, production mutation, or deployment.
+
+## CI follow-up
+
+Full CI exposed a cross-coordinator cooldown gap: the global four-start bound
+was intact, but another coordinator could admit a fifth total restore after the
+first coordinator learned the reset. Startup cooldowns now share the helper root
+and server scope, and every deferred coordinator arms its own recovery wake.
+Deterministic staggered starts reproduce this race.
+
+The activation cleanup regression now exercises four explicit recovery attempts
+while proving each rejected subprocess is stopped; it also checks that intervening
+commands do not restart a signed-out corner. The Sentry fixture uses independent
+provider failure spans so an earlier documented cooldown cannot mask the plain
+403 responses whose reporting it verifies. Plain 403 errors still reach Sentry.
+
+Helper-version recovery runs from the presence transaction and marks only prior
+completed adapter failures. It leaves original failed-turn evidence intact and
+does not clear authentication/model failures. The owner-reviewed System-message
+lock, its guard and the three wrapper snapshots remain unchanged. The branch was
+rebased onto current main before full-suite validation.

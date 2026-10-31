@@ -103,6 +103,16 @@ function hooksFile(path: string, agent: AgentId, groups: [string, Json][], remov
   const value = readJson(path);
   mergeHookGroups(nested ? object(value, 'hooks') : value, agent, groups, remove);
   if (nested && !Object.keys(value.hooks as Json).length) delete value.hooks;
+  return saveJson(path, value, remove);
+}
+
+/** Writes a config; on removal, a file only Beeline wrote goes away with its entry. */
+function saveJson(path: string, value: Json, remove: boolean): string[] {
+  if (remove && !Object.keys(value).length && !existsSync(`${path}.bak-${NAME}`)) {
+    if (!existsSync(path)) return [];
+    rmSync(path, { force: true });
+    return [`removed ${path}`];
+  }
   return writeJson(path, value) ? [`${remove ? 'removed Beeline from' : 'updated'} ${path}`] : [];
 }
 
@@ -144,7 +154,7 @@ function antigravity(context: SetupContext): string[] {
     hooks[NAME] = { enabled, SessionStart: [handler('session-start')], PreInvocation: [handler('user-prompt-submit')],
       PostToolUse: [{ matcher: '*', hooks: [handler('post-tool-use')] }], Stop: [handler('stop')] };
   }
-  if (writeJson(hooksPath, hooks)) lines.push(`updated ${hooksPath}`);
+  lines.push(...saveJson(hooksPath, hooks, Boolean(context.remove)));
   const sidecar = join(dir, 'sidecars', NAME, 'sidecar.json');
   const configPath = join(dir, 'config.json');
   const config = readJson(configPath);
@@ -158,7 +168,8 @@ function antigravity(context: SetupContext): string[] {
     // Keep an explicit choice to disable it.
     sidecars[NAME] ??= { enabled: true };
   }
-  if (writeJson(configPath, config)) lines.push(`updated ${configPath}`);
+  if (!Object.keys(sidecars).length) delete config.sidecars;
+  lines.push(...saveJson(configPath, config, Boolean(context.remove)));
   return lines;
 }
 

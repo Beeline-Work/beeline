@@ -122,6 +122,11 @@ describe('setup is additive and reversible', () => {
     expect(setupAgent(agent, context(home))).toEqual([]);
     setupAgent(agent, context(home, true));
     expect(JSON.parse(readFileSync(file(home), 'utf8'))).toEqual(JSON.parse(before));
+    // A file Beeline created alone is removed on leave.
+    const fresh = scratch();
+    setupAgent(agent, context(fresh));
+    setupAgent(agent, context(fresh, true));
+    expect(existsSync(file(fresh))).toBe(false);
   });
 
   it('antigravity registers its sidecar, which hands waiting text to the App and keeps a failed handoff', async () => {

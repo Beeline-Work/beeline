@@ -854,6 +854,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   it('repeats the saved starter wake rule in server, setup and webhook instructions', async () => {
     const { client } = await connected();
     const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
+    const send = (await client.listTools()).tools.find(tool => tool.name === 'send_message')!;
+    expect(send.description).toContain("asking agent's exact @handle to wake it");
     for (const text of [client.getInstructions(), setup, MCP_TAG_INSTRUCTION]) {
       expect(text).toContain(MCP_STARTER_ROUTINE);
       expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');

@@ -1,4 +1,5 @@
 import { anchorCornerMarkers } from './corner-markers';
+import { foldPrLifecycleRuns } from './pr-lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import {
@@ -358,6 +359,37 @@ describe('ReadCursorAdvancer and the mark the server already holds', () => {
 
 // Reproduction R1: the newest durable card is displayed under an older source.
 describe('anchored corner card read boundaries (R1)', () => {
+  function foldedTranscript(markerTime: number, markerId = 'corner') {
+    const check = (id: string, orderAtMs: number) => row(id, {
+      timestamp: Math.floor(orderAtMs / 1_000), orderAtMs,
+      systemEvent: { kind: 'check', subject: { kind: 'app', name: 'GitHub' }, verb: 'passed' } as ChatDisplayMessage['systemEvent'],
+      githubEvent: { type: 'pull-request', action: 'opened', actor: 'GitHub', title: 'Checks', url: 'https://github.com/test/repo/pull/1' },
+    });
+    return foldPrLifecycleRuns(anchorCornerMarkers([
+      row('source', { timestamp: 1 }),
+      check('first', 3000),
+      row(markerId, { timestamp: Math.floor(markerTime / 1_000), orderAtMs: markerTime,
+        daemonFact: { type: 'corner-open', sourceMessageId: 'source' } as ChatDisplayMessage['daemonFact'] }),
+      check('latest', 3900),
+    ]));
+  }
+
+  it.each([[3500, 'corner'], [3900, 'aaa']])('R1: a folded message newer than a card advances the cursor (%s, %s)', (time, id) => {
+    const folded = foldedTranscript(time, id);
+    expect(folded.at(-1)!.foldedIds).toEqual(['first', 'latest']);
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    advancer.seed(id);
+    advancer.observe(folded, [folded.at(-1)!]);
+    advancer.flush();
+    expect(publish).toHaveBeenCalledExactlyOnceWith('latest');
+  });
+
+  it('R1: a card after a folded message in the same second remains newest', () => {
+    const folded = foldedTranscript(3950);
+    expect(newestVisibleMessageId(folded, [folded.at(-1)!])).toBe('corner');
+  });
+
   const source = row('source', { timestamp: 1 });
   const middle = row('middle', { timestamp: 2 });
   const tail = row('tail', { timestamp: 3 });

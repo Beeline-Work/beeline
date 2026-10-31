@@ -205,7 +205,7 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
     if (fact?.pullRequest?.url) corners.set(canonical(fact.pullRequest.url), fact.cornerId);
   }
   const result: T[] = [];
-  let run: { anchor: T; ids: string[]; items: LifecycleItem[]; index: number } | undefined;
+  let run: { anchor: T; ids: string[]; boundaries: { id: string; orderAtMs: number }[]; items: LifecycleItem[]; index: number } | undefined;
   for (const message of messages) {
     const fact = message.deleted ? undefined : message.daemonFact;
     if (
@@ -218,7 +218,8 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
       // Retain hidden ids for jumps/read cursors without drawing another close notice.
       if (run) {
         run.ids.push(message.id);
-        result[run.index] = { ...result[run.index], foldedIds: [...run.ids] };
+        run.boundaries.push({ id: message.id, orderAtMs: message.orderAtMs ?? message.timestamp * 1_000 });
+        result[run.index] = { ...result[run.index], foldedIds: [...run.ids], foldedReadBoundaries: [...run.boundaries] };
       }
       continue;
     }
@@ -229,10 +230,11 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
       continue;
     }
     if (!run) {
-      run = { anchor: message, ids: [], items: [], index: result.length };
+      run = { anchor: message, ids: [], boundaries: [], items: [], index: result.length };
       result.push(message);
     }
     run.ids.push(message.id);
+    run.boundaries.push({ id: message.id, orderAtMs: message.orderAtMs ?? message.timestamp * 1_000 });
     run.items.push({
       ...item,
       ...(item.url && !item.cornerId && corners.has(canonical(item.url))
@@ -243,6 +245,7 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
       ...run.anchor,
       timestamp: message.timestamp,
       foldedIds: [...run.ids],
+      foldedReadBoundaries: [...run.boundaries],
       notificationLifecycleRun: { items: [...run.items], subline: '' },
     };
   }

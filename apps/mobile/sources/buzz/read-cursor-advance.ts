@@ -23,23 +23,27 @@ function isProvisional(
  */
 function readBoundaries(chronological: readonly ChatDisplayMessage[]) {
   const rows = chronological.filter(message => !isProvisional(message));
-  const time = (message: ChatDisplayMessage) =>
-    message.foldedIds ? message.timestamp * 1_000 : message.orderAtMs ?? message.timestamp * 1_000;
-  const compare = (left: ChatDisplayMessage, right: ChatDisplayMessage) =>
-    time(left) - time(right) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  const rowBoundaries = (message: ChatDisplayMessage, hostId: string) =>
+    (message.foldedReadBoundaries ?? messageBoundaryIds(message).map(id => ({
+      id, orderAtMs: message.orderAtMs ?? message.timestamp * 1_000,
+    }))).map(boundary => ({ ...boundary, hostId }));
+  type Boundary = ReturnType<typeof rowBoundaries>[number];
+  const compare = (left: Boundary, right: Boundary) =>
+    left.orderAtMs - right.orderAtMs || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
   const markers = rows.flatMap(host => (host.cornerMarkers ?? [])
     .filter(marker => !isProvisional(marker))
-    .map(message => ({ message, hostId: host.id })))
-    .sort((left, right) => compare(left.message, right.message));
-  const boundaries: { id: string; hostId: string }[] = [];
+    .flatMap(message => rowBoundaries(message, host.id)))
+    .sort(compare);
+  const boundaries: Boundary[] = [];
   let nextMarker = 0;
   const appendMarker = () => {
-    const { message, hostId } = markers[nextMarker++]!;
-    for (const id of messageBoundaryIds(message)) boundaries.push({ id, hostId });
+    boundaries.push(markers[nextMarker++]!);
   };
   for (const row of rows) {
-    while (nextMarker < markers.length && compare(markers[nextMarker]!.message, row) < 0) appendMarker();
-    for (const id of messageBoundaryIds(row)) boundaries.push({ id, hostId: row.id });
+    for (const boundary of rowBoundaries(row, row.id)) {
+      while (nextMarker < markers.length && compare(markers[nextMarker]!, boundary) < 0) appendMarker();
+      boundaries.push(boundary);
+    }
   }
   while (nextMarker < markers.length) appendMarker();
   return boundaries;

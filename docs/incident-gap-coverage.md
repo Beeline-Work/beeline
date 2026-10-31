@@ -50,3 +50,11 @@ npm run build -w @beeline/server
 node --import tsx scripts/prove-review-capacity.mjs
 node --import tsx scripts/prove-review-capacity.mjs --merge-webhook
 ```
+
+## Additional merged-PR replay proof
+
+The merged-PR cases also enable the institutional outcome ledger. After the first successful landing they require exactly one persisted merged outcome, one terminal landed card, one merge note and one branch deletion. Replaying `check_run` must leave those exact rows, the complete lifecycle including merge commit SHA, the workflow state and archival timestamp unchanged. The provider merge API remains uncalled.
+
+Both strengthened cases fail against `af61a8d05`. A separate mutation removes only the new `refreshCheckRollup` archival call, keeping the early return: the checks-event case fails again while the independent live-read case still passes. This demonstrates that the new event archival call, rather than unrelated changes, removes the event reproduction. The call is restored afterward.
+
+Both strengthened merge paths passed in ten consecutive independent Vitest invocations (twenty passing cases), with no flakes. Complete invocation times ranged from 6.99 to 8.79 seconds. Logs and the baseline/call-removal mutation runner are attached in the follow-up evidence archive.

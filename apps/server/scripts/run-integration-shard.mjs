@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readSelection, selected } from './selected-tests.mjs';
 
 const [position, count] = process.argv[2]?.split('/').map(Number) ?? [];
 if (
@@ -12,6 +13,11 @@ if (
   position > count
 ) {
   throw new Error('expected an integration shard such as 1/8');
+}
+
+if (!selected(readSelection(), 'src/integration.test.ts')) {
+  console.log(`Integration shard ${position}/${count}: skipped, this PR changes nothing the integration file runs`);
+  process.exit(0);
 }
 
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));

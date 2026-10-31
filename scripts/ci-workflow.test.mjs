@@ -6,11 +6,12 @@ import { parse } from 'yaml';
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
 test('server critical-path jobs use GitHub-hosted runners', () => {
-  const critical = ['changes', 'shared-package-tests', 'server-suite-shard', 'server-claim-latency', 'server-suite'];
+  const critical = ['changes', 'shared-package-tests', 'server-test-selection', 'server-suite-shard', 'server-claim-latency', 'server-suite'];
   for (const name of critical) {
     assert.equal(jobs[name]['runs-on'], 'ubuntu-latest');
   }
   for (const [name, job] of Object.entries(jobs)) {
+    if (job.uses) continue;
     assert.ok(!JSON.stringify(job['runs-on']).includes('beeline-ci-shard'), name);
   }
 });
@@ -55,4 +56,36 @@ test('every Linux workspace consumer waits for the shared preparation job', () =
   const mobile = action.runs.steps.find((step) => step.id === 'mobile');
   assert.match(mobile.with.key, /patch-livekit-abort.cjs/);
   assert.match(mobile.with.path, /public\/canvaskit.wasm/);
+});
+
+test('a PR runs only selected server tests, and anything without a selection runs them all', () => {
+  const selection = jobs['server-test-selection'];
+  assert.match(selection.if, /github.event_name == 'pull_request'/);
+  assert.doesNotMatch(selection.if, /merge_group|workflow_dispatch/);
+  const shard = jobs['server-suite-shard'];
+  assert.ok(shard.needs.includes('server-test-selection'));
+  // A failed or skipped selection must not skip the shards: they run every file.
+  assert.match(shard.if, /!cancelled\(\)/);
+  const use = shard.steps.find((step) => step.name === "Use this PR's server test selection");
+  assert.equal(use.if, "needs.server-test-selection.outputs.selection != ''");
+  assert.match(use.run, /SERVER_TEST_SELECTION=/);
+  for (const name of ['SERVER SUITE', 'SERVER INTEGRATION']) {
+    assert.ok(Object.values(jobs).some((job) => job.name === name), name);
+  }
+});
+
+test('the coverage map follows main pushes without a schedule and checks source-text tests', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/server-coverage-map.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(workflow.on.push.branches, ['main']);
+  assert.equal(workflow.on.schedule, undefined);
+  assert.equal(workflow.concurrency['cancel-in-progress'], true);
+  const steps = JSON.stringify(workflow.jobs.map.steps);
+  assert.match(steps, /test-selection.mjs check-map/);
+  assert.match(steps, /"name":"server-coverage-map"/);
+  const shard = workflow.jobs.shard;
+  assert.deepEqual(shard.strategy.matrix.shard, [1, 2, 3, 4]);
+  const run = shard.steps.find((step) => step.env?.SERVER_COVERAGE_MAP_DIR);
+  assert.match(run.run, /"\$SHARD\/8"/);
+  assert.match(run.run, /"\$\(\(SHARD \+ 4\)\)\/8"/);
+  assert.equal(jobs['coverage-map'].uses, './.github/workflows/server-coverage-map.yml');
 });

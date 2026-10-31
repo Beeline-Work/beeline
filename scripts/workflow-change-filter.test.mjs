@@ -264,10 +264,10 @@ test('documentation does not fan out Checks suites', () => {
 
 test('representative PRs request fewer hosted runners without hiding check contexts', () => {
   const examples = [
-    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 13 },
+    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 14 },
     { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 8 },
-    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 17 },
-    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 15 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 18 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 16 },
     { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
   ];
   for (const example of examples) {

@@ -207,6 +207,39 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('restarts the retry budget after exhaustion for every external recovery event', async () => {
+    vi.useFakeTimers();
+    const recoveries = [
+      {
+        name: 'network change',
+        recover: (connection: LiveConnection, networkChanged: () => void) => networkChanged(),
+      },
+      {
+        name: 'foreground',
+        recover: (connection: LiveConnection) => {
+          for (const listener of appStateListeners) listener('active');
+        },
+      },
+      {
+        name: 'Retry',
+        recover: (connection: LiveConnection) => connection.reconnectNow(),
+      },
+    ];
+
+    for (const { name, recover } of recoveries) {
+      const authorization = vi.fn().mockRejectedValue(new Error('offline'));
+      const { connection, networkChanged } = createConnection(authorization);
+      await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+      await vi.advanceTimersByTimeAsync(15_001);
+      expect(authorization, name).toHaveBeenCalledTimes(5);
+
+      recover(connection, networkChanged);
+      await vi.advanceTimersByTimeAsync(15_001);
+      expect(authorization, name).toHaveBeenCalledTimes(10);
+      connection.dispose();
+    }
+  });
+
   it('backs off and stops after repeated WebSocket handshake errors until an external event', async () => {
     vi.useFakeTimers();
     const { connection, networkChanged } = createConnection();

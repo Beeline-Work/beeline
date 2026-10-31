@@ -43,6 +43,8 @@
         // The background latency runbook invokes these isolated database proofs by path.
         "scripts/prove-background-waste.mjs",
         "scripts/prove-webhook-burst.mjs",
+        // Reproduction CHECK-DEADLOCK-1 invokes the isolated PostgreSQL HTTP proof by path.
+        "scripts/prove-check-rollup-deadlock.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/prove-corner-startup.mjs",
@@ -53,6 +55,8 @@
         // Reproduction STALE-CAUSE-1 invokes the isolated HTTP proof by path.
         "scripts/prove-stale-wake-drop.mjs",
         "scripts/prove-corner-stall.mjs",
+        // Reproduction SESSION-JOIN-1 invokes the loopback session-join proof by path.
+        "scripts/prove-session-join.mjs",
         // The development guide invokes the built storage retention proof by path.
         "scripts/prove-corner-proof-retention.mjs",
         // The dashboard runbook invokes the recorded Cloudflare HTTP proof by path.
@@ -156,6 +160,8 @@
         "scripts/unread-controls-native-proof.tsx",
         "scripts/operation-deadline-native-proof.tsx",
         "scripts/unread-dot-clear-proof.tsx",
+        // anchored-corner-unread.browser.test.ts bundles this R1 entry by path.
+        "scripts/anchored-corner-unread-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/reply-recovery-proof.mjs",
         "scripts/workspace-picture-clip-proof.tsx",

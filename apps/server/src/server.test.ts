@@ -5,7 +5,7 @@ import type { Pool } from 'pg';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
-import type { RoomLiveDelta } from '@beeline/api-contract/phone';
+import { type RoomLiveDelta } from '@beeline/api-contract/phone';
 import type { DaemonService } from './daemon-service.js';
 import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
 import { LiveHub } from './live.js';
@@ -1242,8 +1242,8 @@ describe('phone committed-row live delivery', () => {
     liveNeedsYou?: PhoneService['liveNeedsYou'],
     phoneReads: Partial<PhoneService> = {},
     sidebarPreviews = false,
+    roomId = 'room-live',
   ) {
-    const roomId = 'room-live';
     const live = new LiveHub();
     const liveDraftSnapshot = vi.fn().mockResolvedValue([]);
     const server = createBeelineServer({
@@ -1289,6 +1289,19 @@ describe('phone committed-row live delivery', () => {
     await subscribed;
     return { live, roomId, socket, port, liveDraftSnapshot };
   }
+
+  it('sends complete small messages to opted-in offscreen Room caches', async () => {
+    const delta = { type: 'message-delta', roomId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
+      message: { id: 'b'.repeat(64), text: 'new arrival', createdAt: 1, presentation: 'message',
+        author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Agent' } } };
+    const { live, socket } = await connect(vi.fn().mockResolvedValue(delta),
+      undefined, undefined, false, undefined, undefined, undefined, undefined, undefined, {}, true, delta.roomId);
+    const frame = nextSocketMessage(socket, 'message-delta');
+    live.publish({ type: 'invalidate', roomId: delta.roomId, reason: 'message', messageId: 'small' });
+    const wire = await frame;
+    expect(wire).toMatchObject(delta);
+
+  });
 
   it('NET-HOL-1 sends bounded previews only to opted-in offscreen subscriptions', async () => {
     const roomId = 'room-live';

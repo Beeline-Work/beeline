@@ -1920,3 +1920,24 @@ test('ARTIFACT-NOT-FOUND: a rerun plans from the published record alone and read
     assert.doesNotMatch(plan.run, /retry|attempt|artifact/i);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('R-DESKTOP-EVIDENCE: notification diagnostics are optional while desktop build and installer uploads remain required', () => {
+  const workflow = parse(readFileSync('.github/workflows/desktop.yml', 'utf8'));
+  const steps = workflow.jobs.build.steps;
+  for (const name of ['Capture macOS native notification', 'Capture Windows native notification']) {
+    assert.equal(steps.find(step => step.name === name)['continue-on-error'], true);
+  }
+  const evidence = steps.find(step => step.with?.name === 'desktop-native-notification-${{ matrix.label }}');
+  assert.equal(evidence['continue-on-error'], true, 'An optional screenshot upload outage must not fail the desktop build');
+  assert.match(evidence.if, /pull_request/);
+  assert.match(evidence.if, /merge_group/);
+  for (const name of ['Build the desktop bundle', 'Prove the build produced installers']) {
+    assert.notEqual(steps.find(step => step.name === name)['continue-on-error'], true);
+  }
+  const installers = steps.filter(step => step.uses === 'actions/upload-artifact@v4' && step !== evidence);
+  assert.equal(installers.length, 2);
+  for (const upload of installers) {
+    assert.notEqual(upload['continue-on-error'], true);
+    assert.equal(upload.with['if-no-files-found'], 'error');
+  }
+});

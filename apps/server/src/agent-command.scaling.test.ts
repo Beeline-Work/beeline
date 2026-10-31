@@ -101,7 +101,16 @@ describe('addressed-message routing and claim scaling', () => {
 
   afterAll(async () => database.close());
 
+  // A message queued behind the agent's running turn paints no dispatch
+  // activity, so finish earlier claims to measure dispatch to an idle agent.
+  async function finishClaims() {
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE agent_id=$1 AND state='claimed'`, [
+      TARGET,
+    ]);
+  }
+
   async function routeAndClaim(request: string, generation: string) {
+    await finishClaims();
     await database.query(`TRUNCATE claim_live_notification_audit`);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@target run')`,
@@ -184,15 +193,30 @@ describe('addressed-message routing and claim scaling', () => {
   }, 20_000);
 
   it('scales linearly across twenty concurrent conversations without amplification', async () => {
-    await database.query(`TRUNCATE claim_live_notification_audit`);
+    await finishClaims();
     const requests = Array.from({ length: 20 }, (_, index) =>
       (index + 10).toString(16).padStart(64, '0'),
     );
-    for (const request of requests)
+    // Each conversation has its own Room, so no message queues behind another
+    // conversation's running turn.
+    const rooms = requests.map((_, index) => `40000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
+    for (const [index, request] of requests.entries()) {
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`, [
+        rooms[index],
+        WORKSPACE,
+        `Conversation ${index}`,
+      ]);
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [WORKSPACE, rooms[index], HUMAN, TARGET],
+      );
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@target concurrent')`,
-        [request, BASE_ROOM, HUMAN],
+        [request, rooms[index], HUMAN],
       );
+    }
+    await database.query(`TRUNCATE claim_live_notification_audit`);
 
     const counted = new CountingDatabase(database);
     await Promise.all(
@@ -205,7 +229,7 @@ describe('addressed-message routing and claim scaling', () => {
           )
         ).rows[0];
         if (!command) throw new Error('routed command missing');
-        await claimAgentCommand(counted, BASE_ROOM, TARGET, command.id, `concurrent-${index}`);
+        await claimAgentCommand(counted, rooms[index]!, TARGET, command.id, `concurrent-${index}`);
       }),
     );
 

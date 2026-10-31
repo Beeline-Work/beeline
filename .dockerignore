@@ -35,6 +35,7 @@ apps/server/*
 !apps/server/src
 !apps/server/src/**
 !apps/server/assets
+!apps/server/assets/game.template.html
 !apps/server/assets/connectors
 !apps/server/assets/connectors/*.svg
 !packages

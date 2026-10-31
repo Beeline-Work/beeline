@@ -96,6 +96,166 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it.each(['checks event', 'stale landing wake'] as const)('MERGE-HANDOFF-AFTER-MERGE: %s reconciles a provider-confirmed merge', async trigger => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    await database.query(`INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage)
+      SELECT workspace_id,'live' FROM rooms WHERE id=$1`, [corner]);
+    // GitHub merged the PR, but its pull_request/closed webhook has not arrived.
+    Object.assign(app, { readPullRequest: vi.fn(async () => ({
+      number: 1, headSha, headRef: 'feature/checks-1', baseRef: 'main',
+      url: 'https://github.com/owner/widgets/pull/1', merged: true,
+      mergedAt: '2026-10-30T12:00:00Z', mergeCommitSha: 'f'.repeat(40),
+      mergedBy: 'owner', state: 'closed', mergeability: 'unknown',
+    })) });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    if (trigger === 'checks event') await operations.processWebhook('check_run', payload);
+    else expect(await operations.prChecksStatus({cornerId: corner})).toMatchObject({stage:'merged',mergeAllowed:false});
+    const state = (await database.query(`SELECT fact.lifecycle, fact.workflow_state,
+      room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
+      WHERE fact.corner_id=$1`, [corner])).rows[0]!;
+    expect(state.lifecycle).toMatchObject({ outcome: 'landed',
+      pr: { mergeCommitSha: 'f'.repeat(40) } });
+    expect(state.workflow_state).toBe('landed');
+    expect(state.archived_at).not.toBeNull();
+    const outcomes = () => database.query(`SELECT id,kind,detail FROM institutional_memory_outcomes
+      WHERE room_id=$1 AND kind='merged' ORDER BY id`, [corner]);
+    const terminalCards = () => database.query(`SELECT id,card FROM messages WHERE room_id=$1
+      AND card_type='corner-workflow-handoff' AND card->>'toState'='landed' ORDER BY id`, [corner]);
+    const committedOutcomes = (await outcomes()).rows;
+    const committedCards = (await terminalCards()).rows;
+    expect(committedOutcomes).toEqual([expect.objectContaining({kind:'merged',
+      detail:expect.objectContaining({mergeCommitSha:'f'.repeat(40)})})]);
+    expect(committedCards).toHaveLength(1);
+    await operations.processWebhook('check_run', payload);
+    expect((await outcomes()).rows).toEqual(committedOutcomes);
+    expect((await terminalCards()).rows).toEqual(committedCards);
+    expect((await database.query(`SELECT fact.lifecycle, fact.workflow_state,
+      room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
+      WHERE fact.corner_id=$1`, [corner])).rows[0]).toEqual(state);
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND card_type='github-corner-note' AND card->>'dedupe' LIKE 'github:pull-request:merged:%'`, [corner])).rows).toHaveLength(1);
+    expect(app.deleteBranch).toHaveBeenCalledTimes(1);
+    expect(app.mergePullRequest).not.toHaveBeenCalled();
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND state IN ('pending','claimed')`, [corner])).rows).toHaveLength(0);
+  });
+
+  it.each(['before writes', 'after writes'] as const)(
+    'CHECK-DEADLOCK-1: rolls back and retries %s without refetching or duplicate wakes', async boundary => {
+      const { corners, app, payload } = await checksFixture();
+      const corner = corners[0]!;
+      app.readCommitCheckRollup.mockResolvedValue({ state: 'failed', total: 1,
+        failing: ['lint'], checks: [{ name: 'lint', status: 'failed' }] });
+      const changed = vi.fn();
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+        app as unknown as GitHubAppClient, 'secret', undefined, changed);
+      const transaction = database.transaction.bind(database);
+      let attempts = 0;
+      vi.spyOn(database, 'transaction').mockImplementation(work => transaction(async tx => {
+        const attempt = ++attempts;
+        if (attempt === 2) {
+          expect((await tx.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.checks).toBe('passing');
+          expect((await tx.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
+          expect(changed).not.toHaveBeenCalled();
+        }
+        if (attempt === 1 && boundary === 'before writes')
+          throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+        const result = await work(tx);
+        if (attempt === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+        return result;
+      }));
+      await operations.processWebhook('check_run', payload);
+      // Two refresh attempts, then the separate mergeability transaction.
+      expect(attempts).toBe(3);
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
+      expect(app.readPullRequest).toHaveBeenCalledTimes(1);
+      expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.checks).toBe('failing');
+      await operations.processWebhook('check_run', payload);
+      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [corner])).rows).toHaveLength(1);
+      expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-failed'`, [corner])).rows).toHaveLength(1);
+    });
+
+  it.each(['40P01', '23514'])(
+    'CHECK-DEADLOCK-1: propagates exhausted or nonretryable %s failures with no partial writes', async code => {
+      const { corners, app, payload } = await checksFixture();
+      const corner = corners[0]!;
+      const changed = vi.fn();
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+        app as unknown as GitHubAppClient, 'secret', undefined, changed);
+      const transaction = database.transaction.bind(database);
+      const failure = Object.assign(new Error('transaction failed'), { code });
+      const spy = vi.spyOn(database, 'transaction').mockImplementation(work => transaction(async tx => {
+        await work(tx);
+        throw failure;
+      }));
+      await expect(operations.processWebhook('check_run', payload)).rejects.toBe(failure);
+      expect(spy).toHaveBeenCalledTimes(code === '40P01' ? 3 : 1);
+      expect(changed).not.toHaveBeenCalled();
+      expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.summary).toBeNull();
+      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
+    });
+
+  it('CHECK-DEADLOCK-1: leaves rollback and replay to the supplied transaction owner', async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    const failure = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    let nestedCalls = 0;
+    await expect(database.transaction(async tx => {
+      const supplied: SqlDatabase = {
+        query: tx.query.bind(tx),
+        transaction: async work => {
+          nestedCalls++;
+          await work(tx);
+          throw failure;
+        },
+      };
+      await operations['refreshCheckRollup']({ corner_id: corners[0]!,
+        parent_id: '22222222-2222-4222-8222-222222222222', author_id: REVIEWER,
+        corner_name: 'Checks', summary: 'Fix checks', repository_id: '101', installation_id: '77',
+        has_pr: true, pr_number: '1' }, 'owner/widgets',
+      { name: 'lint', status: 'passed', headSha }, supplied);
+    })).rejects.toBe(failure);
+    expect(nestedCalls).toBe(1);
+    expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]?.summary).toBeNull();
+  });
+
+  it.each(['head', 'fetch'])(
+    'CHECK-DEADLOCK-1: revalidates a changed %s after rollback', async guard => {
+      const { corners, app, payload } = await checksFixture();
+      const corner = corners[0]!;
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+        app as unknown as GitHubAppClient, 'secret');
+      const transaction = database.transaction.bind(database);
+      let attempts = 0;
+      vi.spyOn(database, 'transaction').mockImplementation(async work => {
+        const attempt = ++attempts;
+        try {
+          return await transaction(async tx => {
+            const result = await work(tx);
+            if (attempt === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+            return result;
+          });
+        } catch (error) {
+          if (attempt === 1) await database.query(guard === 'head'
+            ? `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`
+            : `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}','{"fetchStartedAt":9000000000000,"total":99}') WHERE corner_id=$1`, [corner]);
+          throw error;
+        }
+      });
+      await operations.processWebhook('check_run', payload);
+      // Two refresh attempts, then the separate mergeability transaction.
+      expect(attempts).toBe(3);
+      const lifecycle = (await database.query<{ lifecycle: { pr: { headSha: string }; checksSummary?: { total: number } } }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]!.lifecycle;
+      if (guard === 'head') expect(lifecycle.pr.headSha).toBe('new-head');
+      else expect(lifecycle.checksSummary?.total).toBe(99);
+      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
+    });
+
   it.each(['webhook', 'live checks read'] as const)('R-GH-SHUTDOWN: drains %s before closing the pool', async trigger => {
     const { app, payload } = await checksFixture();
     let entered!: () => void;
@@ -170,6 +330,44 @@ describe('GitHub phone operations', () => {
     const shutdown = operations.stopCheckRefreshes();
     resume();
     await Promise.all([failure, shutdown]);
+  });
+
+  it('WAKE-STORM: persists installation cooldown across server clients and keeps restore readable', async () => {
+    const { corners, headSha } = await checksFixture();
+    const { privateKey } = await generateKeyPair('RS256');
+    const config = { appId: '42', slug: 'test', privateKey: await exportPKCS8(privateKey) };
+    const app = new GitHubAppClient(config);
+    const first = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const fetcher = vi.fn(async (input: string | URL) => String(input).endsWith('/access_tokens')
+      ? Response.json({ token: 'installation-77', expires_at: new Date(Date.now() + 3600_000).toISOString() })
+      : new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(first.refreshCornerReviewHead(corners[0]!)).rejects.toMatchObject({ rateLimited: true });
+    expect((await database.query<{ reset: string }>(
+      'SELECT api_retry_at::text reset FROM github_installations WHERE installation_id=77')).rows[0]?.reset)
+      .toBeDefined();
+    const requests = fetcher.mock.calls.length;
+    const replica = new GitHubAppClient(config);
+    const second = new GitHubOperations(database, {} as GitHubOAuthClient, replica, 'secret');
+    await expect(second.refreshCornerReviewHead(corners[0]!)).rejects.toMatchObject({ rateLimited: true });
+    expect(fetcher).toHaveBeenCalledTimes(requests);
+    const daemon = new DaemonService(database, new LiveHub(), id => second.roomToken(id));
+    Object.assign(daemon, { github: second });
+    for (let i = 0; i < 20; i++) {
+      const restore = await daemon.execute('getCornerRestoreState', { cornerId: corners[0]! }, REVIEWER);
+      expect(restore.lifecycle?.pr?.headSha).toBe(headSha);
+    }
+    expect(fetcher).toHaveBeenCalledTimes(requests);
+    // Reset expiry permits fresh provider evidence; the stored deadline is
+    // shared, while each client's in-memory deadline remains authoritative too.
+    await database.query("UPDATE github_installations SET api_retry_at=now()-interval '1 second' WHERE installation_id=77");
+    const recovered = new GitHubOperations(database, {} as GitHubOAuthClient, new GitHubAppClient(config), 'secret');
+    fetcher.mockImplementation(async input => String(input).endsWith('/access_tokens')
+      ? Response.json({ token: 'recovered', expires_at: new Date(Date.now() + 3600_000).toISOString() })
+      : Response.json({ head: { sha: headSha }, state: 'open' }));
+    await recovered.refreshCornerReviewHead(corners[0]!);
+    expect(fetcher).toHaveBeenCalledTimes(requests + 2);
   });
 
   it.each(['workflow completion', 'live checks read'])(
@@ -3155,7 +3353,7 @@ describe('GitHub phone operations', () => {
     console.info(`Reproduction C2-1: failing wake body="${command?.body ?? ''}"`);
     expect(command?.body).toContain('typecheck');
   });
-  it('wakes on the first failed job with its log and batches later failures once', async () => {
+  it('CHECK-DEADLOCK-1: wakes on first failure and settled followup once despite rollback and replay', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const corner = corners[0]!;
     const checks = [
@@ -3183,6 +3381,16 @@ describe('GitHub phone operations', () => {
        ORDER BY message.created_at,message.id`, [corner],
     )).rows;
 
+    const transaction = database.transaction.bind(database);
+    let replay = true;
+    vi.spyOn(database, 'transaction').mockImplementation(work => transaction(async tx => {
+      const result = await work(tx);
+      if (replay) {
+        replay = false;
+        throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+      }
+      return result;
+    }));
     await operations.processWebhook('check_run', failure('TYPECHECK'));
     expect((await wakes())).toHaveLength(1);
     expect((await wakes())[0]?.body).toContain('TYPECHECK');
@@ -3199,6 +3407,7 @@ describe('GitHub phone operations', () => {
     await operations.processWebhook('check_run', failure('desktop'));
     expect((await wakes())).toHaveLength(1);
     checks[2] = { name: 'lint', status: 'passed' };
+    replay = true;
     await operations.processWebhook('check_run', payload);
     expect((await wakes())).toHaveLength(2);
     expect((await wakes())[1]?.body).toContain('desktop');

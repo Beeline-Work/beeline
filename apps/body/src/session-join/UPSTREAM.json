@@ -1,0 +1,24 @@
+{
+  "repository": "reason-machines/reason-network",
+  "version": "0.12.17",
+  "commit": "bcf045cf7eadcbff25965fd6b12afeb88ab819ea",
+  "files": [
+    "src/claude.rs",
+    "src/hook.rs",
+    "src/codex.rs",
+    "src/agent.rs",
+    "src/opencode-plugin.ts",
+    "src/pi-extension.ts",
+    "src/antigravity.rs",
+    "src/setup.rs",
+    "src/setup/antigravity.rs",
+    "src/setup/gemini.rs",
+    "src/setup/hermes.rs",
+    "src/setup/zcode.rs",
+    "src/daemon/antigravity.rs",
+    "src/daemon/sessions.rs",
+    "src/daemon/mail.rs",
+    "integrations/hermes/__init__.py",
+    "integrations/hermes/plugin.yaml"
+  ]
+}

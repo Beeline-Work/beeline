@@ -1,5 +1,6 @@
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DaemonApiError } from './daemon-api-client.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
@@ -95,6 +96,51 @@ describe('RoomSupervisor', () => {
     expect(settled).toBe(false);
     abort.abort();
     await supervised;
+  });
+
+  it('WAKE-STORM: 60 restarting intakes respect the reset despite repeated discovery wakes', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const reset = Date.now() + 600_000;
+    const supervisor = new RoomSupervisor();
+    const abort = new AbortController();
+    let reads = 0;
+    const jobs = Array.from({ length: 60 }, (_, i) => supervisor.supervise(`corner ${i}`, abort.signal, async () => {
+      reads++;
+      if (Date.now() < reset) throw new DaemonApiError(
+        `GitHub rate limit; checks readable again at ${new Date(reset).toISOString()}`, 502, true);
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads).toBe(60);
+    for (let i = 0; i < 20; i++) {
+      supervisor.wake();
+      await vi.advanceTimersByTimeAsync(20_000);
+    }
+    expect(reads).toBe(60);
+    await vi.advanceTimersByTimeAsync(200_500);
+    await Promise.all(jobs);
+    expect(reads).toBe(120);
+    abort.abort();
+  });
+
+  it('WAKE-STORM: a protocol rejection stays parked across unrelated wakes', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const supervisor = new RoomSupervisor();
+    const abort = new AbortController();
+    const run = vi.fn(async () => { throw new Error('ACP error -32602: Invalid params'); });
+    const job = supervisor.supervise('corner', abort.signal, run);
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 10; i++) {
+      supervisor.wake();
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+    expect(run).toHaveBeenCalledOnce();
+    run.mockImplementationOnce(async () => undefined);
+    supervisor.configurationChanged();
+    await job;
+    expect(run).toHaveBeenCalledTimes(2);
+    abort.abort();
   });
 
   it('re-enters intake only after the running turn settles, so its command is claimed once', async () => {

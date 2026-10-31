@@ -1245,6 +1245,7 @@ interface DownloadAttachmentDeps {
   /** The daemon's authenticated server; media bytes are read from here, never a stored URL's host. */
   serverBaseUrl: string;
   readMessage: (messageId: string) => Promise<JsonObject>;
+  readAttachment?: (objectId: string) => Promise<JsonObject>;
   /**
    * The active corner's brief attachment with this object id, or null when the
    * id is not pinned to a brief this agent may read. The server's reach check
@@ -1264,6 +1265,9 @@ function downloadAttachmentDepsFromEnv(): DownloadAttachmentDeps {
         roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
         messageId,
       }),
+    readAttachment: (attachmentId) => daemonExecute('getRoomMessage', {
+      roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'), messageId: '', attachmentId,
+    }),
     readBriefAttachment: async (objectId) => {
       const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
       if (!cornerId) return null;
@@ -1350,9 +1354,9 @@ function candidateFromMessage(
 /**
  * Resolve the file to download. A `messageId` authorizes through the same
  * getRoomMessage read as before. A brief manifest exposes only the attachment
- * object id, so when the id is not on that message the active corner's brief
- * is consulted; the server's reach check decides who may read it, and no
- * parent Room message is read for this path.
+ * object id, so consult the active brief first, then ask the server to locate
+ * a readable message or brief carrying the object id. Existing server read
+ * checks remain the authority for every candidate.
  */
 async function resolveDownloadAttachment(
   args: JsonObject,
@@ -1397,14 +1401,28 @@ async function resolveDownloadAttachment(
       ...(brief.expired ? { expired: true } : {}),
     };
   }
+  if (deps.readAttachment) {
+    try {
+      const message = await deps.readAttachment(wanted);
+      const attachments = (Array.isArray(message.attachments) ? message.attachments : []) as DaemonAttachment[];
+      const index = attachments.findIndex(item => attachmentId(item) === wanted);
+      if (index >= 0) {
+        const candidate = candidateFromMessage(String(message.messageId || wanted), attachments, index);
+        if (candidate) return candidate;
+      }
+    } catch (error) {
+      const failure = messageReadFailure(error);
+      if (failure.reason === 'download_failed') throw failure;
+      // An unreachable object and an absent object have the same result.
+    }
+  }
   if (messageError) throw messageReadFailure(messageError);
   throw new AttachmentDownloadError('not_found', 'no attachment with this id');
 }
 
 /**
  * download_attachment: authorize through the same getRoomMessage read the
- * agent already has, or through the active corner's brief when the manifest's
- * object id names a brief attachment, then copy the bytes from the server into
+ * agent already has, or through a readable brief, then copy the bytes from the server into
  * `<scratch>/attachments/<key>/<safe-name>`. Nothing is downloaded while a
  * prompt is built; this is the only on-demand path for a transcript file.
  */

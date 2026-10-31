@@ -1,3 +1,5 @@
+import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
+import { postStarterGame } from './starter-onboarding.js';
 import { setMcpMemberWebhook, McpToolError } from './rooms-mcp-members.js';
 import { disconnectMcp, MCP_SCOPES } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
@@ -6490,6 +6492,7 @@ export class PhoneService {
         );
       }
       const generalId = await ensureFirstRoom(db, id, viewerId);
+      await seedWelcomeVideoWorkflow(db, id, generalId);
       // Only a newly created Workspace gets a free starter agent, in the same
       // transaction as its #general, so the creator lands next to it.
       if (inserted.rowCount && this.freeAgents)
@@ -7832,16 +7835,33 @@ export class PhoneService {
          WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
       )).rows[0];
       if (starter) {
-        if (starter.first_label !== 'Write code in your repo')
+        if (starter.stage === 'welcome' && starter.first_label !== 'Make a welcome video and post it to my YouTube')
           throw new Error('This welcome has changed. Ask Beebee to run onboarding again for the current job choices.');
         const result = await answerRoomChoice(database, {
           choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
-        }, { wake: input.optionId === 'B' });
+        }, { wake: (starter.stage === 'next' && input.optionId === 'B') || (starter.stage === 'welcome' && input.optionId === 'C') });
+        if (starter.stage === 'next') {
+          if (input.optionId === 'A') await postStarterInviteOffer(database, starter.room_id, starter.agent_id, viewerId, this.publicOrigin);
+          return result;
+        }
         await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C', roomId: starter.room_id });
-        await recordOnboardingEvent(database, viewerId, input.optionId === 'A' ? 'repo_job_chosen' : input.optionId === 'B' ? 'youtube_job_chosen' : 'other_job_chosen', { roomId: starter.room_id });
-        if (input.optionId === 'A') await postRepositoryOnboarding(database, this.github, {
-          roomId: starter.room_id, agentId: starter.agent_id, requesterId: viewerId, kind: 'repository',
-        });
+        if (input.optionId === 'A') {
+          await recordOnboardingEvent(database, viewerId, 'youtube_job_chosen', { roomId: starter.room_id });
+          const team = (await database.query<{ agent_id: string; starter_role: string }>(
+            `SELECT f.agent_id,f.starter_role FROM free_agents f JOIN memberships m ON m.identity_id=f.agent_id
+             WHERE m.room_id=$1 AND m.removed_at IS NULL AND f.owner_id=$2 AND f.removed_at IS NULL`,
+            [starter.room_id, viewerId])).rows;
+          const beebee = team.find(agent => agent.starter_role === 'beebee')?.agent_id;
+          const luna = team.find(agent => agent.starter_role === 'luna')?.agent_id;
+          if (!beebee || !luna) throw new Error('Your starter team is no longer in this Room');
+          await startWorkflow(database, { room_id: starter.room_id, agent_id: viewerId }, {
+            name: WELCOME_VIDEO_SLUG, roleBindings: { writer: [beebee, luna], maker: [beebee, luna], checker: [luna, beebee], owner: [beebee, luna] },
+          });
+        } else if (input.optionId === 'B') {
+          await postStarterGame(database, this.objects, starter.room_id, viewerId);
+        } else {
+          await recordOnboardingEvent(database, viewerId, 'other_job_chosen', { roomId: starter.room_id });
+        }
         return result;
       }
       return (await settleWorkflowGate(database, {

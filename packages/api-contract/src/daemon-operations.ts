@@ -328,6 +328,8 @@ export type DaemonOperationMap = {
   getRoomMessage: Operation<
     RoomInput & {
       readonly messageId: string;
+      /** Resolve a visible file by object id; messageId may be empty for this lookup. */
+      readonly attachmentId?: string;
       readonly offset?: number;
       readonly requestId?: string;
       readonly generationId?: string;

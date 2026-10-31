@@ -422,7 +422,11 @@ jobs:
         # verification can use .NET Framework's built-in WinRT projection.
         run: powershell.exe -File scripts/desktop-notification-proof-windows.ps1
 
-      - uses: actions/upload-artifact@v4
+      # Screenshot/log evidence is informational, like the capture itself.
+      # An artifact-service outage must not turn it into an installer gate.
+      - name: Upload native notification diagnostics
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
         if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (runner.os == 'macOS' || runner.os == 'Windows')
         with:
           name: desktop-native-notification-${{ matrix.label }}

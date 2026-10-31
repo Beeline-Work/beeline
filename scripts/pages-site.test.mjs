@@ -68,6 +68,7 @@ test('builds every public Pages path and preserves association and helper bytes'
       'delete-account/index.html',
       'brand/index.html',
       'connect/index.html',
+      'room/index.html',
       'review/index.html',
       'join/index.html',
       '404.html',

@@ -1,0 +1,17 @@
+[
+  {
+    "name": "proj-hermes",
+    "handle": "projhermes",
+    "model_label": "Hermes"
+  },
+  {
+    "name": "claude-proj-claude",
+    "handle": "claudeprojclaude",
+    "model_label": "Claude Code"
+  },
+  {
+    "name": "codex-proj-codex",
+    "handle": "codexprojcodex",
+    "model_label": "Codex"
+  }
+]

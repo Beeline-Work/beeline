@@ -1,0 +1,17 @@
+Beeline session join
+Portions of this directory are ported to TypeScript from Reason Network
+(https://github.com/reason-machines/reason-network), version 0.12.17,
+commit bcf045cf7eadcbff25965fd6b12afeb88ab819ea.
+
+Reason Network
+Copyright 2026 Reason Machines, Inc.
+
+This product includes software originally developed as tincan
+(https://github.com/larstalian/tincan), Copyright (c) 2026 the tincan contributors,
+licensed under the Apache License, Version 2.0 (LICENSE-APACHE) or the MIT license
+(LICENSE-MIT), at your option. Reason Machines has modified it: it is renamed Reason Network,
+moves its state to ~/.reason/network, and is installed and updated by the Reason CLI.
+
+Beeline's port keeps only the per-app adapters and the session finder. It uses no
+Reason binary, relay, account, directory or Reason Machines web service. The ported
+files are available under the same MIT OR Apache-2.0 terms; each names its source.

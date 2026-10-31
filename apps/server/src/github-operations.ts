@@ -375,6 +375,17 @@ export class GitHubOperations {
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
     this.armRoomTokenCache();
+    this.app.setRateLimitStore?.({
+      get: async installationId => {
+        const row = (await this.database.query<{ retry_at: string | null }>(
+          'SELECT api_retry_at::text retry_at FROM github_installations WHERE installation_id=$1', [installationId])).rows[0];
+        return row?.retry_at ? Date.parse(row.retry_at) : 0;
+      },
+      set: async (installationId, retryAt) => {
+        await this.database.query(`UPDATE github_installations SET api_retry_at=GREATEST(api_retry_at,$2::timestamptz)
+          WHERE installation_id=$1`, [installationId, new Date(retryAt).toISOString()]);
+      },
+    });
   }
 
   async beginIdentity(viewerId: string, input: Input<'beginGitHubIdentityBind'>) {
@@ -991,7 +1002,6 @@ export class GitHubOperations {
        WHERE room.id=$1 AND room.archived_at IS NULL
          AND ${cornerImplementerSql('fact', 'room')}=$2
          AND fact.lifecycle->'pr'->>'number' IS NULL
-         AND COALESCE(fact.lifecycle->>'lifecycle','')<>'landed'
          AND fact.feature_branch IS NOT NULL`, [cornerId, agentId],
     )).rows[0];
     if (!corner || (await currentCornerBrief(this.database, cornerId))?.repositoryWork === false) return;
@@ -1005,8 +1015,7 @@ export class GitHubOperations {
       // A webhook or close may have won while the provider read was in flight.
       await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb,updated_at=now()
         FROM rooms room WHERE fact.corner_id=$1 AND room.id=fact.corner_id AND room.archived_at IS NULL
-          AND fact.feature_branch=$2 AND fact.lifecycle->'pr'->>'number' IS NULL
-          AND COALESCE(fact.lifecycle->>'lifecycle','')<>'landed'`,
+          AND fact.feature_branch=$2 AND fact.lifecycle->'pr'->>'number' IS NULL`,
       [cornerId, corner.feature_branch, JSON.stringify({ lifecycle: 'in-review', branch: corner.feature_branch,
         pr: { number: pr.number, url: pr.url, title: pr.title ?? `Pull request #${pr.number}`,
           headSha: pr.headSha, targetBranch: pr.baseRef, mergeability: 'unknown',
@@ -1110,6 +1119,19 @@ export class GitHubOperations {
       `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
     )).rows[0]!.started_at;
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
+    // A delayed landing wake may be the first observer of a missed merge webhook.
+    // Reconcile the recorded PR through the same idempotent archival path.
+    if (!corner.archived && pr.merged && pr.headRef && corner.author_id &&
+      corner.lifecycle.pr?.number === number) {
+      await this.mergeCorner({ ...target, corner_id: input.cornerId,
+        parent_id: corner.parent_id, author_id: corner.author_id,
+        corner_name: corner.corner_name, summary: '' }, {
+        repository: target.repository, branch: pr.headRef, title: pr.title ?? `Pull request #${number}`,
+        url: pr.url, number, targetBranch: pr.baseRef, headSha: pr.headSha,
+        mergedAt: pr.mergedAt, mergeCommitSha: pr.mergeCommitSha, mergedBy: pr.mergedBy,
+        commits: 0, files: 0,
+      }, this.database, number);
+    }
     let rollup = await this.app.readCommitCheckRollup(
       target.token,
       target.repository,
@@ -2742,7 +2764,18 @@ export class GitHubOperations {
           await this.recordClosedCornerPullRequest(target.corner_id, Number(target.pr_number), database);
           return;
         }
-        if (livePr && (livePr.merged || livePr.headSha !== checkHeadSha)) return;
+        if (livePr?.merged) {
+          // Checks can finish after the merge, before its closed webhook arrives.
+          if (livePr.headRef) await this.mergeCorner(target, {
+            repository, branch: livePr.headRef, title: livePr.title ?? `Pull request #${livePr.number}`,
+            url: livePr.url, number: livePr.number, targetBranch: livePr.baseRef,
+            headSha: livePr.headSha, mergedAt: livePr.mergedAt,
+            mergeCommitSha: livePr.mergeCommitSha, mergedBy: livePr.mergedBy,
+            commits: 0, files: 0,
+          }, database, livePr.number);
+          return;
+        }
+        if (livePr && livePr.headSha !== checkHeadSha) return;
         const beforeFetch = await this.lifecycle(target.corner_id, database);
         if (beforeFetch.pr?.headSha && beforeFetch.pr.headSha !== checkHeadSha) return;
         const oldReport = beforeFetch.checksSummary as (typeof beforeFetch.checksSummary & {
@@ -2775,7 +2808,11 @@ export class GitHubOperations {
             return { name: item.name, url: item.url, jobId };
           }
         }));
-        await database.transaction(async (database) => {
+        const providerCheck = check;
+        let noteInserted = false;
+        // Each replay starts with the provider fact, not a label from an aborted attempt.
+        const refresh = (check = providerCheck) => database.transaction(async (database) => {
+          noteInserted = false;
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
           // the provider has replied, under the run lock then the fact row lock.
@@ -2897,7 +2934,7 @@ export class GitHubOperations {
           // check can never be described as the failure.
           const failing = reportFailure && newFailures.length ? newFailures : summary.failing?.length ? summary.failing : [check.name];
           if (!options?.quiet || becamePassing || becameFailing)
-          await this.systemNote(
+          noteInserted = await this.systemNote(
             target.corner_id,
             target.author_id,
             {
@@ -2942,6 +2979,7 @@ export class GitHubOperations {
                 ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : partialRepair ? 'partial' : 'first'}`
               : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`,
             database,
+            true,
           );
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
@@ -2953,6 +2991,13 @@ export class GitHubOperations {
               WHERE corner_id=$1 AND merge_attempt_head=$3`,
             [target.corner_id, currentRow.updated_at, currentRow.merge_attempt_head]);
         });
+        // A supplied transaction belongs to its caller: only the owner can
+        // roll back and replay the complete unit after a deadlock.
+        if (database !== this.database) await refresh();
+        else await retryOnDeadlock(async () => { await refresh(); }, {
+          attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
+        });
+        if (noteInserted) this.onRoomChanged?.(target.corner_id);
     } catch (error) {
       if (transientGitHubError(error)) {
         await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
@@ -3017,6 +3062,7 @@ export class GitHubOperations {
     phrase: SystemPhrase,
     dedupe: string,
     database: SqlDatabase = this.database,
+    deferNotification = false,
   ) {
     const note = await systemLine(database, {
       id: hash(`beeline:${roomId}:${dedupe}`),
@@ -3026,7 +3072,7 @@ export class GitHubOperations {
       cardType: 'github-corner-note',
       card: { source: 'github', dedupe },
     });
-    if (note.inserted) this.onRoomChanged?.(roomId);
+    if (note.inserted && !deferNotification) this.onRoomChanged?.(roomId);
     // A previously written green fact can outlive a lost dispatch. Its note
     // remains idempotent, but the command routing must be retried.
     if (!note.inserted && (phrase.kind === 'check-passed' || phrase.kind === 'check-failed'))
@@ -3038,6 +3084,7 @@ export class GitHubOperations {
         followup: phrase.kind === 'check-failed' &&
           Boolean((phrase.payload as { followup?: unknown } | undefined)?.followup),
       });
+    return note.inserted;
   }
 
   private async mergeCorner(
@@ -3120,15 +3167,16 @@ export class GitHubOperations {
       if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
         `UPDATE corner_facts SET close_requested=$3,merge_attempt_head=NULL,
-           lifecycle=(lifecycle-'mergeRecovery'-'mergeQueue')||$2::jsonb,
+           lifecycle=((lifecycle-'mergeRecovery'-'mergeQueue') -
+             CASE WHEN $4 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb,
            updated_at=now() WHERE corner_id=$1`,
         [
           target.corner_id,
           JSON.stringify({
             lifecycle: locked ? 'working' : 'done',
-            checks: 'passing',
-            outcome: 'landed',
-            ...(mergedPr
+            checks: locked ? 'unknown' : 'passing',
+            ...(!locked ? { outcome: 'landed' } : {}),
+            ...(!locked && mergedPr
               ? {
                   pr: {
                     ...mergedPr,
@@ -3142,6 +3190,7 @@ export class GitHubOperations {
               : {}),
           }),
           !locked,
+          locked,
         ],
       );
       const merged: SystemPhrase = {
@@ -3170,7 +3219,7 @@ export class GitHubOperations {
         },
       });
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
-      if (!locked) await advanceCorner(database, target.corner_id, {
+      await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });

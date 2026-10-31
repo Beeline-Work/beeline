@@ -185,27 +185,12 @@ to fill unmeasured routes with static estimates.
 
 Run `node scripts/latency-rig/check-routes.mjs` and
 `node --test scripts/latency-rig/*.test.mjs` to validate route coverage and the
-deterministic budget evaluator. Device capture runs on squire; GitHub Actions
-checks PR evidence with `latency-proof.yml` and does not run an emulator.
+deterministic budget evaluator. Device capture runs on squire.
 Nightly timing uses the squire emulator and parent-Room schedule documented below. A full launch report still requires all route and
 interaction marks; the
 nightly subset does not establish that broader budget. Missing required subset
 cases fail closed.
 
-### Pull request proof
-
-`sensitive-paths.json` owns the latency-sensitive path prefixes. Pull requests
-touching those paths must include one line with measured before/after p95 values
-for each nightly case, in milliseconds:
-
-```text
-Rig before/after: room-list-1=BEFORE->AFTERms; room-list-5=BEFORE->AFTERms; push-1=BEFORE->AFTERms; push-5=BEFORE->AFTERms; warm-room=BEFORE->AFTERms; send-text=BEFORE->AFTERms
-```
-
-Replace every placeholder with a measured number and link the reports alongside
-the line. `LATENCY RIG PROOF` fails missing or nonnumeric cases and reevaluates
-when the PR body changes. Unrelated paths need no line. The evidence check
-validates the summary's presence; independent review must verify its reports.
 Room request contracts also reject any star-prompt, Workspace, read-mark or
 Room-list request starting before the native draw mark, even when the overall
 request-count budget would allow it.
@@ -370,7 +355,7 @@ at a live Gradle installation's writable cache.
 
 `local-attempt.sh` builds a local release/Hermes APK, starts `run-local.sh` on
 loopback ports 18880/18881 by default, seeds the disposable PostgreSQL fixture, signs in
-through the local review link after backend readiness, captures the six fixed
+through the local review link after backend readiness, captures the ten fixed
 cases, joins HTTP/SQL spans, and writes report JSON/Markdown. It owns and stops
 its fixture server and a uniquely named disposable PostgreSQL database, removed
 on exit. Each attempt clears the fixture app on the explicitly owned emulator,
@@ -384,11 +369,13 @@ and verify that each listener is the child started by this attempt. The nightly 
 - Room list and push, with one and five unseen messages (four cases).
 - Existing warm Room open with no unseen messages.
 - Existing send-text interaction, ending at its optimistic row's native frame.
+- Reaction, corner open, conversation-tab switch and composer open, using the
+  native completion contracts below.
 
 Each case has 20 samples. Cold opening is recorded separately and never gates
 this subset. Host load and free memory are sampled every ten seconds into
 `capture/host-load.json`, including failed captures. Typical nightly work is a
-release build plus 120 samples; it does not run every application route.
+release build plus 200 samples; it does not run every application route.
 
 From the detached main checkout, with `rig_state` set to the private state path:
 
@@ -533,3 +520,46 @@ from inherited run `night-2026-10-30-EG85he`, main
 `e20fb93ade55d09b4a75f6c309e7c3c170b16119`. It proves failed measurements reach
 history and publication without establishing a passing baseline. The synthetic
 100 → 105 → 110.25 ms fixture proves cumulative drift despite small nightly steps.
+
+## Timed tap actions
+
+The nightly capture also includes `react-message`, `open-corner`, `switch-tabs`,
+and `open-composer`. Each reports p50 and p95, with a strict **p50 <150 ms**
+target. Existing six cases retain their existing targets and request rules.
+The nightly comparator and its existing p95 budget/regression rules remain unchanged;
+a p50 tap pass alone does not establish a passing nightly baseline.
+All four start at the native Activity's touch-up dispatch, before React handles
+that tap, and end at the first frame commit after the first draw containing
+the result. The probe requests that frame, so a static result such as an empty
+tab still completes; this adds at most one frame to the sample. Highlight, selection, navigation commit and JavaScript callbacks
+alone cannot finish these samples.
+
+| Case | Setup and measured tap | Visible completion | Expected requests |
+|---|---|---|---|
+| `react-message` | Open the fixture Room; insert a unique short message with one 👍 from the fixture agent; tap its existing reaction chip. | Unique message visible above the composer and chip reads `👍, 2 reactions`. The fixture viewer's optimistic reaction has appeared. | One reaction write, no completed prepaint round trip, no follow-up GET. |
+| `open-corner` | Open the parent Room's corners list; insert unique text in a visible seeded corner, then tap that corner row. Opening the list is setup. | Unique corner message visible above its composer in the destination native Screen; the corner title/list preview cannot satisfy it. | At most one prepaint covering read; no prepaint housekeeping. Normal postpaint page/read telemetry is outside this request budget. |
+| `switch-tabs` | Open the conversation list on All, with no pinned fixture conversations; tap Pinned. | Target tab's `No pinned conversations yet.` content is visible; selected tab styling is insufficient. | No requests. |
+| `open-composer` | Open the Room with the keyboard dismissed; tap Message. | The visible Message EditText has focus and native IME insets report the keyboard visible. Focus alone is insufficient. | No requests. |
+
+Reaction fixture messages are removed after capture so prior chips cannot
+complete later samples. Corner messages use a fresh unique token per attempt.
+The fixture database and emulator remain local and disposable. A missing action
+fails setup; an absent completion produces a censored timeout, never a successful
+sample. Keyboard animation and navigation rendering are included in the duration.
+The native Screen boundary uses a type check so release obfuscation cannot
+disable completion. These are frame-submission measurements, not physical scanout timings.
+
+For a single smoke sample of each new case, build/install the fixture APK and sign
+into its local server, select Latency Rig 200, then run:
+
+```sh
+LATENCY_RIG_SMOKE=1 LATENCY_RIG_ENTRY=timed-taps \
+  node scripts/latency-rig/capture-arrivals.mjs .beeline-proof/timed-taps
+```
+
+Use an individual action name as the entry filter to isolate it. Supply the leased
+`LATENCY_RIG_DEVICE` and loopback `LATENCY_RIG_DATABASE_URL` as for arrival
+capture. `LATENCY_RIG_SMOKE=1` permits one sample (the ordinary minimum stays
+20); it never relaxes nightly analysis coverage and cannot establish a passing
+nightly verdict. With no entry filter smoke mode captures the arrival cases too;
+use the explicit entry filter for these bounded proofs.

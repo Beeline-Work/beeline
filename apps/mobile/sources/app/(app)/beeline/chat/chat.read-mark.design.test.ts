@@ -85,6 +85,8 @@ describe('the chat surface read-mark contract', () => {
     expect(tailAsk).toContain('hasObservedVisibility: newMessageHasObservedVisibility');
     expect(tailAsk).toContain('advanceReadCursor(chronological, report)');
     expect(tailAsk).toContain('newestTranscriptMessageId');
+    // R1: a card may attach above the viewport without changing the tail id.
+    expect(tailAsk).toContain('visibleMessages,');
   });
 
   it('ranks the read cursor against chronological order, never the inverted list', () => {

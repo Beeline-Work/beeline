@@ -1317,6 +1317,18 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(readFileSync(new URL('../../../web/sitemap.xml', import.meta.url), 'utf8')).toContain('<loc>https://usebeeline.app/connect/</loc>');
   });
   const data = (result: unknown) => JSON.parse(((result as { content: { text: string }[] }).content)[0]!.text).data;
+  it('owner-unknown: identifies the approving owner before and after setup, even without Rooms', async () => {
+    const { client, member } = await connected();
+    const listed = () => client.callTool({ name: 'list_rooms', arguments: {} }).then(data);
+    expect((await listed()).owner).toEqual({ name: 'Demo', handle: 'demo' });
+    expect((await listed()).setup).toContain('your own app');
+    const profile = await client.callTool({ name: 'set_profile', arguments: { name: 'Existing Bot' } });
+    expect(profile.isError).toBeFalsy();
+    expect(await listed()).toMatchObject({ owner: { name: 'Demo', handle: 'demo' } });
+    expect((await listed()).setup).toBeUndefined();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NOT NULL', [member]);
+    expect(await listed()).toMatchObject({ rooms: [], owner: { name: 'Demo', handle: 'demo' } });
+  });
   it('repeats the setup rule in read results until the member calls set_profile', async () => {
     const { client } = await connected();
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toContain('set_profile');
@@ -1324,6 +1336,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const tools = (await client.listTools()).tools;
     expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('call it first');
     expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^Call this first/);
+    expect(tools.find(t => t.name === 'set_profile')!.description).toContain('display name and profile picture you already use in your own app');
+    expect(tools.find(t => t.name === 'set_profile')!.description).toContain('https URL or data URI');
+    expect(client.getInstructions()).toContain('Read the owner field in list_rooms');
+    expect(client.getInstructions()).toContain('display name and profile picture you already use in your own app');
     await client.callTool({ name: 'set_profile', arguments: { name: 'Named', handle: `named_${randomBytes(3).toString('hex')}` } });
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toBeUndefined();
     expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toBeUndefined();

@@ -1,3 +1,4 @@
+import { groupMessageSendStates } from '@/buzz/message-outbox';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
@@ -133,7 +134,6 @@ import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
-import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -4019,8 +4019,6 @@ export function BuzzChatSurface({
     [activeCommunityId, decodedId, displayRoomName, forwardBusyRoomId, forwardTarget, transport],
   );
 
-  const markOutboxFailed = outbox.markFailed;
-  const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
   const handleSend = useCallback(
     async (shortcut?: MessageShortcut, dictated?: DictatedSend) => {
@@ -4118,7 +4116,6 @@ export function BuzzChatSurface({
         await yieldToNextPaint();
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
-      let preparedTransport: BuzzRigTransport | undefined;
       try {
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
@@ -4131,7 +4128,6 @@ export function BuzzChatSurface({
           sendTransport = new BuzzRigTransport(identity);
         }
         if (!transport) setSessionTransport(sendTransport);
-        preparedTransport = sendTransport;
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
@@ -4222,6 +4218,7 @@ export function BuzzChatSurface({
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(attachments.length ? { attachments } : {}),
         });
+        setPendingAck(null); // The durable outbox now owns the Sending line.
         landAtOwnSend(optimistic.id);
         if (!provisionalId) addMessages([optimistic]);
         if (!sendShortcut) {
@@ -4244,8 +4241,11 @@ export function BuzzChatSurface({
             setReplyTarget((current) => (current === activeReplyTarget ? null : current));
           }
         }
-        await activeOutbox.attempted(preparedEvent.id);
-        const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+        const writeResult = await activeOutbox.send(preparedEvent.id);
+        if (!writeResult) {
+          if (desktopExperience) setDesktopDeliveryState(null);
+          return true;
+        }
         recordUntaggedSend(preparedEvent.id);
         if (writeResult.message) applyRoomMessageResult(writeResult.message);
         if (writeResult.pendingAgentCommands) applyPendingAgentCommands(writeResult.pendingAgentCommands);
@@ -4283,27 +4283,11 @@ export function BuzzChatSurface({
         console.warn('Send failed:', err);
         if (provisionalId && !preparedEvent) removeOptimistic(provisionalId);
         if (desktopExperience) setDesktopDeliveryState('failed');
-        // A publish failure already gets its own explicit modal below; the
-        // local ack has nothing left to guess at and must not keep buzzing.
+        // Delivery errors stay in the outbox. Preparation errors keep the draft.
         setPendingAck(null);
-        if (preparedEvent) await markOutboxFailed(preparedEvent.id);
-        const failure = publishFailurePresentation(err);
-        Modal.alert(
-          'Message not sent',
-          failure.message,
-          failure.retryable
-            ? [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Retry',
-                  onPress: () => {
-                    if (!preparedEvent || !preparedTransport) return;
-                    retryOutboxMessage(preparedEvent.id, preparedTransport);
-                  },
-                },
-              ]
-            : [{ text: 'OK' }],
-        );
+        if (isFocused() && (!preparedEvent || !outbox.current()?.get(preparedEvent.id))) {
+          Modal.alert('Could not prepare message', appErrorCopy(err));
+        }
         return false;
       } finally {
         sendInFlightRef.current = false;
@@ -4312,6 +4296,8 @@ export function BuzzChatSurface({
     },
     [
       captureUntaggedSend,
+      isFocused,
+      outbox,
       isDirectMessage,
       activeCommunityId,
       attachmentUploader,
@@ -5693,7 +5679,6 @@ export function BuzzChatSurface({
     beginForward,
     handleForwardToNewCorner,
     handleConfirmTargetBranch,
-    retryOutboxMessage,
     handleOpenChannelReference,
     handleOpenMention
   }, `${decodedId}\0${cacheViewerPubkey}`);
@@ -5707,6 +5692,7 @@ export function BuzzChatSurface({
         firstBylineOfDay,
         untaggedHint,
         deliveryFailed = false,
+        sendState,
         speakerWorking: rowSpeakerWorking = false,
         cornerProposalAnswer,
         cornerProposalAction: rowCornerProposalAction,
@@ -6079,6 +6065,7 @@ export function BuzzChatSurface({
           channelIndex={channelReferenceIndex}
           untaggedHint={untaggedHint}
           deliveryFailed={deliveryFailed}
+          sendState={sendState}
           onChannelReference={rowActions.handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
@@ -6109,7 +6096,6 @@ export function BuzzChatSurface({
             : {})}
           cornerProposalAnswer={cornerProposalAnswer}
           cornerProposalAction={rowCornerProposalAction}
-          onRetry={rowActions.retryOutboxMessage}
           onDismiss={dismissOutboxMessage}
         />
       );
@@ -6183,10 +6169,12 @@ export function BuzzChatSurface({
   // Resolve changing transcript-wide indexes before the memo boundary. A new
   // hint, byline opener, working speaker, or this row's roster paint changes
   // only that row's props.
+  const groupedSendStates = useMemo(() => groupMessageSendStates(visibleMessages, outbox.states ?? new Map()), [visibleMessages, outbox.states]);
   const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
     firstBylineOfDay: bylineOpeners.has(item.id),
     untaggedHint: hintMessageIds.has(item.id),
     deliveryFailed: failedOutboxIds.has(item.id),
+    sendState: groupedSendStates.get(item.id),
     speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
     cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
     cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
@@ -6224,6 +6212,7 @@ export function BuzzChatSurface({
     bylineOpeners,
     hintMessageIds,
     failedOutboxIds,
+    groupedSendStates,
     speakerWorking,
     answerByMessageId,
     cornerProposalAction,

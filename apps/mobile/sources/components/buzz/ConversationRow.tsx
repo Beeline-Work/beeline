@@ -1,3 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useOutboxRecords } from '@/buzz/message-outbox-observer';
+import { outboxRoomId } from '@/buzz/message-outbox';
 import { voiceCallHumanNames } from '@/buzz/voice-call-members';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -54,6 +57,8 @@ export function ConversationRow({
   onLongPressCorners?: () => void;
   testID: string;
 }) {
+  const outbox = useOutboxRecords();
+  const refused = outbox.filter(record => outboxRoomId(record) === item.room.id && record.reason && !record.seen).at(-1);
   const name = roomRowName(item);
   const preview = roomRowPreview(item, viewer);
   const call = item.voiceCall && !item.voiceCall.endedAt ? item.voiceCall : null;
@@ -155,7 +160,7 @@ export function ConversationRow({
               ]}
               testID={`${testID}-preview`}
             >
-              {call ? <><Text style={styles.liveVoice}>●</Text> Ongoing call: {voiceCallHumanNames(call, viewer)}</> : showReason ? (
+              {refused ? <><Text style={styles.notSent}><Ionicons name="alert-circle-outline" size={13} color={styles.notSent.color} /> Not sent:</Text> {refused.row.text}</> : call ? <><Text style={styles.liveVoice}>●</Text> Ongoing call: {voiceCallHumanNames(call, viewer)}</> : showReason ? (
                 showReason
               ) : (
                 <>
@@ -236,6 +241,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'baseline',
     gap: 8,
   },
+  notSent: { color: theme.buzz.dialogDanger },
   preview: {
     ...theme.buzz.type.meta,
     flex: 1,

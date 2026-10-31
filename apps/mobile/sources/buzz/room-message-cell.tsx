@@ -1,3 +1,4 @@
+import type { MessageSendState } from './message-outbox';
 import React from 'react';
 import { Text, View } from 'react-native';
 import Animated, {
@@ -21,6 +22,7 @@ import {
 } from '@/components/buzz/transcript-card-motion-context';
 
 export type RoomMessagePresentation = {
+  sendState?: MessageSendState;
   firstBylineOfDay?: boolean;
   untaggedHint?: boolean;
   deliveryFailed?: boolean;

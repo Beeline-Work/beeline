@@ -1,3 +1,4 @@
+vi.mock('@/buzz/message-outbox-runtime', () => ({ startMessageOutbox: async () => undefined }));
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 import { SurfaceRegistry } from '@/buzz/surface-registry';
@@ -174,6 +175,9 @@ vi.mock('@/buzz/surface-storage', () => ({
   createRoomOutbox: vi.fn(() => ({
     restore: vi.fn(async () => { await controls.outboxRestore; }),
     list: vi.fn(() => []),
+    subscribe: () => () => undefined,
+    state: () => undefined,
+    acknowledgeFailures: async () => undefined,
     reconcile: vi.fn(async () => undefined),
     fail: controls.outboxFail,
     retry: vi.fn(async () => undefined),

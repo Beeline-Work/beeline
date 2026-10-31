@@ -1,15 +1,15 @@
 import { MMKV } from 'react-native-mmkv';
 import { webStringStorage } from '@/sync/browser-string-storage';
 import {
-  SignedEventOutbox,
   SurfaceResponseCache,
   type Identity,
-  type SignedOutboxRecord,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
 import { selectIdentities } from './identity-records';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
-import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
+import { MessageOutbox, type MessageOutboxRecord } from './message-outbox';
+import type { NostrEvent } from '@beeline/nostr';
+import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
 import { SurfaceRegistry } from './surface-registry';
 import { deferRoomWrite } from './room-transition-work';
 import { webRuntimeStorage } from '@/utils/web-storage';
@@ -94,42 +94,73 @@ function relayScope(relayOrigin: string): string {
   }
 }
 
-function outboxKey(relayOrigin: string, viewerPubkey: string, roomId: string): string {
-  return `${OUTBOX_PREFIX}${relayScope(relayOrigin)}.${viewerPubkey}.${encodeURIComponent(roomId)}`;
+const appOutboxes = new Map<string, MessageOutbox>();
+const roomHandles = new Map<string, ReturnType<typeof roomOutboxHandle>>();
+let delivery: { send(event: NostrEvent): Promise<AgentMessageWriteResult>; rejection(error: unknown): string | undefined };
+export function configureMessageOutboxDelivery(next: typeof delivery): void { delivery = next; }
+
+export function getMessageOutbox(relayOrigin: string, identity: Pick<Identity, 'publicKey'>): MessageOutbox {
+  const prefix = `${OUTBOX_PREFIX}${relayScope(relayOrigin)}.${identity.publicKey}.`;
+  const key = `${prefix}app`;
+  let owner = appOutboxes.get(key);
+  if (owner) return owner;
+  owner = new MessageOutbox({
+    load: async () => {
+      const records: MessageOutboxRecord[] = [];
+      // Read the former Room keys once, save the app key before deleting them.
+      const oldKeys = mutations.getAllKeys().filter(candidate => candidate.startsWith(prefix) && candidate !== key);
+      for (const storedKey of [...oldKeys, key]) {
+        try { records.push(...JSON.parse(mutations.getString(storedKey) ?? '[]')); } catch { /* Ignore malformed local data. */ }
+      }
+      return records;
+    },
+    save: async records => {
+      if (records.length) mutations.set(key, JSON.stringify(records));
+      else mutations.delete(key);
+      for (const old of mutations.getAllKeys()) if (old.startsWith(prefix) && old !== key) mutations.delete(old);
+    },
+    send: event => delivery.send(event),
+    rejection: error => delivery.rejection(error),
+  });
+  appOutboxes.set(key, owner);
+  return owner;
 }
 
-/** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
-export function createRoomOutbox(
-  relayOrigin: string,
-  identity: Pick<Identity, 'publicKey'>,
-  roomId: string,
-) {
-  const key = outboxKey(relayOrigin, identity.publicKey, roomId);
-  return new SignedEventOutbox(
-    {
-      load: async () => {
-        const encoded = mutations.getString(key);
-        if (!encoded) return [];
-        try {
-          return JSON.parse(encoded) as SignedOutboxRecord[];
-        } catch {
-          mutations.delete(key);
-          return [];
-        }
-      },
-      save: async (records) => {
-        const encoded = records.length === 0 ? undefined : JSON.stringify(records);
-        if (encoded === undefined) mutations.delete(key);
-        else mutations.set(key, encoded);
-      },
-    },
-    {
-      acceptUnsignedEvent: isUnsignedMonolithMessage,
-    },
-  );
+function roomOutboxHandle(owner: MessageOutbox, roomId: string) {
+  return {
+    restore: () => owner.restore(),
+    list: () => owner.list(roomId),
+    get: (id: string) => owner.get(id),
+    enqueue: owner.enqueue.bind(owner),
+    fail: owner.fail.bind(owner),
+    remove: owner.remove.bind(owner),
+    reconcile: owner.reconcile.bind(owner),
+    send: owner.send.bind(owner),
+    state: owner.state.bind(owner),
+    acknowledgeFailures: () => owner.acknowledgeFailures(roomId),
+    subscribe: owner.subscribe,
+  };
+}
+
+/** A Room selector over the app-wide owner; it never starts a second sender. */
+export function createRoomOutbox(relayOrigin: string, identity: Pick<Identity, 'publicKey'>, roomId: string) {
+  const key = JSON.stringify([relayScope(relayOrigin), identity.publicKey, roomId]);
+  let handle = roomHandles.get(key);
+  if (!handle) {
+    handle = roomOutboxHandle(getMessageOutbox(relayOrigin, identity), roomId);
+    roomHandles.set(key, handle);
+  }
+  return handle;
+}
+
+export function resetMessageOutboxes(): void {
+  for (const owner of appOutboxes.values()) owner.dispose();
+  appOutboxes.clear();
+  roomHandles.clear();
 }
 
 export function clearMobileSurfaceStorage(): void {
+  resetMessageOutboxes();
   mobileSurfaceCache.clear();
   for (const key of responses.getAllKeys()) {
     if (key.startsWith(RESPONSE_PREFIX)) responses.delete(key);

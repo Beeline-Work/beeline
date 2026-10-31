@@ -32,7 +32,7 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
       publishPreparedMessage: vi.fn(async () => { order.push('publish'); return {}; }),
     };
     const enqueue = vi.fn();
-    const attempted = vi.fn();
+    const sendOutbox = vi.fn(async () => transport.publishPreparedMessage(event));
     const clear = vi.fn(() => { draft.value = ''; return true; });
     const draft = { value: text, captureMessage: () => clear };
     const prompt = vi.fn();
@@ -56,7 +56,7 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
       yieldToNextPaint: async () => { order.push('paint'); },
       roomSurface: null, userPubkey: 'human-key', fallbackMemberName: () => 'Person',
       decodedId: 'conversation', reconcileOptimistic: noop,
-      outbox: { current: () => ({ enqueue, attempted }) },
+      outbox: { current: () => ({ enqueue, send: sendOutbox }) },
       activeComposerDraftRef: { current: draft }, composerInputRevisionRef: { current: 0 },
       composerRef: { current: { clear: noop } }, setComposerInputRevision: noop,
       setComposerHeight: noop, COMPOSER_MIN_HEIGHT: 40, setInputSelection: noop,
@@ -71,7 +71,7 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
       { mentionAgent: 'ruby-key', mentionPubkeys: ['ruby-key'] },
     );
     expect(enqueue).toHaveBeenCalledWith(event, expect.objectContaining({ text }));
-    expect(attempted).toHaveBeenCalledWith(event.id);
+    expect(sendOutbox).toHaveBeenCalledWith(event.id);
     expect(transport.publishPreparedMessage).toHaveBeenCalledWith(event);
     expect(clear).toHaveBeenCalledOnce();
     expect(draft.value).toBe('');

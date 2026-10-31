@@ -1,0 +1,28 @@
+Reproduction R2 — actual component test-render output
+
+Device proof: adb devices returned no devices; os.open(/dev/kvm, O_RDWR) returned EACCES.
+This is a Node react-test-renderer stand-in, not a device screenshot.
+
+BEFORE: original RoomMessageVariants.tsx from the branch base, with the same R2 assertions:
+     → No instances found with props: {"testID":"outbox-sending-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+Error: No instances found with props: {"testID":"outbox-sending-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+Expected: "Not sent · The relay did not allow this message."
+Received: "Delivery failed"
+      Tests  2 failed | 135 skipped (137)
+
+AFTER — Obsidian:
+R2 Room list after leaving: Not sent: Start with the server PR
+R2 rendered: Sending; pending prose; no popup; no Retry
+R2 rendered after offline cutoff: Not sent yet · no connection; Dismiss
+R2 rendered after reconnect: sent; status removed; one publication
+R2 rendered refusal: Not sent · The relay did not allow this message.; Dismiss; no Retry; no popup
+      Tests  334 passed (334)
+
+AFTER — Bone:
+R2 rendered: Sending; pending prose; no popup; no Retry
+R2 rendered after offline cutoff: Not sent yet · no connection; Dismiss
+R2 rendered after reconnect: sent; status removed; one publication
+R2 rendered refusal: Not sent · The relay did not allow this message.; Dismiss; no Retry; no popup
+      Tests  2 passed | 135 skipped (137)
+
+Server replay: the existing HTTP integration test passed: concurrent identical sends both returned HTTP 200, both included the canonical message, and the database contained one row.

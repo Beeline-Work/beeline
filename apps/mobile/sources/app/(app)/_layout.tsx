@@ -1,3 +1,4 @@
+import { useMessageOutbox } from '@/buzz/message-outbox-runtime';
 import { Stack } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
@@ -12,6 +13,7 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
+  useMessageOutbox();
   const isDesktop = useIsDesktop();
   const { theme } = useUnistyles();
 

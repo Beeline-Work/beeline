@@ -67,7 +67,7 @@ import { MonolithRigTransport } from './monolith-rig-transport';
 import { resetSharedLiveConnection } from './live-connection';
 import { BuzzRigTransport } from './buzz-rig-transport';
 import { MonolithPhoneOperationError, monolithPhoneOperation } from './monolith-operation';
-import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
+import { clearMobileSurfaceStorage, configureMessageOutboxDelivery, getMessageOutbox, createRoomOutbox } from '@/buzz/surface-storage';
 import { resetClientState } from '@/sync/client-reset';
 
 const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
@@ -91,10 +91,11 @@ async function driveHandleSendPath(
   const outbox = createRoomOutbox(RELAY, identity, ROOM);
   const preparedEvent = await compose();
   await outbox.enqueue(preparedEvent, optimisticRow(preparedEvent, preparedEvent.content));
-  await outbox.attempted(preparedEvent.id);
-  expect(outbox.get(preparedEvent.id)).toMatchObject({ status: 'pending', attempts: 1 });
-  await transport.publishPreparedMessage(preparedEvent);
-  expect(outbox.list()).toHaveLength(1);
+  configureMessageOutboxDelivery({ send: event => transport.publishPreparedMessage(event), rejection: () => undefined });
+  const owner = getMessageOutbox(RELAY, identity);
+  await owner.connectionChanged(true);
+  await outbox.send(preparedEvent.id);
+  expect(outbox.list()).toHaveLength(0);
   return preparedEvent;
 }
 

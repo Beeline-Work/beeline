@@ -1,3 +1,5 @@
+import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
+import type { MessageSendState } from '@/buzz/message-outbox';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
@@ -226,8 +228,7 @@ export interface RoomSurfaceSessionBindings {
 export interface RoomSurfaceOutboxHandle {
   current(): RoomOutbox | null;
   failedIds: ReadonlySet<string>;
-  markFailed(eventId: string): Promise<void>;
-  retry(eventId: string, transport?: BuzzRigTransport | null): void;
+  states: ReadonlyMap<string, MessageSendState>;
   dismiss(eventId: string): void;
 }
 
@@ -408,6 +409,7 @@ export function useRoomSurfaceSession({
   const [hydrationAttempt, setHydrationAttempt] = useState(0);
   const [hydrationFailed, setHydrationFailed] = useState(false);
   const [hydrationError, setHydrationError] = useState<string | null>(null);
+  const [outboxStates, setOutboxStates] = useState<ReadonlyMap<string, MessageSendState>>(new Map());
   const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
 
   const outboxRef = useRef<RoomOutbox | null>(null);
@@ -479,6 +481,7 @@ export function useRoomSurfaceSession({
     readVisitFocusRef.current = isFocused;
     liveDraftDrainStore.setActive(isFocused);
     if (isFocused) {
+      void outboxRef.current?.acknowledgeFailures();
       readCursorRef.current?.resume();
       const viewport = readViewportRef.current;
       if (viewport?.roomId === channelId && viewport.viewer === readCursorViewerRef.current) {
@@ -565,35 +568,6 @@ export function useRoomSurfaceSession({
     setPresenceNow(Date.now());
   }, []);
 
-  const markFailed = useCallback(async (eventId: string) => {
-    await outboxRef.current?.fail(eventId);
-    setFailedIds((current) => new Set(current).add(eventId));
-  }, []);
-
-  const retryOutbox = useCallback(
-    (eventId: string, retryTransport?: BuzzRigTransport | null) => {
-      const outbox = outboxRef.current;
-      const record = outbox?.get(eventId);
-      const activeTransport = retryTransport === undefined ? transport : retryTransport;
-      if (!outbox || !record || !activeTransport) return;
-      void (async () => {
-        await outbox.retry(eventId);
-        setFailedIds((current) => {
-          const next = new Set(current);
-          next.delete(eventId);
-          return next;
-        });
-        try {
-          const result = await activeTransport.publishPreparedMessage(record.event);
-          if (result.message) applyRoomMessageResult(result.message);
-        } catch {
-          await markFailed(eventId);
-        }
-      })();
-    },
-    [applyRoomMessageResult, markFailed, transport],
-  );
-
   const dismissOutbox = useCallback(
     (eventId: string) => {
       void outboxRef.current?.remove(eventId);
@@ -626,6 +600,7 @@ export function useRoomSurfaceSession({
     liveDraftDrainStore.setActive(true);
 
     let cancelled = false;
+    let stopOutbox: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
     // A backgrounded app reads nothing: returning to the foreground replaces
@@ -675,6 +650,7 @@ export function useRoomSurfaceSession({
       setLiveOverlays([]);
       reconciledViewRef.current = null;
       setFailedIds(new Set());
+      setOutboxStates(new Map());
     }
     setHydrationFailed(false);
     setHydrationError(null);
@@ -1217,6 +1193,8 @@ export function useRoomSurfaceSession({
         setTransport(nextTransport);
         setRoomClient(nextRoomClient);
 
+        await startMessageOutbox();
+        if (cancelled) return;
         const outbox = createRoomOutbox(relayUrl, identity, channelId);
         outboxRef.current = outbox;
         await outbox.restore();
@@ -1233,13 +1211,14 @@ export function useRoomSurfaceSession({
               .map((record) => record.event.id),
           ),
         );
-        for (const record of outbox.list().filter((record) => record.status === 'pending')) {
-          await outbox.attempted(record.event.id);
-          void nextTransport.publishPreparedMessage(record.event).then(
-            (result) => { if (result.message) applyRoomMessageResult(result.message); },
-            () => void markFailed(record.event.id),
-          );
-        }
+        const updateOutbox = () => {
+          if (cancelled) return;
+          if (isFocusedRef.current && AppState.currentState === 'active') void outbox.acknowledgeFailures();
+          setOutboxStates(new Map(outbox.list().map(record => [record.event.id, outbox.state(record.event.id)!])));
+          setFailedIds(new Set(outbox.list().filter(record => record.status === 'failed').map(record => record.event.id)));
+        };
+        stopOutbox = outbox.subscribe(updateOutbox);
+        updateOutbox();
         if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
         if (cancelled) return;
 
@@ -1413,6 +1392,7 @@ export function useRoomSurfaceSession({
       abandonHandshakeWait?.();
       scheduler?.dispose();
       unsubscribe?.();
+      stopOutbox?.();
       outboxRef.current = null;
       schedulerRef.current = null;
       reconciledViewRef.current = null;
@@ -1429,7 +1409,6 @@ export function useRoomSurfaceSession({
     bindingsRef,
     channelId,
     hydrationAttempt,
-    markFailed,
     notificationResponseId,
     sessionActivated,
   ]);
@@ -1438,11 +1417,10 @@ export function useRoomSurfaceSession({
     () => ({
       current: () => outboxRef.current,
       failedIds,
-      markFailed,
-      retry: retryOutbox,
-      dismiss: dismissOutbox,
+      states: outboxStates,
+        dismiss: dismissOutbox,
     }),
-    [dismissOutbox, failedIds, markFailed, retryOutbox],
+    [dismissOutbox, failedIds, outboxStates],
   );
 
   const retryHydration = useCallback(() => setHydrationAttempt((attempt) => attempt + 1), []);

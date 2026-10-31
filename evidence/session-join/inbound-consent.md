@@ -35,6 +35,8 @@ The final fallback build additionally passed a tag posted immediately after Allo
 
 Claude version: (2.1.311). Codex CLI: (0.165.0); its managed app server reported (0.166.0) during the final live run. Codex used full access **before** join so it could write its user config and reach the loopback proof server. No hook-trust bypass flag was used. An earlier default-sandbox attempt could not complete the background user-config setup; this evidence does not claim that initial host access is unnecessary in a restricted sandbox.
 
+Clean-first-join follow-up: [SESSION-JOIN-CODEX-CLEAN-1](codex-clean.md) records fresh homes without prior config allowances, the exact one-time native prompt, successful post-Allow wake, and the remaining initial native permission-preset limitation. It supersedes the full-access-only caveat above.
+
 ## Codex file trust investigation
 
 An isolated Codex (0.165.0) app-server run listed Beeline's hook as `untrusted`, returned its normalized `currentHash`, and accepted a `config/batchWrite` of just `hooks.state.<Beeline hook key>.trusted_hash`. Listing again returned `trusted`. No session, model request or credential was needed for that investigation. The live join then printed “Trusted only Beeline’s SessionStart hook, pinned to its current Codex hash.” and answered its tags without a hook-trust prompt. A second live run used a different bundle path, changing the hook declaration hash, and also completed automatic trust after Allow.

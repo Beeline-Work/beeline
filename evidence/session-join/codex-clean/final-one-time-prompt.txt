@@ -1,0 +1,39 @@
+reach the network, ask for one-time approval of that exact join command. Do not create any permanent allowance.
+
+
+• The join failed creating /home/lunchbox/jb-stock-9074-v2/state/beeline-sessions. I haven’t moved state or changed
+  configuration.
+
+  This session’s permission policy blocks approval requests for shell commands, so I can’t request one-time approval for
+
+  the exact join command. No sign-in link was generated.
+
+  Worked for 23s • 17:20
+
+• Permission selection requested: Ask for approval
+
+
+› Retry the original join command with one-time approval if needed; keep Ask for approval mode and do not create a
+                                                                                                                    perm
+anent allowance.
+
+
+• Running node /home/lunchbox/jb-stock-9074-v2/usebeeline.mjs join --server http://127.0.0.1:47126 --name
+  │ codex-stock-final
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: Allow this exact Beeline join command once to write its session configuration and connect to the local Room?
+
+  $ node /home/lunchbox/jb-stock-9074-v2/usebeeline.mjs join --server http://127.0.0.1:47126 --name codex-stock-final
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `node /home/lunchbox/jb-stock-9074-v2/usebeeline.mjs join
+     --server http://127.0.0.1:47126 --name codex-stock-final` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

@@ -1,0 +1,40 @@
+defaultTriggerAsyncIdScope (node:internal/async_hooks:472:18)
+                                                                 +8 lines (^t to view transcript)
+
+• The join is blocked: this environment denies connections to 127.0.0.1:47125 (EPERM), so no sign-in link was generated.
+
+  I used the supplied script and retried with session storage under /tmp after the default state directory failed. No
+                                                                                                                       u
+nrelated files were edited.
+
+  Worked for 14s • 17:12
+
+• Permission selection requested: Ask for approval
+
+
+› Retry the original join command with one-time approval if needed; keep Ask for approval mode and do not create a
+                                                                                                                    perm
+anent allowance.
+
+
+• I’ll retry the original join command with one-time approval and no permanent allowance.
+
+• Running node /home/lunchbox/jb-stock-9074-v1/usebeeline.mjs join --server http://127.0.0.1:47125 --name
+  │ codex-stock-first
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: Allow this one-time Beeline join command to reach the local server and write its session state?
+
+  $ node /home/lunchbox/jb-stock-9074-v1/usebeeline.mjs join --server http://127.0.0.1:47125 --name codex-stock-first
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `node /home/lunchbox/jb-stock-9074-v1/usebeeline.mjs join
+     --server http://127.0.0.1:47125 --name codex-stock-first` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

@@ -1462,11 +1462,11 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
     expect(refused.isError).toBe(true);
   });
-  it.each([false, true])('SESSION-JOIN-1: a headless session signs in with fallback consent=%s and collects its code by state', async fallback => {
-    const label = fallback ? 'fallback' : 'api';
+  it.each([{ fallback: false, app: 'Claude Code' }, { fallback: true, app: 'Claude Code' }, { fallback: false, app: 'Codex' }])('SESSION-JOIN-1: a headless $app session signs in with fallback consent=$fallback and collects its code by state', async ({ fallback, app }) => {
+    const label = app === 'Codex' ? 'codex' : fallback ? 'fallback' : 'api';
     const memberName = `payments ${label}`, memberHandle = `payments_${label}`;
     const handoff = origin + '/mcp/oauth/handoff';
-    const registered = await post('/mcp/oauth/register', { client_name: 'Claude Code', redirect_uris: [handoff] });
+    const registered = await post('/mcp/oauth/register', { client_name: app, redirect_uris: [handoff] });
     expect(registered.status).toBe(201);
     const client = await registered.json() as { client_id: string };
     const verifier = opaque(), state = opaque();
@@ -1482,7 +1482,9 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     await db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]);
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
-    expect(page).toContain('Add Claude Code to your team');
+    expect(page).toContain(`Add ${app} to your team`);
+    expect(page.includes('Would you like to run the following command?')).toBe(app === 'Codex');
+    expect(page.includes('choose “Yes, proceed”')).toBe(app === 'Codex');
     expect(page).toContain(memberName);
     expect(page).toContain('Agents and people who tag this session in your Rooms can send it messages');
     expect(page.includes('user-level "crossSessionInbound": "accept" setting')).toBe(fallback);

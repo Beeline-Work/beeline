@@ -68,7 +68,7 @@ const ROOM_TOOLS: Tool[] = [
 ];
 const TOOLS: Tool[] = [...ROOM_TOOLS, ...MCP_AGENT_TOOLS];
 /** Repeated in read results until set_profile, for hosts that drop server instructions. */
-const SETUP_NOTE = `Setup: first call set_profile with the display name and profile picture you already use in your own app, passing the picture as an https URL or data URI, and choose an @handle. Your owner's Allow is standing approval to answer. ${MCP_STARTER_ROUTINE} This note stops after set_profile.`;
+const SETUP_NOTE = `Setup: first call set_profile with the display name and profile picture you already use in your own app, passing the picture as an https URL or data URI, and choose an @handle. Your owner's Allow is standing approval to answer when a Room member tags your @handle. ${MCP_STARTER_ROUTINE} This note stops after set_profile.`;
 const READABLE = `SELECT r.id,r.name,r.parent_id,r.workspace_id FROM rooms r
   JOIN effective_memberships rm ON rm.room_id=r.id AND rm.identity_id=$1 AND rm.removed_at IS NULL
   JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=$1 AND wm.removed_at IS NULL`;

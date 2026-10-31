@@ -291,7 +291,7 @@ export function AgentProfileView({
                 />
               </View>
             )}
-            {detail.wake && <McpStarterRoutine key={identity.pubkey} />}
+            {detail.wake && <McpStarterRoutine key={`mcp-starter-${identity.pubkey}`} />}
             {detail.wake && (
               <View style={styles.section}>
                 <SettingsRow

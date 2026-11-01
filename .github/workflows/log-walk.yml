@@ -1,0 +1,46 @@
+name: Production log walk
+on:
+  workflow_dispatch:
+  schedule:
+    # Eastern changes offset during the year. Only the matching local hour runs.
+    - cron: '40 10,11 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: production-log-walk
+  cancel-in-progress: false
+jobs:
+  walk:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 5
+    steps:
+      - name: Select the Eastern morning slot
+        id: slot
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ] || [ "$(TZ=America/New_York date +%H)" = 06 ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.slot.outputs.run == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.slot.outputs.run == 'true'
+        with:
+          node-version: 22
+      - name: Walk collector files with reviewed repository code
+        if: steps.slot.outputs.run == 'true'
+        run: node scripts/log-walk/run-production.mjs
+      - name: Save private report
+        if: steps.slot.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-walk-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/log-walk-report/report.md
+            ${{ runner.temp }}/log-walk-report/report.json
+          if-no-files-found: error
+          retention-days: 14

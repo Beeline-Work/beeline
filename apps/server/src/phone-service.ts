@@ -5332,8 +5332,9 @@ export class PhoneService {
     const delta = await this.readLiveDelta(input.roomId, viewerId, {
       type: 'message', messageId: input.messageId,
     });
-    return delta?.type === 'message-delta'
-      ? { ...delta.message, ...(await this.liveStarPrompt(viewerId)) } : null;
+    if (delta?.type !== 'message-delta') return null;
+    const prompt = await this.liveStarPrompt(viewerId).catch(() => undefined);
+    return { ...delta.message, ...prompt };
   }
 
   private async deleteRoomMessage(

@@ -307,7 +307,7 @@ vi.mock('@beeline/buzz-client', async () => {
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
-import { abandonRoomDraw, finishRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
+import { abandonRoomDraw, beginRoomDraw, finishRoomDraw, observeVisibleRoomRows, waitForRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { roomMessageRecord, useRoomMessageRecords, writeRoomBookmark } from '@/buzz/room-message-records';
@@ -1455,6 +1455,30 @@ describe('useRoomSurfaceSession', () => {
     expect(stored).toContain('"startedAt":1000');
     expect(stored).toContain('"databaseAt":1025');
     expect(stored).toContain('"serverReceivedAt":1240');
+    await act(async () => renderer.unmount());
+  });
+
+  it('Corner: a direct open keeps optional requests behind the fresh response, past stale cache paint', async () => {
+    beginRoomDraw('room-a');
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: () => undefined,
+    })); });
+    await flushEffects();
+    const sent = vi.fn();
+    const waiting = waitForRoomDraw()?.then(sent);
+    observeVisibleRoomRows('room-a', ['old-row']);
+    finishRoomDraw('old-row', 'room-a');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
+    expect(sent).not.toHaveBeenCalled();
+    const fresh = { ...roomView('room-a'), messages: [{ id: 'fresh-row', createdAt: 2, text: 'new corner contents', presentation: 'message',
+      author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' } }] };
+    await act(async () => controls.schedulers[0]!.apply(fresh));
+    observeVisibleRoomRows('room-a', ['fresh-row']);
+    finishRoomDraw('fresh-row', 'room-a');
+    await waiting;
+    expect(sent).toHaveBeenCalledOnce();
     await act(async () => renderer.unmount());
   });
 

@@ -23,6 +23,7 @@ export function useStarPrompt(roomId: string | undefined, enabled: boolean) {
   // An answer outdates every read started before it; later reads still ask,
   // so the next milestone shows in the same open chat after Not now.
   const answers = useRef(0);
+  const answeredMilestone = useRef(0);
   useEffect(() => {
     if (!enabled || stoppedThisSession) return;
     let current = true;
@@ -51,7 +52,8 @@ export function useStarPrompt(roomId: string | undefined, enabled: boolean) {
   }, [enabled, roomId]);
   const accept = useCallback((view: { prompt: StarPrompt | null }) => {
     answers.current += 1;
-    if (!stoppedThisSession) setPrompt(view.prompt);
+    if (!stoppedThisSession && (!view.prompt || view.prompt.milestone > answeredMilestone.current))
+      setPrompt(view.prompt);
   }, []);
   useEffect(() => {
     if (!enabled || !roomId || stoppedThisSession) return;
@@ -75,6 +77,7 @@ export function useStarPrompt(roomId: string | undefined, enabled: boolean) {
           milestone: prompt.milestone,
         });
         answers.current += 1;
+        answeredMilestone.current = Math.max(answeredMilestone.current, prompt.milestone);
         if (action !== 'later') stoppedThisSession = true;
         setPrompt(null);
         if (result.outcome === 'open' && result.url)

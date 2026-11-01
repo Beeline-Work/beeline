@@ -82,3 +82,13 @@ it('accepts reaction receipt eligibility without a read and fences an older open
   expect(current!.prompt).toEqual(prompt);
   expect(operation).toHaveBeenCalledTimes(1);
 });
+
+it('a late eligibility projection cannot redisplay a milestone answered Not now', async () => {
+  await act(async () => { renderer = create(<Probe />); });
+  const prompt = { milestone: 3, repository: 'Beeline-Work/beeline', url: 'https://github.com/Beeline-Work/beeline' };
+  await act(async () => current!.accept({ prompt }));
+  operation.mockResolvedValueOnce({ outcome: 'later' } as any);
+  await act(async () => current!.answer('later'));
+  await act(async () => current!.accept({ prompt }));
+  expect(current!.prompt).toBeNull();
+});

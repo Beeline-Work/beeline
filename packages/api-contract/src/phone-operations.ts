@@ -109,7 +109,7 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
   answerStarPrompt: { input: AnswerStarPromptInput; output: AnswerStarPromptResult };
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
-  reactToMessage: { input: ReactToMessageInput; output: (RoomViewMessage & StarPromptView) | null };
+  reactToMessage: { input: ReactToMessageInput; output: (RoomViewMessage & Partial<StarPromptView>) | null };
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: RoomViewMessage | null };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
   /** Clear every bookmark in one Workspace for this viewer. */

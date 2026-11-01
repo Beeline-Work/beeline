@@ -100,6 +100,12 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
   pending = { responseId, roomId, origin: config.monolithUrl, viewer, generation, startedAt: Date.now(), view, releaseRead };
 }
 
+/** The route must not require a second response when its tap already owns one. */
+export function hasPrefetchedRoomOpen(roomId: string): boolean {
+  return pending?.roomId === roomId && pending.generation === clientResetGeneration() &&
+    pending.origin === getBuzzRuntimeConfig().monolithUrl && Date.now() - pending.startedAt <= MAX_PREFETCH_AGE_MS;
+}
+
 /**
  * A response id binds this read to one push, rather than any later Room visit.
  * The read is refused when the account or server changed after it started.

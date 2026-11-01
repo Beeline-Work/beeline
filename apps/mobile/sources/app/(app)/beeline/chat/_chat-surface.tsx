@@ -3786,7 +3786,7 @@ export function BuzzChatSurface({
         });
         if (canonical) {
           applyRoomMessageResult(canonical);
-          if ('prompt' in canonical) starPrompt.accept(canonical);
+          if (canonical.prompt !== undefined) starPrompt.accept({ prompt: canonical.prompt });
         }
         setOptimisticReactions((current) => {
           const updated = { ...current };

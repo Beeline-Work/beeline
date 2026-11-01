@@ -509,19 +509,21 @@ async function saveCheckoutBeforeRelease(input: {
     await git(['commit', '--no-verify', '--quiet', '-m', 'Save unpushed work before implementer swap']);
   }
   const head = (await git(['rev-parse', '--verify', 'HEAD'])).stdout.trim();
-  const stash = await git(['rev-parse', '--verify', '--quiet', 'refs/stash']).then(r => r.stdout.trim(), () => '');
-  const unpushed = [head, ...(stash ? [stash] : [])];
-  const pending: string[] = [];
-  for (const commit of unpushed) if (!await originContains(input.gitCommonDir, commit)) pending.push(commit);
-  if (!pending.length) return 'I had no unpushed work.';
+  const stashes = [...new Set((await git(['stash', 'list', '--format=%H'])).stdout.trim().split('\n').filter(Boolean))];
   const backup = `beeline/backup/${input.cornerId.slice(0, 12)}-${input.agentId.slice(0, 8)}`;
-  const refspecs = pending.map((commit, index) =>
-    `${commit}:refs/heads/${backup}${index ? '-stash' : ''}`);
-  // No force: a repeated swap may only extend an earlier backup. A refused
-  // push throws, and the caller keeps the copy.
+  const refspecs: string[] = [];
+  if (!await originContains(input.gitCommonDir, head)) refspecs.push(`${head}:refs/heads/${backup}`);
+  // Each reflog entry is an independent stash, not an ancestor of the newest.
+  // Content-addressed refs preserve all entries and allow safe publication retries.
+  for (const stash of stashes) refspecs.push(`${stash}:refs/heads/${backup}-stash-${stash}`);
+  if (!refspecs.length) return 'I had no unpushed work.';
+  // Never clear local recovery data after a failed or partially successful push.
   await git(['push', 'origin', ...refspecs]);
+  if (stashes.length) await git(['stash', 'clear']);
+  if (refspecs.length === stashes.length) return `I pushed my ${stashes.length} stash entries to ${backup}-stash-<commit> branches. My current HEAD was already published.`;
   const what = dirty ? 'uncommitted edits (saved as one commit)' : 'unpushed commits';
-  return `I pushed my ${what}${stash ? ' and stash' : ''} to branch ${backup} (${head.slice(0, 12)}).`;
+  return `I pushed my ${what}${stashes.length ? ` and ${stashes.length} stash entries (to ${backup}-stash-<commit> branches)` : ''} to branch ${backup} (${head.slice(0, 12)}).`;
+
 }
 
 interface DesiredCorner {

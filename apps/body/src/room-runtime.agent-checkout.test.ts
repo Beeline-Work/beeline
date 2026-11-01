@@ -219,3 +219,27 @@ it('a swapped-out implementer stops its background jobs, pushes unpushed work to
     expect(posted[0]).toContain(`deleted my copy at ${own.path}`);
   } finally { await fixture.close(); }
 });
+
+it('a swap publishes every stash entry before deleting the old copy', async () => {
+  const fixture = await cornerFixture('corner-swap-stashes-', self => self);
+  const { turn, own, remote, posted } = fixture;
+  try {
+    await turn.withCheckout(async () => undefined);
+    const stashes: string[] = [];
+    for (const content of ['older stashed work', 'newer stashed work']) {
+      await writeFile(resolve(own.path, 'file'), content);
+      await exec('git', ['-C', own.path, 'stash', 'push', '-m', content]);
+      stashes.push((await exec('git', ['-C', own.path, 'rev-parse', 'refs/stash'])).stdout.trim());
+    }
+    await turn.releaseImplementer('release-stashes');
+    const backup = `beeline/backup/corner-${fixture.identity.publicKey.slice(0, 8)}`;
+    for (const [index, sha] of stashes.entries()) {
+      const ref = `${backup}-stash-${sha}`;
+      expect((await exec('git', [`--git-dir=${remote}`, 'show', `${ref}:file`])).stdout)
+        .toBe(index === 0 ? 'older stashed work' : 'newer stashed work');
+    }
+    await expect(access(own.path)).rejects.toThrow();
+    await expect(access(own.gitCommonDir)).rejects.toThrow();
+    expect(posted[0]).toContain(`deleted my copy at ${own.path}`);
+  } finally { await fixture.close(); }
+});

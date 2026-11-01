@@ -5,7 +5,9 @@ vi.mock('node:child_process', async (importOriginal) => {
   const mocked = (...args: any[]) => {
     if (args[0] === '/usr/bin/python3' && args[1][1].includes('KERN_PROCARGS2')) {
       const callback = args.at(-1);
-      try { callback(null, JSON.stringify(readFileSync(`/proc/${args[1][2]}/cmdline`, 'utf8').split('\0').filter(Boolean)), ''); }
+      try { callback(null, JSON.stringify(Object.fromEntries(JSON.parse(args[1][2]).flatMap((pid: number) => {
+        try { return [[pid, readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean)]]; } catch { return []; }
+      }))), ''); }
       catch (error) { callback(error, '', ''); }
       return;
     }
@@ -13,9 +15,12 @@ vi.mock('node:child_process', async (importOriginal) => {
     if (args[0] === '/usr/sbin/lsof') {
       const callback = args.at(-1);
       try {
-        const base = `/proc/${args[1][2]}`;
-        const paths = ['cwd', ...readdirSync(base + '/fd').map(fd => 'fd/' + fd)].flatMap(name => {
-          try { return ['n/private' + readlinkSync(base + '/' + name)]; } catch { return []; }
+        const pids = args[1].includes('-p') ? [args[1][2]] : readdirSync('/proc').filter(pid => /^\d+$/.test(pid));
+        const paths = pids.flatMap((pid: string) => {
+          const base = `/proc/${pid}`;
+          try { return ['p' + pid, ...['cwd', ...readdirSync(base + '/fd').map(fd => 'fd/' + fd)].flatMap(name => {
+            try { return ['n/private' + readlinkSync(base + '/' + name)]; } catch { return []; }
+          })]; } catch { return []; }
         });
         callback(null, paths.join('\n'), '');
       }

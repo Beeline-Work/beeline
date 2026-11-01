@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, existsSync } from 'node:fs';
-import { copyFile, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { CRASH_SAFE_CLONE_ARGS, fetchRepositoryCache } from './repository-cache-repair.js';
@@ -35,6 +35,45 @@ async function copyLegacy(source: string, target: string): Promise<void> {
 }
 
 /**
+ * A mirror of the seed whose object files are hard links. `git clone --local`
+ * ignores `--local` for a shallow seed and writes a full private pack
+ * (about 0.5 GiB per Beeline copy), so the objects are linked here directly.
+ * `objects/info` is skipped: it may name alternates or a stale commit-graph.
+ */
+async function linkSeedRepository(seed: string, staging: string): Promise<void> {
+  await git([...CRASH_SAFE_CLONE_ARGS, 'init', '--bare', '--quiet', staging]);
+  // `clone -c` would persist these settings; `init -c` does not.
+  for (const setting of CRASH_SAFE_CLONE_ARGS.filter(arg => arg !== '-c')) {
+    const [key, value] = setting.split('=', 2) as [string, string];
+    await git([`--git-dir=${staging}`, 'config', key, value]);
+  }
+  const linkTree = async (from: string, to: string): Promise<void> => {
+    await mkdir(to, { recursive: true });
+    for (const entry of await readdir(from, { withFileTypes: true })) {
+      const source = resolve(from, entry.name), target = resolve(to, entry.name);
+      if (entry.isDirectory()) await linkTree(source, target);
+      else if (entry.isFile()) await link(source, target).catch(async (error: NodeJS.ErrnoException) => {
+        // Another mount (a sandbox bind) cannot hold a link: copy instead.
+        if (error.code === 'EXDEV') await copyFile(source, target);
+        else if (error.code !== 'EEXIST') throw error;
+      });
+    }
+  };
+  for (const entry of await readdir(resolve(seed, 'objects'), { withFileTypes: true })) {
+    if (entry.isDirectory() && entry.name !== 'info')
+      await linkTree(resolve(seed, 'objects', entry.name), resolve(staging, 'objects', entry.name));
+  }
+  await copyFile(resolve(seed, 'shallow'), resolve(staging, 'shallow')).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  // Every object is already present, so this copies only the refs.
+  await git([...CRASH_SAFE_CLONE_ARGS, `--git-dir=${staging}`, 'fetch', '--quiet', '--update-shallow',
+    '--no-write-fetch-head', seed, '+refs/*:refs/*']);
+  await git([`--git-dir=${staging}`, 'config', 'remote.origin.url', seed]);
+  await git([`--git-dir=${staging}`, 'config', 'remote.origin.mirror', 'true']);
+}
+
+/**
  * Clone immutable local objects with hard links, never refs or alternates.
  * One coordinator owns each corner+agent setup; there are no checkout locks.
  * The source cache remains recovery evidence until ordinary archive cleanup.
@@ -61,7 +100,7 @@ export async function materializeAgentCornerCheckout(input: {
     await rm(staging, { recursive: true, force: true });
     try {
       try {
-        await git(['clone', '--mirror', '--local', ...CRASH_SAFE_CLONE_ARGS, input.sourceGitDir, staging]);
+        await linkSeedRepository(input.sourceGitDir, staging);
         await git([`--git-dir=${staging}`, 'fsck', '--connectivity-only', '--no-dangling']);
       } catch (error) {
         if (!input.targetBranch) throw error;

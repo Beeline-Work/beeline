@@ -499,7 +499,7 @@ async function originContains(gitCommonDir: string, head: string): Promise<boole
  * goes to a backup branch on origin. The corner branch is never written, so
  * the new implementer starts from what was pushed. Returns what was done.
  */
-export async function saveCheckoutBeforeRelease(input: {
+async function saveCheckoutBeforeRelease(input: {
   path: string; gitCommonDir: string; cornerId: string; agentId: string; env: NodeJS.ProcessEnv;
 }): Promise<string> {
   const git = (args: string[]) => execFileAsync('git', ['-C', input.path, ...args],

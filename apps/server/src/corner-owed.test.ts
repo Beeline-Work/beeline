@@ -442,14 +442,17 @@ describe('corner_owed', () => {
     // by message id. The waiting reason reads the indexed blocker message by
     // its primary key too; owed facts still come from corner_owed.
     const messageScans = scans.filter((scan) => scan.relation === 'messages');
-    expect(messageScans.filter((scan) => scan.alias === 'source')).toHaveLength(1);
+    // Running, pending and held activity each resolve their dispatched check
+    // source by id; these do not recover owed facts.
+    const isDispatchSource = (alias: string) => /^source(?:_\d+)?$/.test(alias);
+    expect(messageScans.filter((scan) => isDispatchSource(scan.alias))).toHaveLength(3);
     expect(messageScans.filter((scan) => scan.alias === 'item')).toHaveLength(1);
     expect(corners!.sql).toContain('JOIN messages item ON item.id=owed.message_id');
     // Each unread-cursor branch checks legacy corner visibility against the
     // indexed call-site cards. These scans do not recover owed facts.
     const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
     expect(callsiteScans).toHaveLength(2);
-    expect(messageScans.filter((scan) => !['source', 'item'].includes(scan.alias) &&
+    expect(messageScans.filter((scan) => scan.alias !== 'item' && !isDispatchSource(scan.alias) &&
       !scan.alias.startsWith('callsite'))).toHaveLength(3);
   });
 });

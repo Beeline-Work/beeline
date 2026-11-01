@@ -181,7 +181,7 @@ export function RoomCornersList({
   };
 
   const stateWord = (display: ReturnType<typeof cornerDisplayState>) => (
-    <CornerWaitingPulse state={display.word}>
+    <CornerWaitingPulse state={display.status}>
       <Text
         style={[
           styles.state,

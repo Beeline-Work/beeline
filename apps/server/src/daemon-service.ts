@@ -463,6 +463,7 @@ export class DaemonService {
     authenticatedAgentId: string,
   ): Promise<Output<Name>> {
     for (let attempt = 0; ; attempt++) {
+      let committed = false;
       try {
     input = { ...input };
     const candidate = input as Record<string, unknown>;
@@ -1008,6 +1009,7 @@ export class DaemonService {
         }
         return result;
       });
+      committed = true;
       for (const task of committedTasks) {
         try {
           await task(this.database);
@@ -2265,10 +2267,11 @@ export class DaemonService {
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
       } catch (error) {
-        // Activity and failed receipts have transactional writes and buffered live events.
+        // These operations have transactional writes and buffered live events.
         // Retry the owning transaction, including authorization, after rollback;
         // a nested transaction cannot recover an aborted PostgreSQL transaction.
         const retryableWrite = name === 'postAgentActivity' ||
+          (name === 'reviseCornerBrief' && !committed) ||
           (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
         if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
           !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
@@ -8378,7 +8381,8 @@ export class DaemonService {
       );
     const result = await this.database.transaction(async (database) => {
       // One open offer per Room+connector, even when two agents race: lock
-      // first, then read any pending row (age does not create a second card).
+      // first, then read pending or connecting rows, matching the unique index
+      // (age does not create a second card).
       await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         `connector-offer:${input.roomId}:${connectorType}`,
       ]);
@@ -8390,7 +8394,7 @@ export class DaemonService {
           intent: string;
         }>(
           `SELECT id,agent_id,message_id,intent FROM connector_offers
-           WHERE room_id=$1 AND connector_type=$2 AND status='pending'
+           WHERE room_id=$1 AND connector_type=$2 AND status IN ('pending','connecting')
            ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
           [input.roomId, connectorType],
         )

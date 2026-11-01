@@ -47,7 +47,6 @@ import { runtimeIdentity } from './runtime.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { agentCornerCheckoutPaths, materializeAgentCornerCheckout } from './agent-corner-checkout.js';
 import {
-  checkRepositoryCachesOnce,
   CRASH_SAFE_CLONE_ARGS,
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
@@ -494,6 +493,39 @@ async function originContains(gitCommonDir: string, head: string): Promise<boole
   return Boolean(result.stdout.trim());
 }
 
+/**
+ * Before a swapped-out implementer's copy is deleted, every unpushed change
+ * goes to a backup branch on origin. The corner branch is never written, so
+ * the new implementer starts from what was pushed. Returns what was done.
+ */
+async function saveCheckoutBeforeRelease(input: {
+  path: string; gitCommonDir: string; cornerId: string; agentId: string; env: NodeJS.ProcessEnv;
+}): Promise<string> {
+  const git = (args: string[]) => execFileAsync('git', ['-C', input.path, ...args],
+    { env: input.env, encoding: 'utf8', timeout: 120_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+  const dirty = (await git(['status', '--porcelain=v1', '--untracked-files=all'])).stdout.trim();
+  if (dirty) {
+    await git(['add', '--all']);
+    await git(['commit', '--no-verify', '--quiet', '-m', 'Save unpushed work before implementer swap']);
+  }
+  const head = (await git(['rev-parse', '--verify', 'HEAD'])).stdout.trim();
+  const stashes = [...new Set((await git(['stash', 'list', '--format=%H'])).stdout.trim().split('\n').filter(Boolean))];
+  const backup = `beeline/backup/${input.cornerId.slice(0, 12)}-${input.agentId.slice(0, 8)}`;
+  const refspecs: string[] = [];
+  if (!await originContains(input.gitCommonDir, head)) refspecs.push(`${head}:refs/heads/${backup}`);
+  // Each reflog entry is an independent stash, not an ancestor of the newest.
+  // Content-addressed refs preserve all entries and allow safe publication retries.
+  for (const stash of stashes) refspecs.push(`${stash}:refs/heads/${backup}-stash-${stash}`);
+  if (!refspecs.length) return 'I had no unpushed work.';
+  // Never clear local recovery data after a failed or partially successful push.
+  await git(['push', 'origin', ...refspecs]);
+  if (stashes.length) await git(['stash', 'clear']);
+  if (refspecs.length === stashes.length) return `I pushed my ${stashes.length} stash entries to ${backup}-stash-<commit> branches. My current HEAD was already published.`;
+  const what = dirty ? 'uncommitted edits (saved as one commit)' : 'unpushed commits';
+  return `I pushed my ${what}${stashes.length ? ` and ${stashes.length} stash entries (to ${backup}-stash-<commit> branches)` : ''} to branch ${backup} (${head.slice(0, 12)}).`;
+
+}
+
 interface DesiredCorner {
   cornerId: string;
   parentRoomId: string;
@@ -529,6 +561,12 @@ export class RoomRuntimeCoordinator {
    */
   private readonly archiveCleanupAbandoned = new Set<string>();
   private preservationFlight?: Promise<void>;
+  private maintenanceFlight?: Promise<void>;
+  private maintenanceRequest?: {
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>;
+    states: readonly StorageRoomState[];
+  };
+  private readonly desiredChannels = new Set<string>();
   private reconciliationProgressListener?: () => void | Promise<void>;
   private reconciliationStage = 'idle';
   private reconciliationStageAt = Date.now();
@@ -705,7 +743,6 @@ export class RoomRuntimeCoordinator {
 
   private async yieldReconciliation(): Promise<void> {
     await new Promise<void>(resolveYield => setImmediate(resolveYield));
-    if (!this.stopped) await this.reconciliationProgressListener?.();
   }
 
   setInteractiveIdleListener(listener: () => void): void {
@@ -850,10 +887,10 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
-    // A reboot can leave empty objects in a shared repo cache; repair them
-    // (and turn on crash-safe writes) before any Room or corner fetches.
-    await checkRepositoryCachesOnce(this.runtime.supervisorRoot);
+    // Repository repair is scoped to the first fetch of each active cache;
+    // archived object stores never delay command intake on helper restart.
     await this.yieldReconciliation();
+    if (!this.stopped) await this.reconciliationProgressListener?.();
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
     // Bind waiting surfaces before any fan-out, cleanup or corner listing.
     // Their intake runs independently while the rest of this sweep continues.
@@ -867,7 +904,8 @@ export class RoomRuntimeCoordinator {
       try {
         if (room.parentRoomId) {
           this.monolithCornerParents.set(room.roomId, room.parentRoomId);
-          await this.startCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
+          this.pendingCornerCommands.add(room.roomId);
+          await this.watchCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
         } else {
           this.surfaceHealth.discover(room.roomId, 'room');
           await this.startRoom(room.roomId);
@@ -972,14 +1010,6 @@ export class RoomRuntimeCoordinator {
     // Readiness belongs to durable command intake, never local retention work.
     await onServing?.();
     if (this.stopped) return 'member';
-    this.noteReconciliationStage('corner-reaping');
-    await this.retryPendingCornerReaps(desired);
-    if (this.stopped) return 'member';
-    this.noteReconciliationStage('archived-corner-storage');
-    await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
-    if (this.stopped) return 'member';
-    await this.reapClosedCornerEmulators(desired);
-    if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -993,9 +1023,6 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
-    this.noteReconciliationStage('room-storage');
-    await this.sweepRoomPrivateStorage(bootstrap.storageRooms ?? []);
-    if (this.stopped) return 'member';
     // Archived corners are discovered for local cleanup through their exact
     // checkout IDs. Their parent mapping serves only a running intake.
     for (const cornerId of this.monolithCornerParents.keys()) {
@@ -1006,7 +1033,46 @@ export class RoomRuntimeCoordinator {
     for (const [roomId, running] of this.running)
       if (existingRooms.has(roomId)) running.body.requestReconciliation();
     if (this.roomRemovalConfirmations.size) this.wakeDiscovery();
+    this.scheduleStorageMaintenance(archivedCorners, desired, bootstrap.storageRooms ?? []);
     return 'member';
+  }
+
+  /** Retention cannot hold discovery or its watchdog acknowledgement hostage.
+   * One sweep runs at a time; discovery coalesces its latest facts for the next
+   * pass and updates the active set immediately, including during a slow reap.
+   * Maintenance yields do not acknowledge a blocked foreground discovery. */
+  private scheduleStorageMaintenance(
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    desired: ReadonlySet<string>,
+    states: readonly StorageRoomState[],
+  ): void {
+    this.desiredChannels.clear();
+    for (const channel of desired) this.desiredChannels.add(channel);
+    this.maintenanceRequest = { archived, states };
+    if (this.maintenanceFlight) return;
+    this.maintenanceFlight = (async () => {
+      await this.yieldReconciliation();
+      while (!this.stopped && this.maintenanceRequest) {
+        const request = this.maintenanceRequest;
+        this.maintenanceRequest = undefined;
+        await this.retryPendingCornerReaps(this.desiredChannels);
+        if (this.stopped) return;
+        await this.sweepArchivedCornerWorktrees(request.archived, this.desiredChannels);
+        if (this.stopped) return;
+        await this.reapClosedCornerEmulators(this.desiredChannels);
+        if (this.stopped) return;
+        await this.sweepRoomPrivateStorage(request.states);
+      }
+    })().catch(error => console.error('[thin-core] storage maintenance deferred:', error))
+      .finally(() => {
+        this.maintenanceFlight = undefined;
+        // A discovery can queue fresh facts between the final loop check and
+        // this promise settling. Do not lose that last coalesced request.
+        if (!this.stopped && this.maintenanceRequest) {
+          const { archived, states } = this.maintenanceRequest;
+          this.scheduleStorageMaintenance(archived, new Set(this.desiredChannels), states);
+        }
+      });
   }
 
   /**
@@ -1369,14 +1435,22 @@ export class RoomRuntimeCoordinator {
         : undefined;
       let worktree: { path: string; gitCommonDir: string } | undefined;
       let readCheckout: { path: string; gitCommonDir: string } | undefined;
-      const prepareCheckout = async (writable: boolean, implementerAgentId = restore.implementerAgentId) => {
+      const ownCheckout = repositoryBacked
+        ? agentCornerCheckoutPaths(this.runtime.supervisorRoot, corner.cornerId, this.agent.publicKey)
+        : undefined;
+      // Only a writer gets a private copy: the implementer, an agent given
+      // work here, or one that already holds a copy with its own edits. Other
+      // turns read the Room's checkout and never clone.
+      const prepareCheckout = async (repositoryWork: boolean, implementerAgentId = restore.implementerAgentId, assigned = false) => {
+        const writable = repositoryWork && (assigned || !implementerAgentId ||
+          implementerAgentId === this.agent.publicKey || existsSync(resolve(ownCheckout!.path, '.git')));
         if (!writable) {
           if (!readCheckout) {
             const path = await this.materializeRoomCheckout(corner.parentRoomId, repository);
             const common = (await execFileAsync('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
             readCheckout = { path, gitCommonDir: common };
           }
-          return readCheckout;
+          return { ...readCheckout, writable };
         }
         if (!worktree || !existsSync(resolve(worktree.path, '.git'))) {
           worktree = await this.materializeCornerWorktree({
@@ -1390,10 +1464,33 @@ export class RoomRuntimeCoordinator {
           if (running) running.worktree = { ...worktree, cornerId: corner.cornerId,
             branch: featureBranch!, parentRoomId: corner.parentRoomId, token: '' };
         }
-        return worktree;
+        return { ...worktree, writable };
+      };
+      const releaseCheckout = async (): Promise<string> => {
+        const own = worktree ?? (existsSync(resolve(ownCheckout!.path, '.git')) ? ownCheckout! : undefined);
+        if (!own) return 'I had no copy of this corner\'s code on this machine.';
+        const { token } = await this.options.daemonApi.execute('getRoomGitHubToken', { roomId: corner.parentRoomId });
+        let saved: string;
+        try {
+          saved = await saveCheckoutBeforeRelease({
+            path: own.path, gitCommonDir: own.gitCommonDir, cornerId: corner.cornerId,
+            agentId: this.agent.publicKey, env: githubGitEnv(token),
+          });
+        } catch (error) {
+          const why = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+          return `I could not push my unpushed work (${why}), so I kept my copy at ${own.path}.`;
+        }
+        await this.reapCornerWorktree({ ...own, cornerId: corner.cornerId, branch: featureBranch!,
+          parentRoomId: corner.parentRoomId, token: '' });
+        if (existsSync(own.path)) return `${saved} My copy at ${own.path} is still on disk; cleanup retries it.`;
+        worktree = undefined;
+        const running = this.running.get(corner.cornerId);
+        if (running) running.worktree = undefined;
+        return `${saved} I deleted my copy at ${own.path}.`;
       };
       const repositoryReadOnly = Boolean(restore.brief) && !cornerHasRepositoryWork(restore.brief);
       const checkout = repositoryBacked ? await prepareCheckout(!repositoryReadOnly) : undefined;
+      const activatedReadOnly = checkout ? !checkout.writable : repositoryReadOnly;
       const workspacePath = checkout?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!checkout) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       await writePrivateFileAtomically(
@@ -1423,11 +1520,12 @@ export class RoomRuntimeCoordinator {
         ...(checkout
           ? {
               prepareCheckout,
+              releaseCheckout,
               repository: {
                 featureBranch: featureBranch!,
                 targetBranch: targetBranch!,
                 gitCommonDir: checkout.gitCommonDir,
-                readOnly: repositoryReadOnly,
+                readOnly: activatedReadOnly,
                 githubToken: granted!.token,
               },
             }
@@ -1498,7 +1596,9 @@ export class RoomRuntimeCoordinator {
       console.log(
         worktree
           ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
-          : `[thin-core] serving repo-less corner ${corner.cornerId} at ${workspacePath}`,
+          : repositoryBacked
+            ? `[thin-core] serving corner ${corner.cornerId} read-only at ${workspacePath}`
+            : `[thin-core] serving repo-less corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
       this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');
@@ -1529,7 +1629,7 @@ export class RoomRuntimeCoordinator {
     const cornerId = corner.cornerId;
     if (this.running.has(cornerId)) return;
     if (this.idleCornerSubscriptions.has(cornerId)) {
-      if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+      if (this.pendingCornerCommands.has(cornerId)) void this.activateWatchedCorner(corner);
       return;
     }
     if (!this.options.daemonApi.liveSubscribe) {
@@ -1558,7 +1658,9 @@ export class RoomRuntimeCoordinator {
       },
     );
     this.idleCornerSubscriptions.set(cornerId, release);
-    if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+    // Migration can copy a large legacy tree. Intake for every other Room and
+    // the local watchdog must remain available while this bounded start runs.
+    if (this.pendingCornerCommands.has(cornerId)) void this.activateWatchedCorner(corner);
   }
 
   private unwatchCorner(cornerId: string): void {
@@ -1844,7 +1946,7 @@ export class RoomRuntimeCoordinator {
       if (this.archiveCleanupAbandoned.has(cornerId) || await this.cleanupWasRefused(cornerId)) continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
       try {
-        await this.reapCornerWorktree(worktree);
+        await this.reapIdleCornerWorktree(worktree, desired);
       } catch (error) {
         if (hasUnpublishedWork(error)) {
           // Nothing will ever push this work for an abandoned corner, so
@@ -1981,7 +2083,7 @@ export class RoomRuntimeCoordinator {
           token: '',
           recovered: true,
         };
-        await this.reapCornerWorktree(candidate);
+        await this.reapIdleCornerWorktree(candidate, desired);
         if (!this.archiveCleanupRefused.has(cornerId))
           console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
@@ -2000,6 +2102,19 @@ export class RoomRuntimeCoordinator {
         // checkout cannot require another full discovery immediately.
       }
     }
+  }
+
+  private async reapIdleCornerWorktree(worktree: CornerWorktree, desired: ReadonlySet<string>): Promise<void> {
+    const eligible = () => !this.stopped && !desired.has(worktree.cornerId) &&
+      !this.running.has(worktree.cornerId) && !this.startingCorners.has(worktree.cornerId) &&
+      !this.idleCornerSubscriptions.has(worktree.cornerId);
+    if (!eligible()) return;
+    await this.scheduler.withIdleStorage(worktree.cornerId, async () => {
+      if (!eligible()) return;
+      this.storageMaintenanceRooms.add(worktree.cornerId);
+      try { await this.reapCornerWorktree(worktree); }
+      finally { this.storageMaintenanceRooms.delete(worktree.cornerId); }
+    });
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
@@ -2246,6 +2361,7 @@ export class RoomRuntimeCoordinator {
       }
     };
     if (this.membershipDrain) await untilDeadline(this.membershipDrain);
+    if (this.maintenanceFlight) await untilDeadline(this.maintenanceFlight);
     if (this.preservationFlight) await untilDeadline(this.preservationFlight.catch(() => undefined));
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();

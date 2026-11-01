@@ -27,6 +27,7 @@ function item(state: CornerState, reason?: CornerStateReason) {
 describe('server-owned corner display state', () => {
   it.each([
     ['working', 'quiet', '◌'],
+    ['idle', 'quiet', '○'],
     ['waiting', 'brass', 'Ⅱ'],
     ['review', 'quiet', '●'],
     ['archived', 'ghost', '○'],
@@ -42,6 +43,12 @@ describe('server-owned corner display state', () => {
 
   it.each(['approve', 'connect', 'question'] as const)('keeps %s off the list label', (reason) => {
     expect(cornerDisplayState(item('waiting', reason)).status).toBe('waiting');
+  });
+
+  it('R1: a waiting worker order shows only the server state on the row and header', () => {
+    const display = cornerDisplayState(item('working'));
+    expect(display.word).toBe(display.status);
+    expect(cornerHeaderAgent({ status: display.status, activeTurnPubkeys: [] }).stateWord).toBe('working');
   });
 
   it('uses lifecycle only for PR/check narration', () => {

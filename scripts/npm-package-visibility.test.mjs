@@ -1,26 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   NPM_VIEW_TIMEOUT_MS,
   NPM_VISIBILITY_TIMEOUT_MS,
   npmVisibilityTimeoutMs,
+  lookupPublicNpmPackage,
   waitForNpmPackageVisibility,
 } from './npm-package-visibility.mjs';
 
 const PACKAGE = 'usebeeline';
 const VERSION = '0.0.71';
 
+test('a stuck npm process is forcibly terminated at its command deadline', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'npm-visibility-'));
+  const previousPath = process.env.PATH;
+  try {
+    const npm = join(directory, 'npm');
+    writeFileSync(npm, `#!${process.execPath}\nprocess.on('SIGTERM', () => {}); setInterval(() => {}, 1000);\n`);
+    chmodSync(npm, 0o755);
+    process.env.PATH = directory;
+    const result = lookupPublicNpmPackage({ packageName: PACKAGE, version: VERSION, timeoutMs: 200 });
+    assert.equal(result.error?.code, 'ETIMEDOUT');
+    assert.equal(result.signal, 'SIGKILL');
+  } finally {
+    process.env.PATH = previousPath;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 function npmResult({ status, stdout = '', stderr = '' }) {
   return { status, stdout, stderr };
 }
 
 test('npm visibility and command deadlines stay bounded', () => {
-  assert.equal(NPM_VISIBILITY_TIMEOUT_MS, 900_000);
+  assert.equal(NPM_VISIBILITY_TIMEOUT_MS, 300_000);
   assert.equal(NPM_VIEW_TIMEOUT_MS, 20_000);
 });
 
 test('visibility deadline is configurable in milliseconds and rejects invalid overrides', () => {
-  assert.equal(npmVisibilityTimeoutMs({}), 900_000);
+  assert.equal(npmVisibilityTimeoutMs({}), 300_000);
   assert.equal(npmVisibilityTimeoutMs({ NPM_VISIBILITY_TIMEOUT_MS: '420000' }), 420_000);
   for (const value of ['', ' ', '0', '-1', '1.5', 'no', 'Infinity']) {
     assert.throws(
@@ -30,7 +51,7 @@ test('visibility deadline is configurable in milliseconds and rejects invalid ov
   }
 });
 
-test('Reproduction npm-delayed-visibility: a version visible after five minutes passes within the default deadline', async () => {
+test('Reproduction npm-delayed-visibility: a version visible after two minutes passes within the default deadline', async () => {
   let now = 0;
   const result = await waitForNpmPackageVisibility({
     packageName: PACKAGE,
@@ -41,13 +62,13 @@ test('Reproduction npm-delayed-visibility: a version visible after five minutes 
     },
     lookup: async ({ timeoutMs }) => {
       assert.ok(timeoutMs <= 20_000);
-      return now >= 360_000
+      return now >= 120_000
         ? npmResult({ status: 0, stdout: VERSION })
         : npmResult({ status: 1, stderr: 'npm error code E404' });
     },
   });
-  assert.ok(result.elapsedMs >= 360_000);
-  assert.ok(result.elapsedMs < 900_000);
+  assert.ok(result.elapsedMs >= 120_000);
+  assert.ok(result.elapsedMs < 300_000);
 });
 
 test('temporary npm 404s are retried until the exact version is visible', async () => {
@@ -64,7 +85,7 @@ test('temporary npm 404s are retried until the exact version is visible', async 
     packageName: PACKAGE,
     version: VERSION,
     timeoutMs: 300_000,
-    initialBackoffMs: 5_000,
+    retryIntervalMs: 5_000,
     lookup: async (request) => {
       calls.push(request);
       return results.shift();
@@ -76,8 +97,8 @@ test('temporary npm 404s are retried until the exact version is visible', async 
     },
   });
 
-  assert.deepEqual(result, { attempts: 3, elapsedMs: 15_000 });
-  assert.deepEqual(waits, [5_000, 10_000]);
+  assert.deepEqual(result, { attempts: 3, elapsedMs: 10_000 });
+  assert.deepEqual(waits, [5_000, 5_000]);
   assert.equal(calls.length, 3);
   assert.ok(
     calls.every(({ packageName, version }) => packageName === PACKAGE && version === VERSION),
@@ -88,13 +109,15 @@ test('temporary npm 404s are retried until the exact version is visible', async 
 test('a permanent npm 404 fails at the visibility deadline', async () => {
   let now = 0;
   const commandTimeouts = [];
+  const logs = [];
 
   await assert.rejects(
     waitForNpmPackageVisibility({
       packageName: PACKAGE,
       version: VERSION,
       timeoutMs: 12_000,
-      initialBackoffMs: 5_000,
+      log: (message) => logs.push(message),
+      retryIntervalMs: 5_000,
       lookup: async ({ timeoutMs: commandTimeoutMs }) => {
         commandTimeouts.push(commandTimeoutMs);
         return npmResult({ status: 1, stderr: 'npm error code E404' });
@@ -104,11 +127,14 @@ test('a permanent npm 404 fails at the visibility deadline', async () => {
         now += milliseconds;
       },
     }),
-    /was not visible after 12000ms/,
+    /was not visible after 12000ms \(3 attempts\) on https:\/\/registry.npmjs.org; verify npm publication succeeded/,
   );
 
   assert.equal(now, 12_000);
-  assert.deepEqual(commandTimeouts, [12_000, 7_000]);
+  assert.match(logs[0], /Waiting up to 12000ms/);
+  assert.match(logs[1], /attempt 1.*retrying in 5000ms/);
+  assert.match(logs.at(-1), /attempt 3.*retrying in 2000ms/);
+  assert.deepEqual(commandTimeouts, [12_000, 7_000, 2_000]);
 });
 
 test('an already visible npm version passes immediately', async () => {

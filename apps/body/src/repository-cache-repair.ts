@@ -177,6 +177,17 @@ export async function fetchRepositoryCache(input: {
   env?: NodeJS.ProcessEnv;
 }): Promise<void> {
   const { gitDir, label, args } = input;
+  // Check only a repository being used. Walking every archived agent's
+  // private object store before opening intake makes restart time grow with
+  // retained history, and withholds the discovery watchdog acknowledgement.
+  let check = checked.get(gitDir);
+  if (!check) {
+    check = checkRepository(gitDir, label).catch(error => {
+      console.error(`[thin-core] repo cache ${label} check failed:`, error);
+    });
+    checked.set(gitDir, check);
+  }
+  await check;
   const fetch = (extra: readonly string[] = []) =>
     git(gitDir, ['fetch', ...extra, ...args], input.env ? { env: input.env } : {});
   const damaged = (error: unknown): never => {
@@ -241,7 +252,7 @@ async function checkRepository(gitDir: string, label: string): Promise<void> {
 }
 
 /**
- * Helper start: turn on crash-safe writes for every existing repo, and repair
+ * Explicit inventory: turn on crash-safe writes for every existing repo, and repair
  * any repo a crash left with empty loose objects before a corner uses it.
  * Never fatal; a cache this cannot fix is repaired again by its next fetch.
  */
@@ -256,13 +267,3 @@ export async function checkRepositoryCaches(supervisorRoot: string): Promise<voi
 }
 
 const checked = new Map<string, Promise<void>>();
-
-/** `checkRepositoryCaches` once per helper process and supervisor root. */
-export function checkRepositoryCachesOnce(supervisorRoot: string): Promise<void> {
-  let check = checked.get(supervisorRoot);
-  if (!check) {
-    check = checkRepositoryCaches(supervisorRoot);
-    checked.set(supervisorRoot, check);
-  }
-  return check;
-}

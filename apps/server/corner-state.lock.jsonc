@@ -1,11 +1,14 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Approved by lunchboxfortwo: owner messages 005973c2 (state rules) and fa0d393f (lock), corner brief revision 4.
+// Queued work stays working: lunchboxfortwo message 1d183c7884173194edd919705a769c759205506422a1a6704a933775823d640c.
+// Queue label removed: lunchboxfortwo message 44451dd4e1ed1d4e7f3e50c3dc4af769ad9c189b283f2bd97325815e3bd1a674.
+// A pending check stays review: lunchboxfortwo message f33288d32e5c70141c1e670672a60128bdd6eeb4e8bd70189120b1283131f480.
 {
   "entries": [
     {
       "file": "packages/api-contract/src/corner-state.ts",
       "declaration": "deriveCornerState",
-      "sha256": "eed5e0a633ec2473103578583c5f127e06a0f326599da69835fc805fa1256448"
+      "sha256": "7a30f057b708a6ad19905f2205c8c25eaaa12c7c2dcbeb741359035e33eb6afc"
     },
     {
       "file": "packages/api-contract/src/corner-state.ts",
@@ -35,7 +38,7 @@
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerWorkSql",
-      "sha256": "2553e1a8fcbed4ae6d8c33882a5808641c40b4eac7d2a1feac4b3896fb8d9a03"
+      "sha256": "b10ce5a74379a02fd2cbc970edbabe831d753363303b625d26e6a57f1105db5e"
     },
     {
       "file": "apps/server/src/chat-corner-counts.ts",

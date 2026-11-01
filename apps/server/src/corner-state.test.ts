@@ -184,3 +184,31 @@ describe('Reproduction R1: a merge hold blocks only the merge', () => {
     })).toEqual({ state: 'review' });
   });
 });
+
+it('CI-MIXED-1: failed checks stay review until every check settles', () => {
+  const lifecycle = {
+    ...pushed,
+    checks: 'failing' as const,
+    checksSummary: {
+      status: 'failing' as const, total: 2, failing: ['FRAME-BUDGET'], updatedAt: 1,
+      checks: [
+        { name: 'FRAME-BUDGET', status: 'failed' as const },
+        { name: 'SERVER', status: 'pending' as const },
+      ],
+    },
+  };
+  const mixed = { ...facts, lifecycle };
+  const blocker = { reason: 'question' as const };
+  expect(deriveCornerState(mixed)).toEqual({ state: 'review' });
+  expect(deriveCornerState({ ...mixed, blocker })).toEqual({ state: 'review' });
+  expect(deriveCornerState({ ...mixed, turnRunning: true })).toEqual({ state: 'working' });
+  const settled = {
+    ...mixed,
+    lifecycle: { ...lifecycle, checksSummary: {
+      ...lifecycle.checksSummary,
+      checks: [lifecycle.checksSummary.checks[0]!, { name: 'SERVER', status: 'passed' as const }],
+    } },
+  };
+  expect(deriveCornerState(settled)).toEqual({ state: 'idle' });
+  expect(deriveCornerState({ ...settled, blocker })).toEqual({ state: 'waiting', ...blocker });
+});

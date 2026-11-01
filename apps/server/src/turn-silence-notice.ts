@@ -15,6 +15,7 @@ import {
   classifyTurnSilence,
   hiccupAttemptLimit,
   escalateExhaustedHiccup,
+  isCheckoutBusyFault,
   isRepositoryCacheDamagedFault,
   phraseTurnSilence,
   shouldRestartHiccup,
@@ -360,6 +361,36 @@ async function inscribeSilence(
       AND presentation='message' AND deleted_at IS NULL
       AND text<>'Selected model is at capacity. Please try a different model.' LIMIT 1`,
     [input.roomId, input.requestId, input.agentId])).rowCount) return NO_RESTART;
+  // An old helper fails a busy checkout at once and would otherwise burn three
+  // hiccups, then drop the order. Leave it pending for a short wake so the
+  // same helper does not claim it in a loop, and do not tell the commander it
+  // failed. The corner stays working because that wake is inside the queue window.
+  if (isCheckoutBusyFault(reason) && command?.state === 'claimed') {
+    const reopened = await reopenCommand(
+      database,
+      live,
+      input.roomId,
+      input.agentId,
+      command.id,
+      command.generation_id,
+      command.hiccup_attempts,
+      15,
+    );
+    if (reopened) {
+      // The receipt already stored a failed turn. Drop it so the pending order
+      // still reads as queued work, not as a finished failure.
+      await database.query(
+        `DELETE FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3 AND status='failed'`,
+        [input.roomId, input.requestId, input.agentId],
+      );
+    }
+    return {
+      kind: 'hiccup',
+      hiccupRestart: false,
+      updateRequeued: reopened,
+      attempt: command.hiccup_attempts,
+    };
+  }
   const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
   const restart = Boolean(

@@ -540,6 +540,34 @@ describe('first-silence notice', () => {
     });
   });
 
+  it('Reproduction R2: a busy checkout keeps the order queued past three tries', async () => {
+    const requestId = '8'.repeat(64);
+    const command = await ask(database, requestId);
+    const daemon = new DaemonService(database, new LiveHub());
+    const reason = 'corner checkout is in use by another agent; retry after its turn and background tools finish';
+    for (const attempt of [1, 2, 3, 4]) {
+      if (attempt > 1) {
+        await database.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`, [command.id]);
+        await flushDueCommanderWakes(database);
+        await claimAgentCommand(database, ROOM, AGENT, command.id, `g${attempt}`);
+      }
+      const result = await daemon.execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: `g${attempt}`, status: 'failed', reason,
+      }, AGENT);
+      expect(result).toMatchObject({ updateRequeued: true });
+      expect(result.hiccupRestart).toBeUndefined();
+      const stored = (await database.query<{ state: string; hiccup_attempts: number; delay: number | null }>(
+        `SELECT state,hiccup_attempts,EXTRACT(EPOCH FROM (wake_after-now()))::float delay
+         FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!;
+      expect(stored.state).toBe('pending');
+      expect(stored.hiccup_attempts).toBe(0);
+      expect(stored.delay).toBeGreaterThan(10);
+      expect(stored.delay).toBeLessThanOrEqual(15);
+    }
+    expect(await failureLine(database, requestId)).toBeUndefined();
+    expect((await database.query(`SELECT 1 FROM messages WHERE text LIKE 'failed:%'`)).rowCount).toBe(0);
+  });
+
   it('WAKE-STORM: repeated ACP rejections settle each command and share one notice until recovery', async () => {
     const daemon = new DaemonService(database, new LiveHub());
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -739,6 +767,39 @@ describe('90-second first silence from presence', () => {
     await presence.stop();
     vi.useRealTimers();
     await database.close();
+  });
+
+  it('Reproduction R1: a live helper that never starts the turn is not called offline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const requestId = '9'.repeat(64);
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await database.query(
+      `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('live-helper',clock_timestamp())`,
+    );
+    await database.query(
+      `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+       VALUES($1,1,'live-helper','live-helper')`,
+      [AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy Hello')`,
+      [requestId, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: requestId, reason: 'order',
+      privatePayload: { kind: 'order', text: 'Continue', authorId: HUMAN, fromRoomId: ROOM },
+    });
+    await presence.observe(ROOM);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await failureLine(database, requestId)).toBeUndefined();
+    expect((await database.query(
+      `SELECT text FROM messages WHERE text ILIKE '%offline%' OR text ILIKE '%unreachable%'`,
+    )).rows).toEqual([]);
+    expect((await commandState(database, command!.id))?.state).toBe('pending');
+    const presenceBody = (await database.query<{ body: { status: string } }>(
+      `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence' LIMIT 1`, [AGENT],
+    )).rows[0]?.body;
+    expect(presenceBody?.status).toBe('online');
   });
 
   it('inscribes the offline line when a delivered message is never picked up', async () => {

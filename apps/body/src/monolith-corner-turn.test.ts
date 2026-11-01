@@ -29,6 +29,7 @@ import {
   CORNER_REVIEWER_AUTHOR_MERGE,
 } from './prompt-assembly.js';
 import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
+import * as scratchLifecycle from './scratch-lifecycle.js';
 import * as workspaceAssets from './workspace-assets.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
@@ -1726,6 +1727,52 @@ describe('corner close-request delivery', () => {
       scheduler,
     };
   }
+
+  it.each([true, false])('R1: preserves scratch accounting with readOnly=%s', async (readOnly) => {
+    const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false,
+        brief: { id: 'corner-id', revision: 1, repositoryWork: false,
+          spec: 'Run the standing rig', authorId: TEST_AGENT_PUBLIC_KEY,
+          sourceRoomId: 'room-id', attachments: [] } };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      return { id: 'write', createdAt: 1 };
+    });
+    const fixture = await cornerHarness(execute, 5);
+    const internal = fixture.loop as unknown as {
+      options: { config: BodyConfig; repository?: { readOnly?: boolean } };
+    };
+    const home = join(fixture.root, 'private-home');
+    internal.options.config.agentHomeRoot = home;
+    if (readOnly) internal.options.repository!.readOnly = true;
+    else internal.options.repository = undefined;
+    let grew = false;
+    const measure = vi.spyOn(scratchLifecycle, 'allocatedDirectoryBytes').mockImplementation(async (path) =>
+      (path === home || !readOnly) ? (grew ? 6 : 4) * 1024 ** 3 : 0);
+    vi.mocked(fixture.acp.sessionPrompt).mockImplementation(async () => {
+      grew = true;
+      return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+    });
+    try {
+      await fixture.loop.run();
+      expect(fixture.acp.sessionPrompt).toHaveBeenCalledOnce();
+      const receipts = execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt');
+      expect(receipts).toContainEqual(['postAgentTurnReceipt', expect.objectContaining({
+        status: readOnly ? 'complete' : 'failed',
+      })]);
+      if (readOnly) {
+        expect(measure).not.toHaveBeenCalledWith(home);
+        expect(vi.mocked(fixture.acp.sessionPrompt).mock.calls[0][1]).toContain('Scratch 0 / 5120 MiB');
+      } else {
+        expect(JSON.stringify(receipts)).toContain('Scratch budget exceeded');
+      }
+    } finally {
+      measure.mockRestore();
+      fixture.abort.abort();
+      await fixture.scheduler.dispose();
+    }
+  });
 
   it('silently acknowledges a textless browser update without nudging existing repository work', async () => {
     const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {

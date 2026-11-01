@@ -38,6 +38,7 @@ const deck = vi.hoisted(() => ({
     emit(event: MonolithSurfaceEvent): void;
   }>,
   focusEffect: null as null | (() => void | (() => void)),
+  focusEffects: new Set<() => void | (() => void)>(),
   blur: null as null | (() => void),
   storedInvite: null as string | null,
 }));
@@ -136,10 +137,18 @@ vi.mock('@react-navigation/native', () => ({
   // One focused visit per mount; the test blurs and refocuses by hand.
   useFocusEffect: (effect: () => void | (() => void)) => {
     React.useEffect(() => {
-      deck.focusEffect = effect;
+      deck.focusEffects.add(effect);
+      deck.focusEffect = () => {
+        const cleanups = [...deck.focusEffects].map((visit) => visit());
+        return () => cleanups.forEach((cleanup) => cleanup?.());
+      };
       const cleanup = effect();
-      deck.blur = () => cleanup?.();
-      return () => cleanup?.();
+      const previousBlur = deck.blur;
+      deck.blur = () => { previousBlur?.(); cleanup?.(); };
+      return () => {
+        deck.focusEffects.delete(effect);
+        cleanup?.();
+      };
     }, [effect]);
   },
 }));
@@ -403,6 +412,7 @@ beforeEach(() => {
 
 afterEach(() => {
   deck.focusEffect = null;
+  deck.focusEffects.clear();
   deck.blur = null;
 });
 

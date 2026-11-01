@@ -1,6 +1,21 @@
 import { createHash } from 'node:crypto';
 import { createConnection, createServer, type Socket } from 'node:net';
 
+class KernelLockBusyError extends Error {
+  constructor() { super('timed out waiting for Beeline installer owner'); }
+}
+
+/** Cache reuse is optional: never queue a serving agent behind its owner. */
+export async function tryWithKernelLock<T>(key: string, work: () => Promise<T>): Promise<T | undefined> {
+  let entered = false;
+  try {
+    return await withKernelLock(key, () => { entered = true; return work(); }, 0);
+  } catch (error) {
+    if (!entered && error instanceof KernelLockBusyError) return undefined;
+    throw error;
+  }
+}
+
 /** A kernel-owned local socket is released on process death, with no stale-age takeover. */
 export async function withKernelLock<T>(
   key: string,
@@ -39,7 +54,7 @@ export async function withKernelLock<T>(
       }
     }
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error('timed out waiting for Beeline installer owner');
+    if (remaining <= 0) throw new KernelLockBusyError();
     // Wait for owner death/completion on the connection, rather than rereading a lock file.
     await new Promise<void>((done, reject) => {
       const peer = createConnection(address);
@@ -49,7 +64,7 @@ export async function withKernelLock<T>(
       peer.resume();
       const timer = setTimeout(() => {
         peer.destroy();
-        reject(new Error('timed out waiting for Beeline installer owner'));
+        reject(new KernelLockBusyError());
       }, remaining);
       const finish = () => {
         clearTimeout(timer);

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { typeRoles } from '@/buzz/groknight';
@@ -95,21 +95,41 @@ export function RoomListSectionHeader({
       ) : null}
       {onAction ? (
         <View style={tapLineHeight && styles.tapLine}>
-          <Pressable
+          <SectionAddButton
             accessibilityLabel={actionAccessibilityLabel}
-            accessibilityRole="button"
             onPress={onAction}
             disabled={actionDisabled}
-            accessibilityState={{ disabled: actionDisabled }}
-            hitSlop={tapLineHeight ? ACTION_HIT_SLOP : undefined}
-            style={({ pressed }) => [styles.sectionHeaderAction, tapLineHeight && styles.compactAction, pressed && styles.pressed]}
+            compact={tapLineHeight}
             testID={actionTestID}
-          >
-            <SectionAddGlyph color={styles.sectionHeaderActionGlyph.color} />
-          </Pressable>
+          />
         </View>
       ) : null}
     </View>
+  );
+}
+
+/** Shared Members add action, including its glyph and phone touch target. */
+export function SectionAddButton({ accessibilityLabel, onPress, disabled, compact = false, testID, style }: {
+  accessibilityLabel?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  compact?: boolean;
+  testID?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled }}
+      hitSlop={compact ? ACTION_HIT_SLOP : undefined}
+      style={({ pressed }) => [styles.sectionHeaderAction, compact && styles.compactAction, pressed && styles.pressed, style]}
+      testID={testID}
+    >
+      <SectionAddGlyph color={styles.sectionHeaderActionGlyph.color} />
+    </Pressable>
   );
 }
 

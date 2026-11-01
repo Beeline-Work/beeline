@@ -427,6 +427,8 @@ jobs:
       # built dist, the same as every app that imports those packages.
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
+      - name: Keep the production log walk producing triage reports
+        run: node --test scripts/log-walk/walk.test.mjs
       - name: Check the weekly Reason adapter port job
         run: node --test scripts/reason-upstream-check.test.mjs
       - name: Protect nightly latency history and measured Loops publication

@@ -1,3 +1,6 @@
+import { activeCornerHolds } from './corner-holds.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { cornerMergeGate } from './corner-lifecycle.js';
 import quotedTagPosts from './test-fixtures/quoted-tag-posts.json';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
@@ -2125,4 +2128,71 @@ it.each([true, false])('records mock reply evidence through brief reads (reply=%
   }
   // The worker can verify stored evidence without gaining access to the private DM.
   await expect(daemon.execute('getRoomMessage', {roomId: DM, messageId: approval}, WORKER)).rejects.toThrow();
+});
+
+// HOLD-CITATION: isolated stand-in; live replay would create owner-account corners.
+it.each(['set', 'open'] as const)('HOLD-CITATION: %s accepts a readable person citation and displays its author', async mode => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const sourceMessageId = randomBytes(32).toString('hex');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Hold this PR')`, [sourceMessageId, ROOM, HUMAN]);
+  const result = mode === 'set'
+    ? await daemon.execute('setCornerHold', { ...authority(turn), cornerId: opened.cornerId, sourceMessageId }, WORKER)
+    : await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+        idempotencyKey: randomUUID(), name: 'cited-hold', objective: 'Verify hold citation', hold: true, sourceMessageId }, RUBY);
+  const cornerId = 'cornerId' in result ? result.cornerId : opened.cornerId;
+  expect(await activeCornerHolds(db, cornerId)).toEqual([expect.objectContaining({
+    sourceMessageId, sourceAuthorId: HUMAN, sourceAuthorName: 'Captain',
+    sourceText: 'Hold this PR',
+  })]);
+  const gate = await cornerMergeGate(db, cornerId, { number: 1, headSha: 'head' });
+  expect(gate).toMatchObject({ held: true, open: false,
+    holds: [expect.objectContaining({ sourceMessageId, sourceAuthorName: 'Captain' })] });
+  const line = (await db.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set a merge hold%'`, [cornerId])).rows[0]!;
+  expect(line.text).toContain('Captain');
+  expect(line.text).toContain('Hold this PR');
+  if (mode === 'set') {
+    const next = randomBytes(32).toString('hex');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Keep this PR held')`, [next, ROOM, HUMAN]);
+    await daemon.execute('setCornerHold', { ...authority(turn), cornerId, sourceMessageId: next }, WORKER);
+    expect(await activeCornerHolds(db, cornerId)).toEqual([expect.objectContaining({ sourceMessageId: next, sourceText: 'Keep this PR held' })]);
+    expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set a merge hold%'`, [cornerId])).rows)
+      .toEqual([expect.objectContaining({ text: expect.stringContaining('Keep this PR held') })]);
+  }
+  // Citation is not needed to release the agent's own hold.
+  const hold = (await activeCornerHolds(db, cornerId))[0]!;
+  const command = mode === 'set' ? turn : order;
+  await daemon.execute('setCornerHold', { ...authority(command), cornerId, releaseHoldId: hold.id }, mode === 'set' ? WORKER : RUBY);
+});
+it.each(['missing', 'nonexistent', 'deleted', 'self', 'other-agent', 'system', 'unreadable'])(
+  'HOLD-CITATION: refuses %s citations on both agent entry points', async kind => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const id = randomBytes(32).toString('hex');
+    if (kind !== 'missing' && kind !== 'nonexistent') {
+      let room = ROOM;
+      if (kind === 'unreadable') {
+        room = randomUUID();
+        await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Private',$3)`, [room, WS, HUMAN]);
+      }
+      const author = kind === 'self' ? WORKER : kind === 'other-agent' ? RUBY : kind === 'system' ? SYSTEM_IDENTITY_ID : HUMAN;
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,deleted_at) VALUES($1,$2,$3,'Hold this PR',$4)`,
+        [id, room, author, kind === 'deleted' ? new Date() : null]);
+    }
+    const sourceMessageId = kind === 'missing' ? undefined : id;
+    for (const action of [
+      () => daemon.execute('setCornerHold', { ...authority(turn), cornerId: opened.cornerId, sourceMessageId }, WORKER),
+      () => daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+        idempotencyKey: randomUUID(), name: 'bad-citation', objective: 'Verify hold citation', hold: true, sourceMessageId }, RUBY),
+    ]) {
+      const failure = kind === 'missing' ? 'sourceMessageId is required' : kind === 'nonexistent' ? 'does not exist' :
+        kind === 'deleted' ? 'is deleted' : kind === 'unreadable' ? 'cannot read' : 'not an agent or System';
+      await expect(action()).rejects.toMatchObject({ status: 403, message: expect.stringContaining(failure) });
+      await expect(action()).rejects.toThrow("cite the person's message that asks for the hold, or close the PR to stop it");
+    }
+    expect(await activeCornerHolds(db, opened.cornerId)).toEqual([]);
+  },
+);
+it('HOLD-CITATION: human hold needs no citation and still blocks merge', async () => {
+  const opened = await open();
+  await phone.execute('setCornerHold', { cornerId: opened.cornerId }, HUMAN);
+  expect(await cornerMergeGate(db, opened.cornerId, {number:1,headSha:'head'})).toMatchObject({held:true,open:false});
 });

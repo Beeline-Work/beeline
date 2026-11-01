@@ -99,6 +99,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
           )}
           {currentModal.type === 'confirm' && (
             <WebAlertModal
+              key={currentModal.id}
               config={currentModal}
               onClose={() => dismissModal(currentModal)}
               onConfirm={(value) => {

@@ -1,6 +1,7 @@
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
+import { mcpClientName } from './rooms-mcp-logos.js';
 import { setMcpMemberWebhook, McpToolError } from './rooms-mcp-members.js';
 import { disconnectMcp, MCP_SCOPES } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
@@ -446,8 +447,18 @@ interface MemberRow extends IdentityRow {
   presence_body: { status: 'online' | 'offline'; observedAt: number; held?: unknown } | null;
   presence_updated_at: Date | null;
 }
+type McpClientIdentity = { name: string; redirects: string[] };
+
+/** Registered app identity wins over legacy model placeholders for joined members. */
+function mcpClientIdentitySql(agentId: string): string {
+  return `(SELECT jsonb_build_object('name',client.name,'redirects',client.redirects)
+    FROM rooms_mcp_members member JOIN rooms_mcp_clients client ON client.id=member.client_id
+    WHERE member.member_id=${agentId})`;
+}
+
 /** A roster agent row with the configuration its Members row shows. */
 type RosterAgentRow = MemberRow & AgentUsageRow & {
+  mcp_client: McpClientIdentity | null;
   selected_model: string | null;
   model_catalog: AgentDetailView['catalog'] | null;
   owner_id: string | null;
@@ -1691,6 +1702,7 @@ export class PhoneService {
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
           agent.selected_model,agent.model_catalog,
+          ${mcpClientIdentitySql('agent.agent_id')} mcp_client,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle
         FROM agents agent JOIN identities i ON i.id=agent.agent_id
         JOIN memberships m ON m.identity_id=i.id
@@ -3427,11 +3439,9 @@ export class PhoneService {
       owner_id: string | null; owner_name: string | null; owner_handle: string | null;
       recent_work: Array<{ title: string; url: string; merged_at: string }>;
       grants: AgentGrantRow[];
-      mcp_client_name: string | null;
+      mcp_client: McpClientIdentity | null;
     } & AgentUsageRow>(`SELECT agent_identity.id member_id,
-        (SELECT client.name FROM rooms_mcp_members mcp_member
-          JOIN rooms_mcp_clients client ON client.id=mcp_member.client_id
-          WHERE mcp_member.member_id=a.agent_id) mcp_client_name,agent_identity.name member_name,
+        ${mcpClientIdentitySql('a.agent_id')} mcp_client,agent_identity.name member_name,
         agent_identity.handle member_handle,agent_identity.avatar member_avatar,
         agent_identity.face_id member_face,agent_membership.role member_role,
         a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,
@@ -3499,7 +3509,8 @@ export class PhoneService {
     const presenceRow = presence?.rows[0];
     // An AI-client member's instructions live in its own app, so its profile
     // names that app instead of a made-up animal soul.
-    const mcpClient = config.mcp_client_name;
+    const mcpClient = config.mcp_client
+      ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects) : undefined;
     const wake = mcpClient && config.owner_id === viewerId
       ? (await this.database.query<{ url: string | null; keySet: boolean }>(
         `SELECT NULLIF(COALESCE(member.callback_url,client.callback_url),'') url,
@@ -3572,10 +3583,10 @@ export class PhoneService {
       ),
       commands: config?.commands ?? [],
       ...(config?.model_unavailable ? { modelUnavailable: config.model_unavailable } : {}),
-      ...(config?.selected_model || config?.selected_effort
+      ...(mcpClient || config?.selected_model || config?.selected_effort
         ? {
             selected: {
-              ...(config.selected_model ? { model: config.selected_model } : {}),
+              ...(mcpClient || config.selected_model ? { model: mcpClient ?? config.selected_model! } : {}),
               ...(config.selected_effort ? { effort: config.selected_effort } : {}),
             },
           }
@@ -10653,6 +10664,7 @@ export class PhoneService {
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
           agent.selected_model,agent.model_catalog,
+          ${mcpClientIdentitySql('agent.agent_id')} mcp_client,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle,
           ${agentUsageColumns('agent', '$7')}
         FROM memberships m JOIN identities i ON i.id=m.identity_id
@@ -10740,7 +10752,9 @@ export class PhoneService {
     const agentConfig = new Map(configs.map((row) => [row.id, row]));
     return this.projectMembers(rows, null).map((member) => {
       const config = agentConfig.get(member.identity.pubkey);
-      const model = config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
+      const model = config?.mcp_client
+        ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects)
+        : config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
       // Usage columns are owner-filtered in SQL; other viewers' rows carry nulls.
       const usage = config ? projectAgentUsage(config) : undefined;
       return {

@@ -7,7 +7,7 @@ import pg from 'pg';
 import os from 'node:os';
 import { calibrateDeviceClock } from './device-clock.mjs';
 import { createDeviceClockReader } from './device-clock-reader.mjs';
-import { isKeyboardShown, pointFor, requireRoomList } from './capture-ui.mjs';
+import { isKeyboardShown, pointFor, requireRoomList, waitForReactionChip } from './capture-ui.mjs';
 import { dumpUi } from './dump-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
@@ -157,13 +157,7 @@ try {
             await db.query('INSERT INTO messages(id,room_id,author_id,text,reactions) VALUES($1,$2,$3,$4,$5::jsonb)',
               [targetId, fixture.id, author, `Rig ${targetId.slice(0, 16)}`, JSON.stringify({'👍': [author]})]);
             await pause(1500);
-            // UI Automator serializes emoji as numeric XML character references.
-            const xml = (await dump()).replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, value) =>
-              String.fromCodePoint(value[0].toLowerCase() === 'x' ? parseInt(value.slice(1), 16) : Number(value)));
-            point = pointFor(xml, 'resource-id', `reaction-chip-${targetId}-👍`);
-            const chip = [...xml.matchAll(/<node\b[^>]*>/g)].map(m => m[0])
-              .find(node => node.includes(`resource-id="reaction-chip-${targetId}-👍"`));
-            if (!chip?.includes('content-desc="👍, 1 reaction"')) throw new Error('Reaction setup requires one existing reaction');
+            point = await waitForReactionChip(dump, targetId, dumpStep);
           } else {
             const doorXml = await dump();
             const doorNode = [...doorXml.matchAll(/<node\b[^>]*>/g)].map(m => m[0]).find(n => n.includes('resource-id="room-corners-menu"'));

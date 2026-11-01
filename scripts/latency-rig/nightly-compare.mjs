@@ -16,8 +16,9 @@ export function compareNightly(current, baseline) {
     if (row.samples < 20 || !Number.isFinite(row.p95Ms) || row.p95Ms < 0)
       failures.push(`${key}: fewer than 20 valid samples`);
     if (!Number.isFinite(row.budgetMs) || row.budgetMs !== (row.kind === 'route' ? 450 : row.kind === 'tap' ? 150 : -1) ||
-        row.p95Ms >= row.budgetMs || row.timingPass !== true || row.requestPass !== true)
+        row.p95Ms >= row.budgetMs || row.timingPass !== true)
       failures.push(`${key}: budget exceeded (${row.p95Ms} ms; budget <${row.budgetMs} ms)`);
+    if (row.requestPass !== true) failures.push(`${key}: request contract failed`);
     const previous = baseline?.rows?.find((item) => item.kind === row.kind && item.name === row.name && item.variant === row.variant);
     if (previous && row.p95Ms > previous.p95Ms * 1.2)
       failures.push(`${key}: >20% slower (${previous.p95Ms} → ${row.p95Ms} ms p95)`);

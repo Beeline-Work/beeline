@@ -128,11 +128,11 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     item_ids: { type: 'array', maxItems: 20, items: { type: 'string' } }, snapshot_items: { type: 'array', maxItems: 20, items: { type: 'integer' } },
     slug: { type: 'string', maxLength: 64 }, description: { type: 'string', maxLength: 60 }, markdown: { type: 'string', maxLength: 32768 },
   }, ['address', 'kind', 'action']),
-  tool('open_corner', 'Open one unit of work in a Room you belong to. Name another agent as implementer: you have no checkout, so you cannot implement repository work. Opening wakes the implementer; do not send a second order.', {
+  tool('open_corner', 'Open one unit of work in a Room you belong to. Name another agent as implementer: you have no checkout, so you cannot implement repository work. Opening wakes the implementer; do not send a second order. hold:true requires sourceMessageId citing a readable person’s request to hold.', {
     room: address('Parent Room id.'), name: { type: 'string', maxLength: 120, description: 'At most 3 words joined by hyphens.' },
     objective: { type: 'string', maxLength: 2000, description: 'At most 24 words.' }, brief,
     implementer: { type: 'string', minLength: 1, description: 'Worker handle without @.' },
-    reviewer: { type: 'string', minLength: 1, description: 'Independent reviewer handle without @.' }, hold: { type: 'boolean' },
+    reviewer: { type: 'string', minLength: 1, description: 'Independent reviewer handle without @.' }, hold: { type: 'boolean' }, sourceMessageId: { type: 'string' },
   }, ['room', 'brief', 'implementer']),
   tool('revise_corner', 'Revise a corner. metadata needs name; install_brief needs name and brief; brief needs brief, expectedRevision and change.', {
     address: address('Corner id.'), action: { type: 'string', enum: ['metadata', 'brief', 'install_brief'] }, reviewer: { type: 'string' },
@@ -162,8 +162,8 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   }, ['address', 'headSha']),
   tool('merge_corner', 'Land a corner through the live gate: green checks, a yes on the exact head, and no hold.', { address: address('Corner id.') }, ['address']),
   tool('record_merge_yes', 'Record the explicit merge yes of the person who tagged you. Does not land or release a hold.', { address: address('Corner id.') }, ['address']),
-  tool('set_corner_hold', 'Set a merge hold for the person who tagged you, or release releaseHoldId. Read hold ids with read facet status.', {
-    address: address('Corner id.'), releaseHoldId: { type: 'string', format: 'uuid' },
+  tool('set_corner_hold', 'Set a merge hold citing a readable person’s request in sourceMessageId, or release releaseHoldId without a citation. Read hold ids with read facet status.', {
+    address: address('Corner id.'), sourceMessageId: { type: 'string' }, releaseHoldId: { type: 'string', format: 'uuid' },
   }, ['address']),
   tool('close_corner', 'Cancel work and archive a corner.', { address: address('Corner id.') }, ['address']),
   tool('close_corner_pr', 'Close only a corner\'s pull request, keeping the corner and branch.', { address: address('Corner id.') }, ['address']),
@@ -392,7 +392,7 @@ export class RoomsMcpAgentTools {
       }
       case 'merge_corner': return exec('mergeCorner', { cornerId: addressArg(args.address) });
       case 'record_merge_yes': return turn((_, context) => exec('orderCornerMerge', { ...context, cornerId: addressArg(args.address) }));
-      case 'set_corner_hold': return turn((_, context) => exec('setCornerHold', { ...context, cornerId: addressArg(args.address), releaseHoldId: args.releaseHoldId }));
+      case 'set_corner_hold': return turn((_, context) => exec('setCornerHold', { ...context, cornerId: addressArg(args.address), releaseHoldId: args.releaseHoldId, sourceMessageId: args.sourceMessageId }));
       case 'close_corner': return exec('archiveCorner', { cornerId: addressArg(args.address) });
       case 'close_corner_pr': return exec('closeCornerPullRequest', { cornerId: addressArg(args.address) });
       case 'send_operator_system_dm': return turn((_, context) => exec('sendOperatorSystemDm', { ...context, agentId: member, recipients: args.recipients, text: args.text }));
@@ -506,7 +506,7 @@ export class RoomsMcpAgentTools {
         idempotencyKey: createHash('sha256').update(`open_corner\0${turn.requestId}`).digest('hex'),
         name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),
         objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),
-        implementer, reviewer: args.reviewer, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),
+        implementer, reviewer: args.reviewer, sourceMessageId: args.sourceMessageId, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),
         ...(repository.resolution === 'repository' ? { repository: repository.key, targetBranch: repository.targetBranch } : {}),
       }) as { cornerId?: string; watch?: unknown; warnings?: unknown };
       return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),

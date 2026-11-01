@@ -36,6 +36,8 @@
         // Discovery spawns launch/MCP helpers; its runbook invokes the grading CLI by path.
         "scripts/discovery-{launch,mcp,grade}.mjs",
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
+        // HOLD-CITATION invokes the isolated built HTTP proof by path.
+        "scripts/prove-agent-merge-holds.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
         // VAULT-CARD-1 invokes the isolated built-server/Squire proof by path.

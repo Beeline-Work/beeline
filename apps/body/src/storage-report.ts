@@ -9,7 +9,6 @@ import { pruneEndedOwnerStorage, pruneUnusedCheckoutStorage, pruneOpenCheckoutOb
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { defaultSupervisorRoot, type AgentRuntimeRecord } from './runtime.js';
 import { inspectCheckoutPreservation } from './storage-owners.js';
-import { cornerProofRetentionActive } from './corner-proof-output.js';
 
 export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot(), input: { orphanOnly?: boolean } = {}) {
   const processUse = input.orphanOnly ? () => true : await capturePrivateProcessUse();
@@ -89,11 +88,11 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
       const path = resolve(root, owner.kind, owner.itemId);
       if (!await lstat(path).catch(() => undefined)) continue;
       const preservation = await inspectCheckoutPreservation(path, states.get(owner.roomId)?.landedHeadSha ?? owner.landedHeadSha);
-      if (!input.orphanOnly && processUse(path)) preservation.reason = 'live process or unavailable process evidence; preserved';
-      else if (await cornerProofRetentionActive(path, owner.roomId, owner.endedAt)) preservation.reason = 'declared proof within seven days of observed archive; preserved';
+      if (owner.kind === 'corners') preservation.reason = 'confirmed archived corner: stop attributed processes and delete all data';
+      else if (!input.orphanOnly && processUse(path)) preservation.reason = 'live process or unavailable process evidence; preserved';
       archivedCheckouts.push(preservation);
       orphans.push({ path, owner: owner.roomId, reason: 'server-confirmed archived checkout owner' });
-      if (!input.orphanOnly) await reclaimOwnedCheckout(supervisorRoot, owner, { ...options('archived-checkout'), landedHeadSha: states.get(owner.roomId)?.landedHeadSha });
+      if (!input.orphanOnly) await reclaimOwnedCheckout(supervisorRoot, { ...owner, ended: true }, { ...options('archived-checkout'), landedHeadSha: states.get(owner.roomId)?.landedHeadSha });
     }
   }
   if (!input.orphanOnly) await pruneOpenCheckoutObjects(supervisorRoot, [...states.values()], options('unused-open-checkout-object'), legacyOwners);

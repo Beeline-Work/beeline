@@ -7,6 +7,8 @@ const http = require('node:http');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { syncBuiltinESMExports } = require('node:module');
 const pg = require('pg');
+const { WebSocket, WebSocketServer } = require('ws');
+const { phoneFrame, socketRequestTrace } = require('./socket-marks.cjs');
 
 const output = process.env.LATENCY_RIG_SQL_LOG;
 const databaseUrl = process.env.DATABASE_URL;
@@ -49,6 +51,27 @@ http.Server.prototype.emit = function (event, ...args) {
   });
 };
 syncBuiltinESMExports();
+
+// A socket message arrives on a different async resource from its HTTP upgrade.
+// Restore the connection scope, then give each multiplexed phone request its own trace.
+const socketScopes = new WeakMap();
+const handleUpgrade = WebSocketServer.prototype.handleUpgrade;
+WebSocketServer.prototype.handleUpgrade = function (request, socket, head, callback) {
+  const scope = context.getStore();
+  return handleUpgrade.call(this, request, socket, head, (client, ...args) => {
+    if (scope) socketScopes.set(client, scope);
+    return callback(client, ...args);
+  });
+};
+const socketEmit = WebSocket.prototype.emit;
+WebSocket.prototype.emit = function (event, ...args) {
+  const scope = event === 'message' && socketScopes.get(this);
+  if (!scope) return socketEmit.call(this, event, ...args);
+  const frame = phoneFrame(args[0], args[1]);
+  const messageScope = frame?.t === 'req' ? { ...scope,
+    traceId: socketRequestTrace(scope.traceId, frame.id), operation: `phone.${frame.op}`, startMs: Date.now() } : scope;
+  return context.run(messageScope, () => socketEmit.call(this, event, ...args));
+};
 
 const connect = pg.Pool.prototype.connect;
 pg.Pool.prototype.connect = function (...args) {

@@ -72,10 +72,9 @@ describe('readMachineId', () => {
   });
 
   it('falls back to hostname hash when config dir is unwritable', async () => {
-    // Use a path under /dev where mkdir will fail, so readMachineId
-    // falls back to the sha256-hash-of-hostname strategy.
-    // The sha256 hash is sliced to 36 chars (matching UUID length roughly).
-    const unwritable = '/dev/beeline-machine-test';
+    // A regular file cannot contain a config directory, even when run as root.
+    const unwritable = resolve(await scratchDir('machine-unwritable-'), 'file');
+    await writeFile(unwritable, 'not a directory');
     const result = await readMachineId({ XDG_CONFIG_HOME: unwritable });
     expect(result.machineId).toMatch(/^[0-9a-f]{36}$/);
     expect(result.machineName).toBe(hostname());

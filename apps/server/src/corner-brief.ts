@@ -316,6 +316,7 @@ export async function resolveCornerBriefApproval(
   initiatingMessageId?: string,
   revision?: { cornerId: string; agentId: string },
   opening?: { agentId: string; roomId: string },
+  humanCitation?: { agentId: string },
 ): Promise<{
   approvalBasis: StoredCornerBriefApproval;
   revisionHash: string;
@@ -339,19 +340,40 @@ export async function resolveCornerBriefApproval(
       };
     }
   }
-  validateCornerBrief(draft);
+  if (!humanCitation) validateCornerBrief(draft);
   if (revision && !draft.approval)
     throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
   let sourceMessageId = draft.approval?.sourceMessageId ?? '';
   const initiating = sourceMessageId === initiatingMessageId;
-  let message: ApprovingMessage | undefined = (
-    await db.query<ApprovingMessage>(
-      `SELECT message.text,message.author_id,identity.kind,message.room_id
-       FROM messages message JOIN identities identity ON identity.id=message.author_id
-       WHERE message.room_id=ANY($1::uuid[]) AND message.id=$2`,
-      [sourceRoomIds, sourceMessageId],
-    )
-  ).rows[0];
+  // Holds use this same message resolver, with live human/readability checks and
+  // no stored-approval or commander-order fallback.
+  const cited = (await db.query<ApprovingMessage & {
+    deleted_at: string | null; hidden_from_roster: boolean;
+    presentation: string; system_event: unknown; readable: boolean;
+  }>(
+    `SELECT message.text,message.author_id,identity.kind,message.room_id,
+            message.deleted_at,identity.hidden_from_roster,message.presentation,message.system_event,
+            EXISTS (SELECT 1 FROM effective_memberships member
+              WHERE member.room_id=message.room_id AND member.identity_id=$3
+                AND member.removed_at IS NULL) readable
+     FROM messages message JOIN identities identity ON identity.id=message.author_id
+     WHERE message.id=$2 AND ($4::boolean OR message.room_id=ANY($1::uuid[]))`,
+    [sourceRoomIds, sourceMessageId, humanCitation?.agentId ?? null, Boolean(humanCitation)],
+  )).rows[0];
+  if (humanCitation) {
+    const failure = !sourceMessageId ? 'sourceMessageId is required' : !cited ? 'cited message does not exist' :
+      cited.deleted_at ? 'cited message is deleted' :
+      cited.kind !== 'human' || cited.hidden_from_roster || cited.presentation === 'system' || cited.system_event
+        ? 'cited author must be a person, not an agent or System' :
+      !cited.readable ? 'calling agent cannot read the cited message' : undefined;
+    if (failure) throw new CommandRefusalError(`${failure}; cite the person's message that asks for the hold, or close the PR to stop it.`, 403);
+    return {
+      approvalBasis: { kind: 'explicit-human-answer', sourceMessageId,
+        snapshot: cited!.text, approvedBy: cited!.author_id, briefHash: '' },
+      revisionHash: '', sourceRoomId: cited!.room_id,
+    };
+  }
+  let message: ApprovingMessage | undefined = cited;
   let commanderOrder = false;
   if (!message && initiating && !revision) {
     const active = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [sourceMessageId])).rows[0];

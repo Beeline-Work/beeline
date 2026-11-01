@@ -1,0 +1,60 @@
+{
+  "runId": "night-2026-11-01-a2Irbb",
+  "device": "emulator-5582",
+  "deviceConfiguration": "Android 35 x86_64; 2560 MiB; four guest cores; SwiftShader; no snapshots; no host CPU quota; not a physical-phone calibration",
+  "network": {
+    "rttMs": 100,
+    "jitterMs": 0,
+    "mbps": 10
+  },
+  "firstAttemptHostLoad": {
+    "observations": 196,
+    "cpus": 20,
+    "meanLoad1m": 23.155102040816328,
+    "minLoad1m": 8.51,
+    "maxLoad1m": 45.61,
+    "firstObservation": {
+      "atMs": 1793547682384,
+      "load": [
+        11.64,
+        10.45,
+        9.12
+      ],
+      "freeMemory": 93908398080,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    "lastObservation": {
+      "atMs": 1793549742138,
+      "load": [
+        20.34,
+        18.42,
+        19.79
+      ],
+      "freeMemory": 85759795200,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    }
+  },
+  "retry": {
+    "timedSamples": 0,
+    "emulatorPid": 3454521,
+    "emulatorExitCode": 134,
+    "emulatorLastLogAt": "2026-11-01T16:20:55Z",
+    "observedDeviceState": "device 'emulator-5582' not found",
+    "captureWait": "adb -s emulator-5582 logcat -c",
+    "workerAction": "SIGTERM only to owned orphaned adb child after confirming QEMU exit; no third attempt",
+    "crashCause": "not established"
+  },
+  "helperFinalObservation": {
+    "updatedAt": "2026-11-01T16:33:58.689Z",
+    "loadedIdentity": {
+      "commit": "2e6951beb1c06174a9adf4c6af6dbfd27d3f94c6",
+      "version": "v0.1.133"
+    },
+    "containsScratchFix": true,
+    "workerChangedSharedHelper": false
+  },
+  "productionWrites": false,
+  "scheduledBaselineChanged": false
+}

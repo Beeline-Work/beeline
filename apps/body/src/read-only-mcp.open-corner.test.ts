@@ -264,10 +264,10 @@ describe('open_corner over the grok wire', () => {
 
   it('R4: sends an atomic initial hold and bound hold/release calls', async () => {
     const door = await daemonDoor();
-    const opened = await callTool(door.origin, {room:ROOM,name: 'Held-work',objective: 'Keep this work held',hold: true,implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}});
+    const opened = await callTool(door.origin, {room:ROOM,name: 'Held-work',objective: 'Keep this work held',hold: true,sourceMessageId:'hold-request',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}});
     expect(opened.result?.isError).toBeUndefined();
-    expect(door.calls.find(call => call.operation === 'createCorner')).toMatchObject({ hold: true });
-    for (const args of [{}, { releaseHoldId: ROOM }]) {
+    expect(door.calls.find(call => call.operation === 'createCorner')).toMatchObject({ hold: true, sourceMessageId:'hold-request' });
+    for (const args of [{sourceMessageId:'hold-request'}, { releaseHoldId: ROOM }]) {
       const result = await callTool(door.origin, {address:CORNER,...args}, { name: 'set_corner_hold', cornerId: CORNER });
       expect(result.error).toBeUndefined();
       expect(result.result?.isError).toBeUndefined();

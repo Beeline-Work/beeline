@@ -2135,8 +2135,8 @@ export class DaemonService {
              WHERE message.id=$1`,
             [command.root_source_message_id],
           )).rows[0];
-          if (!actor) throw new Error('hold requires a human requester');
-          return setCornerHold(db, hold, actor.author_id, authenticatedAgentId);
+          if (!actor && hold.releaseHoldId !== undefined) throw new Error('hold requires a human requester');
+          return setCornerHold(db, hold, actor?.author_id ?? authenticatedAgentId, authenticatedAgentId);
         });
         const reconcile = async () => { await this.github?.reconcileQueuedCorners(hold.cornerId); };
         if (this.afterCommit) this.afterCommit(reconcile);
@@ -8493,6 +8493,10 @@ export class DaemonService {
   }
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
+    // Validate even an idempotent opening retry; prior creation is not consent.
+    if (input.hold === true) await resolveCornerBriefApproval(this.database, [],
+      { spec: 'Merge hold', approval: { sourceMessageId: input.sourceMessageId ?? '' } }, [],
+      undefined, undefined, undefined, { agentId });
     // Objectives are normalized paragraphs; names must already be continuous.
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
@@ -8701,8 +8705,7 @@ export class DaemonService {
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       if (input.hold === true) {
-        if (!commissionedBy) throw new Error('hold requires a human requester');
-        await setCornerHold(db, { cornerId }, commissionedBy, agentId);
+        await setCornerHold(db, { cornerId, sourceMessageId: input.sourceMessageId }, commissionedBy ?? agentId, agentId);
       }
       if (input.brief) {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];

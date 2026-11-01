@@ -75,7 +75,7 @@ export type {
 export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 
 /** Omit releaseHoldId to set a hold; supply its ID for an authorized release. */
-export type CornerHoldInput = { readonly cornerId: string; readonly releaseHoldId?: string };
+export type CornerHoldInput = { readonly cornerId: string; readonly releaseHoldId?: string; readonly sourceMessageId?: string };
 export type CornerMergeHold = {
   id: string;
   actorId: string;
@@ -83,6 +83,10 @@ export type CornerMergeHold = {
   holderName: string;
   standing: 'owner' | 'admin' | 'member';
   setAt: string;
+  sourceMessageId?: string | null;
+  sourceAuthorId?: string | null;
+  sourceAuthorName?: string | null;
+  sourceText?: string | null;
 };
 
 export type PhoneOperationMap = PhoneRouteOperationMap & {

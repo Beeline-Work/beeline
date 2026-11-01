@@ -236,6 +236,22 @@ function loadLevel(ts, statement) {
     || ts.isFunctionDeclaration(statement) || ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement));
 }
 
+// Initializers may throw or mutate shared state before any covered function
+// runs. Function bodies are inert here; calls, getters and class evaluation
+// outside those bodies require every test that loaded this module.
+function executableInitializer(ts, statement) {
+  if (!(ts.isVariableStatement(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement))) return false;
+  const executes = (node) => {
+    if (ts.isFunctionLike(node) || ts.isTypeNode(node)) return false;
+    if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)
+      || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
+      || ts.isAwaitExpression(node) || ts.isSpreadElement(node) || ts.isSpreadAssignment(node)
+      || ts.isDecorator(node) || ts.isHeritageClause(node) || ts.isComputedPropertyName(node)) return true;
+    return Boolean(ts.forEachChild(node, executes));
+  };
+  return executes(statement);
+}
+
 const ANONYMOUS = '(anonymous)';
 
 // `export const|function|class|enum`, whose importers see the new value.
@@ -366,12 +382,16 @@ export function changedFunctions(ts, fileName, text, lines, { existing, existing
       ts.forEachChild(node, visit);
     };
     visit(source);
+    const statement = source.statements.find((node) => position >= node.getStart(source) && position < node.end);
+    if (!innermost && statement && !typeOnly(ts, statement) && executableInitializer(ts, statement)) {
+      fileLevel = true;
+      continue;
+    }
     const found = (innermost ? [innermost] : opened).map(nameOf);
     if (found.length && found.every(Boolean)) {
       for (const name of found) names.add(name);
       continue;
     }
-    const statement = source.statements.find((node) => position >= node.getStart(source) && position < node.end);
     if (!statement || typeOnly(ts, statement)) continue;
     // New function declarations are inert until called. Other declarations
     // can execute initializers, decorators or static blocks during import,

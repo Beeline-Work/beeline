@@ -217,6 +217,32 @@ test('new module initializers select the importing test that catches their failu
   assert.deepEqual(selectTests({ map: coverage, changes: [inert], alwaysRun: [], testFiles: [loader] }).files, []);
 });
 
+test('existing executable initializers select failing importing tests (INITIALIZER-2)', () => {
+  const path = 'apps/server/src/rooms.ts';
+  const loader = 'apps/server/src/rooms.test.ts';
+  const coverage = buildMap([{ test: loader, sources: { [path]: ['show'] }, reads: [] }],
+    { commit: 'abc', files: [path] });
+  const directory = mkdtempSync(join(tmpdir(), 'selection-existing-initializer-'));
+  const module = join(directory, 'rooms.mjs');
+  const importingTest = join(directory, 'rooms.test.mjs');
+  writeFileSync(importingTest, "import assert from 'node:assert/strict';\nimport { show } from './rooms.mjs';\nassert.equal(show(), 1);\n");
+  for (const initializer of ['const registered = JSON.parse(VALUE);',
+    'class Registered { static value = JSON.parse(VALUE); }',
+    'const registered = (() => JSON.parse(VALUE))();']) {
+    const before = initializer.replace('VALUE', '"1"') + '\nexport function show() { return 1; }\n';
+    const after = before.replace('"1"', '"invalid"');
+    writeFileSync(module, before);
+    assert.equal(spawnSync(process.execPath, [importingTest]).status, 0);
+    writeFileSync(module, after);
+    const result = spawnSync(process.execPath, [importingTest], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout + result.stderr, /SyntaxError/);
+    const change = describeChange(ts, { path, status: 'M', before, after, hunks: parseHunks('@@ -1 +1 @@') });
+    assert.deepEqual(selectTests({ map: coverage, changes: [change], alwaysRun: [], testFiles: [loader] }).files,
+      [loader], initializer);
+  }
+});
+
 test('a changed export selects the importer functions that use it, and gives up on untraceable importers', () => {
   const files = {
     'apps/server/src/schema.ts': 'export const SCHEMA = 1;',

@@ -857,7 +857,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
     expect(page).toContain('Starter instructions');
     expect(page).toContain('id="copy-routine" type="button">Copy</button>');
-    expect(page).toContain(MCP_STARTER_ROUTINE.replaceAll("'", '&#39;'));
+    for (const line of MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()))
+      expect(page).toContain(`<li>${line.replaceAll("'", '&#39;')}</li>`);
     expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
     expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.

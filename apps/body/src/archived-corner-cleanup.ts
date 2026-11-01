@@ -5,6 +5,7 @@ import { lstat, readdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ordinaryDirectory, storageTree, hasMount, type WholeStorageOptions, type StorageReclaimEntry } from './helper-storage.js';
 import { stopKeptCornerEmulator } from './corner-emulator.js';
+import { canonicalStoragePath } from './storage-filesystem.js';
 const exec = promisify(execFile);
 
 // pidfds fence PID reuse. No environment values, arbitrary shell commands or
@@ -68,6 +69,7 @@ finally:
 // macOS has no /proc or pidfds. Require an exact cwd attribution and
 // revalidate both the process birth stamp and cwd immediately before signalling.
 async function stopDarwinProcesses(roots: string[]): Promise<number> {
+  roots = roots.map(canonicalStoragePath);
   const snapshot = async () => {
     const { stdout } = await exec('/bin/ps', ['-axo', 'pid=,ppid=,uid=,lstart=,command=']);
     return stdout.split('\n').flatMap(line => {
@@ -78,7 +80,8 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
   const cwd = async (pid: number): Promise<string | undefined> => {
     try {
       const { stdout } = await exec('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
-      return stdout.split('\n').find(line => line.startsWith('n'))?.slice(1);
+      const path = stdout.split('\n').find(line => line.startsWith('n'))?.slice(1);
+      return path === undefined ? undefined : canonicalStoragePath(path);
     } catch { return undefined; }
   };
   const inside = (path: string | undefined) => path !== undefined && roots.some(root => path === root || path.startsWith(`${root}/`));

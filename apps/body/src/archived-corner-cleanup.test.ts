@@ -6,7 +6,7 @@ vi.mock('node:child_process', async (importOriginal) => {
     if (args[0] === '/sbin/mount') args[0] = '/bin/mount';
     if (args[0] === '/usr/sbin/lsof') {
       const callback = args.at(-1);
-      try { callback(null, `p${args[1][2]}\nn${readlinkSync(`/proc/${args[1][2]}/cwd`)}\n`, ''); }
+      try { callback(null, `p${args[1][2]}\nn${('/private' + readlinkSync(`/proc/${args[1][2]}/cwd`))}\n`, ''); }
       catch (error) { callback(error, '', ''); }
       return;
     }
@@ -23,8 +23,8 @@ import { resolve } from 'node:path';
 import { reclaimArchivedMemberStorage, rememberStorageOwner } from './storage-owners.js';
 import { declareCornerProofOutput } from './corner-proof-output.js';
 
-it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCHIVED-OUTPUT-1 deletes closed dirty/unpushed/proof data and stops its child; preserves open and unknown (%s)', async (platform) => {
-  const root = await mkdtemp(resolve(tmpdir(), 'beeline-closed-corner-'));
+it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] as const)('ARCHIVED-OUTPUT-1 deletes closed dirty/unpushed/proof data and stops its child; preserves open and unknown (%s)', async (platform) => {
+  const root = await mkdtemp(resolve(platform === 'darwin-var' ? '/var/tmp' : tmpdir(), 'beeline-closed-corner-'));
   const path = resolve(root, 'beeline/corners/closed');
   execFileSync('git', ['init', '-q', path]);
   await writeFile(resolve(path, 'source'), 'unpublished');
@@ -48,7 +48,7 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCH
   await mkdir(resolve(path, 'build'));
   await writeFile(resolve(path, 'build/output'), 'ignored output');
   const platformSpy = { mockRestore: () => vi.unstubAllGlobals() };
-  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
+  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? (platform === 'darwin-var' ? 'darwin' : platform) : Reflect.get(target, key) }));
   try {
     for (const states of [[], [{ roomId: 'closed', archived: false }]]) {
       await reclaimArchivedMemberStorage(root, states);
@@ -58,6 +58,7 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCH
     await reclaimArchivedMemberStorage(root, [{ roomId: 'closed', archived: true }]);
     expect(await access(path).then(() => true, () => false)).toBe(false);
     expect(await access(home).then(() => true, () => false)).toBe(false);
+    await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true);
     await exited;
     expect(broker.exitCode).toBe(null);
     expect(broker.signalCode).toBe(null);
@@ -68,15 +69,15 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCH
 }, 30_000);
 
 
-it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCHIVED-OUTPUT-1 removes a home without checkout or owner and stops its child; preserves open and unknown (%s)', async (platform) => {
-  const root = await mkdtemp(resolve(tmpdir(), 'beeline-home-only-'));
+it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] as const)('ARCHIVED-OUTPUT-1 removes a home without checkout or owner and stops its child; preserves open and unknown (%s)', async (platform) => {
+  const root = await mkdtemp(resolve(platform === 'darwin-var' ? '/var/tmp' : tmpdir(), 'beeline-home-only-'));
   const home = resolve(root, 'beeline/agents', 'a'.repeat(64), 'rooms/closed');
   await mkdir(home, { recursive: true });
   await writeFile(resolve(home, 'data'), 'private');
   const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: home, stdio: 'ignore' });
   await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
   const exited = new Promise<void>(done => child.once('exit', () => done()));
-  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
+  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? (platform === 'darwin-var' ? 'darwin' : platform) : Reflect.get(target, key) }));
   try {
     for (const states of [[], [{ roomId: 'closed', archived: false }]]) {
       await reclaimArchivedMemberStorage(root, states);
@@ -86,6 +87,7 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCH
     }
     await reclaimArchivedMemberStorage(root, [{ roomId: 'closed', archived: true }]);
     expect(await access(home).then(() => true, () => false)).toBe(false);
+    await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true);
     await exited;
   } finally { vi.unstubAllGlobals(); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
 }, 30_000);

@@ -659,7 +659,7 @@ describe('prompt assembly guards', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
     expect(author).not.toMatch(/^Commit and push/m);
     expect(author).toContain('Only when the brief calls for repository changes');
-    expect(author).toContain('Work outside the repository delivers with post_artifact and reports.');
+    expect(author).toContain('Non-repo work: post_artifact and report.');
     expect(author).not.toContain('Only repository assignments commit');
     expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when you write code in this corner and the brief calls for repository changes');
   });
@@ -873,6 +873,30 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
         expect(text.indexOf(rule), `${name}: ${rule}`).toBeGreaterThan(condition);
       expect(text.indexOf('You are in an isolated git worktree'), name).toBeLessThan(condition);
     }
+  });
+
+  it.each(['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer'])(
+    'admits only distinct tests that fail without the change in %s',
+    (name) => {
+      const text = prompt(name);
+      for (const rule of [
+        'Add tests only if they fail without your change, even for new behavior.',
+        'Read tests first; extend or parameterize instead of duplicating the same failure.',
+        'List skipped tests and why in the handoff or PR body.',
+      ]) {
+        expect(text.split(rule), name).toHaveLength(2);
+        expect(text.indexOf(rule), name).toBeGreaterThan(text.indexOf('Implementer rules:'));
+        if (name === 'code-corner-reviewer')
+          expect(text.indexOf(rule), name).toBeLessThan(text.indexOf('Reviewer rules:'));
+      }
+    },
+  );
+
+  it('requires the reviewer to reject redundant or weakened tests and demand deletion proof', () => {
+    const text = prompt('code-corner-reviewer').split('Reviewer rules:')[1]!;
+    expect(text).toContain('Reject this PR’s redundant tests or assertions weakened or deleted without proof.');
+    expect(text).toContain('Remove a test only with a named surviving test catching the same failure under a seeded bug or mutation check.');
+    expect(text).toContain('Coverage overlap or "never failed" is not proof.');
   });
 
   it('stops after four pushes without PASS and names the three escalation causes', () => {

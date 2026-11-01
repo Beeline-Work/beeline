@@ -194,9 +194,9 @@ export const CORNER_RUNTIME_AUTHOR_CONTRACT = `Work in this corner; report block
 
 export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. Report status done/blocked/failed/needs_decision must match its text prefix; progress stays here. Worker done requires an opened PR or repositoryWork:false.
 The current brief's stories, criteria, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story, respect risks and use the file manifest. Before code/build, read the current brief. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed. Dispatch authorizes work without separate spec/mock approval; produce either first when requested.
-For repository bugfixes, the brief records a real-target Reproduction <id>, or why it is not feasible and the closest stand-in; done means that same reproduction or stand-in passes.
-Follow beeline-triage. Before the PR, demonstrate the user path with the built app or affected service; if unavailable, exercise that exact path with the narrowest script. Inner-function tests, logs and code reads do not prove a visible result. The PR body needs ## Reproduced and ## Demonstrated: steps, wrong and passing results under the same Reproduction <id>; explain any unavailable real-target proof and its stand-in. For features, say "not a defect report".
-Work outside the repository delivers with post_artifact and reports. End the turn awaiting orders, checks or review; committed wakes resume it. Landing archives this corner, cancels its work and abandons saved runs. The surviving commander owns follow-up at its own address. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
+Bugfix briefs need a real-target Reproduction <id> or why infeasible and the closest stand-in; done requires that proof to pass.
+Follow beeline-triage. Before PR, prove the user path in the built app/service or, if unavailable, the narrowest script for that path. Inner-function tests/logs/code reads prove no visible result. The PR body needs ## Reproduced and ## Demonstrated: steps, wrong/passing results, same Reproduction <id>, why real-target proof is unavailable and its stand-in. Features: "not a defect report".
+Non-repo work: post_artifact and report. End awaiting orders/checks/review; committed wakes resume. Landing archives this corner, cancels its work and abandons saved runs. The surviving commander owns follow-up at its address. Claim others' progress only from durable commands, this prompt or tool evidence. No unrequested features or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
   "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS wakes the implementer to land; use merge_corner yourself only on an explicit commander order.";
@@ -521,12 +521,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             ? `${push} Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
             : `${push} Open the pull request with gh.`),
         repositoryWork && '4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.',
+        repositoryWork && 'Add tests only if they fail without your change, even for new behavior. Read tests first; extend or parameterize instead of duplicating the same failure. List skipped tests and why in the handoff or PR body.',
         repositoryWork ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
         repositoryWork &&
           'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',
         repositoryWork && (reviewer ? CORNER_REVIEWER_AUTHOR_MERGE : cornerMergeInstruction(reviewerHandle)),
         reviewer &&
-          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule.`,
+          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule. Reject this PR’s redundant tests or assertions weakened or deleted without proof. Remove a test only with a named surviving test catching the same failure under a seeded bug or mutation check. Coverage overlap or "never failed" is not proof.`,
       );
     },
   },

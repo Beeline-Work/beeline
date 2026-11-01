@@ -81,7 +81,8 @@ async function input(agent = A) {
 }
 
 it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as author', async () => {
-  const request = { ...(await input()), implementer: 'beta', hold: true };
+  const draft = await input();
+  const request = { ...draft, implementer: 'beta', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   const fact = (
     await db.query(`SELECT owner_agent_id,commissioned_by FROM corner_facts WHERE corner_id=$1`, [

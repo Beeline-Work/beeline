@@ -1453,6 +1453,7 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly implementer?: string;
     readonly reviewer?: string;
     readonly hold?: boolean;
+    readonly sourceMessageId?: string;
     /** Target parent Room; the active command may be in a DM or another Room. */
     readonly targetRoomId?: string;
     readonly requestId: string;

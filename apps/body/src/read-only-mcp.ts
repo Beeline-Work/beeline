@@ -810,6 +810,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
       ? { brief: brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
     ...(args.hold === true ? { hold: true } : {}),
+    ...(typeof args.sourceMessageId === 'string' ? { sourceMessageId: args.sourceMessageId } : {}),
     ...(repository.resolution === 'repository'
       ? {
           repository: repository.key,
@@ -3494,6 +3495,7 @@ async function executeAgentOperation(
           ...await activeCommandContext(),
           cornerId: typeof args.cornerId === 'string'
             ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID'),
+          ...(typeof args.sourceMessageId === 'string' ? { sourceMessageId: args.sourceMessageId } : {}),
           ...(args.releaseHoldId !== undefined ? { releaseHoldId: args.releaseHoldId } : {}),
         }),
       );

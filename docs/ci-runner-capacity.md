@@ -51,7 +51,12 @@ locale and per-runner tool-cache path. They run with no capabilities and
 and devices, and an invisible view of other users' processes. Home directories
 and deployment directories are inaccessible. `/etc`, `/var` and `/run` are
 replaced by private filesystems; only the CI home and an explicit allowlist of
-public identity, DNS, dynamic-loader and TLS trust files are mounted back.
+public identity, DNS, dynamic-loader, command-alternative links and TLS trust
+files are mounted back. Preserve `/etc/alternatives` read-only: Ubuntu's
+`/usr/bin/awk` resolves through it, and the mobile canary's stubbed readiness
+tests need that standard command. Masking it made those fixtures poll instead
+of parsing adb output. With the command links available, the isolated
+`mobileOtaRelease.test.ts` fixture passes all 29 tests in about seven seconds.
 Host environment files, systemd units, production credential directories and
 the Docker socket are absent from the runner's filesystem view.
 

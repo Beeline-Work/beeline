@@ -1,3 +1,4 @@
+// Human-message hold citation display approved by lunchboxfortwo, brief revision 4, message 654aedd0aa3ca9be7b56e51f0d31c3d22ae344ca0932279e330780a8044cf707. Hold line shows the cited person and excerpt; only its producer and transitive wrappers updated.
 // Wording fingerprints follow the words of a message. A helper that only returns those words is not a separate message. Approved by lunchboxfortwo, message 62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702. Displayed wording is unchanged.
 // Welcome choice card, restored game and welcome-video workflow approved by lunchboxfortwo, brief revision 1, message 70415acb30aea25b94498928664981f5a6d3873b9e3288df648a1e6012618af3. Onboarding producers, choice metadata and workflow role-selection dependencies only; existing workflow wording unchanged.
 // Wording-neutral lifecycle cleanup approved by lunchboxfortwo, message 304303be9b7e4a533bec01c78824f102a8486127a021656274eb6d2dfd890f9b, corner brief revision 5. Additional applyEvent and backfillRun wrappers approved in message 134f90601fa010dd765527b857a5f4292a4d7f6d3f379aa1ffca84cb4b44db52. Transition.take and its dead rereview wrappers only otherwise; no System wording change.
@@ -2167,16 +2168,45 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-holds.ts:writeHoldMessage:systemLine:25913f3242082e21",
+    "id": "src/corner-holds.ts:writeHoldMessage:restateSystemLine:b49a1bd672f2abb4",
     "file": "apps/server/src/corner-holds.ts",
-    "kind": "systemLine",
-    "template": "systemLine(db, {\n    id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),\n    roomId: cornerId,\n    authorId: actorId,\n    subject: { kind: actor?.kind === 'agent' ? 'agent' : 'person', id: actorId, name: actor?.name ?? actorId },\n    verb: 'set a merge hold',\n})",
+    "kind": "restateSystemLine",
+    "template": "restateSystemLine(db, id, phrase)",
     "literals": [
       "\"set a merge hold\"",
       ".name",
       ".rows",
+      ".source_name",
+      ".source_text",
       "FirstLiteralToken:0",
+      "NullKeyword",
+      "[\"\",\": “\",\"”\"]",
+      "binary:!==",
+      "binary:&&",
       "binary:??",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-holds.ts:writeHoldMessage:systemLine:b49a1bd672f2abb4",
+    "file": "apps/server/src/corner-holds.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, { id, roomId: cornerId, authorId: actorId, ...phrase })",
+    "literals": [
+      "\"set a merge hold\"",
+      ".name",
+      ".rows",
+      ".source_name",
+      ".source_text",
+      "FirstLiteralToken:0",
+      "NullKeyword",
+      "[\"\",\": “\",\"”\"]",
+      "binary:!==",
+      "binary:&&",
+      "binary:??",
+      "conditional:?:",
       "end:expression"
     ],
     "occurrences": 1
@@ -4099,14 +4129,16 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:wrapper:13c9f8ac275bc4b3",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:wrapper:3af8652a20dc7dc8",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "setCornerHold(db, { cornerId }, commissionedBy, agentId)",
+    "template": "setCornerHold(db, { cornerId, sourceMessageId: input.sourceMessageId }, commissionedBy ?? agentId, agentId)",
     "literals": [
       ".author_id",
       ".rows",
-      "FirstLiteralToken:0"
+      "FirstLiteralToken:0",
+      "binary:??",
+      "end:expression"
     ],
     "occurrences": 1
   },
@@ -4278,18 +4310,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:13c9f8ac275bc4b3",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "setCornerHold(db, hold, actor.author_id, authenticatedAgentId)",
-    "literals": [
-      ".author_id",
-      ".rows",
-      "FirstLiteralToken:0"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:2f72d8163df702fc",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
@@ -4328,6 +4348,20 @@
       "[\"^\\\\s*(?:\",\")\\\\s*\"]",
       "binary:===",
       "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:3af8652a20dc7dc8",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerHold(db, hold, actor?.author_id ?? authenticatedAgentId, authenticatedAgentId)",
+    "literals": [
+      ".author_id",
+      ".rows",
+      "FirstLiteralToken:0",
+      "binary:??",
       "end:expression"
     ],
     "occurrences": 1
@@ -8619,20 +8653,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:1d631463a7721d41",
-    "file": "apps/server/src/rooms-mcp-agent.ts",
-    "kind": "wrapper",
-    "template": "exec('setCornerHold', { ...context, cornerId: addressArg(args.address), releaseHoldId: args.releaseHoldId })",
-    "literals": [
-      "$local()",
-      ".address",
-      ".releaseHoldId",
-      ".toLowerCase",
-      ".toLowerCase()"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:1e2dd197f5807845",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
@@ -8893,6 +8913,21 @@
       "binary:===",
       "conditional:?:",
       "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:d9f887130d67156a",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('setCornerHold', { ...context, cornerId: addressArg(args.address), releaseHoldId: args.releaseHoldId, sourceMessageId: args.sourceMessageId })",
+    "literals": [
+      "$local()",
+      ".address",
+      ".releaseHoldId",
+      ".sourceMessageId",
+      ".toLowerCase",
+      ".toLowerCase()"
     ],
     "occurrences": 1
   },

@@ -215,9 +215,19 @@ describe('native fingerprint gate', () => {
       }
       cpSync(join(mobileRoot, 'plugins'), join(project, 'plugins'), { recursive: true });
       // node_modules is the expensive part and is not what the edit touches.
+      // The symlink stays so the gate can load @expo/fingerprint. Ignoring it
+      // in this copy keeps the fixture hashes on the plugin and config edits.
+      // The clean run above still hashes the real tree.
       for (const shared of ['node_modules', 'patches']) {
         symlinkSync(join(mobileRoot, shared), join(project, shared));
       }
+      const fingerprintConfigPath = join(project, 'fingerprint.config.js');
+      const fingerprintConfig = readFileSync(fingerprintConfigPath, 'utf8').replace(
+        'ignorePaths: [',
+        "ignorePaths: ['node_modules/**/*', ",
+      );
+      expect(fingerprintConfig).toContain("ignorePaths: ['node_modules/**/*', ");
+      writeFileSync(fingerprintConfigPath, fingerprintConfig);
       const baselineFile = join(project, 'native-fingerprint.json');
 
       const fixture = ['--project-dir', project, '--baseline', baselineFile];
@@ -298,11 +308,10 @@ module.exports = withoutIosPushCapabilities;\n`,
       expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "44"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
-    // Six real fingerprint runs, each hashing the whole mobile tree plus
-    // node_modules. A quiet runner does one in tens of seconds, but under the
-    // suite's competing workers each run slows several-fold and six of them
-    // outgrew 240s — the same head's NATIVE FINGERPRINT job (one run) passed.
-    // 600s keeps the 20-minute job comfortable at its observed ~5.5 minutes.
-    600_000,
+    // One full hash of the real tree, then fixture runs that skip node_modules.
+    // Six full hashes on a busy runner used the entire 600s and the suite was
+    // cancelled before vitest could exit. 15 minutes covers the remaining
+    // full hash when the CI pool is sharing the host.
+    900_000,
   );
 });

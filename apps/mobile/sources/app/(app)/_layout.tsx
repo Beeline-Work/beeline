@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
+import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
 
 export const unstable_settings = {
   initialRouteName: 'index',
@@ -13,7 +14,8 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   React.useEffect(() => {
-    void import('@/buzz/message-outbox-runtime').then(({ startMessageOutbox }) => startMessageOutbox());
+    // Delivery is required on every signed-in route, including a stale web tab.
+    void startMessageOutbox();
   }, []);
   const isDesktop = useIsDesktop();
   const { theme } = useUnistyles();

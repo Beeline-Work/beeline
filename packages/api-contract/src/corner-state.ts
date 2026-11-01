@@ -93,7 +93,9 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
     return { state: 'working' };
   }
   const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
-  if (facts.reviewerActive || checks === 'pending' || checksNotReported(facts.lifecycle))
+  if (facts.reviewerActive || checks === 'pending' ||
+    facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending') ||
+    checksNotReported(facts.lifecycle))
     return { state: 'review' };
   if (facts.blocker) return { state: 'waiting', ...facts.blocker };
   return { state: 'idle' };

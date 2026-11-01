@@ -192,6 +192,19 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect((await http(`/v1/phone/rooms/${ROOM}/history`)).status).toBe(429);
   });
 
+  it('LATER-1: an unavailable forward cursor keeps failing while the latest history remains readable', async () => {
+    const socket = await open();
+    const missingCursor = 'd'.repeat(64);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await request(socket, 'readHistoryAfter', { roomId: ROOM, messageId: missingCursor }))
+        .toMatchObject({ ok: false, error: { code: 'not_found', retryable: false } });
+    }
+    const response = await http(`/v1/phone/rooms/${ROOM}/history?after=${missingCursor}`);
+    expect(response.status).toBe(404);
+    expect(await request(socket, 'readHistory', { roomId: ROOM }))
+      .toMatchObject({ ok: true, result: { messages: [expect.objectContaining({ id: MESSAGE })] } });
+  });
+
   it('creates one message and one reply when retried over both transports, rejecting id collisions', async () => {
     const socket = await open();
     for (const [op, id, extra] of [

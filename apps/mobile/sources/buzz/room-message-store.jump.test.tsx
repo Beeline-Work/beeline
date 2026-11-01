@@ -112,6 +112,58 @@ const shownIds = (store: Store, tail: readonly RoomViewMessage[]) => {
 };
 
 describe('jumpTo', () => {
+  it('Reproduction LATER-1: recovers a missing forward cursor to the live tail', async () => {
+    const all = room(227);
+    const tail = all.slice(197);
+    const client = serverOver(all);
+    const { state, renderer } = await mountStore(tail, client);
+    await act(async () => state.current.jumpTo(all[26]!.id));
+    act(() => state.current.endJump());
+    vi.mocked(client.historyAfter).mockRejectedValue(new RoomViewHttpError(404, 'not_found'));
+
+    await act(async () => state.current.loadNewer());
+
+    expect(state.current.attached).toBe(true);
+    expect(state.current.newerStatus).toBe('complete');
+    expect(shownIds(state.current, tail).slice(-tail.length)).toEqual(tail.map((message) => message.id));
+    await act(async () => renderer.unmount());
+  });
+
+  it('Reproduction LATER-1: retry recovers when a transient failure is followed by a missing cursor', async () => {
+    const all = room(227);
+    const tail = all.slice(197);
+    const client = serverOver(all);
+    vi.mocked(client.historyAfter)
+      .mockRejectedValueOnce(new RoomViewHttpError(0, 'timeout'))
+      .mockRejectedValue(new RoomViewHttpError(404, 'not_found'));
+    const { state, renderer } = await mountStore(tail, client);
+    await act(async () => state.current.jumpTo(all[26]!.id));
+    await act(async () => state.current.loadNewer());
+    expect(state.current.newerStatus).toBe('error');
+    expect(state.current.attached).toBe(false);
+    await act(async () => state.current.retryNewer());
+    expect(state.current.attached).toBe(true);
+    expect(state.current.jump).toBeNull();
+    expect(shownIds(state.current, tail).at(-1)).toBe(tail.at(-1)!.id);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a newer jump when an old forward cursor fails late', async () => {
+    const all = room(227);
+    const client = serverOver(all);
+    const pending = deferred<RoomHistoryView>();
+    vi.mocked(client.historyAfter).mockReturnValueOnce(pending.promise);
+    const { state, renderer } = await mountStore(all.slice(197), client);
+    await act(async () => state.current.jumpTo(all[26]!.id));
+    await act(async () => state.current.loadNewer());
+    await act(async () => state.current.jumpTo(all[100]!.id));
+    await act(async () => pending.reject(new RoomViewHttpError(404, 'not_found')));
+    expect(state.current.attached).toBe(false);
+    expect(state.current.jump?.messageId).toBe(all[100]!.id);
+    expect(shownIds(state.current, all.slice(197))).toContain(all[100]!.id);
+    await act(async () => renderer.unmount());
+  });
+
   it('opens a distant target with at most a screen of newer rows below it', async () => {
     const all = room(227);
     const tail = all.slice(197);

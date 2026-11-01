@@ -67,13 +67,11 @@
  * `node_modules`, so each tree's own top-level files are copied writable
  * rather than linked.
  *
- * Stated plainly: read-only modes are hygiene, not confinement. A session can
- * `chmod` its own hardlink and write through it, the same way the bwrap
- * denylist keeps sibling work pristine without pretending to confine a
- * determined process. The blast radius is a derived, disposable directory —
- * delete `<supervisorRoot>/beeline/node-modules` and the next corner rebuilds
- * it — and the store itself sits under the read-only supervisor root that a
- * corner session cannot reach at all.
+ * File modes alone are insufficient: callers must seal every seeded tree with
+ * a read-only mount before exposing it to a harness. dependency-generation.ts
+ * prepares replacements outside the old namespace; bwrap-sandbox.ts applies
+ * their mounts after writable checkout and agent-home mounts. This prevents
+ * chmod and writes through shared aliases within the harness namespace.
  *
  * Nothing here may fail a corner. Every entry point reports an outcome instead
  * of throwing: a cold store, an unreadable lockfile, a cross-filesystem store
@@ -103,28 +101,13 @@ import { dirname, join, resolve } from 'node:path';
  * Bumped when the on-disk shape of a store entry changes. It is part of the
  * key, so old entries simply stop matching instead of needing a migration.
  */
-const STORE_FORMAT = 'v1';
+const STORE_FORMAT = 'v2';
 
 /** Staged trees, mid-clone. Named so a crashed run is sweepable. */
 const STAGING_PREFIX = '.beeline-warm-';
 
 /** A staging directory older than this was left by a process that died. */
 export const STAGING_SWEEP_MS = 24 * 60 * 60 * 1000;
-
-/**
- * How many lockfile keys the store keeps, most-recently-used first.
- *
- * An entry is a whole dependency tree — this repository's is ~600MB — and a
- * lockfile changes on any PR that touches a dependency, so an unbounded store
- * would fill the operator's disk with trees no corner will ask for again. The
- * working set is small by nature: the target branch's lockfile, plus whatever
- * a branch under work has changed it to.
- *
- * Dropping an entry never breaks a worktree seeded from it. Those are
- * hardlinks, so the inodes live until the last link goes — the store is giving
- * up its own reference, not the files.
- */
-export const WARM_STORE_MAX_ENTRIES = 3;
 
 /** The one npm cache every corner session on this host shares. */
 export function sharedNpmCacheDir(supervisorRoot: string): string {
@@ -161,12 +144,11 @@ export function warmNodeModulesStoreDir(supervisorRoot: string): string {
 }
 
 /**
- * The warm `node_modules` store for the isolated mobile app (`apps/mobile`),
- * which is NOT a root workspace and has its own lockfile, so its tree needs a
- * store of its own beside the root one.
+ * Mobile has its own lockfile but uses the same machine-wide generation store.
+ * Matching hashes share bytes regardless of the checkout-relative location.
  */
 export function mobileNodeModulesStoreDir(supervisorRoot: string): string {
-  return resolve(supervisorRoot, 'beeline', 'node-modules-mobile');
+  return warmNodeModulesStoreDir(supervisorRoot);
 }
 
 /**
@@ -410,7 +392,7 @@ export async function harvestWarmNodeModules(input: {
     // First writer wins: `rename` onto a populated directory fails, which is
     // the whole of the concurrency story between two corners on one lockfile.
     await rename(staging, entry);
-    await pruneWarmStore(input.storeRoot, WARM_STORE_MAX_ENTRIES);
+    // Generation collection is reference-based; never evict a live lockfile.
     return { reason: 'stored', key: plan.key };
   } catch (error) {
     if (await pathExists(entry)) return { reason: 'already-warm', key: plan.key };
@@ -602,6 +584,7 @@ async function cloneTree(
 ): Promise<void> {
   await mkdir(target, { recursive: true, mode: 0o755 });
   for (const entry of await readdir(source, { withFileTypes: true })) {
+    if (topLevel && entry.name === '.cache') continue;
     const from = join(source, entry.name);
     const to = join(target, entry.name);
     if (entry.isSymbolicLink()) {
@@ -638,31 +621,6 @@ const seedFile: CloneFile = async (source, target, topLevel) => {
   await copyFile(source, target);
   await chmod(target, 0o644);
 };
-
-/**
- * Keep the `keep` most recently used entries and delete the rest.
- *
- * Recency is the entry's own mtime: set when it was stored, and refreshed by
- * {@link seedWarmNodeModules} each time a worktree is cut from it. Run after a
- * store, which is the only moment the store grows.
- */
-export async function pruneWarmStore(storeRoot: string, keep: number): Promise<string[]> {
-  const names = (await readdir(storeRoot).catch(() => [] as string[])).filter(
-    (name) => !name.startsWith(STAGING_PREFIX),
-  );
-  const entries: Array<{ name: string; usedAt: number }> = [];
-  for (const name of names) {
-    const info = await lstat(join(storeRoot, name)).catch(() => undefined);
-    if (info?.isDirectory()) entries.push({ name, usedAt: info.mtimeMs });
-  }
-  const dropped = entries
-    .sort((a, b) => b.usedAt - a.usedAt || a.name.localeCompare(b.name))
-    .slice(keep);
-  for (const entry of dropped) {
-    await rm(join(storeRoot, entry.name), { recursive: true, force: true }).catch(() => undefined);
-  }
-  return dropped.map((entry) => entry.name);
-}
 
 /**
  * Remove staging trees left behind by a process that died mid-clone. A live

@@ -110,6 +110,17 @@ async function run() {
   await pause();
   record('7 tray closed as alice', { badge: 2 });
   proof.__server.countDelayMs = 400;
+  for (const reason of ['postgres:memberships', 'reconnect', 'needs-you-gap']) {
+    const observed = new Set<number>();
+    proof.__emit({ type: 'invalidate', reason });
+    for (let tick = 0; tick < 10; tick += 1) {
+      await pause(50);
+      observed.add(badge());
+    }
+    steps.push(`NEEDS-YOU-FLICKER ${reason}: badge values ${[...observed].join(',')}`);
+    if ([...observed].some((value) => value !== 2))
+      failures.push(`${reason} hid or changed the badge during its held refetch`);
+  }
   proof.__switchViewer('bob');
   // Let React render the reset before reading; the DOM before that is never painted.
   await pause(0);

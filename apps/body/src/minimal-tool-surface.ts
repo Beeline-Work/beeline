@@ -819,7 +819,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "revise_corner",
-    "description": "Supply address. metadata requires name; install_brief requires name and brief. brief requires top-level expectedRevision and change, plus nested brief: {spec, repositoryWork?, approval?: {sourceMessageId}, attachments?}. Put Reproduction <id>: steps, or Reproduction not feasible: reason; Stand-in: check in spec. Parent and ancestor restrictions remain enforced.",
+    "description": "Supply address. metadata requires name; install_brief requires name and brief. brief requires top-level expectedRevision and change, plus nested brief: {spec, repositoryWork?, approval?: {sourceMessageId}, attachments?}. A brief copied from read is accepted; returned metadata is ignored and approval is revalidated. Put Reproduction <id>: steps, or Reproduction not feasible: reason; Stand-in: check in spec. Parent and ancestor restrictions remain enforced.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -835,6 +835,12 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "type": "object",
           "required": ["spec"],
           "properties": {
+            "id": {"type": "string"},
+            "revision": {"type": "integer"},
+            "authorId": {"type": "string"},
+            "sourceRoomId": {"type": "string"},
+            "sourceMessageId": {"type": "string"},
+            "change": {"type": "string"},
             "repositoryWork": {
               "type": "boolean",
               "description": "Set false when no repository files are assigned or repository edits or pull requests are forbidden. Set true for assigned repository work. Attachments are not repository assignments."
@@ -847,10 +853,9 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
             },
             "approval": {
               "type": "object",
-              "required": ["sourceMessageId"],
-              "properties": {"sourceMessageId": {"type": "string"}},
+              "properties": {"sourceMessageId": {"type": "string"}, "text": {"type": "string"}, "approvedBy": {"type": "string"}, "approverName": {"type": "string"}},
               "additionalProperties": false,
-              "description": "Optional for the corner commander revising directly. Other agents must cite a human message or private commander order authorizing the revision. The server records the approver."
+              "description": "Optional for the corner commander revising directly. A copied approval with an empty or absent sourceMessageId is accepted only for that commander when the stored approval is commander-direct. Other agents must cite a human message or private commander order authorizing the revision. The server records the approver."
             },
             "attachments": {
               "type": "array",
@@ -863,6 +868,10 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
                 "properties": {
                   "objectId": {"type": "string", "format": "uuid"},
                   "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                  "title": {"type": "string"},
+                  "mime": {"type": "string"},
+                  "sha256": {"type": "string"},
+                  "size": {"type": "integer", "minimum": 0},
                   "purpose": {"type": "string", "maxLength": 500},
                   "required": {"type": "boolean"}
                 },
@@ -950,7 +959,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "to": {"type": "string", "minLength": 1, "description": "Member handle or id to receive this report."},
         "ask": {"type": "string", "minLength": 1, "maxLength": 140, "description": "Optional plain text ask: one sentence on one line, at most 140 characters."},
         "status": {"type": "string", "enum": ["done", "blocked", "failed", "needs_decision"]},
-        "text": {"type": "string", "minLength": 1, "maxLength": 16000}
+        "text": {"type": "string", "minLength": 1, "maxLength": 16000, "description": "Report text, at most 16000 UTF-16 code units."}
       },
       "additionalProperties": false
     }
@@ -1241,7 +1250,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "wake",
-    "description": "Manage your own wake sources. List, update and delete your schedules across every Room you belong to by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
+    "description": "Manage your own wake sources. List your schedules across every Room you belong to by scheduleId; update and delete require a turn started by a human Workspace admin of the schedule’s Room, and a scheduled wake cannot do either; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1259,7 +1268,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         },
         "prompt": {
           "type": "string",
-          "description": "The action to perform on each event. For a workflow, tell yourself to call start_workflow for the saved workflow."
+          "description": "The action to perform on each event. Schedule prompts allow at most 2000 UTF-16 code units. For a workflow, tell yourself to call start_workflow for the saved workflow."
         },
         "cadence": {
           "type": "object",
@@ -1299,6 +1308,10 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       },
       "required": ["action"],
       "additionalProperties": false,
+      "allOf": [{
+        "if": {"properties": {"trigger": {"const": "schedule"}}},
+        "then": {"properties": {"prompt": {"type": "string", "maxLength": 2000}}}
+      }],
       "anyOf": [
         {"properties": {"action": {"const": "create"}, "trigger": {"const": "schedule"}}, "required": ["action", "trigger", "title"]},
         {"properties": {"action": {"const": "create"}, "trigger": {"const": "event"}}, "required": ["action", "trigger", "title", "when"]},

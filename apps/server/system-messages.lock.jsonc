@@ -1,3 +1,4 @@
+// Wording fingerprints follow the words of a message. A helper that only returns those words is not a separate message. Approved by lunchboxfortwo, message 62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702. Displayed wording is unchanged.
 // Welcome choice card, restored game and welcome-video workflow approved by lunchboxfortwo, brief revision 1, message 70415acb30aea25b94498928664981f5a6d3873b9e3288df648a1e6012618af3. Onboarding producers, choice metadata and workflow role-selection dependencies only; existing workflow wording unchanged.
 // Wording-neutral lifecycle cleanup approved by lunchboxfortwo, message 304303be9b7e4a533bec01c78824f102a8486127a021656274eb6d2dfd890f9b, corner brief revision 5. Additional applyEvent and backfillRun wrappers approved in message 134f90601fa010dd765527b857a5f4292a4d7f6d3f379aa1ffca84cb4b44db52. Transition.take and its dead rereview wrappers only otherwise; no System wording change.
 // Connected app post/order wake-chain fix approved by lunchboxfortwo, message bd07c8db4f5da927d128b4624dbb17d1fe419210d001c0154fb0ea1c239fc4d3. Only the RoomsMcpAgentTools.inTurn wrapper changed: a lookup timeout and wake depth fields; no System wording changed.
@@ -49,7 +50,18 @@
 // Agent stop line approved by lunchboxfortwo, DM message feeafd10: "@commander stopped @worker's running turn", with " · N queued orders dropped" when orders were dropped; agent stop tool producers only.
 [
   {
-    "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:8f2382aaa649da4e",
+    "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:dc3f4b2749d2d2bc",
+    "file": "apps/server/src/agent-class-retirement.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=jsonb_set ( card , '{roleBindings}' , ( SELECT COALESCE ( jsonb_object_agg ( binding . key , binding . value ) , '{}' :: jsonb ) ) )",
+    "literals": [
+      "'{roleBindings}'",
+      "'{}'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:e2e6e429c93cb65a",
     "file": "apps/server/src/agent-class-retirement.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=( card - 'roleClasses' ) | | jsonb_build_object ( 'roleAgents' , JSON.stringify(roleAgents) :: jsonb )",
@@ -123,17 +135,6 @@
       "binary:??",
       "conditional:?:",
       "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:dc3f4b2749d2d2bc",
-    "file": "apps/server/src/agent-class-retirement.ts",
-    "kind": "message-write",
-    "template": "UPDATE messages card=jsonb_set ( card , '{roleBindings}' , ( SELECT COALESCE ( jsonb_object_agg ( binding . key , binding . value ) , '{}' :: jsonb ) ) )",
-    "literals": [
-      "'{roleBindings}'",
-      "'{}'"
     ],
     "occurrences": 1
   },
@@ -282,61 +283,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:systemLine:92215b1fd52adfa1",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "systemLine",
-    "template": "systemLine(db, {\n    id: createHash('sha256')\n        .update(`agent-lifecycle:${sourceId}:${target.agent_id}:${action}`)\n        .digest('hex'),\n    roomId: source.room_id,\n    authorId: target.agent_id,\n    subject: lifecycleSubject(target),\n    verb,\n    ...(consequence ? { consequence } : {}),\n    afterMessageId: sourceId,\n})",
-    "literals": [
-      "$local()",
-      "'held'",
-      "'lifecycleId'",
-      "'releaseVersion'",
-      "'sourceSha'",
-      "'status'",
-      "'true'",
-      ".handle",
-      ".name",
-      ".rows",
-      "FirstLiteralToken:0",
-      "[\"@\",\"\"]",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:systemLine:d38b63848801a448",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "systemLine",
-    "template": "systemLine(db, {\n    id: agentSignInCardId(sourceId, target.agent_id),\n    roomId: source.room_id,\n    authorId: target.agent_id,\n    subject: lifecycleSubject(target),\n    verb: agentSignInUsesKey(harness)\n        ? 'asked for a new key'\n        : `started a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`,\n    consequence: 'its owner finishes it in this card',\n    afterMessageId: sourceId,\n    presentation: 'card',\n    cardType: 'agent-sign-in',\n    card: {\n        agentId: target.agent_id,\n        ownerId: target.owner_id,\n        harness,\n        status: 'starting',\n        sourceMessageId: sourceId,\n    },\n})",
-    "literals": [
-      "\"asked for a new key\"",
-      "\"its owner finishes it in this card\"",
-      "\"starting\"",
-      "$local()",
-      "'held'",
-      "'lifecycleId'",
-      "'releaseVersion'",
-      "'sourceSha'",
-      "'status'",
-      "'true'",
-      ".agent_id",
-      ".handle",
-      ".harness",
-      ".name",
-      ".rows",
-      "FirstLiteralToken:0",
-      "[\"@\",\"\"]",
-      "[\"started a \",\" sign-in\"]",
-      "agentSignInUsesKey()",
-      "conditional:?:",
-      "end:expression",
-      "isAgentSignInHarness()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:systemLine:ed1931d5672fb253",
+    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:systemLine:48fe8a5d2beb7a4c",
     "file": "apps/server/src/agent-command.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: createHash('sha256')\n        .update(`agent-lifecycle:${sourceId}:${target.agent_id}:denied`)\n        .digest('hex'),\n    roomId: source.room_id,\n    authorId: target.agent_id,\n    subject: lifecycleSubject(target),\n    verb: deniedVerb,\n    consequence,\n    afterMessageId: sourceId,\n})",
@@ -376,6 +323,58 @@
       "end:expression",
       "isAgentSignInHarness()",
       "prefix:!"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:systemLine:5fe7de9c1005a4c8",
+    "file": "apps/server/src/agent-command.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    id: createHash('sha256')\n        .update(`agent-lifecycle:${sourceId}:${target.agent_id}:${action}`)\n        .digest('hex'),\n    roomId: source.room_id,\n    authorId: target.agent_id,\n    subject: lifecycleSubject(target),\n    verb,\n    ...(consequence ? { consequence } : {}),\n    afterMessageId: sourceId,\n})",
+    "literals": [
+      "'held'",
+      "'lifecycleId'",
+      "'releaseVersion'",
+      "'sourceSha'",
+      "'status'",
+      "'true'",
+      ".handle",
+      ".name",
+      ".rows",
+      "FirstLiteralToken:0",
+      "[\"@\",\"\"]",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:systemLine:e5c610c23ce201bb",
+    "file": "apps/server/src/agent-command.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    id: agentSignInCardId(sourceId, target.agent_id),\n    roomId: source.room_id,\n    authorId: target.agent_id,\n    subject: lifecycleSubject(target),\n    verb: agentSignInUsesKey(harness)\n        ? 'asked for a new key'\n        : `started a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`,\n    consequence: 'its owner finishes it in this card',\n    afterMessageId: sourceId,\n    presentation: 'card',\n    cardType: 'agent-sign-in',\n    card: {\n        agentId: target.agent_id,\n        ownerId: target.owner_id,\n        harness,\n        status: 'starting',\n        sourceMessageId: sourceId,\n    },\n})",
+    "literals": [
+      "\"asked for a new key\"",
+      "\"its owner finishes it in this card\"",
+      "\"starting\"",
+      "'held'",
+      "'lifecycleId'",
+      "'releaseVersion'",
+      "'sourceSha'",
+      "'status'",
+      "'true'",
+      ".agent_id",
+      ".handle",
+      ".harness",
+      ".name",
+      ".rows",
+      "FirstLiteralToken:0",
+      "[\"@\",\"\"]",
+      "[\"started a \",\" sign-in\"]",
+      "agentSignInUsesKey()",
+      "conditional:?:",
+      "end:expression",
+      "isAgentSignInHarness()"
     ],
     "occurrences": 1
   },
@@ -586,7 +585,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-retirement.ts:settleGrantCard:message-write:6421012b9a008f5c",
+    "id": "src/agent-retirement.ts:settleGrantCard:message-write:ae24af41f0997b82",
     "file": "apps/server/src/agent-retirement.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=jsonb_set ( card , '{grants}' , JSON.stringify(grants) :: jsonb )",
@@ -614,8 +613,7 @@
       "binary:/",
       "binary:===",
       "conditional:?:",
-      "end:expression",
-      "unix()"
+      "end:expression"
     ],
     "occurrences": 1
   },
@@ -661,7 +659,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-schedules.ts:AgentScheduleLoop.runOnce:systemLine:15608a18f8e5c5d5",
+    "id": "src/agent-schedules.ts:AgentScheduleLoop.runOnce:systemLine:f1e70f4bcb2288ba",
     "file": "apps/server/src/agent-schedules.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: current.room_id,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: `The ${current.workflow_slug} schedule` },\n    verb: 'skipped a run',\n    consequence: `run ${live.runId} is active at step ${live.state} in state ${live.status} for ${elapsedMinutes} min`,\n})",
@@ -725,6 +723,25 @@
     "occurrences": 2
   },
   {
+    "id": "src/agent-sign-in.ts:beginAgentSignInCards:wrapper:5c9969fccaa47ecd",
+    "file": "apps/server/src/agent-sign-in.ts",
+    "kind": "wrapper",
+    "template": "settleCard(database, { messageId: id, attemptId }, { status: 'failed', errorMessage: failureText(error) }, false)",
+    "literals": [
+      "\"failed\"",
+      ".message",
+      ".slice",
+      ".slice()",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:500",
+      "String()",
+      "binary:instanceof",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/agent-sign-in.ts:beginAgentSignInCards:wrapper:775f3e18c5109dc3",
     "file": "apps/server/src/agent-sign-in.ts",
     "kind": "wrapper",
@@ -778,13 +795,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-sign-in.ts:beginAgentSignInCards:wrapper:a69d62f401d40a2c",
+    "id": "src/agent-sign-in.ts:completeAgentSignInCard:wrapper:5c9969fccaa47ecd",
     "file": "apps/server/src/agent-sign-in.ts",
     "kind": "wrapper",
-    "template": "settleCard(database, { messageId: id, attemptId }, { status: 'failed', errorMessage: failureText(error) }, false)",
+    "template": "settleCard(database, where, { status: 'failed', errorMessage: failureText(error) }, false)",
     "literals": [
       "\"failed\"",
-      "$local()",
       ".message",
       ".slice",
       ".slice()",
@@ -804,26 +820,6 @@
     "template": "settleCard(database, where, { status: 'signing-in' }, true)",
     "literals": [
       "\"signing-in\""
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/agent-sign-in.ts:completeAgentSignInCard:wrapper:a69d62f401d40a2c",
-    "file": "apps/server/src/agent-sign-in.ts",
-    "kind": "wrapper",
-    "template": "settleCard(database, where, { status: 'failed', errorMessage: failureText(error) }, false)",
-    "literals": [
-      "\"failed\"",
-      "$local()",
-      ".message",
-      ".slice",
-      ".slice()",
-      "FirstLiteralToken:0",
-      "FirstLiteralToken:500",
-      "String()",
-      "binary:instanceof",
-      "conditional:?:",
-      "end:expression"
     ],
     "occurrences": 1
   },
@@ -884,7 +880,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-subscriptions.ts:fireRepositorySubscriptions:systemLine:deb5106779622a45",
+    "id": "src/agent-subscriptions.ts:fireRepositorySubscriptions:systemLine:465de67ffd82c750",
     "file": "apps/server/src/agent-subscriptions.ts",
     "kind": "systemLine",
     "template": "systemLine(tx, {\n    id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,\n    ...repositorySubscriptionLine(eventName, repository, details),\n    kind: 'subscription-fired', payload, wakes: [row.agent_id],\n    subscriptionPrompt: current.prompt, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,\n})",
@@ -908,7 +904,6 @@
       "\"starred\"",
       "\"string\"",
       "\"unstarred\"",
-      "$local()",
       ".action",
       ".filter",
       ".filter()",
@@ -1000,7 +995,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/app-connections.ts:completeComposioSignIn:wrapper:adb26e250afb2cb6",
+    "id": "src/app-connections.ts:completeComposioSignIn:wrapper:c9bd1c03cb294c0d",
     "file": "apps/server/src/app-connections.ts",
     "kind": "wrapper",
     "template": "failAppSignInCards(db, pending.id, error.message)",
@@ -1075,7 +1070,7 @@
     "occurrences": 2
   },
   {
-    "id": "src/app-connections.ts:connectApp:wrapper:5e8e36182e673c82",
+    "id": "src/app-connections.ts:connectApp:wrapper:7be600a6408f2c8d",
     "file": "apps/server/src/app-connections.ts",
     "kind": "wrapper",
     "template": "failAppSignInCards(database, row.id, derived.errorMessage)",
@@ -1293,16 +1288,13 @@
       "binary:instanceof",
       "binary:||",
       "conditional:?:",
-      "created()",
       "encodeURIComponent()",
       "end:expression",
       "existingFacts()",
       "prefix:!",
       "randomUUID()",
-      "readExisting()",
       "registryServerAppKey()",
-      "resolveWith()",
-      "workbenchProbe()"
+      "resolveWith()"
     ],
     "occurrences": 1
   },
@@ -1323,7 +1315,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/app-connections.ts:readOwnerApps:wrapper:27673ad91264b16f",
+    "id": "src/app-connections.ts:readOwnerApps:wrapper:0e768118780c36ee",
     "file": "apps/server/src/app-connections.ts",
     "kind": "wrapper",
     "template": "failAppSignInCards(database, row.id, derived.errorMessage)",
@@ -1543,7 +1535,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/commander.ts:stopCommandedTurn:systemLine:597a3aeb12b6effb",
+    "id": "src/commander.ts:stopCommandedTurn:systemLine:8b416ed43b623551",
     "file": "apps/server/src/commander.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: createHash('sha256').update(`agent-stop-line:${command.id}:${running.id}`).digest('hex'),\n    roomId: address, authorId: worker.id, subject: { kind: 'agent', id: agentId, name: agentId }, verb: 'stopped',\n    object: `${systemIdentityMention({ ...worker, kind: 'agent' })}'s running turn`,\n    ...(dropped ? { consequence: `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` } : {}),\n})",
@@ -1600,7 +1592,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/computer-session.ts:createComputerSession:systemLine:6e8a6468563c389c",
+    "id": "src/computer-session.ts:createComputerSession:systemLine:142ae698d864743b",
     "file": "apps/server/src/computer-session.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: messageId,\n    roomId: input.roomId,\n    authorId: input.agentId,\n    subject: { kind: 'agent', id: input.agentId, name: agent.name },\n    verb: 'shared',\n    object: 'a live browser',\n    presentation: 'card',\n    cardType: 'computer-session',\n    card: { id, url, title, status: 'live' },\n})",
@@ -1612,7 +1604,6 @@
       "\"https://server.usebeeline.app\"",
       "\"live\"",
       "\"shared\"",
-      "$local()",
       ".BEELINE_COMPUTER_ORIGIN",
       ".env",
       ".name",
@@ -2136,7 +2127,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/connector-offer-completion.ts:settleConnectingOffers:systemLine:7be790855ca3f55e",
+    "id": "src/connector-offer-completion.ts:settleConnectingOffers:systemLine:63c683ca97d00a3a",
     "file": "apps/server/src/connector-offer-completion.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: offer.room_id,\n    authorId: offer.accepted_by ?? SYSTEM_IDENTITY_ID,\n    subject: offer.accepted_by ? identitySubject({\n        id: offer.accepted_by,\n        kind: offer.accepted_kind,\n        name: offer.accepted_name,\n    }) : { kind: 'system', name: connectorName },\n    verb: offer.accepted_by ? (offer.intent === 'reconnect' ? 'reconnected' : 'added') : 'reconnected automatically',\n    ...(offer.accepted_by ? { object: connectorName } : {}),\n    kind: 'connector-offer-decided',\n    ...(offer.command_id ? { commandId: offer.command_id } : {}),\n    wakes: [offer.agent_id],\n    cardType: 'connector-offer-decision',\n    card: { offerId: offer.id, status: 'accepted', ...(connectorId ? { connectorId } : {}) },\n})",
@@ -2206,7 +2197,7 @@
     "id": "src/corner-holds.ts:writeHoldMessage:systemLine:25913f3242082e21",
     "file": "apps/server/src/corner-holds.ts",
     "kind": "systemLine",
-    "template": "systemLine(db, {\n    id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),\n    roomId: cornerId,\n    authorId: actorId,\n    subject: { kind: 'person', id: actorId, name: actor?.name ?? actorId },\n    verb: 'set a merge hold',\n})",
+    "template": "systemLine(db, {\n    id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),\n    roomId: cornerId,\n    authorId: actorId,\n    subject: { kind: actor?.kind === 'agent' ? 'agent' : 'person', id: actorId, name: actor?.name ?? actorId },\n    verb: 'set a merge hold',\n})",
     "literals": [
       "\"set a merge hold\"",
       ".name",
@@ -2218,7 +2209,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:Transition.take:systemLine:f1131f6f591184e5",
+    "id": "src/corner-lifecycle.ts:Transition.take:systemLine:1d0ac904906580c5",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "systemLine",
     "template": "systemLine(this.db, {\n    id: createHash('sha256')\n        .update(`beeline:corner-workflow:${this.cornerId}:${seq}:${fromState}:${outcome}`)\n        .digest('hex'),\n    roomId: this.cornerId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject,\n    verb: 'handed off',\n    object: toState,\n    presentation: 'card',\n    cardType: CORNER_LIFECYCLE_CARD_TYPE,\n    card: {\n        runId: this.cornerId,\n        roleBindings: this.run.roleBindings,\n        fromState,\n        outcome,\n        toState,\n        contents,\n        receipt: { exit: { gate: outcome, actorId: SYSTEM_IDENTITY_ID } },\n        seq,\n        ...(status ? { status } : {}),\n    },\n})",
@@ -2754,7 +2745,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:1f9f867e02653861",
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:154095578a486f25",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, reason)",
@@ -2966,7 +2957,6 @@
       "conditional:?:",
       "createHash()",
       "end:expression",
-      "field()",
       "formatSystemLine()",
       "isSubscribableEventKind()",
       "prefix:!",
@@ -3422,23 +3412,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-live.ts:DaemonAgentSession.#subscribe:wrapper:d160723509909c71",
-    "file": "apps/server/src/daemon-live.ts",
-    "kind": "wrapper",
-    "template": "$databaseResult",
-    "literals": [
-      ".agentId"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-live.ts:DaemonAgentSession.#subscribe:wrapper:e77d40739d4653c6",
+    "id": "src/daemon-live.ts:DaemonAgentSession.#subscribe:wrapper:c2150951a8d7a658",
     "file": "apps/server/src/daemon-live.ts",
     "kind": "wrapper",
     "template": "$databaseResult",
     "literals": [
       "\"string\"",
-      "$local()",
       ".agentId",
       ".cursor",
       ".test",
@@ -3451,6 +3430,16 @@
       "binary:??",
       "conditional:?:",
       "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-live.ts:DaemonAgentSession.#subscribe:wrapper:d160723509909c71",
+    "file": "apps/server/src/daemon-live.ts",
+    "kind": "wrapper",
+    "template": "$databaseResult",
+    "literals": [
+      ".agentId"
     ],
     "occurrences": 1
   },
@@ -3507,14 +3496,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.closeCornerPullRequest:systemLine:f98fdb01d03be5e7",
+    "id": "src/daemon-service.ts:DaemonService.closeCornerPullRequest:systemLine:356aef2de3069be3",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(this.database, {\n    roomId: input.cornerId,\n    subject: { kind: 'agent', id: agentId, name: (await this.identity(agentId)).name },\n    verb: 'closed',\n    object: { text: closed.title, url: closed.url },\n})",
     "literals": [
       "\"closed\"",
-      "$local()",
-      ".$local",
       ".closePullRequest",
       ".closePullRequest()",
       ".cornerId",
@@ -3718,7 +3705,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.connectMcpServer:systemLine:70b124483d008bbb",
+    "id": "src/daemon-service.ts:DaemonService.connectMcpServer:systemLine:2f46af4d6ba9a633",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(this.database, {\n    id: createHash('sha256')\n        .update(`registry-mcp-signin:${row.id}:${signIn.attemptId}`)\n        .digest('hex'),\n    roomId: dmRoomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: registrySubject(serverName) },\n    verb: 'needs',\n    object: { text: 'provider sign-in', url: signIn.url },\n    consequence: 'complete this sign-in to connect the tool',\n})",
@@ -3894,7 +3881,7 @@
     "occurrences": 3
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.connectService:wrapper:f4eb33f5a7b99c3c",
+    "id": "src/daemon-service.ts:DaemonService.connectService:wrapper:d16b2716aa2f62ea",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "this.connectMcpServer({ ...input, serverName: match.name,\n    version: match.version, reason }, agentId)",
@@ -4003,7 +3990,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.connectorInstall:systemLine:61bc8158f3bbc9b8",
+    "id": "src/daemon-service.ts:DaemonService.connectorInstall:systemLine:361001c75cbb5814",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: createHash('sha256')\n        .update(`registry-mcp-connected:${row.id}:${row.pairing_generation}`)\n        .digest('hex'),\n    roomId: row.install_room_id,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: registrySubject(row.registry_server_name) },\n    verb: 'connected',\n    consequence: 'the requesting agent can continue the original task',\n    kind: 'connector-offer-decided',\n    commandId: row.install_command_id,\n    wakes: [row.install_agent_id],\n})",
@@ -4012,7 +3999,6 @@
       "\"MCP server\"",
       "\"connected\"",
       "\"the requesting agent can continue the original task\"",
-      "$local()",
       ".registry_server_name",
       ".replace",
       ".replace()",
@@ -4109,7 +4095,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:70018432dbc241b1",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:68dcd157b334c91c",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name,\n        objective: destination.roomId === roomId ? name : objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
@@ -4117,8 +4103,6 @@
       "\"\"",
       "\"corner-open\"",
       "\"opened a corner\"",
-      "$local()",
-      ".$local",
       ".corner_id",
       ".name",
       ".objective",
@@ -4145,7 +4129,7 @@
     "id": "src/daemon-service.ts:DaemonService.createCorner:wrapper:13c9f8ac275bc4b3",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "setCornerHold(db, { cornerId }, commissionedBy)",
+    "template": "setCornerHold(db, { cornerId }, commissionedBy, agentId)",
     "literals": [
       ".author_id",
       ".rows",
@@ -4229,6 +4213,77 @@
     "occurrences": 1
   },
   {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:02cc4a96094cb280",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "failOverUnansweredTurn(db, {\n    roomId: scopedRoom!,\n    agentId: authenticatedAgentId,\n    sourceMessageId: command.source_message_id!,\n})",
+    "literals": [
+      "\"\"",
+      "\"'\"",
+      "\"*\"",
+      "\"**\"",
+      "\"\\\"\"",
+      "\"\\\\$&\"",
+      "\"approveCornerMerge\"",
+      "\"complete\"",
+      "\"failed\"",
+      "\"free-agent-time-limit\"",
+      "\"getCornerRestoreState\"",
+      "\"getPrChecksStatus\"",
+      "\"getRoomAuthority\"",
+      "\"getRoomConversation\"",
+      "\"iu\"",
+      "\"listCornerBriefRevisions\"",
+      "\"listRoomMembers\"",
+      "\"mergeCorner\"",
+      "\"postAgentTurnReceipt\"",
+      "\"postRoomMessage\"",
+      "\"readCornerPullRequest\"",
+      "\"retractAgentLiveOutput\"",
+      "\"string\"",
+      "\"|\"",
+      "\"‘\"",
+      "\"’\"",
+      "\"“\"",
+      "\"”\"",
+      "$local()",
+      ".cornerId",
+      ".flatMap",
+      ".flatMap()",
+      ".generationId",
+      ".has",
+      ".has()",
+      ".join",
+      ".join()",
+      ".reason",
+      ".relay",
+      ".replace",
+      ".replace()",
+      ".requestId",
+      ".roomId",
+      ".rowCount",
+      ".rows",
+      ".source_message_id",
+      ".status",
+      ".text",
+      ".turnId",
+      "Boolean()",
+      "FirstLiteralToken:0",
+      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
+      "[\"\",\"\",\"\",\"\\\\s*:\"]",
+      "[\"\",\"\",\"\\\\s*:\",\"\"]",
+      "[\"\",\"\\\\s*:\"]",
+      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
+      "binary:&&",
+      "binary:===",
+      "binary:??",
+      "binary:||",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:04415677d11d21dd",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
@@ -4253,11 +4308,170 @@
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:13c9f8ac275bc4b3",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "setCornerHold(db, hold, actor.author_id)",
+    "template": "setCornerHold(db, hold, actor.author_id, authenticatedAgentId)",
     "literals": [
       ".author_id",
       ".rows",
       "FirstLiteralToken:0"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:2f72d8163df702fc",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), String(candidate.text), candidate.agent === undefined ? undefined : String(candidate.agent))",
+    "literals": [
+      "\"\"",
+      "\"'\"",
+      "\"*\"",
+      "\"**\"",
+      "\"\\\"\"",
+      "\"\\\\$&\"",
+      "\"complete\"",
+      "\"iu\"",
+      "\"|\"",
+      "\"‘\"",
+      "\"’\"",
+      "\"“\"",
+      "\"”\"",
+      "$local()",
+      ".address",
+      ".agent",
+      ".authorizedCommand",
+      ".database",
+      ".flatMap",
+      ".flatMap()",
+      ".join",
+      ".join()",
+      ".replace",
+      ".replace()",
+      ".text",
+      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
+      "String()",
+      "[\"\",\"\",\"\",\"\\\\s*:\"]",
+      "[\"\",\"\",\"\\\\s*:\",\"\"]",
+      "[\"\",\"\\\\s*:\"]",
+      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:3d8866d0f7838d32",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "this.report(text, authenticatedAgentId, command, db, true)",
+    "literals": [
+      "\"\"",
+      "\"'\"",
+      "\"*\"",
+      "\"**\"",
+      "\"\\\"\"",
+      "\"\\\\$&\"",
+      "\"approveCornerMerge\"",
+      "\"complete\"",
+      "\"failed\"",
+      "\"free-agent-time-limit\"",
+      "\"getCornerRestoreState\"",
+      "\"getPrChecksStatus\"",
+      "\"getRoomAuthority\"",
+      "\"getRoomConversation\"",
+      "\"iu\"",
+      "\"listCornerBriefRevisions\"",
+      "\"listRoomMembers\"",
+      "\"mergeCorner\"",
+      "\"postAgentTurnReceipt\"",
+      "\"postRoomMessage\"",
+      "\"readCornerPullRequest\"",
+      "\"retractAgentLiveOutput\"",
+      "\"string\"",
+      "\"|\"",
+      "\"‘\"",
+      "\"’\"",
+      "\"“\"",
+      "\"”\"",
+      "$local()",
+      ".cornerId",
+      ".flatMap",
+      ".flatMap()",
+      ".generationId",
+      ".has",
+      ".has()",
+      ".join",
+      ".join()",
+      ".reason",
+      ".relay",
+      ".replace",
+      ".replace()",
+      ".requestId",
+      ".roomId",
+      ".rowCount",
+      ".rows",
+      ".status",
+      ".text",
+      ".trim",
+      ".trim()",
+      ".turnId",
+      "Boolean()",
+      "FirstLiteralToken:0",
+      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
+      "String()",
+      "TrueKeyword",
+      "[\"\",\"\",\"\",\"\\\\s*:\"]",
+      "[\"\",\"\",\"\\\\s*:\",\"\"]",
+      "[\"\",\"\\\\s*:\"]",
+      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
+      "binary:&&",
+      "binary:===",
+      "binary:??",
+      "binary:||",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:4eddc1bbd9d16f9f",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "stopCommandedTurn(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), candidate.agent === undefined ? undefined : String(candidate.agent))",
+    "literals": [
+      "\"\"",
+      "\"'\"",
+      "\"*\"",
+      "\"**\"",
+      "\"\\\"\"",
+      "\"\\\\$&\"",
+      "\"complete\"",
+      "\"iu\"",
+      "\"|\"",
+      "\"‘\"",
+      "\"’\"",
+      "\"“\"",
+      "\"”\"",
+      "$local()",
+      ".address",
+      ".agent",
+      ".database",
+      ".flatMap",
+      ".flatMap()",
+      ".join",
+      ".join()",
+      ".replace",
+      ".replace()",
+      ".text",
+      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
+      "String()",
+      "[\"\",\"\",\"\",\"\\\\s*:\"]",
+      "[\"\",\"\",\"\\\\s*:\",\"\"]",
+      "[\"\",\"\\\\s*:\"]",
+      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
     ],
     "occurrences": 1
   },
@@ -4270,18 +4484,7 @@
     "occurrences": 17
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:a606017760056f4e",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "postStarterVideoPreview(this.database, this.objects, { ...request, agentId: authenticatedAgentId })",
-    "literals": [
-      ".database",
-      ".objects"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:af5895185be906db",
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:51ced7ea2ac63a48",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "this.linkSpendApproval(request, authenticatedAgentId, owner.owner_id, created.id, created.approval_url)",
@@ -4397,244 +4600,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:ca119ff7696920dd",
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:826df1537bc4f76c",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "stopCommandedTurn(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), candidate.agent === undefined ? undefined : String(candidate.agent))",
-    "literals": [
-      "\"\"",
-      "\"'\"",
-      "\"*\"",
-      "\"**\"",
-      "\"\\\"\"",
-      "\"\\\\$&\"",
-      "\"complete\"",
-      "\"iu\"",
-      "\"|\"",
-      "\"‘\"",
-      "\"’\"",
-      "\"“\"",
-      "\"”\"",
-      "$local()",
-      ".address",
-      ".agent",
-      ".database",
-      ".flatMap",
-      ".flatMap()",
-      ".join",
-      ".join()",
-      ".replace",
-      ".replace()",
-      ".text",
-      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
-      "String()",
-      "[\"\",\"\",\"\",\"\\\\s*:\"]",
-      "[\"\",\"\",\"\\\\s*:\",\"\"]",
-      "[\"\",\"\\\\s*:\"]",
-      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
-      "binary:===",
-      "conditional:?:",
-      "end:expression",
-      "quote()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:de60c7a46d4547be",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "failOverUnansweredTurn(db, {\n    roomId: scopedRoom!,\n    agentId: authenticatedAgentId,\n    sourceMessageId: command.source_message_id!,\n})",
-    "literals": [
-      "\"\"",
-      "\"'\"",
-      "\"*\"",
-      "\"**\"",
-      "\"\\\"\"",
-      "\"\\\\$&\"",
-      "\"approveCornerMerge\"",
-      "\"complete\"",
-      "\"failed\"",
-      "\"free-agent-time-limit\"",
-      "\"getCornerRestoreState\"",
-      "\"getPrChecksStatus\"",
-      "\"getRoomAuthority\"",
-      "\"getRoomConversation\"",
-      "\"iu\"",
-      "\"listCornerBriefRevisions\"",
-      "\"listRoomMembers\"",
-      "\"mergeCorner\"",
-      "\"postAgentTurnReceipt\"",
-      "\"postRoomMessage\"",
-      "\"readCornerPullRequest\"",
-      "\"retractAgentLiveOutput\"",
-      "\"string\"",
-      "\"|\"",
-      "\"‘\"",
-      "\"’\"",
-      "\"“\"",
-      "\"”\"",
-      "$local()",
-      ".cornerId",
-      ".flatMap",
-      ".flatMap()",
-      ".generationId",
-      ".has",
-      ".has()",
-      ".join",
-      ".join()",
-      ".reason",
-      ".relay",
-      ".replace",
-      ".replace()",
-      ".requestId",
-      ".roomId",
-      ".rowCount",
-      ".rows",
-      ".source_message_id",
-      ".status",
-      ".text",
-      ".turnId",
-      "Boolean()",
-      "FirstLiteralToken:0",
-      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
-      "[\"\",\"\",\"\",\"\\\\s*:\"]",
-      "[\"\",\"\",\"\\\\s*:\",\"\"]",
-      "[\"\",\"\\\\s*:\"]",
-      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
-      "binary:&&",
-      "binary:===",
-      "binary:??",
-      "binary:||",
-      "conditional:?:",
-      "end:expression",
-      "quote()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:e58df3086769e9d5",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), String(candidate.text), candidate.agent === undefined ? undefined : String(candidate.agent))",
-    "literals": [
-      "\"\"",
-      "\"'\"",
-      "\"*\"",
-      "\"**\"",
-      "\"\\\"\"",
-      "\"\\\\$&\"",
-      "\"complete\"",
-      "\"iu\"",
-      "\"|\"",
-      "\"‘\"",
-      "\"’\"",
-      "\"“\"",
-      "\"”\"",
-      "$local()",
-      ".address",
-      ".agent",
-      ".authorizedCommand",
-      ".database",
-      ".flatMap",
-      ".flatMap()",
-      ".join",
-      ".join()",
-      ".replace",
-      ".replace()",
-      ".text",
-      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
-      "String()",
-      "[\"\",\"\",\"\",\"\\\\s*:\"]",
-      "[\"\",\"\",\"\\\\s*:\",\"\"]",
-      "[\"\",\"\\\\s*:\"]",
-      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
-      "binary:===",
-      "conditional:?:",
-      "end:expression",
-      "quote()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:eb6a95d5ab629cd3",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "this.report(text, authenticatedAgentId, command, db, true)",
-    "literals": [
-      "\"\"",
-      "\"'\"",
-      "\"*\"",
-      "\"**\"",
-      "\"\\\"\"",
-      "\"\\\\$&\"",
-      "\"approveCornerMerge\"",
-      "\"complete\"",
-      "\"failed\"",
-      "\"free-agent-time-limit\"",
-      "\"getCornerRestoreState\"",
-      "\"getPrChecksStatus\"",
-      "\"getRoomAuthority\"",
-      "\"getRoomConversation\"",
-      "\"iu\"",
-      "\"listCornerBriefRevisions\"",
-      "\"listRoomMembers\"",
-      "\"mergeCorner\"",
-      "\"postAgentTurnReceipt\"",
-      "\"postRoomMessage\"",
-      "\"readCornerPullRequest\"",
-      "\"retractAgentLiveOutput\"",
-      "\"string\"",
-      "\"|\"",
-      "\"‘\"",
-      "\"’\"",
-      "\"“\"",
-      "\"”\"",
-      "$local()",
-      ".cornerId",
-      ".flatMap",
-      ".flatMap()",
-      ".generationId",
-      ".has",
-      ".has()",
-      ".join",
-      ".join()",
-      ".reason",
-      ".relay",
-      ".replace",
-      ".replace()",
-      ".requestId",
-      ".roomId",
-      ".rowCount",
-      ".rows",
-      ".status",
-      ".text",
-      ".trim",
-      ".trim()",
-      ".turnId",
-      "Boolean()",
-      "FirstLiteralToken:0",
-      "RegularExpressionLiteral:/[.*+?^${}()|[\\]\\\\]/g",
-      "String()",
-      "TrueKeyword",
-      "[\"\",\"\",\"\",\"\\\\s*:\"]",
-      "[\"\",\"\",\"\\\\s*:\",\"\"]",
-      "[\"\",\"\\\\s*:\"]",
-      "[\"^\\\\s*(?:\",\")\\\\s*\"]",
-      "binary:&&",
-      "binary:===",
-      "binary:??",
-      "binary:||",
-      "conditional:?:",
-      "end:expression",
-      "quote()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:eba17f9a890469b8",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "wrapper",
-    "template": "this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask)",
+    "template": "this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask, candidate.to)",
     "literals": [
       "\"\"",
       "\"'\"",
@@ -4670,8 +4639,18 @@
       "binary:===",
       "conditional:?:",
       "end:expression",
-      "normalizeTrayAsk()",
-      "quote()"
+      "normalizeTrayAsk()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:a606017760056f4e",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "postStarterVideoPreview(this.database, this.objects, { ...request, agentId: authenticatedAgentId })",
+    "literals": [
+      ".database",
+      ".objects"
     ],
     "occurrences": 1
   },
@@ -4788,7 +4767,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.offerConnector:systemLine:49be4383941536b8",
+    "id": "src/daemon-service.ts:DaemonService.offerConnector:systemLine:7f3324130aa583d3",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: switching ? `asked ${addresseeMention} to switch` : `offered ${addresseeMention}`,\n    object: switching ? `${connectorName}'s Google account` : connectorName,\n    consequence: reason,\n    presentation: 'card',\n    cardType: 'connector-offer',\n    card: card as unknown as Record<string, unknown>,\n})",
@@ -4877,7 +4856,6 @@
       "connectorOfferConsequence()",
       "end:expression",
       "randomUUID()",
-      "seconds()",
       "squireAccountSwitchConsequence()"
     ],
     "occurrences": 1
@@ -5030,7 +5008,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.report:wrapper:18fab1beeb3bef4c",
+    "id": "src/daemon-service.ts:DaemonService.report:wrapper:780d637f347839d6",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "reportToCommander(database, command.room_id, agentId, text, reportCommand, createHash('sha256').update(`report:${command.id}:${command.generation_id}:${reportCommand.id}:${directRecipient ?? \"\"}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask, directRecipient })",
@@ -5094,7 +5072,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:restateSystemLine:a9898a8ddfc9cac2",
+    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:restateSystemLine:4ac466ccdc23485b",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "restateSystemLine",
     "template": "restateSystemLine(database, open.id, grantCardPhrase(requester, agent, grants), {\n    agent,\n    owner,\n    requester,\n    grants,\n    ...source,\n})",
@@ -5185,13 +5163,12 @@
       "end:expression",
       "parseCommandGrantTarget()",
       "prefix:!",
-      "randomUUID()",
-      "seconds()"
+      "randomUUID()"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:systemLine:5b884d99559ff477",
+    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:systemLine:99fc540d68a0f207",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: dmRoomId,\n    authorId: squireRoute ? SYSTEM_IDENTITY_ID : agentId,\n    ...grantCardPhrase(requester, agent, [grantView]),\n    presentation: 'card',\n    cardType: 'grant-request',\n    card: {\n        agent,\n        owner,\n        requester,\n        grants: [grantView],\n        ...source,\n    },\n})",
@@ -5279,21 +5256,18 @@
       "end:expression",
       "parseCommandGrantTarget()",
       "prefix:!",
-      "randomUUID()",
-      "seconds()"
+      "randomUUID()"
     ],
     "occurrences": 2
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.requestCornerAppOpen:systemLine:a50f528b9b444daa",
+    "id": "src/daemon-service.ts:DaemonService.requestCornerAppOpen:systemLine:864fe6d918384ef2",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(this.database, {\n    id: messageId,\n    roomId: input.cornerId,\n    subject: { kind: 'agent', id: agentId, name: agent.name },\n    verb: 'opened an app',\n    object: app.title,\n    presentation: 'card',\n    requestId: input.requestId,\n    cardType: 'corner-app',\n    card: { slug: input.slug, title: app.title, revision: app.revision },\n})",
     "literals": [
       "\"opened an app\"",
-      "$local()",
       "'title'",
-      ".$local",
       ".name",
       ".revision",
       ".rows",
@@ -5310,7 +5284,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.resumeRegistrySignIn:systemLine:8f175ac9ddf61324",
+    "id": "src/daemon-service.ts:DaemonService.resumeRegistrySignIn:systemLine:1fa86ddedcb08d63",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(this.database, {\n    id: createHash('sha256')\n        .update(`registry-mcp-signin-resume:${row.id}:${signIn.attemptId}`)\n        .digest('hex'),\n    roomId: target.install_room_id,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: registrySubject(row.registry_server_name) },\n    verb: 'needs',\n    object: { text: 'provider sign-in', url: signIn.url },\n    consequence: 'the provider sign-in page is ready · connect this tool through Trusty Squire',\n    kind: 'connector-offer-decided',\n    commandId: target.install_command_id,\n    wakes: [target.install_agent_id],\n})",
@@ -5320,7 +5294,6 @@
       "\"needs\"",
       "\"provider sign-in\"",
       "\"the provider sign-in page is ready · connect this tool through Trusty Squire\"",
-      "$local()",
       ".registry_server_name",
       ".replace",
       ".replace()",
@@ -5334,14 +5307,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.reviseCornerBrief:systemLine:c32e35044ed488fe",
+    "id": "src/daemon-service.ts:DaemonService.reviseCornerBrief:systemLine:1b1df924c73ce22e",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    roomId: input.cornerId,\n    subject: { kind: 'agent', id: agentId, name: (await this.identity(agentId)).name },\n    verb: 'revised the corner brief',\n    object: { text: `Revision ${revision}`, id: input.cornerId },\n})",
     "literals": [
       "\"revised the corner brief\"",
-      "$local()",
-      ".$local",
       ".expectedRevision",
       ".name",
       ".rows",
@@ -5458,7 +5429,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.squireApprovalDecision:systemLine:d3ed4d474e91a363",
+    "id": "src/daemon-service.ts:DaemonService.squireApprovalDecision:systemLine:dc483de4dd1985c4",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id,\n    roomId: input.roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: `The request to ${action}` },\n    verb: input.status === 'expired' ? 'expired' : input.status === 'approved' ? 'was allowed' : 'was denied',\n    kind: 'squire-approval-decided',\n    requestId: input.requestId,\n    wakes: [agentId],\n    presentation: 'card',\n    cardType: 'squire-approval-decision',\n    card: { approvalId, tool, title, detail, status: input.status, agentId, agentName: agent.name },\n})",
@@ -5467,9 +5438,7 @@
       "\"expired\"",
       "\"was allowed\"",
       "\"was denied\"",
-      "$local()",
       "'action'",
-      ".$local",
       ".action",
       ".approvalId",
       ".detail",
@@ -5496,7 +5465,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.squireLoginWall:systemLine:b38694c389ed738b",
+    "id": "src/daemon-service.ts:DaemonService.squireLoginWall:systemLine:b8909c91095d4d1c",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: 'needs',\n    object: 'Google sign-in',\n    consequence: reason,\n    presentation: 'card',\n    cardType: 'connector-offer',\n    card: card as unknown as Record<string, unknown>,\n})",
@@ -5563,22 +5532,18 @@
       "conditional:?:",
       "end:expression",
       "randomUUID()",
-      "seconds()",
-      "squireLoginWallConsequence()",
-      "squireMachineAddress()"
+      "squireLoginWallConsequence()"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.targetProposal:systemLine:3179a15263bb1114",
+    "id": "src/daemon-service.ts:DaemonService.targetProposal:systemLine:240b21a44f389896",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(this.database, {\n    id: messageId,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: agent.name },\n    verb: 'proposed a target branch',\n    object: input.to,\n    consequence: `instead of ${input.from}`,\n    presentation: 'card',\n    requestId: input.requestId,\n    cardType: 'target-branch',\n    card: {\n        ...(input.purpose ? { purpose: input.purpose.trim().slice(0, 240) } : {}),\n        proposalId: messageId,\n        from: input.from,\n        to: input.to,\n        repository: input.repository,\n        agent,\n    },\n})",
     "literals": [
       "\"hex\"",
       "\"proposed a target branch\"",
-      "$local()",
-      ".$local",
       ".from",
       ".name",
       ".purpose",
@@ -5600,7 +5565,6 @@
       "binary:??",
       "conditional:?:",
       "end:expression",
-      "id()",
       "randomBytes()"
     ],
     "occurrences": 1
@@ -5889,7 +5853,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.processCornerEvent:wrapper:6d464cadb73a18c2",
+    "id": "src/github-operations.ts:GitHubOperations.processCornerEvent:wrapper:7c2742e46494f8fa",
     "file": "apps/server/src/github-operations.ts",
     "kind": "wrapper",
     "template": "this.systemNote(target.corner_id, target.author_id, {\n    subject: actor(text(record(body.pusher)?.name) ?? actorLogin),\n    verb: 'pushed',\n    object: {\n        text: `${commits ? `${commits} commit${commits === 1 ? '' : 's'} to ` : ''}${branch}`,\n        ...(compare ? { url: compare } : {}),\n    },\n    ...(head ? { consequence: `at ${head.slice(0, 12)}` } : {}),\n}, `github:push:${text(body.after) ?? hash(JSON.stringify(body))}`, database)",
@@ -5947,7 +5911,6 @@
       "[\"\",\"\",\"\"]",
       "[\"at \",\"\"]",
       "[\"github:push:\",\"\"]",
-      "actor()",
       "binary:&&",
       "binary:===",
       "binary:??",
@@ -5959,7 +5922,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.processCornerEvent:wrapper:8e3aba18c58b4131",
+    "id": "src/github-operations.ts:GitHubOperations.processCornerEvent:wrapper:9ac747edda96e40b",
     "file": "apps/server/src/github-operations.ts",
     "kind": "wrapper",
     "template": "this.systemNote(target.corner_id, target.author_id, {\n    subject: actor(text(record(pullRequest?.user)?.login) ?? actorLogin),\n    verb: 'opened a pull request',\n    object: { text: title, url },\n}, `github:pull-request:opened:${url}`, database)",
@@ -5984,7 +5947,6 @@
       ".user",
       "[\"Pull request #\",\"\"]",
       "[\"github:pull-request:opened:\",\"\"]",
-      "actor()",
       "binary:&&",
       "binary:===",
       "binary:??",
@@ -5995,7 +5957,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.processRepositoryEvent:systemLine:75d9e18b5fc40f7f",
+    "id": "src/github-operations.ts:GitHubOperations.processRepositoryEvent:systemLine:f962a48a7a12ced8",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: hash(`beeline:${room.room_id}:github-event:${event}:${card.action}:${dedupeKey}`),\n    roomId: room.room_id,\n    authorId: room.author_id,\n    subject: { kind: 'github', name: card.actor },\n    verb: card.action,\n    object: { text: card.title, url: card.url },\n    presentation: 'card',\n    cardType: 'github-event',\n    card: { ...card, ...(room.corner_id ? { cornerId: room.corner_id } : {}) },\n})",
@@ -6051,10 +6013,10 @@
     "occurrences": 2
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.refreshCheckRollup:wrapper:d1f26d89e05f876e",
+    "id": "src/github-operations.ts:GitHubOperations.refreshCheckRollup:wrapper:6a57b3b2b658b906",
     "file": "apps/server/src/github-operations.ts",
     "kind": "wrapper",
-    "template": "this.systemNote(target.corner_id, target.author_id, {\n    subject: GITHUB_SUBJECT,\n    verb: becameFailing ? 'found failing checks on' : `${label} a check`,\n    ...(becamePassing\n        ? { kind: 'check-passed' as const }\n        : becameFailing\n            ? { kind: 'check-failed' as const }\n            : {}),\n    object: becameFailing\n        ? {\n            text: current.pr?.title ??\n                (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),\n            ...(current.pr?.url ? { url: current.pr.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        }\n        : {\n            text: check.name,\n            ...(check.url ? { url: check.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        },\n    ...(becameFailing\n        ? { consequence: `failing ${failing.join(', ')}` }\n        : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'\n            ? { consequence: check.conclusion }\n            : {}),\n    ...(becameFailing ? { payload: {\n            failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),\n            ...(!checksSettled(summary.checks) ? { runInProgress: true } : {}),\n            ...(followup || partialRepair || newAttempt ? { followup: true } : {}),\n        } } : {}),\n}, becamePassing\n    ? `github:checks:green:${check.headSha}:${attempt}`\n    : becameFailing\n        ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : partialRepair ? 'partial' : 'first'}`\n        : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`, database)",
+    "template": "this.systemNote(target.corner_id, target.author_id, {\n    subject: GITHUB_SUBJECT,\n    verb: becameFailing ? 'found failing checks on' : `${label} a check`,\n    ...(becamePassing\n        ? { kind: 'check-passed' as const }\n        : becameFailing\n            ? { kind: 'check-failed' as const }\n            : {}),\n    object: becameFailing\n        ? {\n            text: current.pr?.title ??\n                (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),\n            ...(current.pr?.url ? { url: current.pr.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        }\n        : {\n            text: check.name,\n            ...(check.url ? { url: check.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        },\n    ...(becameFailing\n        ? { consequence: `failing ${failing.join(', ')}` }\n        : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'\n            ? { consequence: check.conclusion }\n            : {}),\n    ...(becameFailing ? { payload: {\n            failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),\n            ...(!checksSettled(summary.checks) ? { runInProgress: true } : {}),\n            ...(followup || partialRepair || newAttempt ? { followup: true } : {}),\n        } } : {}),\n}, becamePassing\n    ? `github:checks:green:${check.headSha}:${attempt}`\n    : becameFailing\n        ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : partialRepair ? 'partial' : 'first'}`\n        : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`, database, true)",
     "literals": [
       "\"\"",
       "\", \"",
@@ -6078,7 +6040,6 @@
       "\"the pull request\"",
       "\"unknown\"",
       "$local()",
-      ".$local",
       ".all",
       ".all()",
       ".app",
@@ -6086,7 +6047,6 @@
       ".checks",
       ".checksSummary",
       ".conclusion",
-      ".corner_id",
       ".digest",
       ".digest()",
       ".failing",
@@ -6187,7 +6147,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.refreshStaleMergeability:systemLine:ddcd23525229abcd",
+    "id": "src/github-operations.ts:GitHubOperations.refreshStaleMergeability:systemLine:efcf409a1fcd93f1",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
     "template": "systemLine(tx, {\n    id: hash(`beeline:${row.corner_id}:github:${conflictKey}`),\n    roomId: row.corner_id,\n    authorId: row.author_id,\n    subject: GITHUB_SUBJECT,\n    verb: 'found merge conflicts in',\n    object: {\n        text: row.title ?? `pull request #${row.number}`,\n        url: row.url,\n        headSha: pr.headSha,\n    },\n    cardType: 'github-corner-note',\n    card: { source: 'github', dedupe: conflictKey },\n})",
@@ -6195,7 +6155,6 @@
       "\"GitHub\"",
       "\"found merge conflicts in\"",
       "\"github\"",
-      "$local()",
       ".app",
       ".headSha",
       ".installationToken",
@@ -6371,7 +6330,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/membership-join.ts:joinRooms:system-card:9e0085e23954d9d1",
+    "id": "src/membership-join.ts:joinRooms:system-card:9877efb66999560d",
     "file": "apps/server/src/membership-join.ts",
     "kind": "system-card",
     "template": "{\n    subject: {\n        kind: context.kind === 'agent' ? ('agent' as const) : ('person' as const),\n        id: input.identityId,\n        name: joiningMention,\n    },\n    verb: 'joined',\n    ...(context.inviter_id &&\n        context.inviter_kind &&\n        context.inviter_name &&\n        context.inviter_handle\n        ? {\n            attribution: {\n                verb: 'invited by',\n                actor: {\n                    kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),\n                    id: context.inviter_id,\n                    name: systemIdentityMention({\n                        id: context.inviter_id,\n                        kind: context.inviter_kind,\n                        name: context.inviter_name,\n                        handle: context.inviter_handle,\n                    }),\n                },\n            },\n        }\n        : {}),\n    kind: 'joined' as const,\n    cardType: 'member-joined',\n    card: { identityId: input.identityId },\n}",
@@ -6415,7 +6374,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/membership-join.ts:joinRooms:systemLine:9e0085e23954d9d1",
+    "id": "src/membership-join.ts:joinRooms:systemLine:9877efb66999560d",
     "file": "apps/server/src/membership-join.ts",
     "kind": "systemLine",
     "template": "systemLine(transaction, {\n    roomId,\n    ...line,\n})",
@@ -6557,7 +6516,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.acceptConnectorOffer:wrapper:6423545a2fd71e33",
+    "id": "src/phone-service.ts:PhoneService.acceptConnectorOffer:wrapper:18d3da4824f52e9d",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.markConnectorOfferConnecting(database, {\n    roomId: offer.room_id,\n    offerId: input.offerId,\n    acceptedBy: acceptor,\n    acceptedAt,\n    connectorId: pairing.connectorId,\n})",
@@ -6589,7 +6548,6 @@
       ".machine_name",
       ".name",
       ".offerId",
-      ".owner_id",
       ".publicOrigin",
       ".rows",
       ".signIn",
@@ -6611,13 +6569,12 @@
       "binary:??",
       "binary:||",
       "conditional:?:",
-      "end:expression",
-      "squireMachineAddress()"
+      "end:expression"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.acceptConnectorOffer:wrapper:713c7364f30bf5a4",
+    "id": "src/phone-service.ts:PhoneService.acceptConnectorOffer:wrapper:838b0ddce0743967",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.markConnectorOfferConnecting(database, { roomId: offer.room_id,\n    offerId: input.offerId, acceptedBy: acceptor, acceptedAt: offer.accepted_at ?? new Date(),\n    connectorId: squireMachineAddress(offer.machine_id) })",
@@ -6642,13 +6599,12 @@
       "[\"squire:\",\"\"]",
       "binary:??",
       "conditional:?:",
-      "end:expression",
-      "squireMachineAddress()"
+      "end:expression"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.acceptWalletOffer:wrapper:b77c3e1ceaf6999c",
+    "id": "src/phone-service.ts:PhoneService.acceptWalletOffer:wrapper:5149d55a7c4369ed",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.markConnectorOfferConnecting(database, {\n    roomId: offer.room_id,\n    offerId: offer.id,\n    acceptedBy: acceptor,\n    acceptedAt,\n})",
@@ -6766,7 +6722,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.cancelAgentTurn:systemLine:ae9248c6557b24fc",
+    "id": "src/phone-service.ts:PhoneService.cancelAgentTurn:systemLine:81b11fd7d4f103b1",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: input.roomId,\n    authorId: viewerId,\n    subject: identitySubject({ id: stopper.pubkey, kind: stopper.kind, name: stopper.name }),\n    verb: 'stopped',\n    object: { text: agent.name, id: agent.pubkey },\n    consequence: `turn cancelled${dropped ? ` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : ''}`,\n    kind: 'turn-cancelled',\n    wakes: [input.agentId],\n    requestId: input.requestId,\n})",
@@ -6923,7 +6879,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.createHumanCorner:systemLine:da5458debd3893c1",
+    "id": "src/phone-service.ts:PhoneService.createHumanCorner:systemLine:f28a5c1a7093fe62",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),\n    verb: 'opened a corner',\n    object: { text: title, id },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: {\n        type: 'corner-open',\n        cornerId: id,\n        name: title,\n        objective: title,\n        ...(source?.rowCount ? { sourceMessageId: input.sourceMessageId } : {}),\n    },\n})",
@@ -6963,7 +6919,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.decideAgentGrant:systemLine:aeb7c04f88397a80",
+    "id": "src/phone-service.ts:PhoneService.decideAgentGrant:systemLine:09c3e219ad363345",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: grant.room_id,\n    authorId: viewerId,\n    subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),\n    verb: decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',\n    kind: 'grant-decided',\n    commandId: (await $databaseResult).rows[0]?.command_id,\n    object: `${grant.kind} ${grant.target}`,\n    wakes: [grant.agent_id],\n    cardType: 'grant-decision',\n    card: { grantId: input.grantId, status },\n})",
@@ -7002,7 +6958,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.decideAgentGrant:wrapper:0994828506f8e347",
+    "id": "src/phone-service.ts:PhoneService.decideAgentGrant:wrapper:53889e63fd1416df",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "settleGrantCard(database, {\n    roomId, grantId: input.grantId, status, decidedBy: decider, decidedAt,\n})",
@@ -7037,7 +6993,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.decideApprovalCard:message-write:e51b7e68b57aa2dd",
+    "id": "src/phone-service.ts:PhoneService.decideApprovalCard:message-write:301fff332c96d8f1",
     "file": "apps/server/src/phone-service.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=card | | JSON.stringify({ status, decidedBy: decider, decidedAt: Math.floor(Date.now() / 1000),\n    ...(row.card_type === 'connector-offer' ? { acceptedBy: decider, acceptedAt: Math.floor(Date.now() / 1000) } : {}) }) :: jsonb",
@@ -7077,7 +7033,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.decideApprovalCard:systemLine:cc6ab7ae3cd29ec0",
+    "id": "src/phone-service.ts:PhoneService.decideApprovalCard:systemLine:57eefb66f2241197",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, { roomId: input.roomId, subject: identitySubject({ id: viewerId, kind: 'human', name: decider.name }),\n    verb: 'declined', object: card.connectorName, kind: 'connector-offer-decided', wakes: [offer.agent_id],\n    ...(offer.command_id ? { commandId: offer.command_id } : {}), cardType: 'connector-offer-decision', card: { offerId: card.offerId, status: 'denied' } })",
@@ -7108,7 +7064,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.decidePermission:systemLine:cbf7009d7252a9f9",
+    "id": "src/phone-service.ts:PhoneService.decidePermission:systemLine:c1f6d1ca75c22b10",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id,\n    roomId: input.roomId,\n    authorId: viewerId,\n    subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),\n    verb: input.decision === 'allow' ? 'allowed' : 'denied',\n    object: {\n        text: `${systemIdentityMention({\n            id: agent.pubkey,\n            kind: agent.kind,\n            name: agent.name,\n            handle: agent.handle ?? null,\n        })} to ${tool}`,\n        id: agent.pubkey,\n    },\n    presentation: 'card',\n    cardType: 'permission',\n    card: {\n        permissionId: input.permissionId,\n        requestId: input.requestId,\n        agent,\n        requester,\n        decider,\n        decidedAt: Math.floor(Date.now() / 1000),\n        ...(typeof card?.reason === 'string' ? { reason: card.reason } : {}),\n        tool,\n        repository: input.repository,\n        ...(card?.purpose === 'squire-spending' ? { purpose: 'squire-spending' } : {}),\n        status: input.decision === 'allow' ? 'allowed' : 'denied',\n    },\n})",
@@ -7176,7 +7132,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.deleteRoomMessage:message-write:2eafebb344961783",
+    "id": "src/phone-service.ts:PhoneService.deleteRoomMessage:message-write:5c332ba9a95089dc",
     "file": "apps/server/src/phone-service.ts",
     "kind": "message-write",
     "template": "UPDATE messages system_event=JSON.stringify(await deletedMessageEvent(database, row.deleted_by, row.author_id)) :: jsonb",
@@ -7274,7 +7230,7 @@
     "occurrences": 2
   },
   {
-    "id": "src/phone-service.ts:PhoneService.flushPendingMentionNotices:wrapper:f9fa13e3c235bb8a",
+    "id": "src/phone-service.ts:PhoneService.flushPendingMentionNotices:wrapper:c263e9eb04bbee04",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.writeMentionNotice(tx, {\n    roomId: row.room_id,\n    id: noticeId,\n    agentId: row.agent_id,\n    agentName: row.agent_name,\n    phrase,\n    afterMessageId: row.source_message_id,\n})",
@@ -7329,7 +7285,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.leaveRoom:systemLine:f6d92c23670b5da9",
+    "id": "src/phone-service.ts:PhoneService.leaveRoom:systemLine:d6c213f8ee7a6ac0",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId,\n    subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),\n    verb: 'left',\n    cardType: 'member-left',\n    card: { identityId: viewerId },\n})",
@@ -7363,13 +7319,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.markConnectorOfferConnecting:message-write:30c726aee599df3c",
+    "id": "src/phone-service.ts:PhoneService.markConnectorOfferConnecting:message-write:fd0e10b2424d7e98",
     "file": "apps/server/src/phone-service.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=JSON.stringify(connecting) :: jsonb",
     "literals": [
       "\"connecting\"",
-      "$local()",
       ".acceptedAt",
       ".acceptedBy",
       ".card",
@@ -7390,7 +7345,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.noteUnansweredMentions:wrapper:fb3660f8618ae21d",
+    "id": "src/phone-service.ts:PhoneService.noteUnansweredMentions:wrapper:b3c240abceee6362",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.writeMentionNotice(this.database, {\n    roomId,\n    id: mentionNoticeId(roomId, agent.agent_id, senderId, phrase.reason, bucket),\n    agentId: agent.agent_id,\n    agentName: agent.agent_name,\n    phrase,\n    afterMessageId,\n})",
@@ -7532,7 +7487,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.removeRoomMember:systemLine:6452bddf1e6c1431",
+    "id": "src/phone-service.ts:PhoneService.removeRoomMember:systemLine:20ab78ab49185d8e",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),\n    verb: 'removed',\n    object: { text: removed.name, id: removed.pubkey },\n    cardType: 'member-removed',\n    card: { identityId: input.memberId },\n})",
@@ -7567,13 +7522,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.sendMessage:wrapper:77bdb6079a02d46e",
+    "id": "src/phone-service.ts:PhoneService.sendMessage:wrapper:550438f862100c82",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "routeHumanMessage(database, id)",
     "literals": [
       "\"hex\"",
-      "$local()",
       ".messageId",
       ".toString",
       ".toString()",
@@ -7585,13 +7539,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.sendMessage:wrapper:861b9305cec203ec",
+    "id": "src/phone-service.ts:PhoneService.sendMessage:wrapper:b1eb3ce7e84ebc28",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id)",
     "literals": [
       "\"hex\"",
-      "$local()",
       ".messageId",
       ".roomId",
       ".toString",
@@ -7604,13 +7557,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.sendReply:wrapper:77bdb6079a02d46e",
+    "id": "src/phone-service.ts:PhoneService.sendReply:wrapper:550438f862100c82",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "routeHumanMessage(database, id)",
     "literals": [
       "\"hex\"",
-      "$local()",
       ".messageId",
       ".toString",
       ".toString()",
@@ -7622,13 +7574,12 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.sendReply:wrapper:861b9305cec203ec",
+    "id": "src/phone-service.ts:PhoneService.sendReply:wrapper:b1eb3ce7e84ebc28",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id)",
     "literals": [
       "\"hex\"",
-      "$local()",
       ".messageId",
       ".roomId",
       ".toString",
@@ -7641,7 +7592,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.setTargetBranch:message-write:fcc5c1a8969a347f",
+    "id": "src/phone-service.ts:PhoneService.setTargetBranch:message-write:2e36101a62692426",
     "file": "apps/server/src/phone-service.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=card | | JSON.stringify({ status: 'allowed', decidedBy: decider, decidedAt: Math.floor(Date.now() / 1000) }) :: jsonb",
@@ -7717,7 +7668,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.updateRoom:systemLine:300a2194d63e019b",
+    "id": "src/phone-service.ts:PhoneService.updateRoom:systemLine:0b9beec946235137",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),\n    verb: 'changed room visibility to',\n    object: input.visibility,\n    cardType: 'room-visibility',\n    card: { visibility: input.visibility },\n})",
@@ -7760,7 +7711,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:projectedMessage:system-card:345da3999e752e4a",
+    "id": "src/phone-service.ts:projectedMessage:system-card:168a26d7e4446b7e",
     "file": "apps/server/src/phone-service.ts",
     "kind": "system-card",
     "template": "{\n    id: row.id,\n    text: row.deleted_at\n        ? row.system_event\n            ? formatSystemLine(row.system_event)\n            : 'Message deleted'\n        : row.text,\n    createdAt: unix(row.created_at),\n    createdAtMs: row.created_at.getTime(),\n    ...(typeof row.version === 'number' ? { version: row.version } : {}),\n    author,\n    ...(!row.deleted_at && row.source_client ? { sourceClient: row.source_client } : {}),\n    presentation: row.deleted_at ? 'system' : row.presentation,\n    ...(row.deleted_at ? { deleted: true } : {}),\n    ...(row.bookmarked ? { bookmarked: true } : {}),\n    ...(row.feedback_reported ? { feedbackReported: true } : {}),\n    ...(row.presentation === 'message'\n        ? {\n            reference: {\n                channelId: row.room_id,\n                eventId: row.id,\n                rootId: row.root_message_id ?? row.id,\n            },\n        }\n        : {}),\n    ...(row.request_id\n        ? { requestId: row.request_id, liveTurnId: row.turn_id ?? `live-turn:${row.request_id}` }\n        : {}),\n    ...(!row.deleted_at && row.attachments.length\n        ? {\n            attachments: (row.attachments as NonNullable<RoomViewMessage['attachments']>).map((attachment) => ({\n                ...attachment,\n                url: attachment.url.startsWith('/')\n                    ? `${publicOrigin}${attachment.url}`\n                    : attachment.url,\n                ...(attachment.previewUrl?.startsWith('/')\n                    ? { previewUrl: `${publicOrigin}${attachment.previewUrl}` }\n                    : {}),\n                ...(attachment.thumbnailUrl?.startsWith('/')\n                    ? { thumbnailUrl: `${publicOrigin}${attachment.thumbnailUrl}` }\n                    : {}),\n            })),\n        }\n        : {}),\n    ...(!row.deleted_at && row.tagged_ids.length ? { mentionPubkeys: row.tagged_ids } : {}),\n    ...(row.agent_model ? { agentModel: row.agent_model } : {}),\n    ...(!row.deleted_at && Object.keys(row.reactions ?? {}).length\n        ? {\n            reactions: MESSAGE_REACTION_EMOJIS.flatMap((emoji) => {\n                const reactors = (row.reactions ?? {})[emoji] ?? [];\n                return reactors.length\n                    ? [\n                        {\n                            emoji,\n                            count: reactors.length,\n                            reacted: viewerId ? reactors.includes(viewerId) : false,\n                            members: reactors.flatMap((reactorId) => {\n                                const reactor = reactionIdentityById.get(reactorId);\n                                return reactor ? [identity(reactor, publicOrigin)] : [];\n                            }),\n                        },\n                    ]\n                    : [];\n            }),\n        }\n        : {}),\n    ...(row.reply_to_message_id\n        ? {\n            reply: {\n                channelId: row.room_id,\n                eventId: row.reply_to_message_id,\n                rootId: row.root_message_id ?? row.reply_to_message_id,\n            },\n        }\n        : {}),\n    ...(row.activity ? { activity: row.activity as NonNullable<RoomViewMessage['activity']> } : {}),\n    ...(row.durable_fact ? { durableFact: row.durable_fact } : {}),\n    ...(row.system_event ? { systemEvent: row.system_event } : {}),\n}",
@@ -7854,7 +7805,18 @@
     "occurrences": 1
   },
   {
-    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:message-write:52dfb8bdbe2646c9",
+    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:message-write:5fec25754107d164",
+    "file": "apps/server/src/repository-onboarding.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=jsonb_set ( card , '{status}' , '\"settled\"' )",
+    "literals": [
+      "'\"settled\"'",
+      "'{status}'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:message-write:a606d20d1be7028f",
     "file": "apps/server/src/repository-onboarding.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=JSON.stringify(card) :: jsonb",
@@ -7863,10 +7825,8 @@
       "\", \"",
       "\"/\"",
       "\"Fix the red CI\"",
-      "\"branches?per_page=100\"",
       "\"hex\"",
       "\"install_missing\"",
-      "\"issues?state=open&sort=created&direction=asc&per_page=50\"",
       "\"no_repo_linked\"",
       "\"number\"",
       "\"object\"",
@@ -7930,7 +7890,6 @@
       ".replace",
       ".replace()",
       ".repository_name",
-      ".repository_target_branch",
       ".roomId",
       ".rows",
       ".sha",
@@ -7977,9 +7936,6 @@
       "[\"Open branch: \",\"\"]",
       "[\"Read issue #\",\": \",\". Reproduce it and implement the smallest fix.\"]",
       "[\"Reproduce and fix the failing checks: \",\". Keep the fix narrow.\"]",
-      "[\"commits/\",\"\"]",
-      "[\"commits?sha=\",\"&per_page=30\"]",
-      "[\"git/trees/\",\"?recursive=1\"]",
       "[\"new-project-\",\"\"]",
       "binary:!==",
       "binary:&&",
@@ -7989,31 +7945,17 @@
       "binary:instanceof",
       "binary:||",
       "conditional:?:",
-      "encodeURIComponent()",
       "end:expression",
       "prefix:!",
       "prefix:-",
       "provider:issuesRequest",
       "provider:readCommitCheckRollup",
-      "randomBytes()",
-      "read()",
-      "records()"
+      "randomBytes()"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:message-write:5fec25754107d164",
-    "file": "apps/server/src/repository-onboarding.ts",
-    "kind": "message-write",
-    "template": "UPDATE messages card=jsonb_set ( card , '{status}' , '\"settled\"' )",
-    "literals": [
-      "'\"settled\"'",
-      "'{status}'"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:systemLine:012048cd47647ed5",
+    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:systemLine:a80c4e2529f94820",
     "file": "apps/server/src/repository-onboarding.ts",
     "kind": "systemLine",
     "template": "systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,\n    subject: { id: input.agentId, kind: 'agent', name: room.name },\n    verb: kind === 'starters' ? 'suggested work' : 'offered a repository',\n    object: room.repository_name ?? 'Choose or create a repository', presentation: 'card',\n    cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown> })",
@@ -8023,10 +7965,8 @@
       "\"/\"",
       "\"Choose or create a repository\"",
       "\"Fix the red CI\"",
-      "\"branches?per_page=100\"",
       "\"hex\"",
       "\"install_missing\"",
-      "\"issues?state=open&sort=created&direction=asc&per_page=50\"",
       "\"no_repo_linked\"",
       "\"number\"",
       "\"object\"",
@@ -8092,7 +8032,6 @@
       ".replace",
       ".replace()",
       ".repository_name",
-      ".repository_target_branch",
       ".roomId",
       ".rows",
       ".sha",
@@ -8137,9 +8076,6 @@
       "[\"Open branch: \",\"\"]",
       "[\"Read issue #\",\": \",\". Reproduce it and implement the smallest fix.\"]",
       "[\"Reproduce and fix the failing checks: \",\". Keep the fix narrow.\"]",
-      "[\"commits/\",\"\"]",
-      "[\"commits?sha=\",\"&per_page=30\"]",
-      "[\"git/trees/\",\"?recursive=1\"]",
       "[\"new-project-\",\"\"]",
       "binary:!==",
       "binary:&&",
@@ -8149,110 +8085,17 @@
       "binary:instanceof",
       "binary:||",
       "conditional:?:",
-      "encodeURIComponent()",
       "end:expression",
       "prefix:!",
       "prefix:-",
       "provider:issuesRequest",
       "provider:readCommitCheckRollup",
-      "randomBytes()",
-      "read()",
-      "records()"
+      "randomBytes()"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:answerRoomChoice:wrapper:3f69b05e9d6ddd83",
-    "file": "apps/server/src/room-choice.ts",
-    "kind": "wrapper",
-    "template": "writeChoiceCard(database, choice.message_id, card)",
-    "literals": [
-      "\"closed\"",
-      "\"open\"",
-      "\"poll\"",
-      "$local()",
-      ".agent",
-      ".agent_id",
-      ".answeredBy",
-      ".ask",
-      ".avatar",
-      ".choiceId",
-      ".closesAt",
-      ".closes_at",
-      ".constraint",
-      ".constraint_text",
-      ".electorate",
-      ".face_id",
-      ".floor",
-      ".floor()",
-      ".footer",
-      ".getTime",
-      ".getTime()",
-      ".handle",
-      ".id",
-      ".length",
-      ".map",
-      ".map()",
-      ".mentionIds",
-      ".mode",
-      ".name",
-      ".note",
-      ".optionId",
-      ".option_id",
-      ".options",
-      ".outcome",
-      ".prompt",
-      ".requester",
-      ".responses",
-      ".rows",
-      ".selectedOptionId",
-      ".status",
-      ".voter_id",
-      "FirstLiteralToken:0",
-      "FirstLiteralToken:1",
-      "FirstLiteralToken:1000",
-      "binary:+",
-      "binary:/",
-      "binary:===",
-      "binary:??",
-      "choiceClosedFooter()",
-      "conditional:?:",
-      "decorateChoiceOptions()",
-      "end:expression",
-      "tallyChoiceVotes()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/room-choice.ts:answerRoomChoice:wrapper:78c5debef948576f",
-    "file": "apps/server/src/room-choice.ts",
-    "kind": "wrapper",
-    "template": "wakeChoice(database, {\n    roomId: choice.room_id,\n    authorId: input.viewerId,\n    agentId: choice.agent_id,\n    subject: viewer,\n    verb: 'picked',\n    object: option.letter,\n    consequence: option.label,\n    kind: 'choice-answered',\n    card: {\n        choiceId: choice.id,\n        optionId: input.optionId,\n        letter: option.letter,\n        ...(note ? { note } : {}),\n    },\n})",
-    "literals": [
-      "\"picked\"",
-      "$local()",
-      ".agent_id",
-      ".choiceId",
-      ".find",
-      ".find()",
-      ".id",
-      ".label",
-      ".letter",
-      ".note",
-      ".optionId",
-      ".options",
-      ".rows",
-      ".viewerId",
-      "FirstLiteralToken:0",
-      "binary:===",
-      "conditional:?:",
-      "end:expression",
-      "normalizeChoiceNote()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/room-choice.ts:answerRoomChoice:wrapper:8270efefaab871c5",
+    "id": "src/room-choice.ts:answerRoomChoice:wrapper:8cfd035088082ade",
     "file": "apps/server/src/room-choice.ts",
     "kind": "wrapper",
     "template": "writeChoiceCard(database, choice.message_id, card)",
@@ -8322,14 +8165,101 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:answerRoomChoice:wrapper:d2953b29342c8d26",
+    "id": "src/room-choice.ts:answerRoomChoice:wrapper:8f3f5266b71df360",
+    "file": "apps/server/src/room-choice.ts",
+    "kind": "wrapper",
+    "template": "wakeChoice(database, {\n    roomId: choice.room_id,\n    authorId: input.viewerId,\n    agentId: choice.agent_id,\n    subject: viewer,\n    verb: 'picked',\n    object: option.letter,\n    consequence: option.label,\n    kind: 'choice-answered',\n    card: {\n        choiceId: choice.id,\n        optionId: input.optionId,\n        letter: option.letter,\n        ...(note ? { note } : {}),\n    },\n})",
+    "literals": [
+      "\"picked\"",
+      "$local()",
+      ".agent_id",
+      ".find",
+      ".find()",
+      ".id",
+      ".label",
+      ".letter",
+      ".note",
+      ".optionId",
+      ".options",
+      ".rows",
+      ".viewerId",
+      "FirstLiteralToken:0",
+      "binary:===",
+      "conditional:?:",
+      "end:expression",
+      "normalizeChoiceNote()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/room-choice.ts:answerRoomChoice:wrapper:f08b06a8389b2d10",
+    "file": "apps/server/src/room-choice.ts",
+    "kind": "wrapper",
+    "template": "writeChoiceCard(database, choice.message_id, card)",
+    "literals": [
+      "\"closed\"",
+      "\"open\"",
+      "\"poll\"",
+      "$local()",
+      ".agent",
+      ".agent_id",
+      ".answeredBy",
+      ".ask",
+      ".avatar",
+      ".choiceId",
+      ".closesAt",
+      ".closes_at",
+      ".constraint",
+      ".constraint_text",
+      ".electorate",
+      ".face_id",
+      ".floor",
+      ".floor()",
+      ".footer",
+      ".getTime",
+      ".getTime()",
+      ".handle",
+      ".id",
+      ".length",
+      ".map",
+      ".map()",
+      ".mentionIds",
+      ".mode",
+      ".name",
+      ".note",
+      ".optionId",
+      ".option_id",
+      ".options",
+      ".outcome",
+      ".prompt",
+      ".requester",
+      ".responses",
+      ".rows",
+      ".selectedOptionId",
+      ".status",
+      ".voter_id",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:1",
+      "FirstLiteralToken:1000",
+      "binary:+",
+      "binary:/",
+      "binary:===",
+      "binary:??",
+      "choiceClosedFooter()",
+      "conditional:?:",
+      "decorateChoiceOptions()",
+      "end:expression",
+      "tallyChoiceVotes()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/room-choice.ts:answerRoomChoice:wrapper:f597b4ebe43c8e23",
     "file": "apps/server/src/room-choice.ts",
     "kind": "wrapper",
     "template": "closeOpenPoll(database, { ...choice, status: 'open' })",
     "literals": [
       "\"open\"",
-      "$local()",
-      ".choiceId",
       ".rows",
       "FirstLiteralToken:0"
     ],
@@ -8356,46 +8286,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:closeOpenPoll:wrapper:8a98e07f7f698b7c",
-    "file": "apps/server/src/room-choice.ts",
-    "kind": "wrapper",
-    "template": "wakeChoice(database, {\n    roomId: choice.room_id,\n    authorId: choice.agent_id,\n    agentId: choice.agent_id,\n    subject: agent,\n    verb: 'asked a poll',\n    consequence,\n    kind: 'poll-closed',\n    card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },\n})",
-    "literals": [
-      "\"asked a poll\"",
-      "\"winner\"",
-      "$local()",
-      ".agent_id",
-      ".electorate",
-      ".find",
-      ".find()",
-      ".id",
-      ".label",
-      ".length",
-      ".map",
-      ".map()",
-      ".optionId",
-      ".option_id",
-      ".options",
-      ".outcome",
-      ".rows",
-      ".uniqueLeaderId",
-      ".voter_id",
-      "FirstLiteralToken:0",
-      "FirstLiteralToken:1",
-      "[\"\",\" of \",\" voted for \",\"\"]",
-      "binary:&&",
-      "binary:+",
-      "binary:===",
-      "binary:??",
-      "choiceClosedFooter()",
-      "conditional:?:",
-      "end:expression",
-      "tallyChoiceVotes()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/room-choice.ts:closeOpenPoll:wrapper:fb9b839ade7a8fa2",
+    "id": "src/room-choice.ts:closeOpenPoll:wrapper:767fc8e2a010a682",
     "file": "apps/server/src/room-choice.ts",
     "kind": "wrapper",
     "template": "writeChoiceCard(database, choice.message_id, card)",
@@ -8456,6 +8347,45 @@
     "occurrences": 1
   },
   {
+    "id": "src/room-choice.ts:closeOpenPoll:wrapper:d7f4e57f936a932f",
+    "file": "apps/server/src/room-choice.ts",
+    "kind": "wrapper",
+    "template": "wakeChoice(database, {\n    roomId: choice.room_id,\n    authorId: choice.agent_id,\n    agentId: choice.agent_id,\n    subject: agent,\n    verb: 'asked a poll',\n    consequence,\n    kind: 'poll-closed',\n    card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },\n})",
+    "literals": [
+      "\"asked a poll\"",
+      "\"winner\"",
+      "$local()",
+      ".agent_id",
+      ".electorate",
+      ".find",
+      ".find()",
+      ".id",
+      ".label",
+      ".length",
+      ".map",
+      ".map()",
+      ".optionId",
+      ".option_id",
+      ".options",
+      ".outcome",
+      ".rows",
+      ".uniqueLeaderId",
+      ".voter_id",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:1",
+      "[\"\",\" of \",\" voted for \",\"\"]",
+      "binary:&&",
+      "binary:+",
+      "binary:===",
+      "binary:??",
+      "choiceClosedFooter()",
+      "conditional:?:",
+      "end:expression",
+      "tallyChoiceVotes()"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/room-choice.ts:closeRunChoices:message-write:49b6b13081f707ed",
     "file": "apps/server/src/room-choice.ts",
     "kind": "message-write",
@@ -8466,7 +8396,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:postRoomChoice:systemLine:30d3c1a62465e4fd",
+    "id": "src/room-choice.ts:postRoomChoice:systemLine:fbc098622d3ec675",
     "file": "apps/server/src/room-choice.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    id: messageId,\n    roomId: input.roomId,\n    authorId: input.agentId,\n    subject: identitySubject({ id: agent.id, kind: agent.kind, name: agent.name }),\n    verb: 'asked',\n    object: prompt,\n    ...(constraint ? { consequence: constraint } : {}),\n    presentation: 'card',\n    cardType: CHOICE_CARD_TYPE,\n    card: card as unknown as Record<string, unknown>,\n    ...(input.requestId ? { requestId: input.requestId } : {}),\n})",
@@ -8542,32 +8472,30 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:settleExpiredChoice:wrapper:54fdcfcacbdc9d47",
+    "id": "src/room-choice.ts:settleExpiredChoice:wrapper:5e0980afdfb39d52",
+    "file": "apps/server/src/room-choice.ts",
+    "kind": "wrapper",
+    "template": "closeOpenPoll(database, choice)",
+    "literals": [
+      ".rows",
+      "FirstLiteralToken:0"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/room-choice.ts:settleExpiredChoice:wrapper:d2af205cc7bfa09e",
     "file": "apps/server/src/room-choice.ts",
     "kind": "wrapper",
     "template": "skipOpenChoice(database, choice, undefined, 'expired')",
     "literals": [
       "\"expired\"",
-      "$local()",
       ".rows",
       "FirstLiteralToken:0"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:settleExpiredChoice:wrapper:e6d9dccde45ef970",
-    "file": "apps/server/src/room-choice.ts",
-    "kind": "wrapper",
-    "template": "closeOpenPoll(database, choice)",
-    "literals": [
-      "$local()",
-      ".rows",
-      "FirstLiteralToken:0"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/room-choice.ts:skipOpenChoice:wrapper:138dc86ce253d1c8",
+    "id": "src/room-choice.ts:skipOpenChoice:wrapper:199989112e793b14",
     "file": "apps/server/src/room-choice.ts",
     "kind": "wrapper",
     "template": "writeChoiceCard(database, choice.message_id, card)",
@@ -8655,14 +8583,13 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:skipRoomChoice:wrapper:b16f1923f947219f",
+    "id": "src/room-choice.ts:skipRoomChoice:wrapper:dfabaab49625e2d1",
     "file": "apps/server/src/room-choice.ts",
     "kind": "wrapper",
     "template": "skipOpenChoice(database, choice, viewer, 'skip', wake)",
     "literals": [
       "\"skip\"",
       "$local()",
-      ".choiceId",
       ".rows",
       ".viewerId",
       "FirstLiteralToken:0"
@@ -8670,12 +8597,11 @@
     "occurrences": 1
   },
   {
-    "id": "src/room-choice.ts:wakeChoice:systemLine:011d5b4a5d309b10",
+    "id": "src/room-choice.ts:wakeChoice:systemLine:2394d8a4477ba73f",
     "file": "apps/server/src/room-choice.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId: input.roomId,\n    authorId: input.authorId,\n    subject: identitySubject({\n        id: input.subject.id,\n        kind: input.subject.kind,\n        name: input.subject.name,\n    }),\n    verb: input.verb,\n    ...(input.object ? { object: input.object } : {}),\n    ...(input.consequence ? { consequence: input.consequence } : {}),\n    kind: input.kind,\n    wakes: [input.agentId],\n    cardType: input.kind,\n    card: input.card,\n})",
     "literals": [
-      "$local()",
       ".card",
       ".consequence",
       ".name",
@@ -8746,10 +8672,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:2119b62e4ff4bf80",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:32d277482046c965",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
-    "template": "exec('reviseCornerBrief', { ...context, cornerId, expectedRevision: args.expectedRevision, reviewer: args.reviewer,\n    brief: { ...briefDraft(args.brief), change: args.change } })",
+    "template": "exec('renameCorner', { ...context, cornerId, name: args.name, reviewer: args.reviewer, objective: args.objective,\n    brief: args.brief === undefined ? undefined : briefDraft(args.brief) })",
     "literals": [
       "\"object\"",
       "$local()",
@@ -8757,16 +8683,16 @@
       ".approval",
       ".attachments",
       ".brief",
-      ".change",
       ".entries",
       ".entries()",
-      ".expectedRevision",
       ".filter",
       ".filter()",
       ".fromEntries",
       ".fromEntries()",
       ".isArray",
       ".isArray()",
+      ".name",
+      ".objective",
       ".repositoryWork",
       ".reviewer",
       ".spec",
@@ -8847,19 +8773,58 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:66a487f9733f29e5",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:6ec768da5593a22d",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "exec('connect', { ...context, service: text(args.service), reason: text(args.reason), continuation: text(args.continuation),\n    squireAvailable: false, reconnect: args.reconnect === true ? true : undefined, noApi: args.noApi === true ? true : undefined })",
+    "literals": [
+      "\"string\"",
+      ".continuation",
+      ".noApi",
+      ".reason",
+      ".reconnect",
+      ".service",
+      ".trim",
+      ".trim()",
+      "FalseKeyword",
+      "TrueKeyword",
+      "binary:&&",
+      "binary:===",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:7065e243a41b9998",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
     "template": "exec('findConnectors', { roomId: context.roomId, query: text(args.query) })",
     "literals": [
       "\"string\"",
-      "$local()",
       ".query",
       ".trim",
       ".trim()",
       "binary:&&",
       "binary:===",
       "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:84a0f0b02e69153f",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.exec(member, op, defined(input))",
+    "literals": [
+      ".entries",
+      ".entries()",
+      ".filter",
+      ".filter()",
+      ".fromEntries",
+      ".fromEntries()",
+      "binary:!==",
       "end:expression"
     ],
     "occurrences": 1
@@ -8888,24 +8853,6 @@
       ".error_excerpt",
       ".summary",
       ".tool_name"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:98088b599eadbd85",
-    "file": "apps/server/src/rooms-mcp-agent.ts",
-    "kind": "wrapper",
-    "template": "this.exec(member, op, defined(input))",
-    "literals": [
-      "$local()",
-      ".entries",
-      ".entries()",
-      ".filter",
-      ".filter()",
-      ".fromEntries",
-      ".fromEntries()",
-      "binary:!==",
-      "end:expression"
     ],
     "occurrences": 1
   },
@@ -8977,26 +8924,38 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:e2edf135bd5c8292",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:e22987cc6857385e",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
-    "template": "exec('connect', { ...context, service: text(args.service), reason: text(args.reason), continuation: text(args.continuation),\n    squireAvailable: false, reconnect: args.reconnect === true ? true : undefined, noApi: args.noApi === true ? true : undefined })",
+    "template": "exec('reviseCornerBrief', { ...context, cornerId, expectedRevision: args.expectedRevision, reviewer: args.reviewer,\n    brief: { ...briefDraft(args.brief), change: args.change } })",
     "literals": [
-      "\"string\"",
+      "\"object\"",
       "$local()",
-      ".continuation",
-      ".noApi",
-      ".reason",
-      ".reconnect",
-      ".service",
-      ".trim",
-      ".trim()",
-      "FalseKeyword",
-      "TrueKeyword",
+      ".address",
+      ".approval",
+      ".attachments",
+      ".brief",
+      ".change",
+      ".entries",
+      ".entries()",
+      ".expectedRevision",
+      ".filter",
+      ".filter()",
+      ".fromEntries",
+      ".fromEntries()",
+      ".isArray",
+      ".isArray()",
+      ".repositoryWork",
+      ".reviewer",
+      ".spec",
+      ".toLowerCase",
+      ".toLowerCase()",
+      "binary:!==",
       "binary:&&",
       "binary:===",
       "conditional:?:",
-      "end:expression"
+      "end:expression",
+      "prefix:!"
     ],
     "occurrences": 1
   },
@@ -9014,42 +8973,6 @@
       ".title",
       "conditional:?:",
       "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:ed84e356643b6920",
-    "file": "apps/server/src/rooms-mcp-agent.ts",
-    "kind": "wrapper",
-    "template": "exec('renameCorner', { ...context, cornerId, name: args.name, reviewer: args.reviewer, objective: args.objective,\n    brief: args.brief === undefined ? undefined : briefDraft(args.brief) })",
-    "literals": [
-      "\"object\"",
-      "$local()",
-      ".address",
-      ".approval",
-      ".attachments",
-      ".brief",
-      ".entries",
-      ".entries()",
-      ".filter",
-      ".filter()",
-      ".fromEntries",
-      ".fromEntries()",
-      ".isArray",
-      ".isArray()",
-      ".name",
-      ".objective",
-      ".repositoryWork",
-      ".reviewer",
-      ".spec",
-      ".toLowerCase",
-      ".toLowerCase()",
-      "binary:!==",
-      "binary:&&",
-      "binary:===",
-      "conditional:?:",
-      "end:expression",
-      "prefix:!"
     ],
     "occurrences": 1
   },
@@ -9074,7 +8997,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:eed1d31dcc15ca82",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:16ba8f9d5eb3572e",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
     "template": "this.end(member, turn, reported)",
@@ -9165,7 +9088,7 @@
     "id": "src/server.ts:createBeelineServer:wrapper:4f53cda18c2baa0c",
     "file": "apps/server/src/server.ts",
     "kind": "wrapper",
-    "template": "route(request, response, options, invitePreview, readLimits, liveHealth, helperVersionGate)",
+    "template": "route(request, response, options, invitePreview, liveHealth, helperVersionGate, dispatchPhoneOperation)",
     "literals": [],
     "occurrences": 1
   },
@@ -9180,7 +9103,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/server.ts:route:wrapper:149e8190e10ea8f6",
+    "id": "src/server.ts:route:wrapper:7b634b6816f78201",
     "file": "apps/server/src/server.ts",
     "kind": "wrapper",
     "template": "$databaseResult",
@@ -9190,10 +9113,7 @@
       "\"sha256\"",
       "\"utf8\"",
       "$local()",
-      ".#daemonAuthCache",
       ".$local",
-      ".agentId",
-      ".agent_id",
       ".auth",
       ".authorization",
       ".concat",
@@ -9202,9 +9122,8 @@
       ".digest()",
       ".from",
       ".from()",
-      ".get",
-      ".get()",
       ".headers",
+      ".identity_id",
       ".isBuffer",
       ".isBuffer()",
       ".length",
@@ -9234,7 +9153,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/server.ts:route:wrapper:dfea9eeb13a8294b",
+    "id": "src/server.ts:route:wrapper:bb3014555a4d618c",
     "file": "apps/server/src/server.ts",
     "kind": "wrapper",
     "template": "$databaseResult",
@@ -9244,7 +9163,10 @@
       "\"sha256\"",
       "\"utf8\"",
       "$local()",
+      ".#daemonAuthCache",
       ".$local",
+      ".agentId",
+      ".agent_id",
       ".auth",
       ".authorization",
       ".concat",
@@ -9253,8 +9175,9 @@
       ".digest()",
       ".from",
       ".from()",
+      ".get",
+      ".get()",
       ".headers",
-      ".identity_id",
       ".isBuffer",
       ".isBuffer()",
       ".length",
@@ -9313,7 +9236,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/starter-onboarding.ts:postStarterGame:wrapper:044f0661b0168600",
+    "id": "src/starter-onboarding.ts:postStarterGame:wrapper:f5fdbce41f7b511c",
     "file": "apps/server/src/starter-onboarding.ts",
     "kind": "wrapper",
     "template": "postStarterNextStep(database, roomId, game.ally.id)",
@@ -9456,10 +9379,8 @@
       "binary:^=",
       "binary:|",
       "binary:||",
-      "channel()",
       "conditional:?:",
       "end:expression",
-      "escapeHtml()",
       "random()",
       "readFile()",
       "resolveFace()",
@@ -9491,7 +9412,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/starter-onboarding.ts:postStarterVideoPreview:message-write:dd671f4491caf130",
+    "id": "src/starter-onboarding.ts:postStarterVideoPreview:message-write:8775220617f75513",
     "file": "apps/server/src/starter-onboarding.ts",
     "kind": "message-write",
     "template": "UPDATE messages card=card | | JSON.stringify({ videoPreview: { videoObjectId: input.videoObjectId, frameUrl: frame.url,\n        title: input.title.trim(), description: input.description, visibility: input.visibility } }) :: jsonb",
@@ -9668,7 +9589,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/system-line.ts:restateSystemLine:message-write:acc8ed044c977f54",
+    "id": "src/system-line.ts:restateSystemLine:message-write:eb8bf4bc68d15d35",
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
     "template": "UPDATE messages text=text, system_event=JSON.stringify(event) :: jsonb, card=COALESCE ( card ? JSON.stringify(card) : null :: jsonb , card )",
@@ -9747,7 +9668,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/system-line.ts:systemLine:message-write:f42d8131ff1b9bbf",
+    "id": "src/system-line.ts:systemLine:message-write:a866df10759eefa4",
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
     "template": "INSERT messages text=text, card=input.card ? JSON.stringify({ ...input.card, ask: approvalAsk(input.cardType, input.card) }) : null :: jsonb, system_event=JSON.stringify(event) :: jsonb, author_id=authorId, presentation=input.presentation ?? 'system', card_type=input.cardType ?? null",
@@ -9850,7 +9771,6 @@
       "binary:||",
       "conditional:?:",
       "end:expression",
-      "field()",
       "formatSystemLine()",
       "shortenAsk()"
     ],
@@ -10346,7 +10266,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/wallet-notices.ts:postWalletNotice:restateSystemLine:e836d5f2d1241a5d",
+    "id": "src/wallet-notices.ts:postWalletNotice:restateSystemLine:30534cb79f0f5ea1",
     "file": "apps/server/src/wallet-notices.ts",
     "kind": "restateSystemLine",
     "template": "restateSystemLine(tx, id, phrase, next)",
@@ -10393,13 +10313,12 @@
       "binary:||",
       "conditional:?:",
       "end:expression",
-      "prefix:!",
-      "terminal()"
+      "prefix:!"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/wallet-notices.ts:postWalletNotice:systemLine:b9efbda4448f2321",
+    "id": "src/wallet-notices.ts:postWalletNotice:systemLine:2c515f794b924d29",
     "file": "apps/server/src/wallet-notices.ts",
     "kind": "systemLine",
     "template": "systemLine(tx, {\n    ...phrase,\n    id,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    durableFact: next.status === 'failed' || next.status === 'refused' ? 'failure' : 'action',\n    card: next,\n})",
@@ -10446,13 +10365,12 @@
       "binary:||",
       "conditional:?:",
       "end:expression",
-      "prefix:!",
-      "terminal()"
+      "prefix:!"
     ],
     "occurrences": 1
   },
   {
-    "id": "src/wallet.ts:agentSignTypedData:systemLine:2956b556eaff9069",
+    "id": "src/wallet.ts:agentSignTypedData:systemLine:629d0693af64f329",
     "file": "apps/server/src/wallet.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Wallet' },\n    verb: 'signed',\n    object: { text: 'EIP-712 typed data' },\n    consequence: (await agentName(database, agentId)) ?? 'An agent',\n    presentation: 'card',\n    cardType: 'wallet-signature',\n    card: {\n        agentId,\n        address: ctx.binding.eoaAddress,\n        domain: input.domain,\n        primaryType: input.primaryType,\n        payloadSha256: createHash('sha256').update(serialized).digest('hex'),\n    },\n})",
@@ -10562,7 +10480,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workbench.ts:postUsageReceiptCard:systemLine:2234e9075ef4e611",
+    "id": "src/workbench.ts:postUsageReceiptCard:systemLine:9e809c70b753ef1b",
     "file": "apps/server/src/workbench.ts",
     "kind": "systemLine",
     "template": "systemLine(database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    id: messageId,\n    ...phrase,\n    presentation: 'card',\n    cardType: 'connection-receipt',\n    card,\n})",
@@ -10643,7 +10561,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:abandonCornerWorkflowRuns:wrapper:9ed7895a9520865b",
+    "id": "src/workflow-runs.ts:abandonCornerWorkflowRuns:wrapper:4d79478bd501f27b",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "closeRun(db, scope, {\n    status: 'abandoned',\n    outcome: 'corner_closed',\n    reason: 'corner closed',\n    line: {\n        authorId: SYSTEM_IDENTITY_ID,\n        subject: { kind: 'system', name: 'the workflow' },\n        verb: 'closed',\n        object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,\n        consequence: `as abandoned at ${scope.stateName} because its corner closed`,\n    },\n})",
@@ -10684,7 +10602,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:assignWorkflowRole:wrapper:e9987e0d84606e61",
+    "id": "src/workflow-runs.ts:assignWorkflowRole:wrapper:7bb41219d5887ba3",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "moveRole(db, scope, {\n    role: input.role,\n    picked: targetAgentId,\n    tried: (run.tried ?? []).filter((entry) => entry.agentId !== targetAgentId),\n    why: `${caller.get(command.agent_id)} assigned it`,\n})",
@@ -10752,7 +10670,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:cancelWorkflowRun:wrapper:2fa9da5298f904f9",
+    "id": "src/workflow-runs.ts:cancelWorkflowRun:wrapper:92e5b0f9ec95c5a2",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "closeRun(db, scope, {\n    status: 'abandoned',\n    outcome: 'cancelled',\n    reason,\n    cancellation: { reason, actorId },\n    line: {\n        authorId: SYSTEM_IDENTITY_ID,\n        subject: identitySubject(await loadIdentityRow(db, actorId)),\n        verb: 'cancelled workflow',\n        object: run.workflowSlug,\n        consequence: `run ${shortRunId(input.runId)}`,\n    },\n})",
@@ -10875,7 +10793,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:enterState:systemLine:6066cfffa560ff8d",
+    "id": "src/workflow-runs.ts:enterState:systemLine:ac10aec288e9db8f",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: cardId,\n    roomId,\n    ...input.line(toState),\n    kind: 'workflow-handoff',\n    ...(!isTerminal && !isGate && nextAgentId ? { wakes: [nextAgentId] } : {}),\n    presentation: 'system',\n    cardType: WORKFLOW_HANDOFF_CARD_TYPE,\n    card: {\n        runId,\n        seq: attempt,\n        workflowSlug: run.workflowSlug,\n        workflowVersion: run.workflowVersion,\n        roleBindings,\n        fromState: stateName,\n        outcome: input.outcome,\n        toState,\n        contents: input.contents,\n        receipt: { ...input.receiptInput, exit: { gate: input.outcome, actorId: input.actorId, ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}) } },\n        answers: run.seq,\n        ...(input.commandId ? { commandId: input.commandId } : {}),\n        ...(nextState.hint ? { receiptHint: nextState.hint } : {}),\n        ...(status ? { status } : {}),\n    },\n})",
@@ -10959,7 +10877,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:enterState:wrapper:4cb6c5f38ed48b33",
+    "id": "src/workflow-runs.ts:enterState:wrapper:57ff230414a726fc",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "dispatchState(db, {\n    workspaceId: scope.workspaceId,\n    roomId,\n    runId,\n    contract,\n    roleBindings,\n    roleAgents,\n    stateName: toState,\n    attempt,\n    cardId,\n    exhausted,\n})",
@@ -11037,12 +10955,11 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:enterState:wrapper:ec4bd0b1142265f3",
+    "id": "src/workflow-runs.ts:enterState:wrapper:b01b97348bac732a",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "saveRunStatus(db, scope, toState)",
     "literals": [
-      "$local()",
       ".kind",
       ".loop",
       ".on",
@@ -11113,7 +11030,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:failOver:wrapper:752ab4310f32a1e4",
+    "id": "src/workflow-runs.ts:failOver:wrapper:aa0dd58db121a724",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "moveRole(db, scope, { role, picked, tried, why: input.why })",
@@ -11185,54 +11102,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:failOver:wrapper:a2bdd1815600cdb0",
-    "file": "apps/server/src/workflow-runs.ts",
-    "kind": "wrapper",
-    "template": "noteWorkflowRoleExhausted(db, {\n    roomId: scope.roomId,\n    runId: scope.runId,\n    workflowSlug: scope.run.workflowSlug,\n    role,\n    afterMessageId: scope.head.id,\n    list,\n    tried,\n    ...(cursor ? { cursor } : {}),\n})",
-    "literals": [
-      "\"checker\"",
-      "\"maker\"",
-      "$local()",
-      "'roleBindings'",
-      ".agentId",
-      ".author_id",
-      ".card",
-      ".created_at",
-      ".filter",
-      ".filter()",
-      ".head",
-      ".holder",
-      ".id",
-      ".includes",
-      ".includes()",
-      ".leaving",
-      ".map",
-      ".map()",
-      ".retryRoleList",
-      ".role",
-      ".roleAgents",
-      ".roleBindings",
-      ".roomId",
-      ".rows",
-      ".run",
-      ".runId",
-      ".state",
-      ".tried",
-      ".why",
-      ".workflowSlug",
-      "Boolean()",
-      "FirstLiteralToken:0",
-      "binary:!==",
-      "binary:===",
-      "binary:??",
-      "conditional:?:",
-      "end:expression",
-      "prefix:!"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/workflow-runs.ts:failOver:wrapper:dc9caa7bdbd29859",
+    "id": "src/workflow-runs.ts:failOver:wrapper:cc5b8410f41a5250",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "enterState(db, scope, {\n    outcome: 'timeout',\n    contents: { reason: reasons || input.why },\n    actorId: SYSTEM_IDENTITY_ID,\n    line: (toState) => ({\n        authorId: SYSTEM_IDENTITY_ID,\n        subject: { kind: 'system', name: 'the workflow' },\n        verb: 'applied',\n        object: 'timeout',\n        consequence: `at ${scope.stateName} and went to ${toState} because nobody on the ${role} role is left${reasons ? ` (${reasons})` : ''} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`.slice(0, 600),\n    }),\n})",
@@ -11340,7 +11210,54 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:failOverUnansweredTurn:wrapper:1a4aa51697b7a2a8",
+    "id": "src/workflow-runs.ts:failOver:wrapper:da25b0939b12c1d9",
+    "file": "apps/server/src/workflow-runs.ts",
+    "kind": "wrapper",
+    "template": "noteWorkflowRoleExhausted(db, {\n    roomId: scope.roomId,\n    runId: scope.runId,\n    workflowSlug: scope.run.workflowSlug,\n    role,\n    afterMessageId: scope.head.id,\n    list,\n    tried,\n    ...(cursor ? { cursor } : {}),\n})",
+    "literals": [
+      "\"checker\"",
+      "\"maker\"",
+      "$local()",
+      "'roleBindings'",
+      ".agentId",
+      ".author_id",
+      ".card",
+      ".created_at",
+      ".filter",
+      ".filter()",
+      ".head",
+      ".holder",
+      ".id",
+      ".includes",
+      ".includes()",
+      ".leaving",
+      ".map",
+      ".map()",
+      ".retryRoleList",
+      ".role",
+      ".roleAgents",
+      ".roleBindings",
+      ".roomId",
+      ".rows",
+      ".run",
+      ".runId",
+      ".state",
+      ".tried",
+      ".why",
+      ".workflowSlug",
+      "Boolean()",
+      "FirstLiteralToken:0",
+      "binary:!==",
+      "binary:===",
+      "binary:??",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/workflow-runs.ts:failOverUnansweredTurn:wrapper:c76820b7088c7036",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "failOver(db, scope, {\n    leaving: input.agentId,\n    why: 'its turn ended with no handoff',\n    whenExhausted: 'timeout',\n})",
@@ -11376,7 +11293,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:fireWorkflowTimer:wrapper:e1705060b8ee767f",
+    "id": "src/workflow-runs.ts:fireWorkflowTimer:wrapper:56f637d33c2fd6be",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "failOver(db, scope, {\n    leaving: scope.run.roleBindings[scope.state.role],\n    why: 'its lease expired',\n    whenExhausted: 'timeout',\n    retryRoleList: timer.retryRoleList,\n})",
@@ -11418,43 +11335,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:fireWorkflowTimer:wrapper:e83812d6cdb076cd",
-    "file": "apps/server/src/workflow-runs.ts",
-    "kind": "wrapper",
-    "template": "expireGate(db, scope, scope.state)",
-    "literals": [
-      "\"live\"",
-      "$local()",
-      ".author_id",
-      ".card",
-      ".catch",
-      ".catch()",
-      ".created_at",
-      ".handoffs",
-      ".markdown",
-      ".parse",
-      ".parse()",
-      ".room_id",
-      ".rows",
-      ".runId",
-      ".runStatus",
-      ".state",
-      ".toState",
-      ".workflowSlug",
-      ".workflowVersion",
-      ".workflow_run",
-      ".workspace_id",
-      "FirstLiteralToken:0",
-      "binary:!==",
-      "binary:||",
-      "conditional:?:",
-      "end:expression",
-      "prefix:!"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/workflow-runs.ts:fireWorkflowTimer:wrapper:feacc5872e3de143",
+    "id": "src/workflow-runs.ts:fireWorkflowTimer:wrapper:ab03d71d9afbc5eb",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "closeRun(db, scope, {\n    status: 'failed',\n    outcome: 'deadline',\n    reason: 'deadline',\n    line: {\n        authorId: SYSTEM_IDENTITY_ID,\n        subject: { kind: 'system', name: 'the workflow' },\n        verb: 'closed',\n        object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,\n        consequence: `as failed at ${scope.stateName} because it passed its deadline${after}`,\n    },\n})",
@@ -11508,44 +11389,34 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:handoff:wrapper:7ef2cabbd11b10df",
+    "id": "src/workflow-runs.ts:fireWorkflowTimer:wrapper:b3930e6ce9a3f4f9",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
-    "template": "settleWorkflowGate(db, {\n    choiceId: answer.choiceId,\n    viewerId: answer.viewerId,\n    optionId: answer.optionId,\n    sourceMessageId: command.source_message_id ?? undefined,\n})",
+    "template": "expireGate(db, scope, scope.state)",
     "literals": [
       "\"live\"",
       "$local()",
       ".author_id",
       ".card",
-      ".choiceId",
+      ".catch",
+      ".catch()",
       ".created_at",
-      ".find",
-      ".find()",
       ".handoffs",
-      ".id",
-      ".label",
       ".markdown",
-      ".optionId",
-      ".options",
-      ".outcome",
       ".parse",
       ".parse()",
       ".room_id",
       ".rows",
       ".runId",
       ".runStatus",
-      ".seq",
-      ".source_message_id",
       ".state",
       ".toState",
-      ".viewerId",
       ".workflowSlug",
       ".workflowVersion",
+      ".workflow_run",
       ".workspace_id",
       "FirstLiteralToken:0",
       "binary:!==",
-      "binary:===",
-      "binary:??",
       "binary:||",
       "conditional:?:",
       "end:expression",
@@ -11554,48 +11425,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:handoff:wrapper:df1944a5f71b6594",
-    "file": "apps/server/src/workflow-runs.ts",
-    "kind": "wrapper",
-    "template": "enterState(db, scope, {\n    outcome: input.outcome,\n    contents: input.contents,\n    ...(input.receipt ? { receiptInput: input.receipt } : {}),\n    actorId: command.agent_id,\n    commandId: command.id,\n    line: (toState) => ({\n        authorId: command.agent_id,\n        subject: identitySubject(actor),\n        verb: 'handed off',\n        object: toState,\n        consequence: `run ${shortRunId(input.runId)} of ${run.workflowSlug}`,\n    }),\n})",
-    "literals": [
-      "\"handed off\"",
-      "\"live\"",
-      "$local()",
-      ".agent_id",
-      ".author_id",
-      ".card",
-      ".contents",
-      ".created_at",
-      ".handoffs",
-      ".id",
-      ".markdown",
-      ".name",
-      ".outcome",
-      ".parse",
-      ".parse()",
-      ".receipt",
-      ".room_id",
-      ".rows",
-      ".runId",
-      ".runStatus",
-      ".toState",
-      ".workflowSlug",
-      ".workflowVersion",
-      ".workspace_id",
-      "FirstLiteralToken:0",
-      "[\"run \",\" of \",\"\"]",
-      "binary:!==",
-      "binary:||",
-      "conditional:?:",
-      "end:expression",
-      "prefix:!",
-      "shortRunId()"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/workflow-runs.ts:handoff:wrapper:e1f1b6bb1281af0e",
+    "id": "src/workflow-runs.ts:handoff:wrapper:2f94ff46fa08cb69",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "failOver(db, scope, {\n    leaving: command.agent_id,\n    why: `blocked (${why})`,\n    whenExhausted: 'timeout',\n})",
@@ -11647,7 +11477,94 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:moveRole:systemLine:93d1d50229ae7b2c",
+    "id": "src/workflow-runs.ts:handoff:wrapper:d267175adf96b076",
+    "file": "apps/server/src/workflow-runs.ts",
+    "kind": "wrapper",
+    "template": "settleWorkflowGate(db, {\n    choiceId: answer.choiceId,\n    viewerId: answer.viewerId,\n    optionId: answer.optionId,\n    sourceMessageId: command.source_message_id ?? undefined,\n})",
+    "literals": [
+      "\"live\"",
+      "$local()",
+      ".author_id",
+      ".card",
+      ".choiceId",
+      ".created_at",
+      ".find",
+      ".find()",
+      ".handoffs",
+      ".id",
+      ".label",
+      ".markdown",
+      ".optionId",
+      ".options",
+      ".outcome",
+      ".parse",
+      ".parse()",
+      ".room_id",
+      ".rows",
+      ".runId",
+      ".runStatus",
+      ".seq",
+      ".source_message_id",
+      ".state",
+      ".toState",
+      ".viewerId",
+      ".workflowSlug",
+      ".workflowVersion",
+      ".workspace_id",
+      "FirstLiteralToken:0",
+      "binary:!==",
+      "binary:===",
+      "binary:??",
+      "binary:||",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/workflow-runs.ts:handoff:wrapper:fcc63bf1e350c179",
+    "file": "apps/server/src/workflow-runs.ts",
+    "kind": "wrapper",
+    "template": "enterState(db, scope, {\n    outcome: input.outcome,\n    contents: input.contents,\n    ...(input.receipt ? { receiptInput: input.receipt } : {}),\n    actorId: command.agent_id,\n    commandId: command.id,\n    line: (toState) => ({\n        authorId: command.agent_id,\n        subject: identitySubject(actor),\n        verb: 'handed off',\n        object: toState,\n        consequence: `run ${shortRunId(input.runId)} of ${run.workflowSlug}`,\n    }),\n})",
+    "literals": [
+      "\"handed off\"",
+      "\"live\"",
+      "$local()",
+      ".agent_id",
+      ".author_id",
+      ".card",
+      ".contents",
+      ".created_at",
+      ".handoffs",
+      ".id",
+      ".markdown",
+      ".name",
+      ".outcome",
+      ".parse",
+      ".parse()",
+      ".receipt",
+      ".room_id",
+      ".rows",
+      ".runId",
+      ".runStatus",
+      ".toState",
+      ".workflowSlug",
+      ".workflowVersion",
+      ".workspace_id",
+      "FirstLiteralToken:0",
+      "[\"run \",\" of \",\"\"]",
+      "binary:!==",
+      "binary:||",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!",
+      "shortRunId()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/workflow-runs.ts:moveRole:systemLine:07a7ae7473d02068",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: cardId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'the workflow' },\n    verb: 'moved',\n    object: stateName,\n    consequence: `${from ? `from ${names.get(from)} ` : ''}to ${names.get(input.picked)} because ${input.why} in run ${shortRunId(runId)} of ${run.workflowSlug}`.slice(0, 600),\n    ...input.line,\n    kind: 'workflow-handoff',\n    ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),\n    presentation: 'system',\n    cardType: WORKFLOW_HANDOFF_CARD_TYPE,\n    card: {\n        runId,\n        seq: attempt,\n        workflowSlug: run.workflowSlug,\n        workflowVersion: run.workflowVersion,\n        roleBindings,\n        toState: stateName,\n        reassigned: true,\n        answers: run.seq,\n        ...(input.tried.length ? { tried: input.tried } : {}),\n        ...(state.hint ? { receiptHint: state.hint } : {}),\n    },\n})",
@@ -11735,7 +11652,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:noteWorkflowRoleExhausted:systemLine:1f7b8ccfdea994ea",
+    "id": "src/workflow-runs.ts:noteWorkflowRoleExhausted:systemLine:4deab47764b03fd6",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id,\n    roomId: input.roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: `No agent on the ${input.role} role's list` },\n    verb: 'is healthy',\n    consequence: `${reasons ? `${reasons} in run ${shortRunId(input.runId)}; ` : `in run ${shortRunId(input.runId)}; `}ask an agent to call assign_workflow_role to bind another agent in this Room`.slice(0, 600),\n    ...(starter.kind === 'agent'\n        ? {\n            kind: 'workflow-handoff' as const,\n            wakes: [starter.id],\n            card: { runId: input.runId, workflowSlug: input.workflowSlug },\n        }\n        : {}),\n    afterMessageId: input.afterMessageId,\n})",
@@ -11912,7 +11829,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:reassignFailedWorkflowRole:wrapper:facbd0cfac70f9cc",
+    "id": "src/workflow-runs.ts:reassignFailedWorkflowRole:wrapper:90e9dfc9722badbc",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "failOver(db, scope, {\n    leaving: input.agentId,\n    why: reason ? `its turn failed (${reason})` : 'its turn failed',\n    whenExhausted: 'wait',\n})",
@@ -11987,20 +11904,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:settleWorkflowGate:wrapper:1585ff92ff1089f7",
-    "file": "apps/server/src/workflow-runs.ts",
-    "kind": "wrapper",
-    "template": "answerRoomChoice(db, { choiceId: input.choiceId, optionId: input.optionId!, viewerId: input.viewerId, note: input.note }, { wake: false })",
-    "literals": [
-      ".choiceId",
-      ".note",
-      ".optionId",
-      ".viewerId"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/workflow-runs.ts:settleWorkflowGate:wrapper:82ed99da5051f542",
+    "id": "src/workflow-runs.ts:settleWorkflowGate:wrapper:0b5e085087cca63b",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "noticeRunOwner(db, scope, `gate-default:${attempt}`, {\n    subject: { kind: 'system', name: `The ${scope.stateName} gate of ${scope.run.workflowSlug}` },\n    verb: 'took its default',\n    object: label,\n    consequence: `${systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name} skipped it in run ${shortRunId(scope.runId)}`,\n})",
@@ -12071,7 +11975,20 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:settleWorkflowGate:wrapper:dd3a52e060a77c29",
+    "id": "src/workflow-runs.ts:settleWorkflowGate:wrapper:1585ff92ff1089f7",
+    "file": "apps/server/src/workflow-runs.ts",
+    "kind": "wrapper",
+    "template": "answerRoomChoice(db, { choiceId: input.choiceId, optionId: input.optionId!, viewerId: input.viewerId, note: input.note }, { wake: false })",
+    "literals": [
+      ".choiceId",
+      ".note",
+      ".optionId",
+      ".viewerId"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/workflow-runs.ts:settleWorkflowGate:wrapper:e3c9bbf0aa5f675a",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "enterState(db, scope, {\n    outcome: label,\n    contents: input.skip\n        ? { decision: label, defaultedBy: input.viewerId }\n        : { decision: label, ...(note ? { note } : {}), answeredBy: input.viewerId },\n    actorId: input.viewerId,\n    ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),\n    line: (toState) => ({\n        authorId: input.viewerId,\n        subject: identitySubject(viewer),\n        verb: input.skip ? 'skipped' : input.sourceMessageId ? 'answered' : 'picked',\n        object: input.skip ? scope.stateName : label,\n        consequence: input.skip\n            ? `so ${label} applied and run ${shortRunId(scope.runId)} went to ${toState}`\n            : input.sourceMessageId\n                ? `by message at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`\n                : `at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`,\n    }),\n})",
@@ -12135,7 +12052,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:startWorkflow:systemLine:6c0669b9707d55a5",
+    "id": "src/workflow-runs.ts:startWorkflow:systemLine:bb92464a5effd869",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: runId,\n    roomId: command.room_id,\n    authorId: command.agent_id,\n    subject: identitySubject(starter),\n    verb: 'started workflow',\n    object: contract.name,\n    consequence: `run ${shortRunId(runId)}`,\n    kind: 'workflow-handoff',\n    ...(!exhausted && !isGate ? { wakes: [(resolution as {\n                agentId: string;\n            }).agentId] } : {}),\n    presentation: 'system',\n    cardType: WORKFLOW_HANDOFF_CARD_TYPE,\n    card: {\n        runId,\n        seq: 0,\n        runStatus: 'live',\n        workflowSlug: contract.name,\n        workflowVersion: skill.current_version,\n        requesterId: await workflowRequester(db, command),\n        ownerId: await resolveRunOwner(db, command),\n        deadlineSeconds,\n        startKind: starter?.kind === 'human'\n            ? 'human_admin'\n            : command.reason === 'schedule'\n                ? 'schedule'\n                : 'direct',\n        roleBindings,\n        ...(Object.keys(roleAgents).length ? { roleAgents } : {}),\n        toState: contract.start,\n        ...(startState.hint ? { receiptHint: startState.hint } : {}),\n        ...(trigger ? { trigger } : {}),\n    },\n})",
@@ -12244,7 +12161,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:startWorkflow:wrapper:1b25b46f8a6bb605",
+    "id": "src/workflow-runs.ts:startWorkflow:wrapper:2c5f68a0d84e5993",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
     "template": "dispatchState(db, {\n    workspaceId: room.workspace_id,\n    roomId: command.room_id,\n    runId,\n    contract,\n    roleBindings,\n    roleAgents,\n    stateName: contract.start,\n    attempt: 0,\n    cardId: runId,\n    exhausted,\n})",

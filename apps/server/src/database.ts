@@ -749,6 +749,15 @@ CREATE TABLE IF NOT EXISTS phone_access_tokens (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS phone_access_tokens_expiry_idx ON phone_access_tokens(expires_at);
+-- The device session that called reportRunningUpdate. A later report on that
+-- same sign-in family uses this installation only. Another family, including
+-- a browser that never reports an update, has no row.
+CREATE TABLE IF NOT EXISTS phone_update_devices (
+  family_id uuid PRIMARY KEY,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  device_id text NOT NULL,
+  reported_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS daemon_token_exchanges (
   exchange_hash text PRIMARY KEY CHECK (exchange_hash ~ '^[0-9a-f]{64}$'),
@@ -3165,6 +3174,19 @@ ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS occurrence_count integer NOT
   CHECK (occurrence_count > 0);
 ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS occurrences jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS last_occurrence_at timestamptz;
+-- Versions in use when the report was filed. Null means the server did not
+-- know that fact; existing rows stay null. Triage compares them to the
+-- delivered release when it reads, so these columns are not a latest flag.
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS helper_version text;
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS app_version text;
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS app_platform text;
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS harness text;
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS harness_version text;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='beeline_feedback_reader') THEN
+    GRANT SELECT ON helper_release_notifications TO beeline_feedback_reader;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS feedback_items_open_match_idx
   ON feedback_items(category, summary_key, tool_name)
   WHERE source_kind='agent' AND status IN ('new','filed','attached');
@@ -3660,6 +3682,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
     workflowBackfillOnce(database, 'feedback-triage-prompt-cases-v1', backfillFeedbackTriageWorkflow));
+  await dataStep('feedback triage latest counts', () =>
+    workflowBackfillOnce(database, 'feedback-triage-latest-count-v1', backfillFeedbackTriageWorkflow));
   await workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow);
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));

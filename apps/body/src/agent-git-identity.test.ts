@@ -7,12 +7,7 @@ import { afterEach, beforeAll, afterAll, expect, it } from 'vitest';
 import { agentGitIdentityEnv } from './agent-git-identity.js';
 import { materializeCornerWorktree } from './room-runtime.js';
 
-/**
- * A corner worktree is shared by every agent that works it, and its
- * `git config --worktree user.name/user.email` is rewritten by whichever
- * session prepared it last (Reproduction R-ID1 on PR #2318). Each session's
- * own environment must therefore decide its commits' author and committer.
- */
+/** Private checkout configuration and session identity must both stay agent-owned. */
 const git = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () =>
@@ -62,17 +57,20 @@ function prepare(supervisorRoot: string, agent: { name: string; publicKey: strin
   });
 }
 
-it('commits as the session that made them, not the session that prepared the worktree last', async () => {
+it('keeps checkout identities private and commits with the current session identity', async () => {
   const supervisorRoot = await scratch('beeline-identity-supervisor-');
-  // Agent A prepares the shared worktree, then agent B prepares the same one.
+  // Two agents prepare the same corner independently.
   const { path } = await prepare(supervisorRoot, AGENT_A);
-  await prepare(supervisorRoot, AGENT_B);
+  const peer = await prepare(supervisorRoot, AGENT_B);
+  expect(peer.path).not.toBe(path);
 
-  // The worktree config now names B: that is the shared state the bug trusted.
+  // Preparing B cannot rewrite A's repository configuration.
   const configured = (
     await git('git', ['-C', path, 'config', '--worktree', 'user.name'])
   ).stdout.trim();
-  expect(configured).toBe(AGENT_B.name);
+  expect(configured).toBe(AGENT_A.name);
+  // A harness can still change local Git settings; the session owns authorship.
+  await git('git', ['-C', path, 'config', '--worktree', 'user.name', AGENT_B.name]);
 
   // Agent A commits from its own session environment.
   await writeFile(join(path, 'a.txt'), 'written by A\n');

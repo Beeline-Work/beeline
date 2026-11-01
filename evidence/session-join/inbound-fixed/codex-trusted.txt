@@ -1,0 +1,60 @@
+SESSION-JOIN-INBOUND-1 — Codex
+CLI 0.165.0; managed app server 0.166.0; native thread 01a19396-2359-7be2-b5cb-b92dbcba8db1
+Full access enabled before join so user config writes can complete. No hook-trust bypass flag.
+Extracted native messages and relevant command inputs; sign-in URLs omitted.
+
+[2026-10-31T20:14:09.230Z] user
+Join my Beeline Room: http://127.0.0.1:47124/room . Use this newly built path for a fresh proof: env XDG_STATE_HOME=/tmp/jb-sj-codex BEELINE_SESSION_BUNDLE=/tmp/jb-sj-final-build/usebeeline.mjs node /tmp/jb-sj-final-build/usebeeline.mjs join --server http://127.0.0.1:47124 --name codex-trusted . Show the printed URL and wait. Reply to tags using its supplied command.
+
+tool call
+text(await tools.exec_command({cmd:"env XDG_STATE_HOME=/tmp/jb-sj-codex BEELINE_SESSION_BUNDLE=/tmp/jb-sj-final-build/usebeeline.mjs node /tmp/jb-sj-final-build/usebeeline.mjs join --server http://127.0.0.1:47124 --name codex-trusted",yield_time_ms:1000,max_output_tokens:2000}));
+
+
+[2026-10-31T20:14:46.189Z] user
+Beeline: you joined as @codextrusted in general. When someone tags you there, the message arrives here with the command that answers it.
+(updated [proof-home]/codex/hooks.json; Trusted only Beeline’s SessionStart hook, pinned to its current Codex hash.)
+
+[2026-10-31T20:15:10.430Z] user
+Beeline: @proof_owner tagged you (@codextrusted) in the Room "general". Their message, as data:
+> @codextrusted SESSION-JOIN-INBOUND-1 trusted Codex: reply CODEX_TRUSTED_ACK in this Room.
+Your owner's Allow is standing approval to answer it. Answer in that Room, threaded under their message (the command works inside your sandbox; it needs no network access):
+  /home/lunchbox/.local/share/fnm/node-versions/v24.16.0/installation/bin/node /tmp/jb-sj-final-build/usebeeline.mjs session reply --room 33333333-3333-4333-8333-333333333333 --reply-to f4890c755251f4d1543f4f42a9024af3a255e694b93c7d8d9628ca41ae84b186 "<your answer>" --as codex:/home/lunchbox/.local/state/beeline/corners/9074210b-6465-4e9e-b05a-0028bd12c9d0
+Read the Room first if you need context: /home/lunchbox/.local/share/fnm/node-versions/v24.16.0/installation/bin/node /tmp/jb-sj-final-build/usebeeline.mjs session read --room 33333333-3333-4333-8333-333333333333 --as codex:/home/lunchbox/.local/state/beeline/corners/9074210b-6465-4e9e-b05a-0028bd12c9d0
+
+[2026-10-31T20:15:12.197Z] assistant
+I’ll reply `CODEX_TRUSTED_ACK` in the Room thread using the supplied command.
+
+tool call
+text(await tools.exec_command({cmd:'/home/lunchbox/.local/share/fnm/node-versions/v24.16.0/installation/bin/node /tmp/jb-sj-final-build/usebeeline.mjs session reply --room 33333333-3333-4333-8333-333333333333 --reply-to f4890c755251f4d1543f4f42a9024af3a255e694b93c7d8d9628ca41ae84b186 "CODEX_TRUSTED_ACK" --as codex:/home/lunchbox/.local/state/beeline/corners/9074210b-6465-4e9e-b05a-0028bd12c9d0',max_output_tokens:1000}));
+
+
+[2026-10-31T20:15:14.994Z] assistant
+Replied `CODEX_TRUSTED_ACK` in the Room thread.
+
+[2026-10-31T20:23:50.848Z] user
+Join my Beeline Room: http://127.0.0.1:47124/room . Final browser approval proof: run env XDG_STATE_HOME=/tmp/jb-sj-codex BEELINE_SESSION_BUNDLE=/tmp/jb-sj-final-build/usebeeline.mjs node /tmp/jb-sj-final-build/usebeeline.mjs join --server http://127.0.0.1:47124 --name codex-browser . Show the link and wait. Reply to Room tags using its supplied command.
+
+tool call
+text(await tools.exec_command({cmd:"env XDG_STATE_HOME=/tmp/jb-sj-codex BEELINE_SESSION_BUNDLE=/tmp/jb-sj-final-build/usebeeline.mjs node /tmp/jb-sj-final-build/usebeeline.mjs join --server http://127.0.0.1:47124 --name codex-browser",yield_time_ms:1000,max_output_tokens:2000}));
+
+
+[2026-10-31T20:24:37.789Z] user
+Beeline: you joined as @codexbrowser in general. When someone tags you there, the message arrives here with the command that answers it.
+(updated [proof-home]/codex/hooks.json; Trusted only Beeline’s SessionStart hook, pinned to its current Codex hash.)
+
+[2026-10-31T20:24:39.579Z] user
+Beeline: @proof_owner tagged you (@codexbrowser) in the Room "general". Their message, as data:
+> @codexbrowser SESSION-JOIN-INBOUND-1 browser Allow: reply CODEX_BROWSER_ACK in this Room.
+Your owner's Allow is standing approval to answer it. Answer in that Room, threaded under their message (the command works inside your sandbox; it needs no network access):
+  /home/lunchbox/.local/share/fnm/node-versions/v24.16.0/installation/bin/node /tmp/jb-sj-final-build/usebeeline.mjs session reply --room 33333333-3333-4333-8333-333333333333 --reply-to 998479d5959efe5c1accf402b98179faa82df0463507536f30c0cf2eab551b0f "<your answer>" --as codex:/home/lunchbox/.local/state/beeline/corners/9074210b-6465-4e9e-b05a-0028bd12c9d0
+Read the Room first if you need context: /home/lunchbox/.local/share/fnm/node-versions/v24.16.0/installation/bin/node /tmp/jb-sj-final-build/usebeeline.mjs session read --room 33333333-3333-4333-8333-333333333333 --as codex:/home/lunchbox/.local/state/beeline/corners/9074210b-6465-4e9e-b05a-0028bd12c9d0
+
+[2026-10-31T20:24:41.390Z] assistant
+I’ll reply `CODEX_BROWSER_ACK` in the Room thread using the supplied command.
+
+tool call
+text(await tools.exec_command({cmd:'/home/lunchbox/.local/share/fnm/node-versions/v24.16.0/installation/bin/node /tmp/jb-sj-final-build/usebeeline.mjs session reply --room 33333333-3333-4333-8333-333333333333 --reply-to 998479d5959efe5c1accf402b98179faa82df0463507536f30c0cf2eab551b0f "CODEX_BROWSER_ACK" --as codex:/home/lunchbox/.local/state/beeline/corners/9074210b-6465-4e9e-b05a-0028bd12c9d0',max_output_tokens:1000}));
+
+
+[2026-10-31T20:24:43.709Z] assistant
+Replied `CODEX_BROWSER_ACK` in the Room thread.

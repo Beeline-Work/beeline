@@ -389,6 +389,28 @@ describe('feedback-triage workflow', () => {
     expect(versions.map((version) => version.markdown)).toEqual(['old procedure', FEEDBACK_TRIAGE_STEPS]);
   });
 
+  it('refreshes seeded triage steps for latest-version counts when older markers are already recorded', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(
+      `UPDATE workspace_skill_versions SET markdown='count every occurrence', content_hash=$2
+       WHERE skill_id=(SELECT id FROM workspace_skills WHERE workspace_id=$1 AND slug='feedback-triage-steps')`,
+      [WORKSPACE, '1'.repeat(64)],
+    );
+    await database.query(
+      `INSERT INTO workflow_backfills(name) VALUES('feedback-triage-prompt-cases-v1') ON CONFLICT DO NOTHING`,
+    );
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-latest-count-v1'`);
+    await migrateData(database);
+    const procedure = (await database.query<{ markdown: string }>(
+      `SELECT version.markdown FROM workspace_skills skill
+       JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
+       WHERE skill.workspace_id=$1 AND skill.slug='feedback-triage-steps'`,
+      [WORKSPACE],
+    )).rows[0]!;
+    expect(procedure.markdown).toBe(FEEDBACK_TRIAGE_STEPS);
+    expect(procedure.markdown).toContain('latest-version evidence');
+  });
+
   it('leaves an interrupted backfill unmarked and allows an idempotent retry', async () => {
     await expect(workflowBackfillOnce(database, 'test-retry', async (db) => {
       await db.query(`UPDATE agent_schedules SET message='failed migration' WHERE id=$1`, [TRIAGE_SCHEDULE]);

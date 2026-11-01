@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile, utimes, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, it, vi } from 'vitest';
 import { identityFromKey, stageMonolithAgentRuntime, runtimeDirectory } from './runtime.js';
@@ -44,7 +44,7 @@ it('ends a Room, code corner, agent and last local Workspace; no payload byte su
   await exec('git', ['-C', seed, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'published']);
   const remote = resolve(root, 'remote.git'); await exec('git', ['clone', '--bare', seed, remote]);
   const code = await materializeCornerWorktree({ supervisorRoot: root, cornerId: 'corner', remote: `file://${remote}`, targetBranch: 'main', featureBranch: 'feature/corner', token: 'unused', committer: { name: 'Bee', publicKey: staged.runtime.agent.publicKey } });
-  const codeOwner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners' as const, itemId: 'corner' };
+  const codeOwner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners' as const, itemId: basename(code.path), agentId: staged.runtime.agent.publicKey };
   await rememberStorageOwner(root, codeOwner);
   await file(resolve(code.path, 'unpublished'), 'protect');
   expect(await reclaimOwnedCheckout(root, codeOwner)).toEqual([]);

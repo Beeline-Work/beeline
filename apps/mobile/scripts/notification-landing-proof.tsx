@@ -278,8 +278,15 @@ async function run() {
     around()
       .pending.splice(0)
       .forEach(({ resolve }) => resolve(around().firstPage));
-    await waitFor(() => target().flashed, 2000);
-    const settled = observe();
+    // A newer page can remount the landed row in the gap after a poll sees
+    // the fill and before the next snapshot. Keep the sample that saw it.
+    let settled = observe();
+    for (let i = 0; i < 40 && !settled.target.flashed; i += 1) {
+      const seen = observe();
+      if (seen.target.flashed) settled = seen;
+      else await pause(50);
+    }
+    if (!settled.target.flashed) settled = observe();
     await pause(3000);
     report(JSON.stringify({ mode, pending, typing, settled, later: observe() }));
     return;

@@ -88,6 +88,77 @@ async function expireWindow(database = db) {
   await flushDueCommanderWakes(database);
 }
 const batch = () => daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
+it.each([
+  ['delivery', 'blocked'], ['cached claim', 'blocked'],
+  ['delivery', 'needs_decision'], ['cached claim', 'needs_decision'],
+  ['delivery', 'done'],
+] as const)('STALE-DELEGATE-REPORT: a new order answers a delegate %s / %s', async (path, status) => {
+  const opened = await open(false), turn = await worker(opened.cornerId);
+  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Recover the input' }, WORKER);
+  const delegate = (await commands(opened.cornerId, RUBY))[0]!;
+  await claim(delegate);
+  await daemon.execute('report', { ...authority(delegate), status, text: `${status.replace('_', '-')}: input recovery result` }, RUBY);
+  const report = (await commands(opened.cornerId, WORKER)).find(command => command.reason === 'report')!;
+  expect(report).toBeDefined();
+  // A delegate is not the corner implementer, so its blocker has no attention-index row.
+  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE report_id=$1', [report.id])).rowCount).toBe(0);
+  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Use the recovered input' }, WORKER);
+  if (path === 'cached claim') await expect(claim(report)).rejects.toThrow('command claim conflict');
+  expect((await commands(opened.cornerId, WORKER)).some(command => command.id === report.id)).toBe(status === 'done');
+});
+it.each(['delivery', 'cached claim'])('Reproduction STALE-ANSWERED-REPORT: drops an answered blocker at %s', async path => {
+  const opened = await open(false), turn = await worker(opened.cornerId);
+  await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: publish job is running' }, WORKER);
+  const report = (await commands(DM, RUBY)).find(command => command.reason === 'report')!;
+  expect(report).toBeDefined();
+  // Replay fb_0fd0fc28da34b3f6dd4e0107: the commander posts the
+  // resolved outcome in the return DM before the queued blocker is claimed.
+  await daemon.execute('postRoomMessage', { ...authority(order), text: 'done: publish verified' }, RUBY);
+  expect((await db.query(`SELECT private_payload->>'waitingAnswered' answered
+    FROM agent_commands WHERE id=$1`, [report.id])).rows).toEqual([{ answered: 'true' }]);
+  if (path === 'cached claim') await expect(claim(report)).rejects.toThrow('command claim conflict');
+  expect((await commands(DM, RUBY)).some(command => command.id === report.id)).toBe(false);
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [report.id])).rows)
+    .toEqual([{ state: 'cancelled' }]);
+});
+it('STALE-ANSWERED-REPORT: preserves a report already being handled', async () => {
+  const opened = await open(false), turn = await worker(opened.cornerId);
+  await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: publish job is running' }, WORKER);
+  const report = (await commands(DM, RUBY)).find(command => command.reason === 'report')!;
+  await claim(report);
+  await daemon.execute('postRoomMessage', { ...authority(order), text: 'done: publish verified' }, RUBY);
+  await claim(report);
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [report.id])).rows)
+    .toEqual([{ state: 'claimed' }]);
+  await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [report.id]);
+  await expect(claim(report)).rejects.toThrow('command claim conflict');
+});
+it.each([
+  ['delivery', false], ['cached claim', false], ['delivery', true], ['cached claim', true],
+] as const)('STALE-ANSWERED-REPORT: preserves other digest work at %s (blocker absorbed: %s)', async (path, absorbed) => {
+  const opened = await open(false), turn = await worker(opened.cornerId);
+  await batch();
+  let other!: Awaited<ReturnType<typeof event>>;
+  if (absorbed) other = await event(randomBytes(32).toString('hex'), 'A separate event still needs handling');
+  await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: publish job is running' }, WORKER);
+  if (!absorbed) other = await event(randomBytes(32).toString('hex'), 'A separate event still needs handling');
+  await expireWindow();
+  const digest = (await commands(DM, RUBY)).find(command => command.reason === (absorbed ? 'watched_corner' : 'report'))!;
+  expect(digest.coalescedContext).toContain(absorbed ? 'blocked: publish job is running' : 'A separate event still needs handling');
+  await daemon.execute('postRoomMessage', { ...authority(order), text: 'done: publish verified' }, RUBY);
+  if (path === 'cached claim') {
+    if (absorbed) {
+      const refreshed = await claim(digest);
+      expect(refreshed.source?.body).toBe('A separate event still needs handling');
+      expect(JSON.stringify(refreshed)).not.toContain('blocked: publish job is running');
+      return;
+    }
+    await expect(claim(digest)).rejects.toThrow('command claim conflict');
+  }
+  const remaining = await commands(DM, RUBY);
+  expect(remaining.map(command => command.id)).toContain(other!.id);
+  expect(JSON.stringify(remaining)).not.toContain('blocked: publish job is running');
+});
 it('Reproduction FR-report: rejects corner progress disguised as done before a PR is ready', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await expect(daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: PR opened, tests running' }, WORKER))

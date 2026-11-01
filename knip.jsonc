@@ -59,6 +59,8 @@
         // Reproduction STALE-CAUSE-1 invokes the isolated HTTP proof by path.
         "scripts/prove-stale-wake-drop.mjs",
         "scripts/prove-corner-stall.mjs",
+        // Reproduction R1 invokes the isolated built HTTP pickup proof by path.
+        "scripts/prove-queued-pickup.mjs",
         // Reproduction SESSION-JOIN-1 invokes the loopback session-join proof by path.
         "scripts/prove-session-join.mjs",
         // The development guide invokes the built storage retention proof by path.

@@ -19,13 +19,12 @@ class CornerGitSyncInterruptedError extends Error {}
  *   - remote absent, or already contained in this worktree → nothing to do;
  *   - this worktree strictly behind → fast-forward;
  *   - the histories diverged → rebase this worktree's own commits on top;
- *   - that rebase conflicts → realign to the shared remote head.
+ *   - that rebase conflicts → retain local work and report the conflict.
  *
- * Realignment discards only this helper's unpushed local commits. The remote
- * branch remains authoritative and is never force-pushed; the next turn can
- * redo the fixed objective against the other helper's accepted work.
+ * Unpublished commits survive a failed sync, including legacy work handed to
+ * the current implementer. The remote is never force-pushed.
  */
-export type CornerBranchSync = 'unchanged' | 'fast-forwarded' | 'rebased' | 'realigned';
+export type CornerBranchSync = 'unchanged' | 'fast-forwarded' | 'rebased';
 
 export interface CornerBranchSyncInput {
   readonly worktreePath: string;
@@ -141,8 +140,7 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
       if (error instanceof CornerGitSyncInterruptedError) throw error;
     });
     if (error instanceof CornerGitSyncInterruptedError) throw error;
-    await git(['reset', '--hard', remote]);
-    return 'realigned';
+    throw new Error('corner branch sync conflict: local commits preserved; resolve against the remote branch', { cause: error });
   }
 }
 

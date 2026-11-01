@@ -40,7 +40,7 @@ import { dashboardFinances } from './operator-finances.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
-import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
+import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, renudgeStrandedPendingCommands } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { clearStalePhoneViews } from './phone-viewing.js';
@@ -456,7 +456,7 @@ async function main() {
   let reconciledMergeability = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const work = new BackgroundWork();
-  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app');
+  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
   let nextDayCheckinRunning = false;
   work.add('next-day-checkin', reconciliationMs, async () => {
     if (nextDayCheckinRunning) return;
@@ -565,6 +565,8 @@ async function main() {
     await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
     await backgroundJobs.run('corner-checks-blocked', () =>
       noteBlockedCornerChecks(jobsDatabase));
+    await backgroundJobs.run('stranded-command-renudge', () =>
+      renudgeStrandedPendingCommands(jobsDatabase));
     await backgroundJobs.run('expired-command-leases', () =>
       reclaimExpiredCommandLeases(jobsDatabase, live));
     await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));

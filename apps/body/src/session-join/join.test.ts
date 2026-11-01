@@ -1,6 +1,6 @@
 // The whole join against a stand-in Beeline server: one command prints one sign-in link and nothing else to do;
 // the sign-in finishes in the background, wires the app and starts delivery; tags then reach the session.
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -15,6 +15,7 @@ let server: Server, origin = '';
 const calls: { name: string; args: Record<string, unknown> }[] = [];
 let mentions: object[] = [];
 let allowed = false;
+let cancelled = false;
 
 async function body(request: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
@@ -27,7 +28,7 @@ beforeAll(async () => {
     const input = await body(request);
     const json = (status: number, value: unknown) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); };
     if (request.url === '/mcp/oauth/register') return json(201, { client_id: `client-${input.client_name}` });
-    if (request.url === '/mcp/oauth/handoff') return allowed ? json(200, { code: 'the-code' }) : json(400, { error: 'authorization_pending' });
+    if (request.url === '/mcp/oauth/handoff') return cancelled ? json(200, { cancelled: true }) : allowed ? json(200, { code: 'the-code' }) : json(400, { error: 'authorization_pending' });
     if (request.url === '/mcp/oauth/token') return json(200, { access_token: 'access', refresh_token: 'refresh-2', expires_in: 3600 });
     if (request.url === '/mcp' && request.headers.authorization === 'Bearer access') {
       const { name, arguments: args } = input.params;
@@ -45,7 +46,57 @@ beforeAll(async () => {
 afterAll(() => { server.close(); });
 
 describe('SESSION-JOIN-1 install: one pasted line and one sign-in', () => {
+  it.each([
+    ['default', false, false], ['bypassPermissions', false, true], ['bypassPermissions', true, false],
+  ])('after Allow, %s with in-session MCP=%s writes fallback=%s', async (mode, mcp, fallback) => {
+    const home = scratch(), bundle = join(scratch(), 'noop.mjs');
+    writeFileSync(bundle, '');
+    const config = join(home, '.claude');
+    mkdirSync(join(config, 'sessions'), { recursive: true });
+    mkdirSync(join(config, 'projects', 'proof'), { recursive: true });
+    writeFileSync(join(config, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: 'proof', cwd: home }));
+    writeFileSync(join(config, 'projects', 'proof', 'proof.jsonl'), JSON.stringify({ permissionMode: mode }) + '\n');
+    const env = { HOME: home, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: 'proof', XDG_STATE_HOME: home,
+      PATH: '', BEELINE_SESSION_AGENT: 'claude-code', BEELINE_SESSION_BUNDLE: bundle };
+    const dir = stateDir(env);
+    if (mcp) {
+      mkdirSync(join(dir, 'claude-mcp'), { recursive: true });
+      writeFileSync(join(dir, 'claude-mcp', 'proof.json'), JSON.stringify({ pid: process.pid, claudePid: process.pid }));
+    }
+    allowed = false;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await runSessionCommand(['join', '--server', origin], env);
+      const printed = log.mock.calls.map(c => String(c[0])).join('\n');
+      expect(printed.includes('claude_inbound_fallback=1')).toBe(fallback);
+      // Awaiting consent does not touch either Claude config file.
+      expect(existsSync(join(config, 'settings.json'))).toBe(false);
+      expect(existsSync(join(config, '.claude.json'))).toBe(false);
+      if (fallback) {
+        cancelled = true;
+        const pending = readdirSync(join(dir, 'pending'))[0]!;
+        try {
+          await expect(runSessionCommand(['session', 'finish-join', join(dir, 'pending', pending)], env)).rejects.toThrow('cancelled');
+          expect(existsSync(join(config, 'settings.json'))).toBe(false);
+          expect(existsSync(join(config, '.claude.json'))).toBe(false);
+          expect(readState(dir).sessions).toEqual([]);
+        } finally { cancelled = false; }
+        await runSessionCommand(['join', '--server', origin], env);
+      }
+      allowed = true;
+      mentions = [{ id: 'immediate', room_id: 'room', text: 'Tag sent immediately after Allow' }];
+      const pending = readdirSync(join(dir, 'pending'))[0]!;
+      await runSessionCommand(['session', 'finish-join', join(dir, 'pending', pending)], env);
+      const settings = JSON.parse(readFileSync(join(config, 'settings.json'), 'utf8'));
+      expect(settings.crossSessionInbound).toBe(fallback ? 'accept' : undefined);
+      const joined = readState(dir).sessions[0]!;
+      expect(takeInbox(dir, joined.key)).toContain('> Tag sent immediately after Allow');
+    } finally { mentions = []; log.mockRestore(); }
+    calls.length = 0;
+  });
+
   it('prints one sign-in link and no other step, then joins by itself after Allow', async () => {
+    allowed = false;
     const home = scratch(), cwd = scratch(), bundle = join(scratch(), 'noop.mjs');
     // The background finisher is a separate process in real use; here the test runs it in-process.
     writeFileSync(bundle, '');

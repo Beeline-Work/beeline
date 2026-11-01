@@ -429,6 +429,42 @@ it('Reproduction reported-stall: delivered done survives loss of terminal receip
   console.info('Demonstrated reported-stall: commander retains done; worker complete; no failure or retry');
 });
 
+it('Reproduction R1: pickup deadline keeps work queued behind a claimed turn', async () => {
+  const opened = await open();
+  const running = (await commands(opened.cornerId, WORKER))[0]!;
+  // The second wake arrives just before the first claim (the production race).
+  const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+    sourceMessageId: null, reason: 'corner_background_tool',
+    privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: WORKER, fromRoomId: opened.cornerId } });
+  await db.query(`UPDATE agent_commands SET wake_after=NULL WHERE id=$1`, [queued!.id]);
+  expect((await db.query(`SELECT generation_id FROM agent_turns WHERE request_id=$1`, [queued!.turn_request_id])).rows)
+    .toEqual([{ generation_id: 'pending:' + queued!.id }]);
+  await claim(running);
+  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes'
+    WHERE room_id=$1 AND request_id=$2`, [opened.cornerId, queued!.turn_request_id]);
+  const { ConnectionPresence } = await import('./connection-presence.js');
+  const presence = new ConnectionPresence(db, new LiveHub());
+  try {
+    await presence.start();
+    await vi.waitFor(async () => expect((await db.query(`SELECT 1 FROM agent_turns
+      WHERE room_id=$1 AND request_id=$2 AND generation_id LIKE 'pending:%'`,
+      [opened.cornerId, queued!.turn_request_id])).rows).toEqual([]));
+    await new Promise(resolve => setTimeout(resolve, 200));
+  } finally { await presence.stop(); }
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, queued!.turn_request_id])).rows).toEqual([]);
+  expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%did not claim%'`,
+    [opened.cornerId])).rows).toEqual([]);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])).rows)
+    .toEqual([{ state: 'pending' }]);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(running), agentId: WORKER, status: 'complete' }, WORKER);
+  const next = (await commands(opened.cornerId, WORKER)).find(command => command.id === queued!.id)!;
+  expect(next).toBeDefined();
+  await claim(next);
+  expect((await db.query(`SELECT status,generation_id FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, next.turnRequestId])).rows).toEqual([{ status: 'working', generation_id: 'proof-generation' }]);
+});
+
 it.each(['unclaimed', 'disconnected', 'connected'])('Reproduction explained-stall: %s reaches the corner or commander with its cause', async kind => {
   const opened = await open();
   const turn = (await commands(opened.cornerId, WORKER))[0]!;
@@ -544,6 +580,8 @@ it('reconnect recovery keeps every private report, even when each was queued off
   for (const text of ['blocked: missing input', 'failed: build stopped', 'needs-decision: select scope'])
     await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
   await db.query(`UPDATE agent_commands SET created_offline=true,created_at=now()-interval '10 minutes' WHERE reason='report'`);
+  // Preserve causal order: the assignment preceded these offline reports.
+  await db.query(`UPDATE agent_commands SET created_at=now()-interval '11 minutes' WHERE id=$1`, [turn.id]);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
 });
@@ -1997,4 +2035,94 @@ it('Reproduction SELF-2: own brief revision and background shell completion can 
   await claim(revision);
   await daemon.execute('markAgentTurnSilent', authority(revision), RUBY);
   console.info('Demonstrated SELF-2: completion and revision continuations accept silence without filler');
+});
+
+it.each([
+  ['recover', '40P01', 1, 2],
+  ['exhaust', '40P01', 10, 3],
+  ['other error', '23505', 1, 1],
+  ['authority revoked', '40P01', 1, 1],
+  ['revision changed', '40P01', 1, 2],
+])('R-BRIEF-DEADLOCK: %s rolls back the revision and command delivery', async (scenario, code, failures, expectedAttempts) => {
+  const opened = await open();
+  const snapshot = async () => ({
+    briefs: (await db.query(`SELECT * FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`, [opened.cornerId])).rows,
+    commands: (await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows,
+    journal: (await db.query(`SELECT * FROM live_journal WHERE event->>'roomId'=$1 ORDER BY stream_id,sequence`, [opened.cornerId])).rows,
+    notes: (await db.query(`SELECT * FROM messages WHERE room_id=$1 ORDER BY id`, [opened.cornerId])).rows,
+  });
+  const before = await snapshot();
+  const events: unknown[] = [];
+  const hub = new LiveHub();
+  hub.publish = event => { events.push(event); };
+  let attempts = 0;
+  const failure = Object.assign(new Error('brief transaction failure'), { code });
+  const wrapped: import('./database.js').SqlDatabase = {
+    query: (sql, values) => db.query(sql, values),
+    transaction: async work => {
+      attempts++;
+      try {
+        return await db.transaction(async tx => {
+          const result = await work(tx);
+          if (attempts <= failures) throw failure;
+          return result;
+        });
+      } catch (error) {
+        if (error !== failure) throw error;
+        expect(events).toHaveLength(0);
+        expect(await snapshot()).toEqual(before);
+        if (scenario === 'authority revoked')
+          await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [RUBY]);
+        if (scenario === 'revision changed')
+          await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+            expectedRevision: 1, brief: { spec: 'Concurrent authorized scope', change: 'Concurrent revision' } }, RUBY);
+        throw error;
+      }
+    },
+  };
+  const watched = new DaemonService(wrapped, hub);
+  const input = { ...authority(order), cornerId: opened.cornerId, expectedRevision: 1,
+    brief: { spec: 'Build the clarified widget', change: 'Clarify scope' } };
+  if (scenario === 'recover') {
+    expect((await watched.execute('reviseCornerBrief', input, RUBY)).revision).toBe(2);
+    const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
+    expect(restored.brief?.spec).toBe(input.brief.spec);
+    const after = await snapshot();
+    expect(after.briefs).toHaveLength(2);
+    expect(after.journal.length).toBeGreaterThan(before.journal.length);
+    expect(after.notes.length).toBe(before.notes.length + 1);
+    const pending = after.commands.filter(row => row.state === 'pending' && row.room_id === opened.cornerId);
+    expect(pending).toHaveLength(1);
+  } else {
+    await expect(watched.execute('reviseCornerBrief', input, RUBY)).rejects.toThrow(
+      scenario === 'authority revoked' ? /access|member|authority/i :
+      scenario === 'revision changed' ? /revision changed/ : failure.message);
+    expect(events).toHaveLength(0);
+    if (scenario !== 'revision changed') expect(await snapshot()).toEqual(before);
+  }
+  expect(attempts).toBe(expectedAttempts);
+});
+
+it.each([true, false])('records mock reply evidence through brief reads (reply=%s)', async (reply) => {
+  const opened = await open();
+  const mock = randomBytes(32).toString('hex'), approval = randomBytes(32).toString('hex');
+  const objectId = randomUUID(), urlObjectId = randomUUID();
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments,created_at)
+    VALUES($1,$2,$3,'Mock', $4::jsonb,'2026-01-01T00:00:00Z')`,
+    [mock, DM, RUBY, JSON.stringify([{mediaId: objectId}, {url: 'https://test/v1/media/' + urlObjectId}])]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,reply_to_message_id,created_at)
+    VALUES($1,$2,$3,'Use this mock',$4,'2026-01-01T00:01:00Z')`, [approval, DM, HUMAN, reply ? mock : null]);
+  const revised = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'Build the approved widget', change: 'Record mock approval', approval: {sourceMessageId: approval} } }, RUBY);
+  const restored = await daemon.execute('getCornerRestoreState', {cornerId: opened.cornerId}, WORKER);
+  const revisions = await daemon.execute('listCornerBriefRevisions', {cornerId: opened.cornerId}, WORKER);
+  for (const brief of [revised, restored.brief, revisions.revisions[0]]) {
+    expect(brief?.approval).toMatchObject({kind: 'explicit-human-answer', sourceMessageId: approval,
+      text: 'Use this mock', approvedBy: HUMAN, replyToMessageId: reply ? mock : null,
+      replyToAttachmentIds: reply ? expect.arrayContaining([objectId, urlObjectId]) : [],
+      replyToCreatedAt: reply ? expect.any(String) : null, approvedAt: expect.any(String)});
+    if (reply) expect(Date.parse(brief!.approval!.approvedAt!)).toBeGreaterThan(Date.parse(brief!.approval!.replyToCreatedAt!));
+  }
+  // The worker can verify stored evidence without gaining access to the private DM.
+  await expect(daemon.execute('getRoomMessage', {roomId: DM, messageId: approval}, WORKER)).rejects.toThrow();
 });

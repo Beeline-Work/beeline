@@ -38,10 +38,17 @@ Orchestration rules:
 Agent tools:
 - You have the tools Beeline agents have, with the same server checks. Each one takes the address (Room, corner or DM id) it acts in.
 - order assigns one agent privately; its report comes back to you. report answers an order you received, at the address it came from. list_mentions lists your waiting orders, reports and other wakes under wakes; no_reply_needed clears wakes that need no answer.
-- open_corner opens work with another agent as implementer: you have no checkout, so you cannot implement repository work. revise_corner changes the brief. Do not order the implementer again after opening.
+- open_corner opens work with another agent as implementer: repository writes go through that implementer. revise_corner changes the brief. Do not order the implementer again after opening.
 - A corner lands only through merge_corner, after the configured reviewer's approve_merge on the exact head, green checks and no hold. You cannot review work you implement or authored. Holds and merge yeses need a person's request.
 - read, search, remember, wake, react_to_message, post, post_artifact, connect and app_tool work as they do for agents. Vault reads need the owner's passkey.
-- Wallet spending, host grants, and tools that need a Beeline machine (repository files, scratch files, shared browsers) are refused.`;
+- Wallet spending, host grants, and tools that need a Beeline machine (repository files, scratch files, shared browsers) are refused.
+
+Code you already wrote:
+- Do not push with your own GitHub connection.
+- Open a corner with an agent as implementer.
+- Post the patch into that corner, not the Room. Give the base commit and the test commands you ran.
+- The implementer applies the patch on a fresh branch and opens the PR. You stay the commit author.
+- Your owner's approval of the connection covers sharing the patch with that corner.`;
 
 const room = { type: 'string', format: 'uuid', description: 'Room id returned by list_rooms.' };
 const tool = (name: string, description: string, properties: Record<string, object>, required: string[], write = false): Tool => ({
@@ -70,7 +77,7 @@ const ROOM_TOOLS: Tool[] = [
 ];
 const TOOLS: Tool[] = [...ROOM_TOOLS, ...MCP_AGENT_TOOLS];
 /** Repeated in read results until set_profile, for hosts that drop server instructions. */
-const SETUP_NOTE = `Setup: call list_rooms first to verify you, owner and the intended Rooms. Preserve the approved @handle; use set_profile only for a profile change requested by the person. Your owner's Allow is standing approval to answer when a Room member tags your @handle. ${MCP_STARTER_ROUTINE} This note stops after set_profile.`;
+const SETUP_NOTE = `Setup: call list_rooms first to verify you, owner and the intended Rooms. Preserve the approved @handle; use set_profile only for a profile change requested by the person. Your owner's Allow is standing approval to answer when a Room member tags your @handle. ${MCP_STARTER_ROUTINE} Repository writes go through a corner implementer. This note stops after set_profile.`;
 const READABLE = `SELECT r.id,r.name,r.parent_id,r.workspace_id FROM rooms r
   JOIN effective_memberships rm ON rm.room_id=r.id AND rm.identity_id=$1 AND rm.removed_at IS NULL
   JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=$1 AND wm.removed_at IS NULL`;

@@ -893,6 +893,26 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
     }
   });
+  it('hands finished local code to a corner implementer in every connected-app surface', async () => {
+    const { client } = await connected();
+    const instructions = client.getInstructions();
+    for (const rule of [
+      'Do not push with your own GitHub connection.',
+      'Open a corner with an agent as implementer.',
+      'Post the patch into that corner, not the Room. Give the base commit and the test commands you ran.',
+      'The implementer applies the patch on a fresh branch and opens the PR. You stay the commit author.',
+      "Your owner's approval of the connection covers sharing the patch with that corner.",
+    ]) expect(instructions).toContain(rule);
+    expect(instructions).not.toContain('you have no checkout');
+    const tools = (await client.listTools()).tools;
+    const handoff = "Code you already wrote: do not push with your own GitHub connection; open a corner with an agent as implementer and post the patch there, not the Room, with the base commit and test commands; the implementer applies it on a fresh branch and opens the PR, preserving your authorship; your owner's connection approval covers sharing the patch with that corner.";
+    for (const name of ['open_corner', 'post_artifact']) {
+      expect(tools.find(tool => tool.name === name)?.description).toContain(handoff);
+      expect(tools.find(tool => tool.name === name)?.description).not.toContain('you have no checkout');
+    }
+    const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
+    expect(setup).toContain('Repository writes go through a corner implementer.');
+  });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
     const tools = await client.listTools(); expect(tools.tools).toHaveLength(9 + MCP_AGENT_TOOLS.length);

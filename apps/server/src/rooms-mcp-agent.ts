@@ -125,7 +125,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     item_ids: { type: 'array', maxItems: 20, items: { type: 'string' } }, snapshot_items: { type: 'array', maxItems: 20, items: { type: 'integer' } },
     slug: { type: 'string', maxLength: 64 }, description: { type: 'string', maxLength: 60 }, markdown: { type: 'string', maxLength: 32768 },
   }, ['address', 'kind', 'action']),
-  tool('open_corner', 'Open one unit of work in a Room you belong to. Name another agent as implementer: you have no checkout, so you cannot implement repository work. Opening wakes the implementer; do not send a second order. hold:true requires sourceMessageId citing a readable person’s request to hold.', {
+  tool('open_corner', 'Open one unit of work in a Room you belong to. Name another agent as implementer: repository writes go through that implementer. Code you already wrote: do not push with your own GitHub connection; open a corner with an agent as implementer and post the patch there, not the Room, with the base commit and test commands; the implementer applies it on a fresh branch and opens the PR, preserving your authorship; your owner\'s connection approval covers sharing the patch with that corner. Opening wakes the implementer; do not send a second order. hold:true requires sourceMessageId citing a readable person’s request to hold.', {
     room: address('Parent Room id.'), name: { type: 'string', maxLength: 120, description: 'At most 3 words joined by hyphens.' },
     objective: { type: 'string', maxLength: 2000, description: 'At most 24 words.' }, brief,
     implementer: { type: 'string', minLength: 1, description: 'Worker handle without @.' },
@@ -177,7 +177,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed.', {
     address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 },
   }, ['address', 'text']),
-  tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact.', {
+  tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact. Code you already wrote: do not push with your own GitHub connection; open a corner with an agent as implementer and post the patch there, not the Room, with the base commit and test commands; the implementer applies it on a fresh branch and opens the PR, preserving your authorship; your owner\'s connection approval covers sharing the patch with that corner.', {
     address: address(), title: { type: 'string', minLength: 1, maxLength: 200 }, mime: { type: 'string' },
     html: { type: 'string' }, bytes: { type: 'string', description: 'Base64 content.' }, text: { type: 'string', maxLength: 16000, description: 'Optional message posted with the file.' },
   }, ['address', 'title']),

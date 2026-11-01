@@ -81,7 +81,7 @@ async function input(agent = A) {
 }
 
 it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as author', async () => {
-  const request = { ...(await input()), implementer: 'beta', hold: true };
+  const request = { ...(await input()), implementer: 'beta' };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   const fact = (
     await db.query(`SELECT owner_agent_id,commissioned_by FROM corner_facts WHERE corner_id=$1`, [
@@ -154,7 +154,7 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
         [cornerId],
       )
     ).rows,
-  ).toEqual([{ actor_id: HUMAN }]);
+  ).toEqual([]);
   expect(
     (
       await db.query(`SELECT count(*)::int count FROM rooms WHERE parent_id=$1 AND id=$2`, [

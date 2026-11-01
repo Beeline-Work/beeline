@@ -481,12 +481,12 @@ export type DaemonOperationMap = {
       readonly id: string;
       readonly createdAt: number;
       readonly stored: true;
-      readonly visible: true;
+      readonly visible: boolean;
       readonly receipt: string;
-      readonly effect: 'conversation';
+      readonly effect: 'conversation' | 'report';
       readonly address: string;
-      readonly visibility: 'public';
-      readonly reportsAssignment: false;
+      readonly visibility: 'public' | 'commander';
+      readonly reportsAssignment: boolean;
       readonly woken: readonly string[];
       readonly notWoken: readonly { readonly handle: string; readonly reason: string }[];
     }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { CommandRefusalError } from './command-refusal.js';
 import { systemLine } from './system-line.js';
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -20,6 +21,8 @@ export async function activeCornerHolds(
 
 /** Called in the caller's transaction, including corner creation. */
 export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, actorId: string, agentId?: string) {
+  if (agentId && input.releaseHoldId === undefined)
+    throw new CommandRefusalError('Agents cannot set merge holds; close the PR to stop it.', 403);
   await lockCornerLifecycle(db, input.cornerId);
   const actor = (
     await db.query<{ role: CornerMergeHold['standing'] }>(

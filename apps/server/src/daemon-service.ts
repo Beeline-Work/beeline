@@ -25,7 +25,7 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, stopCommandedTurn, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, stopCommandedTurn, reportToCommander, commanderReportAddress, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -2123,6 +2123,8 @@ export class DaemonService {
         )) as Output<Name>;
       case 'setCornerHold': {
         const hold = input as Input<'setCornerHold'>;
+        if (hold.releaseHoldId === undefined)
+          throw new CommandRefusalError('Agents cannot set merge holds; close the PR to stop it.', 403);
         await this.access(hold.cornerId, authenticatedAgentId);
         const result = await this.database.transaction(async (db) => {
           await lockCornerLifecycle(db, hold.cornerId);
@@ -8493,6 +8495,7 @@ export class DaemonService {
   }
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
+    if (input.hold === true) throw new CommandRefusalError('Agents cannot set merge holds; close the PR to stop it.', 403);
     // Objectives are normalized paragraphs; names must already be continuous.
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
@@ -8700,10 +8703,6 @@ export class DaemonService {
       );
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
-      if (input.hold === true) {
-        if (!commissionedBy) throw new Error('hold requires a human requester');
-        await setCornerHold(db, { cornerId }, commissionedBy, agentId);
-      }
       if (input.brief) {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
@@ -9138,6 +9137,22 @@ export class DaemonService {
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
+    const status = /^(blocked|needs-decision|done|failed):/.exec(text)?.[1];
+    if (status &&
+      (await this.database.query(`SELECT 1 FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
+        WHERE room.id=$1 AND ${cornerImplementerSql('fact', 'room')}=$2`, [input.cornerId,agentId])).rowCount) {
+      // A worker can post from another control surface. Resolve the target's
+      // actual incoming assignment instead of reporting to the current DM's caller.
+      const reportCommand = command.room_id === input.cornerId.toLowerCase() ? command :
+        (await this.database.query<CommandRow>(`SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+          ORDER BY created_at DESC,id DESC LIMIT 1`, [input.cornerId,agentId])).rows[0];
+      if (!reportCommand) throw new CommandRefusalError('this corner has no commander return address', 409);
+      const route = await commanderReportAddress(this.database, input.cornerId, reportCommand, false, text);
+      const result = await this.report(text, agentId, reportCommand, this.database, false, status.replace('-', '_'));
+      return { ...result, effect: 'report' as const, address: route.returnRoom!, visibility: 'commander' as const,
+        reportsAssignment: true as const, stored: true as const, visible: false as const,
+        woken: [], notWoken: [], receipt: `Sent as a report to ${route.recipient} at ${route.returnRoom}. ${'receipt' in result ? result.receipt ?? '' : ''}` };
+    }
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
       command.room_id === input.cornerId.toLowerCase() ? command : undefined);
     const saved = (

@@ -217,6 +217,8 @@ describe('corner_owed', () => {
       cardType: 'choice',
       card: question('open'),
     });
+    await database.query(`INSERT INTO room_choices(id,room_id,workspace_id,agent_id,message_id,mode,prompt,options,electorate,status)
+      VALUES(gen_random_uuid(),$1,$2,$3,'question','question','Matte or gloss?','[]'::jsonb,ARRAY[$4],'open')`, [CORNER,WORKSPACE,AGENT,OWNER]);
     await step(blockingToViewer);
     await post('chatter', OWNER, 'Let me think.');
     await step(blockingToViewer);
@@ -224,12 +226,15 @@ describe('corner_owed', () => {
       `UPDATE messages SET card=jsonb_set(card,'{status}','"answered"') WHERE id='question'`,
     );
     await step(idle);
+    await database.query(`UPDATE room_choices SET status='answered' WHERE message_id='question'`);
 
     await post('question-2', AGENT, 'Hinged or loose?', {
       presentation: 'card',
       cardType: 'choice',
       card: question('open'),
     });
+    await database.query(`INSERT INTO room_choices(id,room_id,workspace_id,agent_id,message_id,mode,prompt,options,electorate,status)
+      VALUES(gen_random_uuid(),$1,$2,$3,'question-2','question','Hinged or loose?','[]'::jsonb,ARRAY[$4],'open')`, [CORNER,WORKSPACE,AGENT,OWNER]);
     await step(blockingToViewer);
     await database.query(
       `UPDATE messages SET card=jsonb_set(card,'{status}','"closed"') WHERE id='question-2'`,
@@ -453,6 +458,7 @@ describe('corner_owed', () => {
     const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
     expect(callsiteScans).toHaveLength(2);
     expect(messageScans.filter((scan) => scan.alias !== 'item' && !isDispatchSource(scan.alias) &&
-      !scan.alias.startsWith('callsite'))).toHaveLength(3);
+      !scan.alias.startsWith('callsite'))).toHaveLength(6);
+    // Notification proof adds two bounded reply lookups and the report message lookup.
   });
 });

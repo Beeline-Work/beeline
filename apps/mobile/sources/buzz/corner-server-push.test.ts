@@ -61,6 +61,12 @@ it.each([
   [messageId, corner, agent, reason ? '@owner please respond' : 'done: @owner finished',
     reason ? 'card' : 'message', type, JSON.stringify(card)]);
 
+  // A question is a waiting blocker only when its real tray item exists.
+  if (type === CHOICE_CARD_TYPE) await db.query(`INSERT INTO room_choices(
+    id,room_id,workspace_id,agent_id,message_id,mode,prompt,options,electorate,status)
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,'question','Please respond','[]'::jsonb,ARRAY[$5],'open')`,
+  [corner, workspace, agent, messageId, human]);
+
   // The blocker predates the delivery floor. An ordinary addressed update
   // exercises the existing push policy without changing which cards push.
   const notificationId = reason ? (index + 20).toString(16).padStart(64, '0') : messageId;

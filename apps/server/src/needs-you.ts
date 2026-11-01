@@ -237,17 +237,17 @@ const VIEWER_ROOMS = `
   )`;
 
 /** A question still awaiting `viewer`, ignoring only its clock deadline. */
-export function questionForSql(viewerId: string, message = 'm'): string {
-  return `${askingMessageSql(message)} AND ${message}.author_id<>${viewerId}
+export function questionForSql(viewerId: string): string {
+  return `${askingMessageSql('m')} AND m.author_id<>${viewerId}
   AND mark.cleared_at IS NULL
-  AND (${tagsKnownIdentitySql(message, 'viewer.id', 'viewer.handle', 'viewer.kind')}
+  AND (${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
     -- A report to a human commander addresses them without a tag.
-    OR (${message}.text ~ '^(needs-decision|blocked):' AND ${message}.card->>'reportToId'=${viewerId}))
+    OR (m.text ~ '^(needs-decision|blocked):' AND m.card->>'reportToId'=${viewerId}))
   AND NOT EXISTS (
     SELECT 1 FROM messages reply
-    WHERE reply.room_id=${message}.room_id AND reply.author_id=${viewerId}
+    WHERE reply.room_id=m.room_id AND reply.author_id=${viewerId}
       AND reply.presentation='message' AND reply.deleted_at IS NULL
-      AND reply.created_at>${message}.created_at
+      AND reply.created_at>m.created_at
   )`;
 }
 

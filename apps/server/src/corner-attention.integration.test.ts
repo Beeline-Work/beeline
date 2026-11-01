@@ -330,11 +330,11 @@ it('failing checks alone are idle immediately with one alert and no repair deadl
   await ci('failing');
   expect(await state()).toBe('idle');
   const attention = await refreshCornerAttention(db, C);
-  expect(attention!.deadlines).toHaveLength(1);
+  expect(attention!.deadlines).toEqual([]);
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
-  expect((await commanderFlags())[0]!.source.body).toBe('blocked: Corner Corner is idle. Resume it or close its PR.');
+  expect((await commanderFlags())[0]!.source.body).toBe('blocked: Corner Corner is idle. Resume it, set a hold, or close it.');
 });
 it('an agent commander with inherited corner access wakes inside it, not the parent Room', async () => {
   await ci('failing');
@@ -494,11 +494,11 @@ it('recovers and fires the gap deadline once across two server instances', async
   try {
     await a.start();
     await b.start();
-    expect(vi.getTimerCount()).toBe(4);
+    expect(vi.getTimerCount()).toBe(2);
     await vi.advanceTimersByTimeAsync(31000);
     await db.query('SELECT 1');
     expect(await commanderFlags()).toHaveLength(1);
-    expect(vi.getTimerCount()).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
     expect(errors).toEqual([]);
   } finally {
     a.stop();
@@ -778,7 +778,7 @@ it('Reproduction IDLE-STORM: new worker work opens an episode after the automati
   await refreshCornerAttention(db, C);
   await end(WORKER,40);
   const deferred = await refreshCornerAttention(db, C);
-  expect(deferred!.deadlines).toHaveLength(2);
+  expect(deferred!.deadlines).toHaveLength(1);
   expect(await commanderFlags()).toHaveLength(1);
   await db.query(`UPDATE automatic_report_wakes SET next_at=now()-interval '1 second' WHERE corner_id=$1`, [C]);
   await refreshCornerAttention(db, C);
@@ -1034,47 +1034,3 @@ it('Reproduction R1: a worker order waiting on an offline helper stays working',
   await db.query(`UPDATE agent_commands SET wake_after=NULL,state='complete',completed_at=now() WHERE id='queued-implementer'`);
   expect(await state()).toBe('idle');
 });
-
-
-it.each(['held','idle-already-reported','unaddressed-blocker','working-without-activity'])(
-  'SUPERVISION-2: %s still wakes once after two silent hours', async kind => {
-    if (kind === 'held') await phone.execute('setCornerHold',{cornerId:C},HUMAN);
-    if (kind === 'idle-already-reported') {
-      await refreshCornerAttention(db,C);
-      await db.query(`UPDATE automatic_report_wakes SET next_at=now()-interval '1 second' WHERE corner_id=$1`,[C]);
-    }
-    if (kind === 'unaddressed-blocker') {
-      await post('unaddressed-silence','blocked: Choose a runner');
-      expect(await state()).toBe('idle');
-    }
-    if (kind === 'working-without-activity') await turn(WORKER);
-    await db.query(`UPDATE corner_attention_spans SET last_activity_at=now()-interval '2 hours 1 second' WHERE corner_id=$1`,[C]);
-    await refreshCornerAttention(db,C);
-    await runCornerAttention(db); // Restart recovery shares the durable rate row.
-    const wakes = (await db.query<{text:string}>(`SELECT private_payload->>'text' text FROM agent_commands
-      WHERE reason='report' AND private_payload->>'fromRoomId'=$1`,[C])).rows.filter(r => r.text.includes('silent'));
-    expect(wakes).toHaveLength(1);
-  });
-it.each(['pending-ci','scheduled-wait','notified-human'])(
-  'SUPERVISION-2: %s suppresses the silent wake', async kind => {
-    if (kind === 'pending-ci') await ci('pending');
-    if (kind === 'scheduled-wait') await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at)
-      VALUES(gen_random_uuid(),$1,$2,$3,$4,'Continue','{"kind":"interval","everyMinutes":10}',now()+interval '10 minutes')`,[WS,C,WORKER,HUMAN]);
-    if (kind === 'notified-human') await post('notified-silence','blocked: @owner choose a runner');
-    await db.query(`UPDATE corner_attention_spans SET last_activity_at=now()-interval '2 hours 1 second' WHERE corner_id=$1`,[C]);
-    await refreshCornerAttention(db,C);
-    expect((await db.query(`SELECT id FROM agent_commands WHERE reason='report' AND private_payload->>'text' LIKE '%silent%'`)).rows).toHaveLength(0);
-  });
-
-it.each(['pending-ci','scheduled-wait','new-work'])(
-  'SUPERVISION-2: queued silence wake is discarded after %s', async kind => {
-    await phone.execute('setCornerHold',{cornerId:C},HUMAN);
-    await db.query(`UPDATE corner_attention_spans SET last_activity_at=now()-interval '2 hours 1 second' WHERE corner_id=$1`,[C]);
-    await refreshCornerAttention(db,C);
-    if (kind === 'pending-ci') await ci('pending');
-    if (kind === 'scheduled-wait') await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at)
-      VALUES(gen_random_uuid(),$1,$2,$3,$4,'Continue','{"kind":"interval","everyMinutes":10}',now()+interval '10 minutes')`,[WS,C,WORKER,HUMAN]);
-    if (kind === 'new-work') await turn(WORKER);
-    const inbox = await daemon.execute('getAgentCommands',{roomId:ROOM},COMMANDER);
-    expect(inbox.commands.filter(c => c.source.body.includes('silent'))).toHaveLength(0);
-  });

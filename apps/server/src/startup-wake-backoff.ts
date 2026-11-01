@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS automatic_report_wakes (
   next_at timestamptz NOT NULL,
   PRIMARY KEY(corner_id,agent_id)
 );
-ALTER TABLE automatic_report_wakes ADD COLUMN IF NOT EXISTS silent_activity_at timestamptz;
 `;
 
 /** Only the immediate human request bypasses a pause; inherited human roots do not. */

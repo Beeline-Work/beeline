@@ -9,7 +9,6 @@ import {
   cornerScheduledWaitSql,
   type CornerStateRow,
 } from './chat-corner-counts.js';
-import { cornerNotifiedPersonSql } from './corner-notification.js';
 import { reportToCommander } from './commander.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
@@ -73,52 +72,13 @@ CREATE TRIGGER corner_attention_human AFTER INSERT ON messages
   FOR EACH ROW EXECUTE FUNCTION corner_attention_human();
 
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS last_turn_ended_at timestamptz;
-ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS last_activity_at timestamptz;
-UPDATE corner_attention_spans span SET last_activity_at=GREATEST(
-  (SELECT created_at FROM rooms WHERE id=span.corner_id),
-  (SELECT max(started_at) FROM agent_turns WHERE room_id=span.corner_id),span.last_turn_ended_at)
-  WHERE last_activity_at IS NULL;
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_started_at timestamptz;
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_head text;
-CREATE OR REPLACE FUNCTION corner_silent_activity() RETURNS trigger LANGUAGE plpgsql AS $activity$
-BEGIN
-  IF EXISTS(SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-      LEFT JOIN rooms parent ON parent.id=corner.parent_id
-      WHERE fact.corner_id=NEW.room_id AND (NEW.author_id IN
-        (COALESCE(fact.worker_agent_id,fact.owner_agent_id),COALESCE(fact.reviewer_agent_id,parent.reviewer_agent_id))
-        OR EXISTS(SELECT 1 FROM agent_commands review WHERE review.room_id=NEW.room_id AND review.agent_id=NEW.author_id
-          AND review.turn_request_id=NEW.request_id AND review.review_context IS NOT NULL)))
-    AND NOT EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=NEW.room_id
-      AND command.agent_id=NEW.author_id AND command.turn_request_id=NEW.request_id
-      AND command.reason='report' AND command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}') THEN
-    UPDATE corner_attention_spans SET last_activity_at=clock_timestamp() WHERE corner_id=NEW.room_id;
-    IF FOUND THEN
-      PERFORM pg_notify('beeline_live_v1',json_build_object('table','corner_state','operation','UPDATE','roomId',NEW.room_id)::text);
-    END IF;
-  END IF;
-  RETURN NULL;
-END $activity$;
-DROP TRIGGER IF EXISTS corner_silent_activity ON messages;
-CREATE TRIGGER corner_silent_activity AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION corner_silent_activity();
-
 CREATE OR REPLACE FUNCTION corner_state_changed() RETURNS trigger LANGUAGE plpgsql AS $state$
 DECLARE corner uuid; pending boolean; failing boolean; was_failing boolean; same_head boolean; head text; status text;
 BEGIN
   IF TG_TABLE_NAME='agent_turns' THEN
     corner=COALESCE(NEW.room_id,OLD.room_id);
-    -- Real worker/reviewer activity starts a fresh silent stretch. Automatic
-    -- attention replies cannot rearm their own alert, even for a self-worker.
-    IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-      LEFT JOIN rooms parent ON parent.id=corner.parent_id WHERE fact.corner_id=NEW.room_id
-        AND (NEW.agent_id IN (COALESCE(fact.worker_agent_id,fact.owner_agent_id),COALESCE(fact.reviewer_agent_id,parent.reviewer_agent_id))
-          OR EXISTS(SELECT 1 FROM agent_commands review WHERE review.room_id=NEW.room_id AND review.agent_id=NEW.agent_id
-            AND review.turn_request_id=NEW.request_id AND review.review_context IS NOT NULL)))
-      AND NOT EXISTS(SELECT 1 FROM agent_commands command
-      WHERE command.room_id=corner AND command.agent_id=NEW.agent_id
-        AND command.turn_request_id=NEW.request_id AND command.reason='report'
-        AND command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}') THEN
-      UPDATE corner_attention_spans SET last_activity_at=clock_timestamp() WHERE corner_id=corner;
-    END IF;
     -- A commander answering its own alert is not new corner work.
     IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND created_by=COALESCE(NEW.agent_id,OLD.agent_id)) THEN
       RETURN NULL;
@@ -210,10 +170,6 @@ type Row = CornerStateRow & {
   scheduled_wait: boolean;
   held: boolean;
   review_queued: boolean;
-  last_activity_at: Date;
-  silent_reported_at: Date | null;
-  notified_person: boolean;
-  notified_until: Date | null;
 };
 function attentionSql() {
   return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
@@ -221,10 +177,6 @@ function attentionSql() {
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,span.reported_episode::text,
-    COALESCE(span.last_activity_at,c.created_at) last_activity_at,
-    (SELECT max(silent_activity_at) FROM automatic_report_wakes WHERE corner_id=c.id) silent_reported_at,
-    ${cornerNotifiedPersonSql('c.id')} notified_person,
-    (SELECT min(expires_at) FROM corner_owed WHERE corner_id=c.id AND blocking AND expires_at>now()) notified_until,
     EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL) held,
     EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
       AND command.action='input' AND (command.state='pending' OR
@@ -253,29 +205,10 @@ export async function refreshCornerAttention(
     const summary = row.lifecycle?.checksSummary;
     const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' || row.lifecycle?.checks === 'pending' ||
       (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
-    const now = Date.now();
-    const activity = new Date(row.last_activity_at).getTime();
-    const silentDue = activity + 2 * 60 * 60 * 1000;
-    const silentSuppressed = row.scheduled_wait || pendingHead || row.notified_person;
-    const waitDeadline = row.notified_person && !pendingHead && row.notified_until
-      ? new Date(row.notified_until).getTime()+1 : 0;
-    const silentReported = row.silent_reported_at && new Date(row.silent_reported_at).getTime() >= activity;
-    let silentDeadline = !silentSuppressed && !silentReported ? silentDue : 0;
-    if (silentDeadline && silentDue <= now) {
-      const report = await reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID,
-        `blocked: Corner ${row.name} has been silent for two hours. Resume work or close its PR.`, undefined,
-        createHash('sha256').update(`corner-silent:${cornerId}:${activity}`).digest('hex'),
-        { automatic: true, agentOnly: true });
-      if (report.retryAt) silentDeadline = report.retryAt;
-      else if (report.delivered) {
-        await tx.query(`UPDATE automatic_report_wakes SET silent_activity_at=$2 WHERE corner_id=$1`, [cornerId,row.last_activity_at]);
-        silentDeadline = 0;
-      } else silentDeadline = 0;
-    }
     const suppressed = row.scheduled_wait || row.held || row.review_queued || pendingHead || row.worker_active || row.reviewer_active;
     if (suppressed) {
       await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
-      return { parentId: row.parent_id, deadlines: [silentDeadline,waitDeadline].filter(due => due > now) };
+      return { parentId: row.parent_id, deadlines: [] };
     }
     // The display reads idle as soon as a turn ends. The alert still waits out
     // the post-turn gap, so a reply or new order inside it opens no episode.
@@ -291,7 +224,7 @@ export async function refreshCornerAttention(
     let reportDeadline = 0;
     if (state === 'idle' && BigInt(row.reported_episode) < episode) {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
-      const text = `blocked: Corner ${row.name} is idle. Resume it or close its PR.`;
+      const text = `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
       const report = await reportToCommander(
         tx,
         cornerId,
@@ -305,10 +238,9 @@ export async function refreshCornerAttention(
       else await tx.query('UPDATE corner_attention_spans SET reported_episode=$2 WHERE corner_id=$1',
         [cornerId,episode.toString()]);
     }
-    // Both deadlines are durable: restart recovery reconstructs them.
+    const now = Date.now();
+    // Only the existing post-turn gap has an activity deadline.
     const deadlines = [
-      silentDeadline,
-      waitDeadline,
       reportDeadline ? Math.max(reportDeadline, now+1) : 0,
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
     ].filter((due) => due > now);
@@ -326,7 +258,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** Reconstruct post-turn and silent-stretch deadlines on live changes and restart. */
+/** The existing post-turn gap deadline; check duration never changes state. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

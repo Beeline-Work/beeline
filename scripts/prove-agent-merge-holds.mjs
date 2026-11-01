@@ -1,8 +1,7 @@
-// SUPERVISION: isolated built HTTP service replay; production is read-only.
+// SUPERVISION-3: isolated built HTTP service replay; production is read-only.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';
-import { refreshCornerAttention } from '../apps/server/dist/corner-attention.js';
 import { cornerMergeGate } from '../apps/server/dist/corner-lifecycle.js';
 import { migrate } from '../apps/server/dist/database.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
@@ -16,14 +15,14 @@ const human = 'a'.repeat(64), commander = 'b'.repeat(64), worker = 'c'.repeat(64
 const workspace = '11111111-1111-4111-8111-111111111111';
 const room = '22222222-2222-4222-8222-222222222222';
 const dm = '33333333-3333-4333-8333-333333333333';
-const tokens = new Map([[commander, 'bdt_answered_commander_fixture'], [worker, 'bdt_answered_worker_fixture']]);
+const tokens = new Map([[commander, 'bdt_hold_commander_fixture'], [worker, 'bdt_hold_worker_fixture']]);
 let server;
 try {
   await migrate(db);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Owner','owner'),($2,'agent','Commander','commander'),($3,'agent','Worker','worker')`, [human, commander, worker]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`, [commander, worker, human]);
-  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Answered report proof')`, [workspace]);
+  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Agent hold proof')`, [workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants,created_by) VALUES
     ($1,$3,'Work',NULL,$4),($2,$3,'Owner and commander',jsonb_build_array($4::text,$5::text),$4)`, [room, dm, workspace, human, commander]);
   for (const member of [human, commander, worker]) {
@@ -54,34 +53,12 @@ try {
   await phone.execute('sendRoomMessage', { roomId: dm, messageId: randomBytes(32).toString('hex'), text: 'Verify the publish' }, human);
   const order = (await call('getAgentCommands', { roomId: dm })).commands[0];
   await claim(order);
-  const opened = await call('createCorner', { ...authority(order), targetRoomId: room, name: 'answered-report',
+  const opened = await call('createCorner', { ...authority(order), targetRoomId: room, name: 'agent-hold-proof',
     objective: 'Verify the publish', implementer: 'commander',
     brief: { spec: 'Verify the publish', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } });
   const turn = (await call('getAgentCommands', { roomId: opened.cornerId })).commands[0];
   await claim(turn);
-  const text = 'blocked: Choose a runner';
-  const posted = await call('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text });
-  assert.equal(posted.effect, 'report');
-  assert.equal(posted.address, dm);
-  assert.equal(posted.reportsAssignment, true);
-  await call('report', { ...authority(turn), text, status:'blocked' });
-  let reports = (await call('getAgentCommands', {roomId:dm})).commands.filter(c => c.reason==='report');
-  assert.equal(reports.length, 1);
-  assert.equal(reports[0].source.body, text);
-  const view = await phone.readRoom(opened.cornerId, human);
-  assert(view.messages.some(m => m.agentCommand?.kind === 'report'));
-  assert(!view.messages.some(m => m.presentation === 'message' && m.text === text));
-  console.log('SUPERVISION-1 PASS: HTTP status post → opening DM wake; explicit repeat deduped; phone shows report card.');
-  await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [opened.cornerId]);
-  await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [opened.cornerId]);
-  // Backdate the durable activity clock instead of sleeping or touching production.
-  await db.query(`UPDATE corner_attention_spans SET last_activity_at=now()-interval '2 hours 1 second' WHERE corner_id=$1`, [opened.cornerId]);
-  await refreshCornerAttention(db, opened.cornerId);
-  await refreshCornerAttention(db, opened.cornerId);
-  reports = (await call('getAgentCommands', {roomId:dm})).commands.filter(c => c.reason==='report' && c.source.body.includes('silent'));
-  assert.equal(reports.length, 1);
-  console.log('SUPERVISION-2 PASS: same blocked corner → two-hour silence → one commander wake across repeated refresh.');
-  // Start a fresh actual worker turn to test authenticated hold refusals.
+  // Exercise the authenticated refusal from the opening control surface.
   const hold = await request('setCornerHold', { ...authority(order), cornerId:opened.cornerId });
   assert.equal(hold.status, 403, JSON.stringify(hold.body));
   assert.match(hold.body.error, /close the PR/);

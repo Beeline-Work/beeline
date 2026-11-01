@@ -1,7 +1,6 @@
 import quotedTagPosts from './test-fixtures/quoted-tag-posts.json';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
-import { refreshCornerAttention } from './corner-attention.js';
 import { setCornerHold } from './corner-holds.js';
 import { cornerMergeGate } from './corner-lifecycle.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -2131,46 +2130,6 @@ it.each([true, false])('records mock reply evidence through brief reads (reply=%
   await expect(daemon.execute('getRoomMessage', {roomId: DM, messageId: approval}, WORKER)).rejects.toThrow();
 });
 
-// Production replay stand-in: no live owner corner or multi-hour hold is created.
-async function selfCommanded() {
-  const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
-    name: 'self-supervised', objective: 'Replay supervision', implementer: 'ruby',
-    brief: { spec: 'Replay supervision', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
-  }, RUBY);
-  const turn = (await commands(opened.cornerId, RUBY))[0]!;
-  await claim(turn);
-  return { opened, turn };
-}
-it('SUPERVISION-1: self-commanded status post wakes the opening DM and dedupes explicit report', async () => {
-  const { opened, turn } = await selfCommanded();
-  const text = 'blocked: Choose a runner';
-  const result = await daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text }, RUBY);
-  expect(result).toMatchObject({ effect: 'report', reportsAssignment: true, address: DM });
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
-  await daemon.execute('report', { ...authority(turn), status: 'blocked', text }, RUBY);
-  expect((await db.query(`SELECT id FROM agent_commands WHERE room_id=$1 AND reason='report'`, [DM])).rows).toHaveLength(1);
-  expect((await db.query(`SELECT id FROM messages WHERE room_id=$1 AND presentation='message' AND text=$2`, [opened.cornerId,text])).rows).toHaveLength(0);
-  const cross = await daemon.execute('postCornerMessage', { ...authority(order), cornerId:opened.cornerId,
-    text:'needs-decision: Choose from the DM surface' }, RUBY);
-  expect(cross).toMatchObject({effect:'report',address:DM,reportsAssignment:true});
-  expect((await db.query(`SELECT id FROM agent_commands WHERE room_id=$1 AND reason='report'`, [DM])).rows).toHaveLength(2);
-});
-it('SUPERVISION-2: a self-commanded blocked corner wakes once after a silent stretch', async () => {
-  const { opened, turn } = await selfCommanded();
-  await daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text: 'blocked: Choose a runner' }, RUBY);
-  await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [opened.cornerId]);
-  await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [opened.cornerId]);
-  // Freeze the last real activity, then advance wall time without waiting in production.
-  const clock = Date.now();
-  vi.spyOn(Date, 'now').mockReturnValue(clock + 2 * 60 * 60 * 1000 + 1000);
-  try {
-    await refreshCornerAttention(db, opened.cornerId);
-    await refreshCornerAttention(db, opened.cornerId);
-    const wakes = (await db.query<{text:string}>(`SELECT private_payload->>'text' text FROM agent_commands
-      WHERE room_id=$1 AND reason='report'`, [DM])).rows.filter(r => r.text.includes('silent'));
-    expect(wakes).toHaveLength(1);
-  } finally { vi.restoreAllMocks(); }
-});
 it('SUPERVISION-3: agents cannot set or open with holds; human hold still gates merge', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await expect(daemon.execute('setCornerHold', { ...authority(turn), cornerId: opened.cornerId }, WORKER)).rejects.toThrow('close the PR');

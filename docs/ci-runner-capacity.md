@@ -49,21 +49,28 @@ The services start with `env -i` and only the CI home, system binary path,
 locale and per-runner tool-cache path. They run with no capabilities and
 `NoNewPrivileges`, a read-only host filesystem, private temporary directories
 and devices, and an invisible view of other users' processes. Home directories
-and deployment directories are inaccessible. `/etc`, `/var` and `/run` are
-replaced by private filesystems; only the CI home and an explicit allowlist of
-public identity, DNS, dynamic-loader, command-alternative links and TLS trust
-files are mounted back. Preserve `/etc/alternatives` read-only: Ubuntu's
+and unlisted deployment directories are inaccessible. `/etc`, `/var`, `/run`
+and `/opt` are replaced by private filesystems; only the CI home, the public
+Chrome package at `/opt/google/chrome`, and an explicit allowlist of public
+identity, DNS, dynamic-loader, command-alternative, font and TLS trust files
+are mounted back. Chrome and font configuration are read-only; `/opt` exposes
+no other installed application. Preserve `/etc/alternatives` read-only: Ubuntu's
 `/usr/bin/awk` resolves through it, and the mobile canary's stubbed readiness
 tests need that standard command. Masking it made those fixtures poll instead
 of parsing adb output. With the command links available, the isolated
 `mobileOtaRelease.test.ts` fixture passes all 29 tests in about seven seconds.
+Browser proofs need the Chrome package and `/etc/fonts`; hiding the package
+breaks `/usr/bin/google-chrome` even though that command lives under `/usr/bin`.
+The corrected namespace passes the three `error-rows.browser.test.ts` browser
+proofs. Browser profiles and temporary files stay inside CI-owned storage.
 Host environment files, systemd units, production credential directories and
 the Docker socket are absent from the runner's filesystem view.
 
 Verification entered a running service's mount namespace as the CI UID with
-no groups or capabilities. Reads of both production homes, `/root`, `/opt`,
-`/srv`, `/etc/environment`, `/etc/systemd/system`, `/var/lib/private`, and the
-Docker socket were denied. All ten actual listener environments were checked
+no groups or capabilities. Reads of both production homes, `/root`, `/srv`,
+`/etc/environment`, `/etc/systemd/system`, `/var/lib/private`, and the Docker
+socket were denied; private `/opt` exposes only the public Chrome package.
+All ten actual listener environments were checked
 by variable name and contained no token, secret, password or credential
 variables. No production credential values were read or copied.
 
@@ -141,3 +148,7 @@ hosted-only run on that PR also supplied supersession evidence: after more
 than 27 minutes, eleven Linux jobs were still queued, and the new push
 cancelled the old run. That cancelled run is queue/cancellation evidence,
 not a completed baseline measurement.
+
+For a completed job while its workflow still runs, fetch its log directly with
+`gh-axi api repos/Beeline-Work/beeline/actions/jobs/JOB_ID/logs --full`.
+`gh-axi run view --log` waits for the entire workflow to finish.

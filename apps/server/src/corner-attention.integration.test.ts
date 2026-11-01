@@ -724,7 +724,9 @@ it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer whi
   }, WORKER);
   await runCornerAttention(db);
   await runCornerAttention(db);
-  expect(await state()).toBe('waiting');
+  // Five shards are still pending, so the corner stays in review. The blocked
+  // report waits until every check has settled.
+  expect(await state()).toBe('review');
   expect((await commanderFlags()).filter(command => command.source.body.includes('is idle'))).toHaveLength(0);
 });
 

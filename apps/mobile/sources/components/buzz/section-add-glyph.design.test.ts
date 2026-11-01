@@ -15,12 +15,14 @@ describe('Shared section add control', () => {
     expect(members).toContain('actionAccessibilityLabel="Add people"');
     expect(members).toContain('actionAccessibilityLabel="Add agents"');
   });
-  it('puts the Room add action beside Close without a separate count heading', () => {
+  it('puts the Room add action on the title line below Close without a count heading', () => {
     expect(roster).not.toContain('<RoomListSectionHeader');
     const heading = roster.slice(roster.indexOf('<View style={styles.rosterModalHeading}>'), roster.indexOf('<ScrollView'));
     expect(heading).toContain('{canAddMembers && (');
     expect(roster).toContain("import { SectionAddButton } from './RoomListSectionHeader'");
     expect(heading).toContain('<SectionAddButton');
+    expect(heading).toContain('testID="room-roster-title-row"');
+    expect(heading).toContain('testID="room-roster-close"');
     expect(heading).not.toContain('label="Add"');
     expect(heading).toContain('accessibilityLabel="Add members"');
     expect(heading).toContain('onPress={onAddMembers}');

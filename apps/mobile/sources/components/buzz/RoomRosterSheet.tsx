@@ -1,3 +1,4 @@
+import { InlineRow } from './IndexRow';
 import { SectionAddButton } from './RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
@@ -56,7 +57,7 @@ function rosterRowNote({
 
 /**
  * The Room's members, in the Members page's vocabulary so the two views read
- * as one: "Members" with an add control beside Close, then a
+ * as one: Close at the top right, then "Members" with its trailing add control and a
  * 64pt row per identity with its handle at body size and one quiet metadata
  * line: a person's Workspace role, or an agent's model and owner. People lead and
  * agents follow inside that single list. The gold ring on the tile means
@@ -130,23 +131,27 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
     >
       <View style={styles.rosterModal}>
         <View style={styles.rosterModalHeading}>
-          <View style={styles.rosterModalHeadingCopy}>
-            <Text style={styles.rosterModalEyebrow}>In this {ROOM_LABEL}</Text>
-            <Text style={styles.rosterModalTitle}>{MEMBERS_LABEL}</Text>
-          </View>
-          {canAddMembers && (
-            <SectionAddButton
-              style={styles.rosterModalAdd}
-              accessibilityLabel="Add members"
-              testID="room-roster-add-members"
-              onPress={onAddMembers}
+          <InlineRow style={styles.rosterModalHeadingTop}>
+            <View style={styles.rosterModalHeadingCopy}>
+              <Text style={styles.rosterModalEyebrow}>In this {ROOM_LABEL}</Text>
+            </View>
+            <CloseButton
+              accessibilityLabel={`Close ${ROOM_LABEL} roster`}
+              onPress={onClose}
+              control={styles.rosterModalClose}
+              testID="room-roster-close"
             />
-          )}
-          <CloseButton
-            accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-            onPress={onClose}
-            control={styles.rosterModalClose}
-          />
+          </InlineRow>
+          <InlineRow style={styles.rosterModalTitleRow} testID="room-roster-title-row">
+            <Text style={styles.rosterModalTitle}>{MEMBERS_LABEL}</Text>
+            {canAddMembers && (
+              <SectionAddButton
+                accessibilityLabel="Add members"
+                testID="room-roster-add-members"
+                onPress={onAddMembers}
+              />
+            )}
+          </InlineRow>
         </View>
 
         <ScrollView
@@ -279,7 +284,9 @@ const styles = StyleSheet.create((theme) => {
       maxHeight: '100%',
       padding: hull.space.md,
     },
-    rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: hull.space.md },
+    rosterModalHeading: { gap: hull.space.xs },
+    rosterModalHeadingTop: { alignItems: 'flex-start' },
+    rosterModalTitleRow: { alignItems: 'center', minHeight: 44 },
     rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
     rosterModalEyebrow: {
       ...Typography.default(),
@@ -289,15 +296,14 @@ const styles = StyleSheet.create((theme) => {
     rosterModalTitle: {
       ...Typography.default(),
       ...hull.type.hero,
-      marginTop: hull.space.xs,
+      flex: 1,
+      minWidth: 0,
       color: hull.textPrimary,
     },
-    rosterModalAdd: { marginTop: -hull.space.sm },
     rosterModalClose: {
       width: 44,
       height: 44,
       marginTop: -hull.space.sm,
-      marginRight: -hull.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },

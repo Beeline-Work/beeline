@@ -21,8 +21,10 @@ async function run() {
     assert(roster.textContent?.includes(name), `Real model ${name}`);
   const add = byId('room-roster-add-members');
   assert(add?.getAttribute('aria-label') === 'Add members' && Boolean(add.querySelector('svg')), 'Manager has shared plus action');
-  const close = roster.querySelector<HTMLElement>('[aria-label="Close Room roster"]')!;
-  assert(add.parentElement === close.parentElement, 'Add and Close share heading');
+  const close = byId('room-roster-close');
+  assert(add.parentElement === byId('room-roster-title-row'), 'Add belongs to Members title line');
+  assert(add.parentElement !== close.parentElement, 'Close owns a separate top row');
+  assert(add.getBoundingClientRect().right === close.getBoundingClientRect().right, 'Add and Close share trailing edge');
   add.click();
   await pause();
   const row = byId(`member-picker-candidate-${candidates[0].pubkey}`);

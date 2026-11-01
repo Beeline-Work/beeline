@@ -63,6 +63,12 @@ export const SPEECH_SILENCE_TIMEOUT_MS = 4000;
 // composer; its latest interim remains the best available fallback.
 export const SPEECH_FINALIZATION_TIMEOUT_MS = 2000;
 const MAX_RESTARTS = 10;
+// Android emits these for refused or empty takes, including ERROR_CLIENT
+// during native session shutdown. Keep capture, network and unknown failures visible.
+const EXPECTED_ANDROID_RECOGNITION_ERRORS = new Set([
+  'client', 'aborted', 'no-speech', 'speech-timeout',
+  'not-allowed', 'service-not-allowed', 'language-not-supported',
+]);
 // Native volume spans roughly -2 (silent) through 10 (loud). Anything above
 // the documented silence floor counts as speech activity.
 const SPEECH_VOLUME_FLOOR = 0;
@@ -402,7 +408,11 @@ export function useSpeechInput(
     };
 
     const onError = (event: any) => {
-      if ((listeningRef.current || stopRequestedRef.current) && !errorReportedRef.current) {
+      if (
+        (listeningRef.current || stopRequestedRef.current)
+        && !errorReportedRef.current
+        && !(Platform.OS === 'android' && EXPECTED_ANDROID_RECOGNITION_ERRORS.has(event.error))
+      ) {
         errorReportedRef.current = true;
         const recognizer = startOptions.androidRecognitionServicePackage ?? 'platform-default';
         void reportClientError('app', new Error(

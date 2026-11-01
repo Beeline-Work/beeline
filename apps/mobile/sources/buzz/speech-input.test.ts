@@ -901,6 +901,48 @@ describe('useSpeechInput', () => {
       expect(speech().state).toBe('idle');
     });
 
+    it.each(['client', 'aborted', 'no-speech', 'speech-timeout', 'not-allowed', 'service-not-allowed', 'language-not-supported'])(
+      'does not report the expected Android refusal %s, but still reports a later failure',
+      async (error) => {
+        const { renderer, speech } = renderHook();
+        await act(async () => { await speech().start(); });
+        await act(async () => { fireEvent('error', { error, message: 'Recognition refused' }); });
+        expect(reportClientError).not.toHaveBeenCalled();
+        if (error === 'not-allowed') {
+          expect(speech().state).toBe('permission-denied');
+          await act(async () => { await speech().start(); });
+        }
+        await act(async () => { fireEvent('error', { error: 'audio-capture', message: 'Capture failed' }); });
+        expect(reportClientError).toHaveBeenCalledExactlyOnceWith('app', expect.objectContaining({
+          message: expect.stringContaining('dictation-error: audio-capture: Capture failed'),
+        }));
+        act(() => renderer.unmount());
+      },
+    );
+
+    it.each(['unknown', 'new-error-code', 'busy', 'network'])('reports unexpected Android error %s', async (error) => {
+      const { renderer, speech } = renderHook();
+      await act(async () => { await speech().start(); });
+      await act(async () => { fireEvent('error', { error, message: 'Recognition failed' }); });
+      expect(reportClientError).toHaveBeenCalledExactlyOnceWith('app', expect.objectContaining({
+        message: expect.stringContaining(`dictation-error: ${error}: Recognition failed`),
+      }));
+      act(() => renderer.unmount());
+    });
+
+    it.each(['ios', 'web'])('keeps reporting client errors on %s', async (platform) => {
+      platformState.OS = platform;
+      const { renderer, speech } = renderHook();
+      try {
+        await act(async () => { await speech().start(); });
+        await act(async () => { fireEvent('error', { error: 'client', message: 'Recognition failed' }); });
+        expect(reportClientError).toHaveBeenCalledOnce();
+      } finally {
+        act(() => renderer.unmount());
+        platformState.OS = 'android';
+      }
+    });
+
     it('reports the native error and recognizer once per take and resets on the next take', async () => {
       mockMod.getSpeechRecognitionServices.mockReturnValue([ANDROID_GOOGLE_RECOGNITION_SERVICE]);
       const { speech } = renderHook();

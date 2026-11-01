@@ -3,6 +3,9 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDeviceSpeechLocale } from '@/buzz/speech-locale';
+import { reportClientError } from '@/buzz/client-error-report';
+
+vi.mock('@/buzz/client-error-report', () => ({ reportClientError: vi.fn(async () => {}) }));
 
 // Synchronous mock for react-native.
 const platformSetter = vi.hoisted(() => {
@@ -569,6 +572,15 @@ describe('listening flow', () => {
 });
 
 describe('edge states', () => {
+  it('keeps the microphone settings message after an Android recognizer refusal', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => fireEvent('error', { error: 'not-allowed', message: 'Recognition refused' }));
+    const status = renderer.root.findByProps({ testID: 'chat-speech-status' }).findByType('Text');
+    expect(status.props.children).toBe('microphone off in settings · tap to open settings');
+    expect(reportClientError).not.toHaveBeenCalled();
+  });
+
   it('shows permission-denied status and dims mic', async () => {
     mockMod.getPermissionsAsync.mockResolvedValue({ status: 'undetermined' });
     mockMod.requestPermissionsAsync.mockResolvedValue({

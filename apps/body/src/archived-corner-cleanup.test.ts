@@ -1,21 +1,36 @@
 import { promisify } from 'node:util';
 import { readlinkSync, readFileSync, readdirSync } from 'node:fs';
+const scans = vi.hoisted(() => ({ files: [] as string[][], argv: [] as number[][] }));
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   const mocked = (...args: any[]) => {
     if (args[0] === '/usr/bin/python3' && args[1][1].includes('KERN_PROCARGS2')) {
       const callback = args.at(-1);
-      try { callback(null, JSON.stringify(readFileSync(`/proc/${args[1][2]}/cmdline`, 'utf8').split('\0').filter(Boolean)), ''); }
+      const requested = JSON.parse(args[1][2]);
+      if (typeof requested === 'number') {
+        scans.argv.push([requested]);
+        try { callback(null, JSON.stringify(readFileSync(`/proc/${requested}/cmdline`, 'utf8').split('\0').filter(Boolean)), ''); }
+        catch (error) { callback(error, '', ''); }
+        return;
+      }
+      scans.argv.push(requested);
+      try { callback(null, JSON.stringify(Object.fromEntries(JSON.parse(args[1][2]).flatMap((pid: number) => {
+        try { return [[pid, readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean)]]; } catch { return []; }
+      }))), ''); }
       catch (error) { callback(error, '', ''); }
       return;
     }
     if (args[0] === '/sbin/mount') args[0] = '/bin/mount';
     if (args[0] === '/usr/sbin/lsof') {
+      scans.files.push(args[1]);
       const callback = args.at(-1);
       try {
-        const base = `/proc/${args[1][2]}`;
-        const paths = ['cwd', ...readdirSync(base + '/fd').map(fd => 'fd/' + fd)].flatMap(name => {
-          try { return ['n/private' + readlinkSync(base + '/' + name)]; } catch { return []; }
+        const pids = args[1].includes('-p') ? [args[1][2]] : readdirSync('/proc').filter(pid => /^\d+$/.test(pid));
+        const paths = pids.flatMap((pid: string) => {
+          const base = `/proc/${pid}`;
+          try { return ['p' + pid, ...['cwd', ...readdirSync(base + '/fd').map(fd => 'fd/' + fd)].flatMap(name => {
+            try { return ['n/private' + readlinkSync(base + '/' + name)]; } catch { return []; }
+          })]; } catch { return []; }
         });
         callback(null, paths.join('\n'), '');
       }
@@ -65,6 +80,7 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
   const platformSpy = { mockRestore: () => vi.unstubAllGlobals() };
   vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? (platform === 'darwin-var' ? 'darwin' : platform) : Reflect.get(target, key) }));
   try {
+    scans.files.length = 0; scans.argv.length = 0;
     for (const states of [[], [{ roomId: 'closed', archived: false }]]) {
       await reclaimArchivedMemberStorage(root, states);
       expect(await access(path).then(() => true, () => false)).toBe(true);
@@ -76,6 +92,13 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
     await reclaimArchivedMemberStorage(root, [{ roomId: 'closed', archived: true }]);
     expect(await access(path).then(() => true, () => false)).toBe(false);
     expect(await access(home).then(() => true, () => false)).toBe(false);
+    if (platform !== 'linux') {
+      // R-MAC-STORAGE: unrelated host processes must not each launch lsof
+      // and Python while the cleanup holds the global storage lease.
+      expect(scans.files.filter(args => args.includes('-u'))).toHaveLength(1);
+      expect(scans.argv.filter(pids => pids.length > 1)).toHaveLength(1);
+      expect(scans.files.filter(args => args.includes('-p')).length).toBeLessThanOrEqual(2);
+    }
     await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true);
     await exited;
     expect(broker.exitCode).toBe(null);

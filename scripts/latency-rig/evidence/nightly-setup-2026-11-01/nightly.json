@@ -1,0 +1,180 @@
+{
+  "pass": false,
+  "failures": [
+    "Capture skipped or produced no measured cases"
+  ],
+  "drift": {
+    "rows": [],
+    "failures": []
+  },
+  "night": "2026-11-01",
+  "head": "017489a1644382d395fbd5b049ad94b12761820d",
+  "prs": [],
+  "needsRerun": false,
+  "shouldAlert": true,
+  "hostLoad": [
+    {
+      "atMs": 1793550025202,
+      "load": [
+        18.7,
+        19.81,
+        20.02
+      ],
+      "freeMemory": 98587131904,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793550035202,
+      "load": [
+        16.51,
+        19.31,
+        19.85
+      ],
+      "freeMemory": 98586439680,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793550045202,
+      "load": [
+        14.94,
+        18.88,
+        19.71
+      ],
+      "freeMemory": 98085339136,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793550055206,
+      "load": [
+        13.79,
+        18.51,
+        19.57
+      ],
+      "freeMemory": 106278465536,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793550065212,
+      "load": [
+        13.37,
+        18.26,
+        19.48
+      ],
+      "freeMemory": 105649381376,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793550780242,
+      "load": [
+        7.14,
+        9.35,
+        13.84
+      ],
+      "freeMemory": 88169119744,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    }
+  ],
+  "firstAttempt": {
+    "pass": false,
+    "failures": [
+      "route//beeline/chat/[channelId]/push-unseen-1: budget exceeded (960 ms; budget <450 ms)",
+      "route//beeline/chat/[channelId]/push-unseen-5: budget exceeded (674 ms; budget <450 ms)",
+      "route//beeline/chat/[channelId]/room-list-unseen-5: budget exceeded (980 ms; budget <450 ms)",
+      "route//beeline/chat/[channelId]/warm: budget exceeded (525 ms; budget <450 ms)",
+      "tap/open-composer/warm: budget exceeded (204 ms; budget <150 ms)",
+      "tap/open-corner/warm: budget exceeded (1647 ms; budget <150 ms)",
+      "tap/open-corner/warm: request contract failed",
+      "tap/react-message/warm: budget exceeded (515 ms; budget <150 ms)",
+      "tap/react-message/warm: request contract failed",
+      "tap/send-text/warm: budget exceeded (997 ms; budget <150 ms)",
+      "tap/send-text/warm: request contract failed",
+      "tap/switch-tabs/warm: budget exceeded (273 ms; budget <150 ms)"
+    ],
+    "drift": {
+      "rows": [
+        {
+          "key": "route//beeline/chat/[channelId]/push-unseen-1",
+          "p95Ms": 960,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/push-unseen-5",
+          "p95Ms": 674,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/room-list-unseen-1",
+          "p95Ms": 444,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/room-list-unseen-5",
+          "p95Ms": 980,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/warm",
+          "p95Ms": 525,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/open-composer/warm",
+          "p95Ms": 204,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/open-corner/warm",
+          "p95Ms": 1647,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/react-message/warm",
+          "p95Ms": 515,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/send-text/warm",
+          "p95Ms": 997,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/switch-tabs/warm",
+          "p95Ms": 273,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        }
+      ],
+      "failures": []
+    }
+  },
+  "text": "Nightly squire emulator rig 2026-11-01: failed or skipped\nCapture skipped or produced no measured cases\nNo passing baseline yet; PR regression range unavailable\nMeasured main: 017489a1644382d395fbd5b049ad94b12761820d\nHost load recorded: 6 observation(s); see attached report",
+  "runId": "night-2026-11-01-a2Irbb",
+  "attempt": 2,
+  "final": true,
+  "recordedAt": "2026-11-01T16:33:00.409Z"
+}

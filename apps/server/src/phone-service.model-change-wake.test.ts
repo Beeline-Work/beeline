@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { QueryResultRow } from 'pg';
-import { migrate, type QueryResult, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { type QueryResult, type SqlDatabase } from './database.js';
+import { migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
@@ -43,8 +43,7 @@ class RecordingDatabase implements SqlDatabase {
 }
 
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Charles','lunchboxfortwo'),($2,'agent','Bee','bee'),

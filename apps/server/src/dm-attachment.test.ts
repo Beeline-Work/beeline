@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -29,8 +29,7 @@ describe('DM attachments', () => {
   let daemonToken: string;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,

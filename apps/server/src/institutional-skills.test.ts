@@ -1,7 +1,6 @@
-import { describedWorkflow } from './test-support.js';
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import {
   getInstitutionalContext,
@@ -58,8 +57,7 @@ const command: CommandRow = {
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Requester'),($2,'human','Other human'),

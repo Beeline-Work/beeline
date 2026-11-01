@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -16,8 +15,7 @@ let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
 let order: AgentCommand;
 
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Owner','owner'),($2,'agent','Jellybean','jellybean'),($3,'agent','Baby','baby'),
     ($4,'agent','Candy','candy'),($5,'agent','Earth','earth')`, [OWNER, ...AGENTS]);

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -24,8 +23,7 @@ let turnCount = 0;
 let openTurn: { agentId: string; roomId: string; requestId: string; generationId: string } | undefined;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   turnCount = 0;
   openTurn = undefined;
   await database.query(

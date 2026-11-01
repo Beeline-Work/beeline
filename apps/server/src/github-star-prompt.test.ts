@@ -4,8 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -88,8 +87,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => github.listen(0, '127.0.0.1', resolve));
   const apiBaseUrl = `http://127.0.0.1:${(github.address() as AddressInfo).port}`;
 
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Person','person'),($2,'agent','Hoots','hoots')`,
     [H, A],

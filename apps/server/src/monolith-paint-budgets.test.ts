@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000201';
 const ROOM = '20000000-0000-4000-8000-000000000201';
@@ -21,8 +20,7 @@ describe('monolith hot-path PhoneService read budgets (deck + transcript)', () =
   let phone: PhoneService;
 
   beforeAll(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     phone = new PhoneService(database, 'http://local.test');
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Paint Viewer','paint')`,

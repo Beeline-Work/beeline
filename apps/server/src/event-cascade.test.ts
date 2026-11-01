@@ -9,8 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MAX_EVENT_DEPTH, MAX_TURNS_PER_ROOT } from '@beeline/api-contract/phone';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { EventCascadeRefusedError, systemLine } from './system-line.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -22,8 +21,7 @@ const AGENT_B = 'c'.repeat(64);
 describe('an event cascade', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Ada'),($2,'agent','Owl'),($3,'agent','Bat')`,
       [HUMAN, AGENT_A, AGENT_B],

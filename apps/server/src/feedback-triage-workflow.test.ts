@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readWorkflowContract, validateSavedWorkflow } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { migrate, migrateData } from './database.js';
+import { migrateData } from './database.js';
 import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
 import {
   FEEDBACK_TRIAGE_CONTRACT,
@@ -17,7 +17,7 @@ import {
 } from './feedback-triage-workflow.js';
 import { getInstitutionalContext } from './institutional-memory-shadow.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { completeServiceReview, readServiceReviewPage } from './service-review.js';
 import { handoff, startWorkflow, saveWorkflow } from './workflow-runs.js';
 
@@ -38,8 +38,7 @@ const DAILY = { kind: 'cron', expression: '0 14 * * *', timeZone: 'UTC' };
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Creator'),($2,'agent','Triager')`,
     [CREATOR, TRIAGER],

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 import { dashboardXSiteVisits } from './x-site-visits.js';
@@ -11,8 +10,7 @@ describe('first-party download tap aggregates', () => {
   let server: ReturnType<typeof createBeelineServer>;
   let base: string;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
     server = createBeelineServer({
       database: db,
       auth: new TokenAuth(db, async (subject) => ({ subject, login: subject })),

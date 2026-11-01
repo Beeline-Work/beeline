@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claimAgentCommand, routeHumanMessage } from './agent-command.js';
-import { migrate } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -18,8 +17,7 @@ describe('solo-agent-untagged-silence', () => {
   let db: PgliteDatabase;
   let phone: PhoneService;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Human','human'),($2,'agent','Agent','agent'),
       ($3,'human','Other human','other'),($4,'agent','Other agent','other-agent')`,

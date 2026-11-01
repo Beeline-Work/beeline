@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import {
   INSTITUTIONAL_SKILL_ANCHOR_RECHECK_MS,
   refreshWorkspaceSkillAnchors,
   type InstitutionalSkillAnchorSource,
 } from './institutional-skill-anchors.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const ROOM = '20000000-0000-4000-8000-000000000301';
@@ -92,8 +91,7 @@ async function skillState(): Promise<{
 }
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Requester'),($2,'agent','Implementer')`,

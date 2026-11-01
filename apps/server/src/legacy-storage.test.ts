@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 
 describe('historical storage compatibility', () => {
   it('creates historical tables on an empty database and preserves rows on a second migration', async () => {
-    const database = new PgliteDatabase();
+    const database = await migratedDatabase();
     try {
-      await migrate(database);
       const names = [
         'beeline_materializer_reservations',
         'beeline_room_read_marks',

@@ -1,15 +1,13 @@
 import { afterEach, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { ensureSystemDirectMessageRoom } from './system-line.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 let database: PgliteDatabase;
 afterEach(async () => database?.close());
 
 it('R1: System DM and Room approval cards show current absolute avatars and faces', async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   const owner = 'a'.repeat(64), agent = 'b'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111';
   const room = '33333333-3333-4333-8333-333333333333';

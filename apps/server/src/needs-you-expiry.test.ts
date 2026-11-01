@@ -1,12 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundLeader } from './background.js';
-import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const VIEWER = 'a'.repeat(64);
 const PEER = 'b'.repeat(64);
@@ -16,9 +15,8 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 const OTHER_ROOM = '33333333-3333-4333-8333-333333333333';
 
 const DATABASE_SNAPSHOT = await (async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     return await database.snapshot();
   } finally {
     await database.close();

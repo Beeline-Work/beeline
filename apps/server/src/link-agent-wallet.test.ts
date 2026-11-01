@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { LinkAgentWallet } from './link-agent-wallet.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -14,8 +13,7 @@ const WORKSPACE = '22222222-2222-4222-8222-222222222222';
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(`INSERT INTO identities(id,kind,name) VALUES
     ($1,'human','Owner'),($2,'agent','Agent'),($3,'agent','Other')`, [OWNER, AGENT, OTHER]);
   await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Test')`, [WORKSPACE]);

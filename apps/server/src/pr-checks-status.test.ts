@@ -2,11 +2,10 @@ import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -49,20 +48,8 @@ let requests: string[];
 let registrationForbidden: boolean;
 let server: Server | undefined;
 
-// Export only migrated schema; every test owns a new database and fresh seed rows.
-let databaseSnapshot: Blob | File;
-beforeAll(async () => {
-  const template = new PgliteDatabase();
-  try {
-    await migrate(template);
-    databaseSnapshot = await template.snapshot();
-  } finally {
-    await template.close();
-  }
-});
-
 beforeEach(async () => {
-  db = PgliteDatabase.fromSnapshot(databaseSnapshot);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle)
      VALUES($1,'human','Owner','owner'),($2,'agent','Author','author'),($3,'agent','Reviewer','reviewer')`,

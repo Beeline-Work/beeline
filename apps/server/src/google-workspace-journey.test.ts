@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -16,8 +16,7 @@ const agent = 'b'.repeat(64);
 const installationToken = vi.fn(async () => ({ token: 'room-grant', expiresAt: Date.now() + 3_600_000 }));
 
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await new AuthStore(db as unknown as TransactionalDatabase).migrate();
   auth = new TokenAuth(db, async () => { throw new Error('GitHub sign-in must not be needed'); },
     () => new Date(), async subject => ({ subject, name: subject, email: `${subject}@gmail.com`, audience: 'google-test' }));

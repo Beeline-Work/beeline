@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const ALLOWED_A = '20000000-0000-4000-8000-000000000301';
@@ -14,8 +13,7 @@ describe('PhoneService.canReadRooms batch authorization', () => {
   let phone: PhoneService;
 
   beforeAll(async () => {
-    const database = new PgliteDatabase();
-    await migrate(database);
+    const database = await migratedDatabase();
     phone = new PhoneService(database, 'http://local.test');
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES

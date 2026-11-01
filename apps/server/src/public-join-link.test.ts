@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { InvitePreviewAccess } from './invite-preview.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 const workspace = '8556a9be-d929-41e7-a0ef-d70af452a494';
 const room = '22222222-2222-4222-8222-222222222222';
 const owner = 'a'.repeat(64),
@@ -11,8 +11,7 @@ const owner = 'a'.repeat(64),
 let db: PgliteDatabase;
 afterEach(async () => db?.close());
 async function setup(visibility: 'public' | 'invite-only') {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Alice'),($3,'human','Bob')`,
     [owner, alice, bob],

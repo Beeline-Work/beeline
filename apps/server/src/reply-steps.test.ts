@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const HUMAN = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -23,8 +22,7 @@ describe('a Room reply’s steps', () => {
   let daemon: DaemonService;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES
        ($1,'human','Human','human'),($2,'agent','Agent','agent')`,

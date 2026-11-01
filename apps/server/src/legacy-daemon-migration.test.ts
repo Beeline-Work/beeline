@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { generateKeypair, nip98AuthHeader } from '@beeline/nostr';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
 import { LiveHub } from './live.js';
@@ -16,8 +15,7 @@ let database: PgliteDatabase,
   origin: string;
 const key = generateKeypair();
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Legacy')`,
     [owner, key.publicKey],

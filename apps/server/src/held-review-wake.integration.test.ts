@@ -6,12 +6,11 @@ import WebSocket from 'ws';
 import { createAgentCommand } from './agent-command.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const PARENT = '22222222-2222-4222-8222-222222222222';
@@ -40,8 +39,7 @@ let origin: string;
 const tokens = new Map<string, string>();
 
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   for (const [id, kind, name] of [[HUMAN, 'human', 'Human'], [WORKER, 'agent', 'Worker'], [REVIEWER, 'agent', 'Reviewer']])
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,$2,$3)`, [id, kind, name]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`, [WORKER, REVIEWER, HUMAN]);

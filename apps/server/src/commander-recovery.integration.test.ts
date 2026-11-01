@@ -2,8 +2,7 @@ import { flushDueCommanderWakes } from './commander-wakes.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { callAgentTool, postArtifact } from '../../body/src/read-only-mcp.js';
 import { createServer } from 'node:http';
@@ -31,8 +30,7 @@ const DM = '33333333-3333-4333-8333-333333333333';
 let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
 let order: AgentCommand;
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Captain','captain'),($2,'agent','Ruby','ruby'),($3,'agent','Worker','worker')`,

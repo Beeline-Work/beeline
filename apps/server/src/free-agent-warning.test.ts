@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { ModuleKind, transpileModule } from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate, migrateData } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { migrateData } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { FREE_AGENT_CONNECT_GUIDE, freeAgentConfigFromEnv, freeAgentInstructions } from './free-agents.js';
 import { recordAgentConnectedAfterNudge, warnFreeAgentOwner } from './free-agent-warning.js';
 import { PhoneService } from './phone-service.js';
@@ -16,8 +16,7 @@ const DAY = '2026-10-16';
 describe('free agent owner warning', () => {
   let db: PgliteDatabase;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Fern'),($3,'human','Other')`, [OWNER, AGENT, OTHER]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
     for (const member of [OWNER, AGENT, OTHER]) await db.query(

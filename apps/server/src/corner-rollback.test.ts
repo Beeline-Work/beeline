@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
-import { migrate, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { type SqlDatabase } from './database.js';
+import { migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 
 // Copied unchanged from predecessor 574b24bd3 for the documented rollback command.
@@ -33,9 +33,8 @@ async function backfillInheritedCornerMemberships(database: SqlDatabase): Promis
 }
 
 it('restores predecessor corner access after an invite join and new corner, twice safely', async () => {
-  const db = new PgliteDatabase();
+  const db = await migratedDatabase();
   try {
-    await migrate(db);
     const workspace = randomUUID(),
       room = randomUUID(),
       corner = randomUUID(),

@@ -2,10 +2,10 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Pool } from 'pg';
 import { createHash } from 'node:crypto';
-import { migrate, PostgresDatabase } from './database.js';
+import { PostgresDatabase } from './database.js';
 import { BackgroundJobRunner } from './background.js';
 import * as sentry from './sentry.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
@@ -19,8 +19,7 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 let db: PgliteDatabase, daemon: DaemonService;
 let seq = 0;
 beforeEach(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Operator','lunchboxfortwo'),($2,'agent','Worker','worker'),
     ($3,'human','Recipient','recipient'),($4,'human','Other','other')`, [OWNER, AGENT, PERSON, OTHER]);

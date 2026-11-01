@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 
@@ -11,8 +10,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 let database: PgliteDatabase;
 let service: DaemonService;
 beforeAll(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','lunchboxfortwo','lunchboxfortwo'),($2,'agent','Jellybean','jellybean'),
     ($3,'agent','Ruby','ruby'),($4,'agent','New','new')`, [OWNER, JELLYBEAN, RUBY, NEW]);

@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { institutionalObjectiveDashboard } from './institutional-curator.js';
 import {
   recordInstitutionalCornerOutcome,
   recordInstitutionalMemoryTurnOutcome,
   recordInstitutionalServeUsage,
 } from './institutional-memory-shadow.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000401';
 const ROOM = '20000000-0000-4000-8000-000000000401';
@@ -19,8 +18,7 @@ const AGENT = 'b'.repeat(64);
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Requester'),($2,'agent','Worker')`,
     [HUMAN, AGENT],

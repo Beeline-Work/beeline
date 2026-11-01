@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { TokenAuth } from './auth.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -26,8 +25,7 @@ describe('PhoneService agent removal', () => {
   let phone: PhoneService;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,face_id) VALUES($1,'human','Owner',NULL),($2,'agent','Foxy','fox')`,
       [OWNER, AGENT],

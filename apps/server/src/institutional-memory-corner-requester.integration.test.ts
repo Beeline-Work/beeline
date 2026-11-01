@@ -13,7 +13,7 @@ import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { wakeLateCornerWatcher } from './system-line.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 // Reproduction 2026-10-08: save_memory on a turn woken by a child corner's
 // report answered "503: institutional memory requester authority is
@@ -43,8 +43,7 @@ describe('save_memory requester authority on corner wakes', () => {
   let agentToken: string;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES

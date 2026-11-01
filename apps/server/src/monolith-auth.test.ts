@@ -9,7 +9,7 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate } from './database.js';
 import { compactSigninAttempts, recordSigninAttempt } from './signin-attempts.js';
 import * as sentry from './sentry.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -42,8 +42,7 @@ describe('mounted monolith auth', () => {
 
   beforeEach(async () => {
     vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     let mountedForVerification: MonolithAuthMount | undefined;
     const tokenAuth = new TokenAuth(

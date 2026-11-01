@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -11,8 +10,7 @@ const HELPER = 'b'.repeat(64);
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'agent','Helper')`,
     [OWNER, HELPER],

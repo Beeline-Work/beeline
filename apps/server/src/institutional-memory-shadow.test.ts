@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate, migrateData } from './database.js';
+import { migrateData } from './database.js';
 import {
   INSTITUTIONAL_CONTEXT_HEADER,
   tombstoneInstitutionalMemoryForMessage,
 } from './institutional-memory-shadow.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -25,8 +25,7 @@ const liveConfig = { enabled: true, live: true } as const;
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Human'),($2,'agent','Bee'),($3,'agent','Wasp')`,

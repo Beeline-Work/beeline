@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -46,8 +45,7 @@ async function activationFacts(agentId: string) {
 }
 
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle)
      VALUES($1,'human','Human','human'),($2,'agent','Hoots','hoots'),($3,'agent','Goosy','goosy')`,

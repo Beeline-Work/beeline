@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { ensureSystemDirectMessageRoom } from './system-line.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'c'.repeat(64);
@@ -15,8 +15,7 @@ const COMMAND = '33333333-3333-4333-8333-333333333333';
 describe('withdrawSupersededGrantAsks', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
       [OWNER, AGENT],

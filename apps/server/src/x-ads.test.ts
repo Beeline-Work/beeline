@@ -1,7 +1,6 @@
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 import type { PhoneService } from './phone-service.js';
@@ -13,8 +12,7 @@ import { syncXAdReports, type XAdsGet } from './x-ad-reports.js';
 describe('X web attribution user path (feature, not a defect report)', () => {
   let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, base: string;
   beforeEach(async () => {
-    db = new PgliteDatabase();
-    await migrate(db);
+    db = await migratedDatabase();
     const auth = new TokenAuth(
       db,
       async (ticket) => ({ subject: ticket, login: ticket, name: 'Private customer name' }),

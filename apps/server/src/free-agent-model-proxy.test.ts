@@ -1,8 +1,7 @@
 import { freeAgentModelTakesImages, IMAGE_TOKEN_RESERVATION } from './free-agent-image-input.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   allowanceMessage,
   chargedTokens,
@@ -16,7 +15,7 @@ import {
 } from './free-agent-model-proxy.js';
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentLimitsFromEnv } from './free-agent-limits.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { projectAgentUsage } from './agent-usage.js';
 import { PhoneService } from './phone-service.js';
 
@@ -41,22 +40,10 @@ describe('free agent model proxy', () => {
   let reply: (signal?: AbortSignal | null) => Response;
   let config: FreeAgentModelProxyOptions['config'];
 
-  // Export only migrated schema; every test owns a new database and fresh seed rows.
-  let databaseSnapshot: Blob | File;
-  beforeAll(async () => {
-    const template = new PgliteDatabase();
-    try {
-      await migrate(template);
-      databaseSnapshot = await template.snapshot();
-    } finally {
-      await template.close();
-    }
-  });
-
   beforeEach(async () => {
     vi.mocked(freeAgentModelTakesImages).mockResolvedValue(false);
     config = { ...CONFIG };
-    db = PgliteDatabase.fromSnapshot(databaseSnapshot);
+    db = await migratedDatabase();
     await db.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Fern')`,
       [OWNER, AGENT],

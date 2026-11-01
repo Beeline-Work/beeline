@@ -5,7 +5,7 @@ import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -163,8 +163,7 @@ describe('deleteAccount', () => {
   };
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await seed();
     storage = new MemoryObjectStorage();

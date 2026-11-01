@@ -1,8 +1,7 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { describe, expect, it, vi } from 'vitest';
 import { PushDeliveryLoop } from './background.js';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
@@ -20,8 +19,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Bee','bee'),($4,'human','Candy','candy'),

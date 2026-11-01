@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService, ACCESS_POLICY_AUTHORITY_MESSAGE } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -15,8 +14,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
 async function fixture() {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   // Handles, because a system line names a person by @handle and never by the
   // display name beside it.
   await database.query(

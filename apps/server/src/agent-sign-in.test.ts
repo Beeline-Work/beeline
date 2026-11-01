@@ -9,11 +9,10 @@ import {
   startAgentSignIn,
 } from './agent-sign-in.js';
 import { DaemonService } from './daemon-service.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -25,9 +24,8 @@ const CODE = 'pasted-claude-code-7f3a#state-from-claude';
 const LINK = 'https://claude.com/cai/oauth/authorize?code=true&state=s';
 
 const SNAPSHOT = await (async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     return await database.snapshot();
   } finally {
     await database.close();

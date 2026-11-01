@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { resolveCurrentMemberMentions, taggedIdentityIdsSql, tagsKnownIdentitySql, typedMentionHandles } from './message-mentions.js';
 import { PushDeliveryLoop } from './background.js';
 
@@ -17,8 +16,7 @@ const CORNER = '33333333-3333-4333-8333-333333333333';
  * membership is inherited without any corner membership rows.
  */
 async function fixture(): Promise<PgliteDatabase> {
-  const database = new PgliteDatabase();
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Author','author'),($2,'human','Bee','bee'),

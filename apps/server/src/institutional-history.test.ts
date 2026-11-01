@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { agentToolsFor, callAgentTool } from '../../body/src/read-only-mcp.js';
-import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
@@ -16,7 +15,7 @@ import {
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
 } from '@beeline/api-contract/daemon';
 import { searchInstitutionalHistory } from './institutional-history.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import type { QueryResult, SqlDatabase } from './database.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000101';
@@ -55,8 +54,7 @@ const command: CommandRow = {
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Requester'),($2,'human','Other human'),($3,'agent','Bee')`,

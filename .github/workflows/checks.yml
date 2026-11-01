@@ -36,8 +36,12 @@
 # production-scale database because plan/timing evidence cannot come from
 # the tiny suite tables. SERVER INTEGRATION takes the verdict from both pools'
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
-# takes the verdict from four runners across both pools and the isolated claim latency
-# budget. Root Markdown and docs/ no longer count as unmapped executable paths.
+# takes the verdict from four runners across both pools and the isolated claim
+# latency budget. On a pull request those runners execute only the server test
+# files SELECT SERVER TESTS picked from the main coverage map
+# (server-coverage-map.yml) plus every test that reads source code as text; the
+# merge queue, dispatch runs and any change the map cannot describe run every
+# file. Root Markdown and docs/ no longer count as unmapped executable paths.
 # Dependencies are cached by lockfile/manifests; build outputs by exact commit.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
@@ -75,6 +79,7 @@ on:
           - actionlint
           - auth-image
           - mirror-ci-images
+          - coverage-map
 
 permissions:
   contents: read
@@ -406,7 +411,7 @@ jobs:
       # Runs on every pull request, after npm ci, so a filter that opens
       # every suite again fails here even when the diff is not a workflow.
       - name: Check path filters skip untouched suites
-        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs
+        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS
@@ -563,9 +568,67 @@ jobs:
           BEELINE_LAUNCHD_USER: '0'
         run: npx vitest run src/fresh-room-discovery.integration.test.ts
 
+  # Not a required check: when it fails or is skipped, the shards run every
+  # file. It downloads the newest coverage map built on the PR's base branch
+  # (or its own branch) whose commit is in the PR's history, and diffs from
+  # that commit, so changes merged since the map count as changed too.
+  server-test-selection:
+    name: SELECT SERVER TESTS
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      selection: ${{ steps.select.outputs.selection }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The selector parses diffs with the workspace's TypeScript; the full
+      # workspace install is not needed for that.
+      - name: Install the workspace TypeScript
+        run: |
+          version=$(node -p "require('./package-lock.json').packages['node_modules/typescript'].version")
+          npm install --prefix "$RUNNER_TEMP/typescript" --no-save --no-audit --no-fund "typescript@$version"
+          echo "NODE_PATH=$RUNNER_TEMP/typescript/node_modules" >> "$GITHUB_ENV"
+      - name: Download the newest coverage map in this PR's history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          best='' best_distance=''
+          while read -r run sha branch; do
+            [ "$branch" = "$BASE_REF" ] || [ "$branch" = "$HEAD_REF" ] || continue
+            git merge-base --is-ancestor "$sha" HEAD 2>/dev/null || continue
+            distance=$(git rev-list --count "$sha..HEAD")
+            if [ -z "$best" ] || [ "$distance" -lt "$best_distance" ]; then best=$run best_distance=$distance; fi
+          done < <(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=server-coverage-map&per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | "\(.workflow_run.id) \(.workflow_run.head_sha) \(.workflow_run.head_branch)"')
+          if [ -n "$best" ]; then
+            gh run download "$best" --repo "$GITHUB_REPOSITORY" --name server-coverage-map --dir "$RUNNER_TEMP/map"
+            echo "Coverage map from run $best, $best_distance commits behind this PR."
+          else
+            echo "No coverage map from $BASE_REF or $HEAD_REF in this PR's history; every server test will run."
+          fi
+      - name: Select the server tests this PR touches
+        id: select
+        run: |
+          node apps/server/scripts/test-selection.mjs select --map "$RUNNER_TEMP/map/server-coverage-map.json" \
+            --out "$RUNNER_TEMP/selection.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "selection=$(node -e "const s=require(process.argv[1]);console.log(JSON.stringify({mode:s.mode,reason:s.reason,files:s.files,mapCommit:s.mapCommit}))" "$RUNNER_TEMP/selection.json")" >> "$GITHUB_OUTPUT"
+
   server-suite-shard:
     name: SERVER SUITE SHARD ${{ matrix.shard }}
-    needs: [changes, shared-package-tests]
+    needs: [changes, shared-package-tests, server-test-selection]
     if: >-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
@@ -580,6 +643,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+      # Without a selection (merge queue, dispatch, selection failure) every
+      # server test file runs.
+      - name: Use this PR's server test selection
+        if: needs.server-test-selection.outputs.selection != ''
+        env:
+          SELECTION: ${{ needs.server-test-selection.outputs.selection }}
+        run: |
+          printf '%s' "$SELECTION" > "$RUNNER_TEMP/server-test-selection.json"
+          echo "SERVER_TEST_SELECTION=$RUNNER_TEMP/server-test-selection.json" >> "$GITHUB_ENV"
       # Server tests import these workspaces from dist. The production corpus
       # test has its own scaled-data gate below; Vitest discovers every other
       # server test except the large integration file, which runs below.
@@ -597,6 +669,11 @@ jobs:
           node scripts/run-integration-shard.mjs "$SHARD/8" || status=1
           node scripts/run-integration-shard.mjs "$((SHARD + 4))/8" || status=1
           exit "$status"
+
+  coverage-map:
+    name: SERVER COVERAGE MAP (on demand)
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'coverage-map'
+    uses: ./.github/workflows/server-coverage-map.yml
 
   server-claim-latency:
     name: SERVER CLAIM LATENCY

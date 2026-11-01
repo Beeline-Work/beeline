@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
-import { migrate, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { type SqlDatabase } from './database.js';
+import { migratedDatabase } from './test-support.js';
 
 it('finishes an earlier slow suspension before a later installation deletion', async () => {
   let suspended!: () => void;
@@ -44,9 +44,8 @@ it('finishes an earlier slow suspension before a later installation deletion', a
 
 
 it('keeps revocation terminal when the delayed suspension runs on another server instance', async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     const owner = 'a'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [owner]);
     await database.query(`INSERT INTO github_installations(

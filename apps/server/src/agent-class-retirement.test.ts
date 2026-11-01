@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000007';
@@ -16,8 +15,7 @@ const RUN = 'e'.repeat(64);
 let database: PgliteDatabase;
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Owner'),($2,'agent','Zed'),($3,'agent','Ada'),($4,'agent','Light')`,

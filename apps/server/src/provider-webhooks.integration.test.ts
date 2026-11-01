@@ -3,8 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase } from './test-support.js';
 import { createAgentSubscription, deleteAgentSubscription, deleteRoomSubscription,
   listAgentSubscriptions, listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, ingestProviderWebhook,
@@ -22,8 +21,7 @@ const APP = '44444444-4444-4444-8444-444444444444';
 const RECEIVER = 'https://beeline.test/v1/connectors/events/composio';
 
 async function fixture(service: 'linear' | 'stripe') {
-  const db = new PgliteDatabase();
-  await migrate(db);
+  const db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Worker')`,
     [OWNER, AGENT]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);

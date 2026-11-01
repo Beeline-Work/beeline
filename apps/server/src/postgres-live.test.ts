@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
-import { migrate, type SqlDatabase } from './database.js';
+import { type SqlDatabase } from './database.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import {
@@ -16,7 +16,7 @@ import {
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
@@ -26,9 +26,8 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 
 const DATABASE_SNAPSHOT = await (async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     return await database.snapshot();
   } finally {
     await database.close();

@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import { companyPopularity } from './workbench-companies.js';
 import { PhoneService } from './phone-service.js';
@@ -37,8 +37,7 @@ describe('workbench connectors', () => {
   let daemon: DaemonService;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle,github_subject)

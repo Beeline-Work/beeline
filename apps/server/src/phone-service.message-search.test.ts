@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
 import type { SqlDatabase } from './database.js';
 
@@ -46,8 +45,7 @@ async function message(
 }
 
 beforeEach(async () => {
-  database = new PgliteDatabase();
-  await migrate(database);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Ada','ada'),($2,'agent','Sol','sol'),($3,'human','Eve','eve')`,

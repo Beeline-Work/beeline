@@ -1,7 +1,6 @@
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
@@ -20,8 +19,7 @@ describe('Registry MCP connection orchestration', () => {
   let exactFetches: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle)
        VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,

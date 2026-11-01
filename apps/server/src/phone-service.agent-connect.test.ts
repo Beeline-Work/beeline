@@ -8,9 +8,8 @@ import {
   isFaceId,
   type FaceId,
 } from '@beeline/api-contract/phone';
-import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);
@@ -24,8 +23,7 @@ describe('PhoneService agent connect pairing claim', () => {
   let phone: PhoneService;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner')`,
       [OWNER],
@@ -532,8 +530,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
   const MACHINE_Y = 'ffffffff-gggg-4hhh-8iii-jjjjjjjjjjjj';
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner')`,
       [OWNER],

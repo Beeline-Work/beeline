@@ -6,11 +6,10 @@ import { HarnessQuotaReader, QUOTA_READ_INTERVAL_MS } from '../../body/src/harne
 import { createUsageRefresh } from '../../body/src/agent-usage-refresh.js';
 import { QUOTA_AXI_CLAUDE_REPORT } from '../../body/src/harness-quota.fixtures.js';
 import { DaemonService } from './daemon-service.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const RUBY = 'a'.repeat(64);
@@ -32,9 +31,8 @@ const report = (percentRemaining: number, state: Record<string, unknown> = { sta
 });
 
 const SNAPSHOT = await (async () => {
-  const database = new PgliteDatabase();
+  const database = await migratedDatabase();
   try {
-    await migrate(database);
     return await database.snapshot();
   } finally {
     await database.close();

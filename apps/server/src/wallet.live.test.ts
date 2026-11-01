@@ -8,8 +8,7 @@
  */
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { agentWalletTool } from './wallet.js';
 
 const ADDRESS = '0xE196B6eD2f276A5c33a122562F13d9a199d89a23';
@@ -25,8 +24,7 @@ describe.skipIf(!process.env.BEELINE_LIVE_WALLET_CHECK)('live Arbitrum balance (
     vi.stubEnv('COINBASE_CDP_API_KEY_ID', 'live-check-throwaway');
     vi.stubEnv('COINBASE_CDP_API_KEY_SECRET', pkcs8.subarray(pkcs8.length - 32).toString('base64'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    database = new PgliteDatabase();
-    await migrate(database);
+    database = await migratedDatabase();
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
       [OWNER, AGENT],

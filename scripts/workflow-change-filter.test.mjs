@@ -266,17 +266,17 @@ test('representative PRs request fewer hosted runners without hiding check conte
   const commonJobs = ['changes', 'typecheck', 'shared-package-tests', 'dead-code'];
   const mobileJobs = ['mobile-suite', 'mobile-export-reachability', 'native-fingerprint'];
   const serverJobs = ['server-suite-shard', 'server-claim-latency', 'server-suite',
-    'server-integration', 'production-corpus-replay', 'auth-image'];
+    'server-integration', 'production-corpus-replay', 'auth-image', 'server-test-selection'];
   const expectedJobs = {
     'mobile-only': [...commonJobs, ...mobileJobs, 'frame-budget', 'state-upgrade'],
     mixed: [...commonJobs, ...mobileJobs, ...serverJobs, 'frame-budget', 'state-upgrade'],
     'mixed-components': [...commonJobs, ...mobileJobs, ...serverJobs],
   };
   const examples = [
-    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 13 },
+    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 14 },
     { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 9 },
-    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 18 },
-    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 16 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 19 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 17 },
     { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
   ];
   for (const example of examples) {

@@ -1,8 +1,7 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -24,8 +23,7 @@ let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService, github: GitH
 let pr = 0;
 
 beforeAll(async () => {
-  db = new PgliteDatabase();
-  await migrate(db);
+  db = await migratedDatabase();
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`,
     [H, A],

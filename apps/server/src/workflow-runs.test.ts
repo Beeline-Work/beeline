@@ -6,11 +6,11 @@ import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
 import { activeWorkflowRunIds } from './workflow-admin.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { describedWorkflow } from './test-support.js';
+import { describedWorkflow, migratedDatabase } from './test-support.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { CHOICE_LABEL_MAX_LENGTH } from '@beeline/api-contract/phone';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, migrateData, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -183,23 +183,11 @@ async function reportPresence(agentId: string, status: 'online' | 'offline'): Pr
   );
 }
 
-// Export only migrated schema; every test owns a new database and fresh seed rows.
-let databaseSnapshot: Blob | File;
-beforeAll(async () => {
-  const template = new PgliteDatabase();
-  try {
-    await migrate(template);
-    databaseSnapshot = await template.snapshot();
-  } finally {
-    await template.close();
-  }
-});
-
 beforeEach(async () => {
   vi.mocked(randomBytes).mockReset();
   const crypto = await vi.importActual<typeof import('node:crypto')>('node:crypto');
   vi.mocked(randomBytes).mockImplementation(crypto.randomBytes);
-  database = PgliteDatabase.fromSnapshot(databaseSnapshot);
+  database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Owner'),($2,'agent','Impy'),($3,'agent','Ravi'),($4,'agent','Ada'),($5,'human','Outsider'),

@@ -2109,7 +2109,7 @@ export class MonolithCornerTurnLoop {
                 ]);
                 const promptText = this.branchSyncNotice ? `${assembled.text}\n\nRepository state: ${this.branchSyncNotice}` : assembled.text;
                 if (!repositoryWork) {
-                  const scratch = this.options.repository?.readOnly ? this.options.config.agentHomeRoot : this.options.worktreePath;
+                  const scratch = this.options.worktreePath;
                   const usage = scratch ? await allocatedDirectoryBytes(scratch) : 0;
                   const text = `${promptText}\n\n${scratchBudgetMessage(usage)}`;
                   trace.notePromptWindow(text, this.modelContextTokens);
@@ -2284,7 +2284,7 @@ export class MonolithCornerTurnLoop {
                 narrationRunBoundary = 0;
                 currentNarrationRun = '';
                 trace.promptSent();
-                const scratchRoot = this.repositoryWork ? undefined : this.options.repository?.readOnly ? this.options.config.agentHomeRoot : this.options.worktreePath;
+                const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
                 const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
                 const promptClient = this.client!;
                 try {

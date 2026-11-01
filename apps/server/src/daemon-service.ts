@@ -8493,6 +8493,10 @@ export class DaemonService {
   }
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
+    // Validate even an idempotent opening retry; prior creation is not consent.
+    if (input.hold === true) await resolveCornerBriefApproval(this.database, [],
+      { spec: 'Merge hold', approval: { sourceMessageId: input.sourceMessageId ?? '' } }, [],
+      undefined, undefined, undefined, { agentId });
     // Objectives are normalized paragraphs; names must already be continuous.
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);

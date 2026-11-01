@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { resolveCornerBriefApproval } from './corner-brief.js';
+import { CommandRefusalError } from './command-refusal.js';
 import { systemLine } from './system-line.js';
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -43,7 +44,10 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
       [input.cornerId, actorId],
     )
   ).rows[0];
-  if (!actor) throw new Error('hold access denied: current human Room membership required');
+  if (!actor) {
+    if (citation) throw new CommandRefusalError("cited person is not a current human Room member; cite the person's message that asks for the hold, or close the PR to stop it.", 403);
+    throw new Error('hold access denied: current human Room membership required');
+  }
   if (input.releaseHoldId !== undefined) {
     const hold = (
       await db.query<{ actor_id: string; set_by_agent_id: string | null; holder_name: string; standing: CornerMergeHold['standing'] }>(

@@ -284,7 +284,7 @@ async function open(repository?: string, hold?: boolean): Promise<string> {
     },
     A,
   );
-  // Legacy agent-set holds remain releasable after the new creation refusal.
+  // Legacy agent-set holds remain releasable after the citation requirement.
   if (hold) await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,set_by_agent_id,standing)
     VALUES($1,$2,$3,'owner')`, [cornerId,H,A]);
   return cornerId;
@@ -3632,7 +3632,7 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Reproduction R8-HOLD: legacy agent holds remain releasable but new holds are refused', async () => {
+  it('Reproduction R8-HOLD: legacy agent holds remain releasable but uncited holds are refused', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets', true);
     const holds = (await db.query(`SELECT id,actor_id,set_by_agent_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;

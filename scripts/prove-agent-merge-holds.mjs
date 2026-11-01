@@ -1,4 +1,4 @@
-// SUPERVISION-3: isolated built HTTP service replay; production is read-only.
+// HOLD-CITATION: isolated built HTTP service replay; production is read-only.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';
@@ -63,14 +63,30 @@ try {
   assert.equal(hold.status, 403, JSON.stringify(hold.body));
   assert.match(hold.body.error, /close the PR/);
   const heldOpen = await request('createCorner', { ...authority(order), targetRoomId:room,
-    name:'held-refusal', objective:'Must refuse', hold:true });
+    idempotencyKey:'refused-open', name:'held-refusal', objective:'Must refuse', hold:true });
   assert.equal(heldOpen.status, 403, JSON.stringify(heldOpen.body));
   assert.match(heldOpen.body.error, /close the PR/);
+  const sourceMessageId = order.sourceMessageId;
+  const cited = await call('setCornerHold', { ...authority(order), cornerId: opened.cornerId, sourceMessageId });
+  const status = await call('getCornerRestoreState', { cornerId: opened.cornerId });
+  assert.equal(status.holds[0].sourceMessageId, sourceMessageId);
+  assert.equal(status.holds[0].sourceAuthorName, 'Owner');
+  assert.equal(status.holds[0].sourceText, 'Verify the publish');
+  const line = (await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set a merge hold%'`, [opened.cornerId])).rows[0];
+  assert.match(line.text, /Owner.*Verify the publish/);
+  console.log(`HOLD-CITATION DISPLAY: ${line.text}`);
+  await call('setCornerHold', { ...authority(order), cornerId: opened.cornerId, releaseHoldId: cited.holdId });
+  const held = await call('createCorner', { ...authority(order), targetRoomId:room,
+    idempotencyKey:'cited-open', name:'cited-hold', objective:'Cite the human', hold:true, sourceMessageId });
+  assert.equal((await call('getCornerRestoreState', {cornerId:held.cornerId})).holds[0].sourceAuthorName, 'Owner');
+  const retryWithoutConsent = await request('createCorner', { ...authority(order), targetRoomId:room,
+    idempotencyKey:'cited-open', name:'cited-hold', objective:'Cite the human', hold:true });
+  assert.equal(retryWithoutConsent.status, 403);
   await phone.execute('setCornerHold', {cornerId:opened.cornerId}, human);
   const gate = await cornerMergeGate(db, opened.cornerId, {number:1,headSha:'head'});
   assert.equal(gate.held, true);
   assert.equal(gate.open, false);
-  console.log('SUPERVISION-3 PASS: authenticated hold and held-open refused; human hold accepted and merge gate closed.');
+  console.log('HOLD-CITATION PASS: uncited HTTP hold and held-open refused; cited hold and held-open accepted with author and excerpt visible; citation-free release works; human hold blocks merge.');
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));
   await db.close();

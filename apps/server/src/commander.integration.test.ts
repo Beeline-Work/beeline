@@ -2176,7 +2176,9 @@ it.each(['missing', 'nonexistent', 'deleted', 'self', 'other-agent', 'system', '
       () => daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
         idempotencyKey: randomUUID(), name: 'bad-citation', objective: 'Verify hold citation', hold: true, sourceMessageId }, RUBY),
     ]) {
-      await expect(action()).rejects.toMatchObject({ status: 403 });
+      const failure = kind === 'missing' ? 'sourceMessageId is required' : kind === 'nonexistent' ? 'does not exist' :
+        kind === 'deleted' ? 'is deleted' : kind === 'unreadable' ? 'cannot read' : 'not an agent or System';
+      await expect(action()).rejects.toMatchObject({ status: 403, message: expect.stringContaining(failure) });
       await expect(action()).rejects.toThrow("cite the person's message that asks for the hold, or close the PR to stop it");
     }
     expect(await activeCornerHolds(db, opened.cornerId)).toEqual([]);

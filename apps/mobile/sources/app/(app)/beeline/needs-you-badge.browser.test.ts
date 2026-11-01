@@ -29,7 +29,11 @@ function shims(mobile: string): Record<string, string> {
     const mine = () => server.items[server.viewer];
     export const monolithPhoneOperation = async (name, input) => {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      if (name === 'readNeedsYou') return { items: mine().map((entry) => ({ ...entry })) };
+      if (name === 'readNeedsYou') {
+        const viewer = server.viewer;
+        await new Promise((resolve) => setTimeout(resolve, server.countDelayMs));
+        return { items: server.items[viewer].map((entry) => ({ ...entry })) };
+      }
       if (name === 'readTray') return { needs: { items: mine().map((entry) => ({ ...entry })) },
         saved: { bookmarks: [] } };
       if (name === 'countNeedsYou') {

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
 import { reclaimHelperStorage } from './helper-storage.js';
@@ -146,18 +146,17 @@ it('expires published legacy repository copies that the bare-clone filename filt
   expect(await exists(path)).toBe(false);
 });
 
-it('removes the accepted local branch of a linked squash-merged corner so its bare clone can expire', async () => {
+it('reclaims a squash-merged agent copy and its private repository together', async () => {
   const root = await fixture(); const checkout = resolve(root, 'checkout'); const source = await repository(root, checkout);
   const worktree = await materializeCornerWorktree({ supervisorRoot: root, cornerId: 'landed', remote: `file://${source}`,
     targetBranch: 'main', featureBranch: 'feature/landed', token: 'unused', committer: { name: 'Bee', publicKey: 'a'.repeat(64) } });
   await file(resolve(worktree.path, 'feature'), 'accepted by squash'); await git('git', ['-C', worktree.path, 'add', '.']);
   await git('git', ['-C', worktree.path, '-c', 'user.name=Bee', '-c', 'user.email=bee@example.test', 'commit', '-m', 'accepted']);
   const landedHeadSha = (await git('git', ['-C', worktree.path, 'rev-parse', 'HEAD'])).stdout.trim();
-  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'landed', kind: 'corners', itemId: 'landed', ended: true, landedHeadSha });
+  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'landed', kind: 'corners', itemId: basename(worktree.path), agentId: 'a'.repeat(64), ended: true, landedHeadSha });
   await pruneArchivedCheckoutStorage(root, { inUse: async () => false });
   expect(await exists(worktree.path)).toBe(false);
   await expect(git('git', [`--git-dir=${worktree.gitCommonDir}`, 'show-ref', '--verify', 'refs/heads/feature/landed'])).rejects.toBeDefined();
-  await age(worktree.gitCommonDir); await pruneRepositoryCaches(root, Date.now(), { inUse: async () => false });
   expect(await exists(worktree.gitCommonDir)).toBe(false);
 });
 

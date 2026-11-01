@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -627,6 +627,274 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     } finally {
       await api.close();
     }
+  });
+
+  it('rewrites a pull request title and body over REST when host gh would query classic projects', async () => {
+    const requests: Array<{ method: string; url: string; body: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push({ method: request.method, url: request.url, body: request.body });
+      if (request.method === 'GET' && request.url?.startsWith('/repos/acme/widget/pulls?')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify([{ number: 12, html_url: 'https://github.com/acme/widget/pull/12' }]));
+        return;
+      }
+      if (request.method === 'PATCH' && request.url === '/repos/acme/widget/pulls/12') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/12' }));
+        return;
+      }
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ message: 'Not Found' }));
+    });
+    try {
+      const { root, gh } = await fixture(
+        '/usr/bin/git',
+        `process.stderr.write('GraphQL: Projects (classic) is being deprecated (repository.pullRequest.projectCards)\\n'); process.exit(1);`,
+      );
+      const bodyFile = join(root, 'body.md');
+      await writeFile(bodyFile, 'Rewritten body\n');
+      const env = { ...process.env, GITHUB_API_URL: api.url };
+      const edited = await execFileAsync(
+        gh,
+        ['pr', 'edit', '--repo', 'acme/widget', '--title', 'Renamed', '--body-file', bodyFile],
+        { env },
+      );
+      expect(edited.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+      expect(edited.stderr).toBe('');
+      expect(requests[0]).toMatchObject({
+        method: 'GET',
+        url: `/repos/acme/widget/pulls?state=open&head=${encodeURIComponent(`acme:${featureBranch}`)}`,
+      });
+      expect(requests[1]).toMatchObject({ method: 'PATCH', url: '/repos/acme/widget/pulls/12' });
+      expect(JSON.parse(requests[1]!.body)).toEqual({ title: 'Renamed', body: 'Rewritten body\n' });
+      const numbered = await execFileAsync(
+        gh,
+        ['pr', 'edit', '12', '--repo', 'acme/widget', '--body-file', bodyFile],
+        { env },
+      );
+      expect(numbered.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+      expect(requests[2]).toMatchObject({ method: 'PATCH', url: '/repos/acme/widget/pulls/12' });
+      expect(JSON.parse(requests[2]!.body)).toEqual({ body: 'Rewritten body\n' });
+      console.log('gh pr edit --body-file: REST patch, host gh not called');
+    } finally {
+      await api.close();
+    }
+  });
+
+  it('reads standard input when gh pr edit --body-file is -', async () => {
+    const requests: Array<{ method: string; url: string; body: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push({ method: request.method, url: request.url, body: request.body });
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/12' }));
+    });
+    try {
+      const { gh } = await fixture(
+        '/usr/bin/git',
+        `process.stderr.write('GraphQL: Projects (classic) is being deprecated (repository.pullRequest.projectCards)\\n'); process.exit(1);`,
+      );
+      const env = { ...process.env, GITHUB_API_URL: api.url };
+      const stdinBody = 'stdin body\n';
+      const invocations = [
+        ['--body-file', '-'],
+        ['-F', '-'],
+        ['--body-file=-'],
+      ];
+      for (const args of invocations) {
+        const edited = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+          const child = spawn(gh, ['pr', 'edit', '12', '--repo', 'acme/widget', ...args], {
+            env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          const stdout: Buffer[] = [];
+          const stderr: Buffer[] = [];
+          child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+          child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+          child.on('error', reject);
+          child.on('close', (code) => {
+            const result = {
+              stdout: Buffer.concat(stdout).toString('utf8'),
+              stderr: Buffer.concat(stderr).toString('utf8'),
+            };
+            if (code === 0) resolve(result);
+            else reject(Object.assign(new Error(`gh exited ${code}: ${result.stderr}`), result));
+          });
+          child.stdin.end(stdinBody);
+        });
+        expect(edited.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+        expect(edited.stderr).toBe('');
+      }
+      const patches = requests.filter((request) => request.method === 'PATCH');
+      expect(patches.map((request) => request.url)).toEqual(invocations.map(() => '/repos/acme/widget/pulls/12'));
+      expect(patches.map((request) => JSON.parse(request.body))).toEqual(invocations.map(() => ({ body: stdinBody })));
+      console.log('gh pr edit --body-file -: PATCH body is stdin');
+    } finally {
+      await api.close();
+    }
+  });
+
+  async function piped(command: string, args: string[], stdin: string, env: NodeJS.ProcessEnv) {
+    return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.on('error', reject);
+      child.on('close', (code) => {
+        const result = {
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+        };
+        if (code === 0) resolve(result);
+        else reject(Object.assign(new Error(`gh exited ${code}: ${result.stderr}`), result));
+      });
+      child.stdin.end(stdin);
+    });
+  }
+
+  it('privately forwards piped bodies and removes them after success, failure and interrupts', async () => {
+    const { root, gh } = await fixture('/usr/bin/git', `
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+const args = process.argv.slice(2);
+const path = args[args.indexOf('--body-file') + 1];
+writeFileSync(process.env.HOST_LOG, JSON.stringify({
+  path, body: readFileSync(path, 'utf8'),
+  mode: statSync(path).mode & 0o777,
+  directoryMode: statSync(dirname(path)).mode & 0o777,
+}));
+if (process.env.HOST_STATUS.startsWith('SIG')) {
+  process.kill(process.ppid, process.env.HOST_STATUS);
+  process.exit(0);
+}
+process.exit(Number(process.env.HOST_STATUS));
+`);
+    const scratch = await mkdtemp(join(root, 'scratch-'));
+    const paths: string[] = [];
+    for (const status of [0, 7, 'SIGINT', 'SIGTERM']) {
+      const log = join(root, 'host-' + status);
+      const result = piped(gh, ['issue', 'create', '--body-file', '-'], 'private body\n', {
+        ...process.env, TMPDIR: scratch, HOST_LOG: log, HOST_STATUS: String(status),
+      });
+      if (status === 0) await result;
+      else await expect(result).rejects.toThrow('gh exited ' + (status === 'SIGINT' ? 130 : status === 'SIGTERM' ? 143 : status));
+      const observed = JSON.parse(await readFile(log, 'utf8'));
+      expect(observed).toMatchObject({ body: 'private body\n', mode: 0o600, directoryMode: 0o700 });
+      paths.push(observed.path);
+      expect(await readdir(scratch)).toEqual([]);
+      await expect(readFile(observed.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect(paths[0]).not.toBe(paths[1]);
+  });
+
+  it('keeps a piped body for pr create and issue create when the body file is -', async () => {
+    const requests: Array<{ method: string; url: string; body: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push({ method: request.method, url: request.url, body: request.body });
+      response.writeHead(201, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/3' }));
+    });
+    try {
+      const { root, gh } = await fixture(
+        '/usr/bin/git',
+        `import { appendFileSync, readFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+let stdin = '';
+try { stdin = readFileSync(0, 'utf8'); } catch {}
+let file = '';
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  const path = arg === '--body-file' || arg === '-F' ? args[index + 1] : arg.startsWith('--body-file=') ? arg.slice('--body-file='.length) : '';
+  if (!path || path === '-') continue;
+  try { file = readFileSync(path, 'utf8'); } catch {}
+}
+appendFileSync(process.env.HOST_LOG, JSON.stringify({ args, stdin, file }) + '\\n');
+if (args[0] === 'issue') process.exit(0);
+process.stderr.write('not logged into any GitHub hosts\\n');
+process.exit(1);
+`,
+      );
+      const hostLog = join(root, 'host.log');
+      const env = { ...process.env, GITHUB_API_URL: api.url, HOST_LOG: hostLog };
+      const stdinBody = 'create body from stdin\n';
+      const created = await piped(
+        gh,
+        ['pr', 'create', '--repo', 'acme/widget', '--title', 't', '-F', '-'],
+        stdinBody,
+        env,
+      );
+      expect(created.stdout.trim()).toBe('https://github.com/acme/widget/pull/3');
+      expect(JSON.parse(requests[0]!.body)).toEqual({
+        title: 't',
+        body: stdinBody,
+        head: featureBranch,
+        base: targetBranch,
+        draft: false,
+      });
+      const hostCalls = (await readFile(hostLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(hostCalls[0]).toMatchObject({ stdin: '', file: stdinBody });
+      const issued = await piped(
+        gh,
+        ['issue', 'create', '--repo', 'acme/widget', '--title', 't', '--body-file', '-'],
+        'issue body from stdin\n',
+        env,
+      );
+      expect(issued.stderr).toBe('');
+      const afterIssue = (await readFile(hostLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(afterIssue[1]).toMatchObject({ stdin: '', file: 'issue body from stdin\n' });
+      expect(afterIssue[1].args).not.toContain('-');
+      console.log('gh pr create -F - and gh issue create --body-file -: body is stdin');
+    } finally {
+      await api.close();
+    }
+  });
+
+  it.each([
+    { flags: ['--body', '123'], number: 12 },
+    { flags: ['--title', '456'], number: 12 },
+    { flags: ['--body=123'], number: 12 },
+    { flags: ['789', '--body', '123'], number: 789 },
+    { flags: ['--body', '123', '--', '789'], number: 789 },
+    { flags: ['--body', '123', '--base', '456'], number: 12 },
+    ...[
+      '--repo', '-R', '--base', '-B', '--add-label', '--remove-label',
+      '--add-reviewer', '--remove-reviewer', '--add-assignee', '--remove-assignee',
+      '--milestone', '-m', '--add-project', '--remove-project',
+    ].flatMap((flag) => [
+      { flags: [flag, '456', '--body', 'text'], number: 12 },
+      { flags: [`${flag}=456`, '--body', 'text'], number: 12 },
+    ]),
+  ])('resolves the edit selector independently of flag values: $flags', async ({ flags, number }) => {
+    const requests: Array<{ method: string; url: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push(request);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(request.method === 'GET' ? [{ number: 12 }] : {
+        html_url: `https://github.com/acme/widget/pull/${number}`,
+      }));
+    });
+    try {
+      const { gh } = await fixture();
+      await execFileAsync(gh, ['pr', 'edit', '--repo', 'acme/widget', ...flags], {
+        env: { ...process.env, GITHUB_API_URL: api.url },
+      });
+      expect(requests.filter((request) => request.method === 'PATCH')).toEqual([
+        expect.objectContaining({ url: `/repos/acme/widget/pulls/${number}` }),
+      ]);
+      expect(requests.some((request) => request.method === 'GET')).toBe(number === 12);
+    } finally {
+      await api.close();
+    }
+  });
+
+  it('still sends reviewer and label edits to the host gh binary', async () => {
+    const { gh } = await fixture(
+      '/usr/bin/git',
+      `process.stdout.write(process.argv.slice(2).join(' ') + '\\n');`,
+    );
+    const result = await execFileAsync(gh, ['pr', 'edit', '12', '--add-label', 'bug']);
+    expect(result.stdout.trim()).toBe('pr edit 12 --add-label bug');
   });
 
   it('creates the feature branch remote-tracking ref after a launcher push', async () => {

@@ -1,3 +1,7 @@
+import sharp from 'sharp';
+import { createBeelineServer } from './server.js';
+import { TokenAuth } from './auth.js';
+import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
@@ -174,6 +178,34 @@ describe('next morning check-in (not a defect report)',()=>{
     if(email) expect(emails[0]?.html).toContain(`/beeline/chat/${R}?communityId=${W}`);
     await runner().runOnce(); expect(emails).toHaveLength(email?1:0);
   });
+  it.each([
+    ['Beebee','Beeline <checkin@usebeeline.app>','Beebee'],
+    ['Luna','checkin@usebeeline.app','Luna'],
+    ['Bee"<bee>\'\r\n','Beeline <checkin@usebeeline.app>','Beebee'],
+    ['"<>\'  ','Beeline <checkin@usebeeline.app>','Beeline'],
+    ['Bee, the fox','Beeline <checkin@usebeeline.app>','Bee, the fox'],
+  ])('sends the starter display name through Resend safely: %s',async(name,configuredFrom,expectedName)=>{
+    vi.stubEnv('BEELINE_EMAIL_API_KEY','test-only-key');
+    vi.stubEnv('BEELINE_EMAIL_FROM',configuredFrom);
+    await db.query(`UPDATE identities SET name=$2 WHERE id=$1`,[A,name]);
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first();await runner().runOnce();await reply();
+    const request=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('{}',{status:200}));
+    try {
+      const actualSender=new NextDayCheckin(db,'https://web.usebeeline.app',undefined,()=>clock);
+      await actualSender.runOnce();await actualSender.runOnce();
+      expect(request).toHaveBeenCalledTimes(1);
+      const [url,init]=request.mock.calls[0]!;
+      expect(url).toBe('https://api.resend.com/emails');
+      const payload=JSON.parse(init!.body as string);
+      expect(payload.from).toBe(`"${expectedName}" <checkin@usebeeline.app>`);
+      expect(payload.to).toEqual(['outside@example.test']);
+      expect(payload.subject).toBe(`${name} picked up where you left off`);
+      expect(payload.text).toBe('@outside We were planning your pottery class. Shall we pick the first project?\n\nOpen in Beeline: https://web.usebeeline.app/beeline/chat/'+R+'?communityId='+W+'\n\nThis is a one-time note from your starter agent.');
+      expect(init!.headers).toMatchObject({'Idempotency-Key':`next-day-${U}`});
+      expect((await record())?.email_status).toBe('sent');
+    } finally {request.mockRestore();}
+  });
   it('skips missing email configuration without blocking the Room message',async()=>{
     vi.stubEnv('BEELINE_EMAIL_API_KEY',''); vi.stubEnv('BEELINE_EMAIL_FROM','');
     await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
@@ -208,4 +240,84 @@ describe('next morning check-in (not a defect report)',()=>{
     expect(mail.html).not.toContain('<script>'); expect(mail.html).toContain('&lt;script&gt;');
     expect(mail.text).toContain('<script>'); expect(mail.html).toContain('one-time note');
   });
+  it.each([1,2])('renders mock A with %s owned starter stickers and the exact escaped message',async count=>{
+    const second='c'.repeat(64);
+    if (count===2) {
+      await db.query(`INSERT INTO identities(id,kind,name,face_id) VALUES($1,'agent','Luna','hare')`,[second]);
+      await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[second,U]);
+      await db.query(`INSERT INTO free_agents(agent_id,owner_id,workspace_id,sealed_keys,starter_role) VALUES($1,$2,$3,'unused','luna')`,[second,U,W]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,R,second]);
+    }
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first(); await runner().runOnce(); await reply(); await runner().runOnce();
+    const html=emails[0]!.html;
+    expect(html.match(/data-sticker=/g)).toHaveLength(count);
+    expect(html).toContain(`/v1/email-faces/${A}.png`);
+    if(count===2) expect(html).toContain(`/v1/email-faces/${second}.png`);
+    expect(html.includes('are still in your Room.')).toBe(count===2);
+    expect(html).toContain('/v1/email-logo.png');
+    expect(html).toContain('Reply in Beeline');
+    expect(html).toContain('@media(prefers-color-scheme:dark)');
+    expect(html).not.toContain('<svg');
+
+  });
+  it('decorates with only this person’s starter agents who still belong to this Room',async()=>{
+    const cases=[['c','Left',true,'luna',false],['d','Other owner',false,'luna',true],['e','Not starter',true,null,true],['f','Removed',true,'luna',true]] as const;
+    const other='9'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other person')`,[other]);
+    for(const [key,name,owned,role,member] of cases) {
+      const agent=key.repeat(64), owner=owned?U:other;
+      await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent',$2)`,[agent,name]);
+      await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,owner]);
+      await db.query(`INSERT INTO free_agents(agent_id,owner_id,workspace_id,sealed_keys,starter_role,removed_at) VALUES($1,$2,$3,'unused',$4,$5)`,[agent,owner,W,role,key==='f'?new Date():null]);
+      if(member) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,R,agent]);
+    }
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first();await runner().runOnce();await reply();await runner().runOnce();
+    expect(emails[0]!.html.match(/data-sticker=/g)).toHaveLength(1);
+    for(const [key] of cases) expect(emails[0]!.html).not.toContain(`/email-faces/${key.repeat(64)}.png`);
+  });
+  it('preserves malicious text and line breaks as escaped bubble content, and leaves subject/plain text unchanged',()=>{
+    const text='<script>alert("hi")</script>\n\n& next line';
+    const mail=renderCheckinEmail('Bee<&',text,'https://example.test/?x="',[{id:A,name:'Bee<&'}]);
+    expect(mail.html).toContain('&lt;script&gt;alert(&quot;hi&quot;)&lt;/script&gt;\n\n&amp; next line');
+    expect(mail.html).not.toContain('<script>');
+    expect(mail.html).toContain('Bee&lt;&amp;');
+    expect(mail.subject).toBe('Bee<& picked up where you left off');
+    expect(mail.text).toBe(`${text}\n\nOpen in Beeline: https://example.test/?x="\n\nThis is a one-time note from your starter agent.`);
+  });
+  it('serves only bounded, cacheable PNG bytes without authentication, including custom uploaded portraits',async()=>{
+    const live=new LiveHub();
+    const server=createBeelineServer({database:db,auth:new TokenAuth(db,async()=>{throw Error('not used');}),phone,
+      daemon:new DaemonService(db,live),live,mediaMaximumBytes:1024});
+    await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+    const origin=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const imageUrl=`${origin}/v1/email-faces/${A}.png`;
+    try {
+      const response=await fetch(imageUrl+'?size=128&tilt=-6');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('image/png');
+      expect(response.headers.get('cache-control')).toContain('public');
+      const bytes=Buffer.from(await response.arrayBuffer());
+      expect(await sharp(bytes).metadata()).toMatchObject({format:'png',hasAlpha:true});
+      expect((await sharp(bytes).stats()).channels.some(c=>c.stdev>10)).toBe(true);
+      const cached=await fetch(imageUrl+'?size=128&tilt=-6');
+      expect(Buffer.from(await cached.arrayBuffer()).equals(bytes)).toBe(true);
+      for (const params of ['size=999999','tilt=90','size=NaN','size=-1']) expect((await fetch(imageUrl+'?'+params)).status).toBe(400);
+      expect((await fetch(origin+'/v1/email-faces/'+U+'.png')).status).toBe(404);
+      for(const theme of ['light','dark']) {
+        const logo=await fetch(origin+'/v1/email-logo.png?theme='+theme);
+        expect(logo.status).toBe(200);
+        expect(await sharp(Buffer.from(await logo.arrayBuffer())).metadata()).toMatchObject({format:'png'});
+      }
+      const uploaded=await sharp({create:{width:64,height:64,channels:3,background:'#ee0000'}}).webp().toBuffer();
+      const id='44444444-4444-4444-8444-444444444444';
+      await db.query(`INSERT INTO agent_avatars(id,agent_id,bytes,request_id,drawing) VALUES($1,$2,$3,'test','[]')`,[id,A,uploaded]);
+      await db.query(`UPDATE identities SET avatar=$2 WHERE id=$1`,[A,'/v1/agent-avatars/'+id]);
+      const custom=await fetch(imageUrl+'?size=64&tilt=0');
+      const rgb=await sharp(Buffer.from(await custom.arrayBuffer())).removeAlpha().raw().toBuffer();
+      expect(rgb[0]).toBeGreaterThan(220); expect(rgb[1]).toBeLessThan(15);
+    } finally { await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
+  });
+
 });

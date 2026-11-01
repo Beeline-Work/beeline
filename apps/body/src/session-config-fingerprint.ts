@@ -29,6 +29,7 @@
 export interface SessionConfigInput {
   /** The model this activation would select, after the Room's own override. */
   model?: string | undefined;
+  dependencyGeneration?: string | undefined;
   /** The effort/thought level that selection carries. */
   effort?: string | undefined;
   fastMode?: boolean | undefined;
@@ -65,6 +66,7 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     input.yoloMode ?? false,
     mountedMcpSet(input.mcpServers),
   ];
+  if (input.dependencyGeneration !== undefined) fingerprint.push({ dependencyGeneration: input.dependencyGeneration });
   if (input.repositoryWork !== undefined) fingerprint.push({ repositoryWork: input.repositoryWork });
   if (input.cornerPrepareScript !== undefined)
     fingerprint.push({ cornerPrepareScript: input.cornerPrepareScript });

@@ -57,6 +57,7 @@ beforeAll(async () => {
 afterAll(async () => closeDatabase());
 beforeEach(async () => {
   await db.query('DELETE FROM workspaces');
+  await db.query('DELETE FROM agent_connections');
   await db.query('DELETE FROM agent_startup_backoff');
   await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Truthful states')`, [WS]);
@@ -871,6 +872,8 @@ it('Reproduction R1: a worker that ends its turn without a report reads idle at 
   await runCornerAttention(db);
   expect(await state()).toBe('working');
   await end(WORKER, 0);
+  // The order was this turn. A still-pending order would correctly stay working.
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id='r1-order'`);
   expect(await state()).toBe('idle');
   expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'idle' });
   expect(
@@ -901,6 +904,7 @@ it('Reproduction R1: a report filed before the turn ends shows waiting and sends
 it('Reproduction R1: a worker that ends its turn with a future schedule reads idle and sends no stall alert', async () => {
   await wake(WORKER, 'r1-scheduled-order');
   await turn();
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id='r1-scheduled-order'`);
   await db.query(
     `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at,max_runs)
     VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue the film','{"kind":"interval","everyMinutes":10}',now()+interval '10 minutes',1)`,
@@ -955,11 +959,16 @@ it('Reproduction HEADER-STATE-3: simultaneous implementer and reviewer display w
   expect(await state()).toBe('working');
   expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('working');
 });
-it('Reproduction HEADER-STATE-5: queued reviewer displays review during pickup window', async () => {
+it('Reproduction HEADER-STATE-5: a queued reviewer stays review until that command is done', async () => {
   await wake(REVIEWER, 'queued-review');
   expect(await state()).toBe('review');
   expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]!.state).toBe('review');
   await db.query("UPDATE agent_turns SET created_at=now()-interval '31 seconds' WHERE room_id=$1", [C]);
+  await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [C]);
+  expect(await state()).toBe('review');
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'review' });
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).not.toHaveProperty('queue');
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id='queued-review'`);
   expect(await state()).toBe('idle');
 });
 
@@ -974,9 +983,53 @@ it('Reproduction HEADER-STATE-4: pending CI wins over a human question with a ho
   await ci('passing');
   expect(await state()).toBe('waiting');
 });
-it('queued implementer keeps the existing pickup window', async () => {
+it('Reproduction R1: a worker order waiting on an offline helper stays working', async () => {
   await wake(WORKER, 'queued-implementer');
-  expect(await state()).toBe('working');
   await db.query("UPDATE agent_turns SET created_at=now()-interval '31 seconds' WHERE room_id=$1", [C]);
+  await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [C]);
+  const restore = await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER);
+  expect(restore).toMatchObject({ state: 'working', activity: 'running', queue: 'offline' });
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'working', queue: 'offline' });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0],
+  ).toMatchObject({ state: 'working', queue: 'offline' });
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('r1-online') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+    VALUES($1,1,'r1-online','r1-online')`, [WORKER]);
+  expect(await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).toMatchObject({
+    state: 'working', activity: 'running', queue: 'queued',
+  });
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'working', queue: 'queued' });
+  const behind = '44444444-4444-4444-8444-444444444444';
+  await db.query(
+    `INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'codex-dot-connect',$3)`,
+    [behind, WS, HUMAN],
+  );
+  await db.query(
+    `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+     VALUES($1,$2,$3,'working','g-live')`,
+    [behind, 'f'.repeat(64), WORKER],
+  );
+  expect(await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).toMatchObject({
+    state: 'working', activity: 'running', queue: 'queued', queueBehind: 'codex-dot-connect',
+  });
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({
+    state: 'working', queue: 'queued', queueBehind: 'codex-dot-connect',
+  });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0],
+  ).toMatchObject({ state: 'working', queue: 'queued', queueBehind: 'codex-dot-connect' });
+  await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [behind]);
+  await db.query(
+    `UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds',
+       claimed_at=now(),generation_id='g-hold' WHERE id='queued-implementer'`,
+  );
+  expect(await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).toMatchObject({
+    state: 'working', activity: 'running', queue: 'queued',
+  });
+  await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL WHERE id='queued-implementer'`);
+  await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour' WHERE id='queued-implementer'`);
+  expect(await state()).toBe('idle');
+  await db.query(`UPDATE agent_commands SET wake_after=NULL,state='complete',completed_at=now() WHERE id='queued-implementer'`);
   expect(await state()).toBe('idle');
 });

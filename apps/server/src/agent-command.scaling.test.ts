@@ -245,11 +245,19 @@ describe('addressed-message routing and claim scaling', () => {
     const requests = Array.from({ length: 60 }, (_, index) =>
       (index + 40 + injectedOverheadMs * 100).toString(16).padStart(64, '0'),
     );
+    // Measure independent claims. A same-person backlog in one Room now
+    // intentionally folds into one turn, so its other ids cannot be claimed.
+    const rooms = requests.map((_, index) =>
+      `50000000-0000-4000-8000-${String(index + 1 + injectedOverheadMs * 100).padStart(12, '0')}`);
     const commands: string[] = [];
-    for (const request of requests) {
+    for (const [index, request] of requests.entries()) {
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Sustained conversation')`,
+        [rooms[index], WORKSPACE]);
+      await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+        ($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, rooms[index], HUMAN, TARGET]);
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@target sustained')`,
-        [request, BASE_ROOM, HUMAN],
+        [request, rooms[index], HUMAN],
       );
       await routeHumanMessage(database, request);
       const command = (
@@ -272,7 +280,7 @@ describe('addressed-message routing and claim scaling', () => {
         commands.slice(batch * 20, (batch + 1) * 20).map(async (command, index) => {
           const delayed = new DelayedCountingDatabase(database, 206, injectedOverheadMs);
           const beganAt = performance.now();
-          await claimAgentCommand(delayed, BASE_ROOM, TARGET, command, `sustained-${batch}-${index}`);
+          await claimAgentCommand(delayed, rooms[batch * 20 + index]!, TARGET, command, `sustained-${batch}-${index}`);
           const wallMs = performance.now() - beganAt;
           return {
             wallMs,

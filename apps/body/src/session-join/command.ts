@@ -6,17 +6,21 @@ import { delimiter, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentLabel, defaultName, detectAgent, isAgentId, pickName, type AgentId } from './agents.js';
 import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, registerClient, signInLink, type SignIn } from './beeline-api.js';
-import { ensureBridge, runBridge, toolViaBridge, toolViaOutbox, type Runner } from './bridge.js';
+import { ensureBridge, renderMention, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
 import { chosenName, claudeTranscript, heldBy, inboundSetting, permissionMode, postToClaude, scanClaude } from './claude.js';
+import { acceptClaudeInbound, assertClaudePolicy, restoreClaudeInbound } from './claude-inbound.js';
+import { hasClaudeMcp, runClaudeMcp } from './claude-mcp.js';
 import { codexQueue, scanCodex } from './codex.js';
+import { trustCodexHook } from './codex-trust.js';
 import { runHook } from './hook.js';
 import { runAntigravitySidecar, runZcodeMcp } from './pull-apps.js';
 import { setupAgent } from './setup.js';
-import { hookSessions, readState, sessionKey, stateDir, updateState, type JoinedSession } from './store.js';
+import { hookSessions, queueInbox, readState, sessionKey, stateDir, updateState, type JoinedSession } from './store.js';
 
 interface Pending {
   server: string; clientId: string; signIn: SignIn; agent: AgentId; cwd: string; name: string;
   sessionId?: string; pid?: number; agentBin?: string; startedAt: number;
+  claudeInboundFallback?: boolean;
 }
 
 function flag(args: string[], name: string): string | undefined {
@@ -59,7 +63,7 @@ function gitRoot(cwd: string): string | undefined {
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
-interface Found { agent: AgentId; cwd: string; sessionId?: string; pid?: number; chosen?: string; note?: string }
+interface Found { agent: AgentId; cwd: string; sessionId?: string; pid?: number; chosen?: string; claudeInboundFallback?: boolean }
 
 /** Which app and conversation this command runs in. */
 export function findOwnSession(env: NodeJS.ProcessEnv, dir: string): Found {
@@ -73,11 +77,12 @@ export function findOwnSession(env: NodeJS.ProcessEnv, dir: string): Found {
     const transcript = sessionId ? claudeTranscript(sessionId, env) : undefined;
     const held = heldBy(transcript ? permissionMode(transcript) : undefined, inboundSetting(env));
     return { agent: 'claude-code', cwd: own?.cwd ?? env.CLAUDE_PROJECT_DIR ?? cwd, sessionId, pid: own?.pid ?? detected.pid, chosen: own ? chosenName(own) : undefined,
-      note: held ? 'This session skips permission prompts, so Claude Code holds Beeline messages for your OK. To let them in, set "crossSessionInbound": "accept" in Claude Code settings.' : undefined };
+      claudeInboundFallback: held && !hasClaudeMcp(dir, own?.pid ?? detected.pid) };
   }
   if (detected.agent === 'codex') {
     const thread = env.CODEX_THREAD_ID ?? env.CODEX_SESSION_ID;
-    const own = scanCodex().find(s => s.threadId === thread || (detected.pid !== undefined && s.pid === detected.pid));
+    const live = scanCodex();
+    const own = thread ? live.find(s => s.threadId === thread) : live.find(s => detected.pid !== undefined && s.pid === detected.pid);
     return { agent: 'codex', cwd: own?.cwd ?? cwd, sessionId: thread ?? own?.threadId, pid: own?.pid ?? detected.pid };
   }
   // Other apps report their conversations through the hooks or plugins this command installs.
@@ -91,8 +96,9 @@ function serverUrl(args: string[], env: NodeJS.ProcessEnv): string {
 
 async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   const dir = stateDir(env);
-  const run = runner(dir, env);
   const own = findOwnSession(env, dir);
+  if (own.agent === 'claude-code') assertClaudePolicy(env);
+  const run = runner(dir, env);
   const key = sessionKey(own.agent, own.cwd);
   const server = serverUrl(args, env);
   const existing = readState(dir).sessions.find(s => s.key === key && s.server === server);
@@ -111,9 +117,9 @@ async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void
   const taken = new Set(readState(dir).sessions.filter(s => s.key !== key).map(s => s.name));
   const name = pickName(flag(args, '--name') ?? own.chosen, defaultName(own.agent, own.cwd, gitRoot(own.cwd)), n => taken.has(n));
   const clientId = await registerClient(server, agentLabel(own.agent));
-  const signIn = signInLink(server, clientId, name);
+  const signIn = signInLink(server, clientId, name, own.claudeInboundFallback);
   const pending: Pending = { server, clientId, signIn, agent: own.agent, cwd: own.cwd, name, sessionId: own.sessionId, pid: own.pid,
-    agentBin: own.agent === 'codex' ? which('codex', env) : undefined, startedAt: Date.now() };
+    agentBin: own.agent === 'codex' ? which('codex', env) : undefined, startedAt: Date.now(), claudeInboundFallback: own.claudeInboundFallback };
   mkdirSync(join(dir, 'pending'), { recursive: true, mode: 0o700 });
   const file = join(dir, 'pending', `${createHash('sha256').update(signIn.state).digest('hex').slice(0, 24)}.json`);
   writeFileSync(file, JSON.stringify(pending), { mode: 0o600 });
@@ -128,7 +134,6 @@ async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void
     '',
     `This ${agentLabel(own.agent)} session joins their Beeline Rooms as "${name}" (they can rename it on the Allow page).`,
     `Nothing else to run: once they tap Allow, a confirmation arrives in this conversation. The link expires in 10 minutes.`,
-    ...(own.note ? ['', own.note] : []),
     ...(env.BEELINE_SESSION_DEBUG ? [`(log: ${out})`] : []),
   ].join('\n'));
 }
@@ -139,23 +144,43 @@ async function finishJoin(file: string, env: NodeJS.ProcessEnv): Promise<void> {
   const pending = JSON.parse(readFileSync(file, 'utf8')) as Pending;
   try {
     const tokens = await finishSignIn(pending.server, pending.clientId, pending.signIn, pending.startedAt + 10 * 60_000);
+    if (pending.agent === 'claude-code') {
+      assertClaudePolicy(env);
+    }
     const key = sessionKey(pending.agent, pending.cwd);
     const joined: JoinedSession = { key, agent: pending.agent, cwd: pending.cwd, name: pending.name, server: pending.server, clientId: pending.clientId,
       refreshToken: tokens.refresh_token, accessToken: tokens.access_token, accessExpiresAt: Date.now() + tokens.expires_in * 1000,
       sessionId: pending.sessionId, pid: pending.pid, cursor: '0', deliveredWakes: [], agentBin: pending.agentBin, joinedAt: new Date().toISOString() };
-    // Start after what already waits: the member is new, so only tags from now on are owed an answer here.
-    const first = await callTool(joined, tokens.access_token, 'list_mentions', {}) as { nextCursor: string; wakes: { id: string }[] };
+    // A tag sent immediately after Allow is already owed, even before the background finisher gets its token.
+    const first = await callTool(joined, tokens.access_token, 'list_mentions', {}) as { mentions: Mention[]; nextCursor: string; wakes: Wake[] };
     joined.cursor = first.nextCursor;
+    joined.deliveredWakes = first.wakes.map(w => w.id);
+    joined.wakesSeenAt = first.wakes.map(w => w.createdAt).sort().at(-1);
     const me = await callTool(joined, tokens.access_token, 'list_rooms', {}) as { rooms: { name: string }[]; you?: { name: string; handle: string | null } };
     joined.name = me.you?.name ?? joined.name;
     joined.handle = me.you?.handle ?? undefined;
     // The person named it on the Allow page; saying that name back ends Beeline's first-call setup reminder.
     await callTool(joined, tokens.access_token, 'set_profile', { name: joined.name }).catch(() => undefined);
+    if (pending.agent === 'claude-code' && pending.claudeInboundFallback && !hasClaudeMcp(dir, pending.pid)) {
+      const transcript = pending.sessionId ? claudeTranscript(pending.sessionId, env) : undefined;
+      if (transcript && permissionMode(transcript) === 'bypassPermissions') {
+        await acceptClaudeInbound(env);
+        // Claude watches settings with a debounce. Let it see consent before posting the first message.
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
     await updateState(dir, state => {
       state.sessions = state.sessions.filter(s => s.key !== key);
       state.sessions.push(joined);
+      const waiting = [...first.mentions.map(m => renderMention(m, joined, run)), ...first.wakes.map(w => renderWake(w, joined, run))];
+      if (waiting.length) queueInbox(dir, key, waiting.join('\n\n'));
     });
     const changes = setupAgent(pending.agent, { env, node: run.node, bundle: run.bundle });
+    if (pending.agent === 'codex' && await trustCodexHook({ env, node: run.node, bundle: run.bundle }, pending.agentBin ?? 'codex', pending.cwd)) {
+      const prompt = changes.findIndex(line => line.startsWith('Codex asks once'));
+      if (prompt >= 0) changes.splice(prompt, 1);
+      changes.push('Trusted only Beeline’s SessionStart hook, pinned to its current Codex hash.');
+    }
     ensureBridge(dir, run, env);
     const rooms = me.rooms.map(r => r.name).slice(0, 5).join(', ');
     await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}`, dir);
@@ -165,6 +190,11 @@ async function finishJoin(file: string, env: NodeJS.ProcessEnv): Promise<void> {
 /** Tells the session itself that it joined, through the same channel tags use. */
 async function announce(joined: JoinedSession, text: string, dir: string): Promise<void> {
   if (joined.agent === 'claude-code') {
+    if (hasClaudeMcp(dir, joined.pid)) {
+      const { queueInbox } = await import('./store.js');
+      queueInbox(dir, joined.key, text);
+      return;
+    }
     const session = scanClaude().find(s => s.sessionId === joined.sessionId || s.pid === joined.pid);
     if (session?.messagingSocketPath) { await postToClaude({ path: session.messagingSocketPath }, text).catch(() => undefined); return; }
   }
@@ -205,6 +235,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   if (sub === 'bridge') return runBridge(dir, runner(dir, env));
   if (sub === 'finish-join') return finishJoin(rest[0] ?? '', env);
   if (sub === 'mcp') return runZcodeMcp(dir);
+  if (sub === 'claude-mcp') return runClaudeMcp(dir, env);
   if (sub === 'antigravity-sidecar') return runAntigravitySidecar(dir);
   if (sub === 'hook') {
     // Never fail loudly: a broken Beeline must not break the app.
@@ -264,6 +295,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       return state.sessions;
     });
     const r = runner(dir, env);
+    await restoreClaudeInbound(env);
     const changes = left.some(s => s.agent === joined.agent) ? [] : setupAgent(joined.agent, { env, node: r.node, bundle: r.bundle, remove: true });
     console.log([`@${joined.handle ?? joined.name} left Beeline on this machine.`, ...changes].join('\n'));
     return;
@@ -282,6 +314,21 @@ function readStdin(limitMs: number): Promise<string> {
 }
 
 export async function runSessionCommand(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  if (args[0] === 'join') return joinCommand(args.slice(1), env);
+  if (args[0] === 'join') {
+    try {
+      return await joinCommand(args.slice(1), env);
+    } catch (error) {
+      // Codex can deny mkdir with ENOENT rather than a permission errno.
+      const failure = error as NodeJS.ErrnoException;
+      const cause = failure?.cause as NodeJS.ErrnoException | undefined;
+      const denied = [failure, cause].some(e => e && (
+        ['EACCES', 'EPERM', 'EROFS'].includes(e.code ?? '') || (e.code === 'ENOENT' && e.syscall === 'mkdir')
+      ));
+      if (detectAgent(env)?.agent === 'codex' && denied) {
+        throw new Error('Codex blocked access needed to join Beeline. Run /permissions, pick "Ask for approval", then run Join again. Choose "Yes, proceed" for the Join command once; no permanent allowance or Full Access is needed.', { cause: error });
+      }
+      throw error;
+    }
+  }
   return session(args.slice(1), env);
 }

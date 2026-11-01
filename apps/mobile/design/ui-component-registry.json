@@ -157,6 +157,7 @@
     "components/buzz/EmptyLedgerState.tsx": ["EmptyLedgerState"],
     "components/buzz/EmptyState.tsx": ["EmptyState"],
     "components/buzz/ErrorBanner.tsx": ["ErrorBanner"],
+    "components/buzz/ExistingAgentJoin.tsx": ["CopyLine", "ExistingAgentJoin"],
     "components/buzz/ExitGlyph.tsx": ["ExitGlyph"],
     "components/buzz/ExternalGlyph.tsx": ["ExternalGlyph"],
     "components/buzz/FaceGrid.tsx": ["FaceGrid"],

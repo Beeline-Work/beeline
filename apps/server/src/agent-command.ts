@@ -263,11 +263,32 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     ) latest ON true
     LEFT JOIN messages start ON start.id=latest.card->>'runId' AND start.room_id=command.room_id
     WHERE source.card_type IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'
+  ), answered_reports AS MATERIALIZED (
+    SELECT command.id FROM recovery_scope command WHERE command.reason='report'
+      AND (command.state<>'claimed' OR command.lease_expires_at<=now())
+      AND (command.private_payload->>'waitingAnswered'='true' OR (
+        command.private_payload->>'text' ~ '^(blocked|needs-decision):'
+        AND EXISTS (SELECT 1 FROM agent_commands answer
+          JOIN rooms origin ON origin.id=answer.room_id AND origin.parent_id IS NOT NULL
+          WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
+            AND answer.private_payload->>'kind'='order'
+            AND answer.private_payload->>'authorId'=command.agent_id
+            AND answer.agent_id=command.private_payload->>'authorId'
+            AND answer.created_at>command.created_at)))
+  ), deleted_human_sources AS MATERIALIZED (
+    SELECT command.id FROM recovery_scope command
+    JOIN messages source ON source.id=command.source_message_id
+    WHERE command.action='input' AND command.reason IN ('human_tag','direct_message')
+      AND command.private_payload IS NULL AND source.deleted_at IS NOT NULL
   ), stale_wakes AS MATERIALIZED (
+    SELECT id FROM deleted_human_sources
+    UNION
     SELECT id FROM recovery_workflows WHERE run_id IS NOT NULL
       AND (latest_card IS NULL OR latest_card->'cancellation' IS NOT NULL
         OR COALESCE(start_card->>'runStatus','live')<>'live'
         OR (attempt IS NOT NULL AND attempt IS DISTINCT FROM latest_card->>'seq') OR expired)
+    UNION
+    SELECT id FROM answered_reports
     UNION
     SELECT command.id FROM recovery_scope command WHERE command.reason='report' AND (
       EXISTS (SELECT 1 FROM rooms origin LEFT JOIN corner_facts fact ON fact.corner_id=origin.id
@@ -351,7 +372,9 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
               AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
   ), cancelled_wakes AS (
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),
-      cancellation_reason=CASE WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
+      cancellation_reason=CASE WHEN EXISTS(SELECT 1 FROM answered_reports answered WHERE answered.id=scoped.id) THEN 'answered_report'
+        WHEN EXISTS(SELECT 1 FROM deleted_human_sources deleted WHERE deleted.id=command.id) THEN 'source_deleted'
+        WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
         WHEN superseded.id IS NOT NULL THEN 'superseded_wake'
         ELSE 'superseded_on_return:' || head.id END
     FROM recovery_scope scoped
@@ -400,7 +423,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     LEFT JOIN messages source ON source.id=cancelled.source_message_id
     LEFT JOIN corner_facts fact ON fact.corner_id=COALESCE((cancelled.review_context->>'cornerId')::uuid,cancelled.room_id)
     LEFT JOIN recovery_workflows workflow ON workflow.id=cancelled.id
-    WHERE cancelled.cancellation_reason IN ('superseded_wake','workflow_attempt_expired')
+    WHERE cancelled.cancellation_reason IN ('superseded_wake','workflow_attempt_expired','source_deleted')
   )`;
 }
 
@@ -1337,7 +1360,10 @@ export { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
  */
 export const CORNER_CHECK_STUCK_AFTER = '1 hour';
 
-/** One silent command push after 30 seconds for a connected, idle helper. */
+/** Push a connected helper's stranded orders and tags again.
+ * A room the helper is already claiming waits for that turn to finish.
+ * Work in any other room is pushed anyway. Passing an agent retries at once
+ * (a reconnect). The unscoped sweep waits 30 seconds, then retries every 90. */
 export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: string): Promise<number> {
   const result = await db.query<{ count: number }>(
     `WITH due AS MATERIALIZED (
@@ -1348,21 +1374,25 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: 
        JOIN live_server_instances server ON server.instance_id=connection.instance_id
          AND server.renewed_at>clock_timestamp()-interval '90 seconds'
        WHERE command.state='pending' AND command.action='input'
-         AND command.reason IN ('human_tag','direct_message')
-         AND (command.renudged_at IS NULL OR $1::text IS NOT NULL)
+         AND command.reason IN ('human_tag','direct_message','order')
+         AND (command.wake_after IS NULL OR command.wake_after<=clock_timestamp())
+         AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=clock_timestamp())
+         AND ($1::text IS NOT NULL OR command.renudged_at IS NULL
+           OR command.renudged_at<=clock_timestamp()-interval '90 seconds')
          AND ($1::text IS NULL OR command.agent_id=$1)
          AND ($1::text IS NOT NULL OR command.created_at<=clock_timestamp()-interval '30 seconds')
          AND NOT EXISTS (
            SELECT 1 FROM agent_commands busy
-           WHERE busy.agent_id=command.agent_id AND busy.state='claimed'
-             AND busy.lease_expires_at>clock_timestamp()
+           WHERE busy.agent_id=command.agent_id AND busy.room_id=command.room_id
+             AND busy.state='claimed' AND busy.lease_expires_at>clock_timestamp()
          )
        ORDER BY command.created_at,command.id LIMIT 100
        FOR UPDATE OF command SKIP LOCKED
      ), renudged AS (
        UPDATE agent_commands command SET renudged_at=clock_timestamp()
        FROM due WHERE command.id=due.id AND command.state='pending'
-         AND (command.renudged_at IS NULL OR $1::text IS NOT NULL)
+         AND ($1::text IS NOT NULL OR command.renudged_at IS NULL
+           OR command.renudged_at<=clock_timestamp()-interval '90 seconds')
        RETURNING command.id
      ) SELECT count(*)::int count FROM renudged`,
     [agentId ?? null],
@@ -1435,6 +1465,17 @@ export async function claimAgentCommand(
                (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
                AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
                AND NOT EXISTS(SELECT 1 FROM digest_refresh)
+               AND NOT (action='input' AND reason IN ('human_tag','direct_message') AND private_payload IS NULL
+                 AND EXISTS(SELECT 1 FROM agent_commands older
+                   JOIN messages old_source ON old_source.id=older.source_message_id AND old_source.deleted_at IS NULL
+                   JOIN messages requested ON requested.id=agent_commands.source_message_id
+                     AND requested.author_id=old_source.author_id
+                   WHERE older.room_id=$2 AND older.agent_id=$3 AND older.state='pending'
+                     AND older.action='input' AND older.reason IN ('human_tag','direct_message')
+                     AND older.private_payload IS NULL AND older.wake_after IS NULL
+                     AND ${startupWakeAllowedSql('older')}
+                     AND (older.created_at,older.id)<(agent_commands.created_at,agent_commands.id)
+                     AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=older.id)))
                AND ${reviewerQuietSql('agent_commands')} AND ${waitingReportSql('agent_commands')}
                AND ${startupWakeAllowedSql('agent_commands')}
                AND (${ordinaryWakeSql('agent_commands')} OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
@@ -1444,6 +1485,38 @@ export async function claimAgentCommand(
                    AND (human.state='pending' OR (human.state='claimed' AND human.lease_expires_at>now()))
                ))
              FOR UPDATE OF agent_commands
+           ), human_followups AS MATERIALIZED (
+             SELECT later.*,source.author_id,source.text,source.attachments
+             FROM eligible head
+             JOIN messages first ON first.id=head.source_message_id AND first.deleted_at IS NULL
+             JOIN identities person ON person.id=first.author_id AND person.kind='human'
+             JOIN agent_commands later ON later.room_id=head.room_id AND later.agent_id=head.agent_id
+               AND (later.created_at,later.id)>(head.created_at,head.id)
+             JOIN messages source ON source.id=later.source_message_id
+               AND source.author_id=first.author_id AND source.room_id=head.room_id AND source.deleted_at IS NULL
+             WHERE head.state='pending' AND head.action='input'
+               AND head.reason IN ('human_tag','direct_message') AND head.private_payload IS NULL
+               AND head.coalesced_context IS NULL AND NOT head.avatar_job
+               AND later.state='pending' AND later.action='input'
+               AND later.reason IN ('human_tag','direct_message') AND later.private_payload IS NULL
+               AND later.coalesced_context IS NULL AND NOT later.avatar_job
+               AND later.wake_after IS NULL AND ${startupWakeAllowedSql('later')}
+               AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=later.id)
+               AND NOT EXISTS(SELECT 1 FROM voice_orders voice
+                 WHERE voice.agent_id=head.agent_id AND voice.source_message_id IN (head.source_message_id,later.source_message_id))
+             ORDER BY later.created_at,later.id FOR UPDATE OF later
+           ), human_context AS (
+             SELECT string_agg(jsonb_build_object('id',id,'sourceMessageId',source_message_id,
+               'authorId',author_id,'body',text,'attachments',attachments)::text,
+               E'\n' ORDER BY created_at,id) context,
+               (SELECT COALESCE(jsonb_agg(attachment),'[]'::jsonb) FROM (
+                 SELECT attachment FROM eligible head JOIN messages source ON source.id=head.source_message_id,
+                   LATERAL jsonb_array_elements(COALESCE(source.attachments,'[]'::jsonb)) attachment
+                 UNION ALL
+                 SELECT attachment FROM human_followups,
+                   LATERAL jsonb_array_elements(COALESCE(attachments,'[]'::jsonb)) attachment
+               ) files) attachments
+             FROM human_followups
            ), working AS (
              INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
              SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible
@@ -1458,11 +1531,26 @@ export async function claimAgentCommand(
            ), claimed AS (
              UPDATE agent_commands command SET state='claimed',generation_id=$4,
                lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
-               recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context)
+               recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context),
+               coalesced_context=COALESCE((SELECT context FROM human_context),command.coalesced_context),
+               coalesced_attachments=CASE WHEN EXISTS(SELECT 1 FROM human_followups)
+                 THEN (SELECT attachments FROM human_context) ELSE command.coalesced_attachments END
              FROM eligible
              WHERE command.id=eligible.id AND
                (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
              RETURNING command.*
+           ), folded_human_commands AS (
+             UPDATE agent_commands command SET state='cancelled',completed_at=now(),
+               cancellation_reason='coalesced_into:'||head.id
+             FROM human_followups folded CROSS JOIN claimed head
+             WHERE command.id=folded.id
+             RETURNING command.*
+           ), folded_human_turns AS (
+             UPDATE agent_turns turn SET status='complete',created_at=now()
+             FROM folded_human_commands folded WHERE turn.room_id=folded.room_id
+               AND turn.agent_id=folded.agent_id AND turn.request_id=folded.turn_request_id
+               AND turn.status='working'
+             RETURNING turn.request_id
            ), resolved_corner_attention AS (
              UPDATE messages notice SET card=jsonb_set(notice.card,'{status}','"resolved"')
              FROM claimed command

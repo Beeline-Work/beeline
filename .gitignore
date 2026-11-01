@@ -79,3 +79,9 @@ agent-home/
 
 # Native component proof adapters share the mobile dependency install.
 /apps/mobile/surface-proof/node_modules
+
+# Dependency mount request, consumed by the helper on activation.
+.beeline-dependency-request
+
+# Helper dependency requests for disposable copies
+.beeline-extra-dependencies/

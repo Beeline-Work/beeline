@@ -23,14 +23,12 @@ import {
   isPlanRefusal,
   missingInstalledPackages,
   nodeModulesTreePaths,
-  pruneWarmStore,
   readWarmPlan,
   seedWarmNodeModules,
   sharedNpmCacheDir,
   sharedCargoTargetDir,
   sharedPnpmStoreDir,
   STAGING_SWEEP_MS,
-  WARM_STORE_MAX_ENTRIES,
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
 
@@ -419,7 +417,7 @@ describe('harvest', () => {
     expect(await readdir(store)).toEqual([]);
   });
 
-  it('keeps the store bounded, dropping the least recently used entries', async () => {
+  it('publishes without evicting generations still used by corners', async () => {
     const store = await scratch();
     // Older than anything a harvest will write, and ordered among themselves.
     const olds = ['aaa', 'bbb', 'ccc'].map((name) => resolve(store, name));
@@ -433,11 +431,11 @@ describe('harvest', () => {
     expect(stored.reason).toBe('stored');
 
     const kept = (await readdir(store)).sort();
-    expect(kept).toHaveLength(WARM_STORE_MAX_ENTRIES);
-    // The new entry and the two most recently used, never the oldest.
+    expect(kept).toHaveLength(4);
+    // Reference-aware collection happens after the generation is linked.
     expect(kept).toContain(stored.key);
     expect(kept).toContain('ccc');
-    expect(kept).not.toContain('aaa');
+    expect(kept).toContain('aaa');
   });
 
   it('promotes an entry when a worktree is seeded from it', async () => {
@@ -457,7 +455,6 @@ describe('harvest', () => {
     // Used is used: a seed refreshes recency, so the entry every new corner is
     // being cut from is never the one a prune chooses.
     expect((await stat(resolve(store, stored.key!))).mtimeMs).toBeGreaterThan(aged * 1000);
-    expect(await pruneWarmStore(store, 1)).toEqual([]);
   });
 
   it('sweeps staging left by a process that died, and keeps a fresh one', async () => {

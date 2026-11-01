@@ -1,3 +1,4 @@
+import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
 import { phoneSocketRequests } from './phone-socket.js';
 import { PHONE_SOCKET_MAX_FRAME_BYTES } from '@beeline/api-contract/phone';
@@ -748,8 +749,9 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Daemon tokens have a distinct prefix. Avoid making every phone socket
       // pay for a failed daemon-auth query before its ordinary session lookup.
       const daemonId = raw?.startsWith('bdt_') ? await options.auth.authenticateDaemon(raw) : null;
-      const phoneId =
-        raw && !raw.startsWith('bdt_') ? await options.auth.authenticatePhone(raw) : null;
+      const phoneSession =
+        !daemonId && raw && !raw.startsWith('bdt_') ? await readPhoneSession(options.auth, raw) : null;
+      const phoneId = phoneSession?.identityId ?? null;
       const identityId = daemonId ?? phoneId;
       if (!identityId) {
         const payload = JSON.stringify({ error: 'phone_token_required' });
@@ -801,6 +803,7 @@ export function createBeelineServer(options: ServerOptions): Server {
           kind: daemonId ? 'daemon' : 'phone',
           helperVersion,
           helperSourceSha,
+          ...(phoneSession?.familyId ? { familyId: phoneSession.familyId } : {}),
         }),
       );
     })().catch(() => socket.destroy());
@@ -815,6 +818,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         kind: 'phone' | 'daemon' | 'machine';
         helperVersion?: string;
         helperSourceSha?: string;
+        familyId?: string;
       },
     ) => {
       const sendLive = (payload: string) => {
@@ -1044,7 +1048,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
       };
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
-        dispatchPhoneOperation, sendLive, requestErrorStatus);
+        dispatchPhoneOperation, sendLive, requestErrorStatus, principal.familyId);
       client.on('message', (raw) => {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
@@ -1507,13 +1511,45 @@ export function createBeelineServer(options: ServerOptions): Server {
   return server;
 }
 
+const phoneFamilies = new WeakMap<IncomingMessage, string>();
+
+/** Identity plus the sign-in family, when this auth implementation can name one. */
+async function readPhoneSession(
+  auth: {
+    authenticatePhone(token: string): Promise<string | null>;
+    authenticatePhoneSession?(token: string): Promise<{ identityId: string; familyId: string } | null>;
+  },
+  token: string,
+): Promise<{ identityId: string; familyId: string | null } | null> {
+  if (typeof auth.authenticatePhoneSession === 'function') {
+    const session = await auth.authenticatePhoneSession(token);
+    return session ? { identityId: session.identityId, familyId: session.familyId } : null;
+  }
+  const identityId = await auth.authenticatePhone(token);
+  return identityId ? { identityId, familyId: null } : null;
+}
+
 async function phoneIdentity(
   request: IncomingMessage,
   options: ServerOptions,
 ): Promise<string | null> {
   const value = bearer(request.headers.authorization);
+  // Family is recorded beside the identity lookup. The identity return stays the
+  // access-token query System messages already follow.
+  if (value) await rememberPhoneFamily(request, options.auth, value);
   return value ? options.auth.authenticatePhone(value) : null;
 }
+
+async function rememberPhoneFamily(
+  request: IncomingMessage,
+  auth: TokenAuth,
+  token: string,
+): Promise<void> {
+  if (typeof auth.authenticatePhoneSession !== 'function') return;
+  const session = await auth.authenticatePhoneSession(token);
+  if (session?.familyId) phoneFamilies.set(request, session.familyId);
+}
+
 async function daemonIdentity(
   request: IncomingMessage,
   options: ServerOptions,
@@ -2327,6 +2363,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, accepted ? 200 : 403, accepted ? { left: true } : { error: 'invalid_voice_stop' });
     return;
   }
+  if (method === 'GET' && await serveEmailImage(options.database, url, response)) return;
   const identityId = await phoneIdentity(request, options);
   if (
     method === 'GET' &&
@@ -2467,7 +2504,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
     invokeLegacy?: () => Promise<unknown>) => {
-    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy);
+    const familyId = phoneFamilies.get(request);
+    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId);
     if (result === undefined) {
       response.writeHead(204, { 'cache-control': 'private, no-store' });
       response.end();
@@ -2638,7 +2676,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const name = match[1]!;
     const input = await body(request);
     await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!));
+      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)));
     return;
   }
 

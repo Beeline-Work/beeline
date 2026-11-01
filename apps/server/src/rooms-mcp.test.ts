@@ -705,6 +705,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         if (previousKey === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY;
         else process.env.BEELINE_MCP_WEBHOOK_KEY = previousKey;
       }
+      const takenHandle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [USER])).rows[0]!.handle;
+      expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: takenHandle }, { cookie, origin })).status).toBe(302);
+      await page('Saving your choice', 'consent submit', 'handle_taken',
+        await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin }));
       await page('Returning to your session', 'handoff', 'handoff_invalid', await fetch(`${origin}/mcp/oauth/handoff?state=state-sentinel-123&code=x`));
       // Every sentence is driven by a real refusal, and each reason reads differently.
       expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
@@ -815,6 +819,26 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(grant.code).toBeNull(); expect(grant.error).toBe('access_denied');
     expect((await post('/mcp/oauth/consent', { flow: grant.flow, decision: 'allow' }, { cookie: grant.cookie, origin })).status).toBe(400);
     expect((await fetch(`${origin}/mcp/oauth/consent?flow=${grant.flow}`)).status).toBe(400);
+  });
+  it('R1: explains a taken consent handle without granting or changing the existing member', async () => {
+    const existing = await connected();
+    const handle = `pidoong_${randomBytes(4).toString('hex')}`;
+    await existing.client.callTool({ name: 'set_profile', arguments: { name: 'Pidoong', handle } });
+    const client = await (await post('/mcp/oauth/register', { client_name: 'ChatGPT', redirect_uris: ['http://127.0.0.1:9876/callback'] })).json() as { client_id: string };
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:9876/callback', response_type: 'code',
+      code_challenge: createHash('sha256').update(opaque()).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state: 'collision' });
+    const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
+    const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+    const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+    await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+    await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Pidoong', joiner_handle: handle }, { cookie, origin })).status).toBe(302);
+    const refused = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain('Handle already taken');
+    expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [client.client_id])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_codes WHERE client_id=$1', [client.client_id])).rowCount).toBe(0);
+    expect((await db.query('SELECT handle FROM identities WHERE id=$1', [existing.member])).rows[0]!.handle).toBe(handle);
   });
   it('previews and edits the joining member on consent', async () => {
     const registered = await post('/mcp/oauth/register', { client_name: 'Grok Bot', redirect_uris: ['http://127.0.0.1:9876/callback'] });
@@ -1398,7 +1422,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const { client, member } = await connected();
     const listed = () => client.callTool({ name: 'list_rooms', arguments: {} }).then(data);
     expect((await listed()).owner).toEqual({ name: 'Demo', handle: 'demo' });
-    expect((await listed()).setup).toContain('your own app');
+    expect((await listed()).setup).toContain('Preserve the approved @handle');
     const profile = await client.callTool({ name: 'set_profile', arguments: { name: 'Existing Bot' } });
     expect(profile.isError).toBeFalsy();
     expect(await listed()).toMatchObject({ owner: { name: 'Demo', handle: 'demo' } });
@@ -1411,8 +1435,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup).toContain('set_profile');
     expect(data(await client.callTool({ name: 'read_messages', arguments: { room: ROOM, limit: 1 } })).setup).toContain('tags your @handle');
     const tools = (await client.listTools()).tools;
-    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('call it first');
-    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^Call this first/);
+    expect(tools.find(t => t.name === 'list_rooms')!.description).toContain('verify your approved member identity and owner');
+    expect(tools.find(t => t.name === 'set_profile')!.description).toMatch(/^After verifying list_rooms/);
     expect(tools.find(t => t.name === 'set_profile')!.description).toContain('display name and profile picture you already use in your own app');
     expect(tools.find(t => t.name === 'set_profile')!.description).toContain('https URL or data URI');
     expect(client.getInstructions()).toContain('Read the owner field in list_rooms');
@@ -1462,27 +1486,34 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const refused = await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 26 } });
     expect(refused.isError).toBe(true);
   });
-  it('SESSION-JOIN-1: a headless session proposes its name, signs in on another device and collects its code by state', async () => {
+  it.each([{ fallback: false, app: 'Claude Code' }, { fallback: true, app: 'Claude Code' }, { fallback: false, app: 'Codex' }])('SESSION-JOIN-1: a headless $app session signs in with fallback consent=$fallback and collects its code by state', async ({ fallback, app }) => {
+    const label = app === 'Codex' ? 'codex' : fallback ? 'fallback' : 'api';
+    const memberName = `payments ${label}`, memberHandle = `payments_${label}`;
     const handoff = origin + '/mcp/oauth/handoff';
-    const registered = await post('/mcp/oauth/register', { client_name: 'Claude Code', redirect_uris: [handoff] });
+    const registered = await post('/mcp/oauth/register', { client_name: app, redirect_uris: [handoff] });
     expect(registered.status).toBe(201);
     const client = await registered.json() as { client_id: string };
     const verifier = opaque(), state = opaque();
     const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: handoff, response_type: 'code', resource: origin + '/mcp',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state,
-      member_name: 'payments  api\u0007' });
+      member_name: `payments  ${label}\u0007` });
+    if (fallback) query.set('claude_inbound_fallback', '1');
     expect(await (await post('/mcp/oauth/handoff', { state })).json()).toEqual({ error: 'authorization_pending' });
     const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
     const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
     const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
     await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
-    await db.query(`UPDATE identities SET handle='payments_api' WHERE id=$1`, [AGENT]);
+    await db.query(`UPDATE identities SET handle=$2 WHERE id=$1`, [AGENT, memberHandle]);
     const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
-    expect(page).toContain('Add Claude Code to your team');
-    expect(page).toContain('payments api');
+    expect(page).toContain(`Add ${app} to your team`);
+    expect(page.includes('Would you like to run the following command?')).toBe(app === 'Codex');
+    expect(page.includes('choose “Yes, proceed”')).toBe(app === 'Codex');
+    expect(page).toContain(memberName);
+    expect(page).toContain('Agents and people who tag this session in your Rooms can send it messages');
+    expect(page.includes('user-level "crossSessionInbound": "accept" setting')).toBe(fallback);
     // Another member in the Workspace holds the plain handle already.
-    expect(page).toContain('@payments_api_2');
+    expect(page).toContain(`@${memberHandle}_2`);
     await db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
     const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
     const target = new URL(allowed.headers.get('location')!);
@@ -1500,7 +1531,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const tokens = await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code: collected.code, code_verifier: verifier });
     expect(tokens.status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
-    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'payments api', handle: 'payments_api_2' });
+    expect((await db.query('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: memberName, handle: `${memberHandle}_2` });
     expect((await fetch(`${origin}/mcp/oauth/handoff?state=short&code=x`)).status).toBe(400);
   });
   it('threads a reply under a message in the same Room and refuses a foreign one', async () => {

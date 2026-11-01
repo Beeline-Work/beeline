@@ -126,6 +126,11 @@ function isProviderOutageFault(text: string): boolean {
   return /\bprovider error (?:408|429|5\d\d)\b/i.test(text);
 }
 
+/** The helper reached a checkout another session still holds. The order waits; the helper is not offline. */
+export function isCheckoutBusyFault(text: string): boolean {
+  return /corner checkout is in use/i.test(text);
+}
+
 const PROVIDER_OUTAGE_POINTER = "its provider is failing; switch its model in the agent's settings.";
 
 /**
@@ -395,6 +400,7 @@ export function phraseTurnSilence(
       );
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();
+      if (isCheckoutBusyFault(fault)) return capLine(agent, 'is waiting', fault);
       const remedy = options.givingUp
         ? (hiccupAttemptLimit(classified.fault) === 2
           ? 'Stopped retrying after two tries.'

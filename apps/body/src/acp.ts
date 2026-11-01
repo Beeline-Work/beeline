@@ -1428,9 +1428,6 @@ export class AcpClient extends EventEmitter {
       if (terminalReason) return;
       terminalReason = reason;
       this.terminalSessions.add(sessionId);
-      for (const key of this.detachedTools.keys()) {
-        if (key.startsWith(`${sessionId}\0`)) this.detachedTools.delete(key);
-      }
       if (contextPath) {
         try {
           const context = JSON.parse(readFileSync(contextPath, 'utf8'));
@@ -1558,7 +1555,7 @@ export class AcpClient extends EventEmitter {
         this.activeRunIds.delete(sessionId);
       }
       this.off('session/update', onUpdate);
-      if (completed && onBackgroundToolCompletion) {
+      if (onBackgroundToolCompletion) {
         for (const call of [...toolCallEntries(updates), ...asyncTasks.values()]) {
           if (call.id && !asyncToolCallIds.has(call.id) && !call.id.startsWith('anonymous-') &&
               !['completed', 'failed'].includes(call.status ?? '') && !call.resultReceived) {

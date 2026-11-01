@@ -7,6 +7,7 @@ import { Typography } from '@/constants/Typography';
 import { HullActionSheetModal } from './HullActionSheet';
 import { IdentityMark } from './IdentityMark';
 import { Button } from './Button';
+import { ExistingAgentJoin } from './ExistingAgentJoin';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { RoomMemberPickerActions, type MemberPickerKind } from './RoomMemberPickerActions';
 
@@ -186,7 +187,8 @@ export function MemberPickerSheet({
           showEmpty={roomInScope && candidates !== null}
         />
       )}
-      {(agentConnectOnly || pairCommand) && (
+      {agentConnectOnly && <ExistingAgentJoin pairCommand={pairCommand} onCopy={onCopyPairCommand} />}
+      {!agentConnectOnly && pairCommand && (
         <View style={styles.pairing} testID="invite-agent-flow">
           <Text style={styles.meta}>
             Run this where the agent will live. It joins every Room you're in.

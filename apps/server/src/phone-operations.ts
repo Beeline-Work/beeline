@@ -62,7 +62,7 @@ export function createPhoneOperationDispatcher(
   legacyOperation: PhoneService['execute'],
 ) {
   const execute = async (name: string, input: Record<string, unknown>, viewerId: string,
-    invokeLegacy?: () => Promise<unknown>): Promise<unknown> => {
+    invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
       case 'readWorkspaces': return phone.readWorkspaces(viewerId);
@@ -199,19 +199,19 @@ export function createPhoneOperationDispatcher(
         return;
       }
       default: return invokeLegacy ? invokeLegacy()
-        : legacyOperation.call(phone, name as never, input as never, viewerId);
+        : legacyOperation.call(phone, name as never, input as never, viewerId, undefined, familyId);
     }
   };
 
   return async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
-    invokeLegacy?: () => Promise<unknown>): Promise<unknown> => {
+    invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
     if (!viewerId) refuse(401, 'phone_token_required');
     if (!PHONE_OPERATION_NAMES.has(name as never)) refuse(404, 'unknown_phone_operation');
     if (!input || typeof input !== 'object' || Array.isArray(input)) refuse(400, 'invalid_args');
     signal?.throwIfAborted();
     const startedAt = Date.now();
     // Let admitted writes settle atomically. Never race a transaction against socket closure.
-    const result = await execute(name, input, viewerId, invokeLegacy);
+    const result = await execute(name, input, viewerId, invokeLegacy, familyId);
     if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
       void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
         .catch(error => console.error('[server] human-triggered merge recovery failed:', error));

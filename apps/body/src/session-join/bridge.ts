@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { accessToken, callTool } from './beeline-api.js';
 import { codexQueue, turnRunning } from './codex.js';
 import { postToClaude } from './claude.js';
+import { hasClaudeMcp } from './claude-mcp.js';
 import { findSession, liveSessions, machineSources, type LiveSession, type Sources } from './sessions.js';
 import { pidAlive, queueInbox, readState, takeInbox, updateState, type JoinedSession } from './store.js';
 
@@ -58,6 +59,7 @@ const realDeps: DeliverDeps = {
 export async function deliver(dir: string, joined: JoinedSession, session: LiveSession | undefined, deps: DeliverDeps = realDeps): Promise<string> {
   if (joined.agent !== 'claude-code' && joined.agent !== 'codex') return 'waiting for the app to collect it';
   if (!session) return 'waiting for the session to open';
+  if (joined.agent === 'claude-code' && hasClaudeMcp(dir, session.pid)) return 'waiting for the in-session MCP server';
   const text = takeInbox(dir, joined.key);
   if (!text) return 'nothing waiting';
   try {

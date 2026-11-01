@@ -114,7 +114,7 @@ describe('a new corner worktree', () => {
     const worktrees = await Promise.all(Array.from({ length: 8 }, (_, index) =>
       materialize(supervisorRoot, remote, `concurrent-${index}`),
     ));
-    expect(new Set(worktrees.map(tree => tree.gitCommonDir)).size).toBe(1);
+    expect(new Set(worktrees.map(tree => tree.gitCommonDir)).size).toBe(8);
     for (const [index, tree] of worktrees.entries()) {
       const branch = await execFileAsync('git', ['-C', tree.path, 'branch', '--show-current']);
       expect(branch.stdout.trim()).toBe(`feature/concurrent-${index}`);
@@ -122,26 +122,11 @@ describe('a new corner worktree', () => {
     }
   }, 60_000);
 
-  it('arrives with the warm tree already hardlinked in', async () => {
+  it('does not expose shared inodes before the harness can seal its mounts', async () => {
     const supervisorRoot = await scratch('beeline-warm-supervisor-');
-    const key = await warmStore(supervisorRoot);
-
+    await warmStore(supervisorRoot);
     const worktree = await materialize(supervisorRoot, remote, 'corner-warm');
-
-    const linked = resolve(worktree.path, 'node_modules', 'left-pad', 'index.js');
-    const stored = resolve(
-      warmNodeModulesStoreDir(supervisorRoot),
-      key,
-      'node_modules',
-      'left-pad',
-      'index.js',
-    );
-    expect(await readFile(linked, 'utf8')).toBe('module.exports = 1;\n');
-    expect((await stat(linked)).ino).toBe((await stat(stored)).ino);
-    // The seed is not a commit: the corner's own `git status` stays clean, and
-    // no staging directory is left where the agent would see it.
-    const status = await execFileAsync('git', ['-C', worktree.path, 'status', '--porcelain=v1']);
-    expect(status.stdout.trim()).toBe('');
+    await expect(stat(resolve(worktree.path, 'node_modules'))).rejects.toThrow();
   });
 
   it('is cut normally when the store has nothing for its lockfile', async () => {
@@ -152,21 +137,4 @@ describe('a new corner worktree', () => {
     expect(await readFile(resolve(worktree.path, 'package-lock.json'), 'utf8')).toBe(LOCKFILE);
     await expect(stat(resolve(worktree.path, 'node_modules'))).rejects.toThrow();
   });
-});
-
-it('materializes independent agent copies through the runtime allocation seam', async () => {
-  const supervisorRoot = await scratch('agent-runtime-copies-');
-  const input = {
-    cornerId: 'same-corner', remote, targetBranch: 'main',
-    featureBranch: 'feature/agent-copies', token: 'fixture', supervisorRoot,
-    committer: { name: 'Writer', publicKey: 'writer' },
-  };
-  const [a, b] = await Promise.all(['writer-a', 'writer-b'].map(agentId =>
-    materializeCornerWorktree({ ...input, agentId })));
-  expect(a.path).not.toBe(b.path);
-  expect(a.gitCommonDir).not.toBe(b.gitCommonDir);
-  await writeFile(resolve(a.path, 'private-edit'), 'unfinished');
-  expect(await readFile(resolve(b.path, 'private-edit')).catch(() => undefined)).toBeUndefined();
-  expect(await materializeCornerWorktree({ ...input, agentId: 'writer-a' })).toEqual(a);
-  expect(await readFile(resolve(a.path, 'private-edit'), 'utf8')).toBe('unfinished');
 });

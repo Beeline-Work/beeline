@@ -136,7 +136,7 @@ describe('corner close cleanup', () => {
     await expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).resolves.toBeTruthy();
   });
 
-  it('still deletes a branch no open pull request points at', async () => {
+  it('an agent copy never deletes the shared remote branch during cleanup', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-delete-'));
     roots.push(supervisorRoot);
@@ -156,6 +156,6 @@ describe('corner close cleanup', () => {
       { preserveRemoteBranch: false },
     );
 
-    await expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).rejects.toThrow();
+    await expect(git(bare, 'show-ref', '--verify', `refs/heads/${FEATURE}`)).resolves.toBeTruthy();
   });
 });

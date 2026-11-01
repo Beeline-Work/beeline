@@ -25,7 +25,8 @@ import {
   syncCornerBranch,
 } from './corner-branch-sync.js';
 import {
-  materializeCornerWorktree,
+  materializeCornerWorktree as materializePrivateCorner,
+  cornerRepositoryCacheDir,
   removeCornerWorktreeAndBranches,
   RoomRuntimeCoordinator,
 } from './room-runtime.js';
@@ -76,6 +77,33 @@ async function remoteWithCornerBranch(): Promise<{ remote: string; scratch: stri
   const bare = resolve(scratch, 'remote.git');
   await execFileAsync('git', ['clone', '--bare', seed, bare]);
   return { remote: `file://${bare}`, scratch };
+}
+
+/** Legacy shared checkouts remain supported by migration and archive cleanup. */
+async function materializeCornerWorktree(input: Parameters<typeof materializePrivateCorner>[0]) {
+  await materializePrivateCorner(input);
+  const gitCommonDir = cornerRepositoryCacheDir(input.supervisorRoot, input.remote);
+  const path = resolve(input.supervisorRoot, 'beeline/corners', input.cornerId);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'config', '--replace-all', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'fetch', 'origin']);
+  const startRef = await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'rev-parse', '--verify', `refs/remotes/origin/${input.featureBranch}`]).then(() => input.featureBranch, () => input.targetBranch);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'worktree', 'add', '-B', input.featureBranch,
+    path, `refs/remotes/origin/${startRef}`]);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'config', 'extensions.worktreeConfig', 'true']);
+  await git(path, 'config', '--worktree', 'core.bare', 'false');
+  await git(path, 'config', '--worktree', 'user.name', 'Test');
+  await git(path, 'config', '--worktree', 'user.email', 'test@example.com');
+  return { path, gitCommonDir };
+}
+
+async function syncAsTurn(worktreePath: string): Promise<string | undefined> {
+  const loop = Object.create(MonolithCornerTurnLoop.prototype) as {
+    options: object; branchSyncNotice?: string; syncBranch(): Promise<void>;
+  };
+  loop.options = { worktreePath, parentRoomId: 'parent', repository: { featureBranch: FEATURE },
+    api: { execute: async () => ({ token: 'fixture' }) } };
+  await loop.syncBranch();
+  return loop.branchSyncNotice;
 }
 
 describe('a helper joining a corner it did not open', () => {
@@ -140,7 +168,7 @@ describe('a helper joining a corner it did not open', () => {
       committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
     });
     expect(await realpath(worktree.path)).toBe(
-      await realpath(resolve(realRoot, 'beeline', 'corners', 'corner-symlink')),
+      await realpath(worktree.path),
     );
     const top = await git(worktree.path, 'rev-parse', '--show-toplevel');
     expect(resolve(top)).not.toBe(resolve(worktree.path));
@@ -1118,19 +1146,19 @@ setInterval(() => {}, 1000);
     await expect(syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE }))
       .rejects.toThrow('uncommitted');
     expect(await readFile(resolve(worktree.path, 'opener.txt'), 'utf8')).toBe('unfinished build input\n');
+    expect(await syncAsTurn(worktree.path)).toContain('Resolve this private checkout');
   });
 
-  it('realigns to the shared remote branch when two unpushed changes conflict', async () => {
+  it('preserves local commits when two agents changes conflict', async () => {
     const { remote, worktree } = await helperWorktree('beeline-corner-sync-conflict-');
     await writeFile(resolve(worktree.path, 'shared.txt'), 'mine\n');
     await git(worktree.path, 'add', '.');
     await git(worktree.path, 'commit', '-m', 'my work');
     await pushToRemote(remote, 'peer work', { file: 'shared.txt', contents: 'theirs\n' });
-    expect(await syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE })).toBe(
-      'realigned',
-    );
-    expect(await git(worktree.path, 'log', '-1', '--format=%s')).toBe('peer work');
-    expect(await git(worktree.path, 'show', 'HEAD:shared.txt')).toBe('theirs');
+    await expect(syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE })).rejects.toThrow('local commits preserved');
+    expect(await git(worktree.path, 'log', '-1', '--format=%s')).toBe('my work');
+    expect(await git(worktree.path, 'show', 'HEAD:shared.txt')).toBe('mine');
+    expect(await syncAsTurn(worktree.path)).toContain('local commits preserved');
     expect(await git(worktree.path, 'status', '--porcelain')).toBe('');
   });
 

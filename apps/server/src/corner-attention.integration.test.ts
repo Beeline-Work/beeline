@@ -967,7 +967,6 @@ it('Reproduction HEADER-STATE-5: a queued reviewer stays review until that comma
   await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [C]);
   expect(await state()).toBe('review');
   expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'review' });
-  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).not.toHaveProperty('queue');
   await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id='queued-review'`);
   expect(await state()).toBe('idle');
 });
@@ -988,18 +987,18 @@ it('Reproduction R1: a worker order waiting on an offline helper stays working',
   await db.query("UPDATE agent_turns SET created_at=now()-interval '31 seconds' WHERE room_id=$1", [C]);
   await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [C]);
   const restore = await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER);
-  expect(restore).toMatchObject({ state: 'working', activity: 'running', queue: 'offline' });
-  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'working', queue: 'offline' });
+  expect(restore).toMatchObject({ state: 'working', activity: 'running' });
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'working' });
   expect(
     (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0],
-  ).toMatchObject({ state: 'working', queue: 'offline' });
+  ).toMatchObject({ state: 'working' });
   await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('r1-online') ON CONFLICT DO NOTHING`);
   await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
     VALUES($1,1,'r1-online','r1-online')`, [WORKER]);
   expect(await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).toMatchObject({
-    state: 'working', activity: 'running', queue: 'queued',
+    state: 'working', activity: 'running',
   });
-  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'working', queue: 'queued' });
+  expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({ state: 'working' });
   const behind = '44444444-4444-4444-8444-444444444444';
   await db.query(
     `INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'codex-dot-connect',$3)`,
@@ -1011,21 +1010,21 @@ it('Reproduction R1: a worker order waiting on an offline helper stays working',
     [behind, 'f'.repeat(64), WORKER],
   );
   expect(await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).toMatchObject({
-    state: 'working', activity: 'running', queue: 'queued', queueBehind: 'codex-dot-connect',
+    state: 'working', activity: 'running',
   });
   expect((await phone.readCorners(ROOM, HUMAN))!.corners[0]).toMatchObject({
-    state: 'working', queue: 'queued', queueBehind: 'codex-dot-connect',
+    state: 'working',
   });
   expect(
     (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0],
-  ).toMatchObject({ state: 'working', queue: 'queued', queueBehind: 'codex-dot-connect' });
+  ).toMatchObject({ state: 'working' });
   await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [behind]);
   await db.query(
     `UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds',
        claimed_at=now(),generation_id='g-hold' WHERE id='queued-implementer'`,
   );
   expect(await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).toMatchObject({
-    state: 'working', activity: 'running', queue: 'queued',
+    state: 'working', activity: 'running',
   });
   await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL WHERE id='queued-implementer'`);
   await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour' WHERE id='queued-implementer'`);

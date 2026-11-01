@@ -1,12 +1,13 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Approved by lunchboxfortwo: owner messages 005973c2 (state rules) and fa0d393f (lock), corner brief revision 4.
 // Queued work stays working: lunchboxfortwo message 1d183c7884173194edd919705a769c759205506422a1a6704a933775823d640c.
+// Queue label removed: lunchboxfortwo message 44451dd4e1ed1d4e7f3e50c3dc4af769ad9c189b283f2bd97325815e3bd1a674.
 {
   "entries": [
     {
       "file": "packages/api-contract/src/corner-state.ts",
       "declaration": "deriveCornerState",
-      "sha256": "93b35682c13e873753e040ef9bb173f72f642ff3cf7ccf0f53e384fa0c981d60"
+      "sha256": "eed5e0a633ec2473103578583c5f127e06a0f326599da69835fc805fa1256448"
     },
     {
       "file": "packages/api-contract/src/corner-state.ts",
@@ -21,22 +22,22 @@
     {
       "file": "packages/api-contract/src/corner-state.ts",
       "declaration": "CornerStateFacts",
-      "sha256": "d272e068ea175b546bec2792fd158d05f5b640df9e60a7c573e315644a643188"
+      "sha256": "8962b6d6696cef7abbeca44078d222daa6ac05c6c1bddbc597b1e59856aea723"
     },
     {
       "file": "packages/api-contract/src/corner-state.ts",
       "declaration": "DerivedCornerState",
-      "sha256": "c652c1758191627cbbf6f64c4aae8cd7bc81dbf2116d9dac9e670e0ccd4e7e03"
+      "sha256": "7141d6b145540d181489dc2630704fce64c21da10b3ce95cd19b982981d2d8a4"
     },
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerRowState",
-      "sha256": "e5a05312064aa55c95bc46c5e635dc8be8ef4cadbcfc895fff9a473249732318"
+      "sha256": "b2e7354ea1fb569c38e3d944dce38f2d85fa24348163b8aaa744ab8c3eac118a"
     },
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerWorkSql",
-      "sha256": "77f6e2db9b94072aa8752aad209155d12952765eb7d552d7f60afab804c7f2d3"
+      "sha256": "b10ce5a74379a02fd2cbc970edbabe831d753363303b625d26e6a57f1105db5e"
     },
     {
       "file": "apps/server/src/chat-corner-counts.ts",

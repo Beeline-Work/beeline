@@ -27,6 +27,7 @@ function item(state: CornerState, reason?: CornerStateReason) {
 describe('server-owned corner display state', () => {
   it.each([
     ['working', 'quiet', '◌'],
+    ['idle', 'quiet', '○'],
     ['waiting', 'brass', 'Ⅱ'],
     ['review', 'quiet', '●'],
     ['archived', 'ghost', '○'],
@@ -44,27 +45,10 @@ describe('server-owned corner display state', () => {
     expect(cornerDisplayState(item('waiting', reason)).status).toBe('waiting');
   });
 
-  it('says a queued order is waiting, and an offline helper has to come back', () => {
-    expect(cornerDisplayState({ ...item('working'), queue: 'queued' })).toMatchObject({
-      status: 'working',
-      word: 'working · queued',
-      queueNote: 'queued',
-    });
-    expect(cornerDisplayState({ ...item('working'), queue: 'offline' })).toMatchObject({
-      word: 'working · waiting for the agent to come back',
-      queueNote: 'waiting for the agent to come back',
-    });
-    expect(cornerDisplayState({
-      ...item('working'), queue: 'queued', queueBehind: 'codex-dot-connect',
-    })).toMatchObject({
-      word: 'working · queued behind codex-dot-connect',
-      queueNote: 'queued behind codex-dot-connect',
-    });
-    expect(cornerHeaderAgent({
-      status: 'working',
-      queueNote: 'waiting for the agent to come back',
-      activeTurnPubkeys: [],
-    }).stateWord).toBe('working · waiting for the agent to come back');
+  it('R1: a waiting worker order shows only the server state on the row and header', () => {
+    const display = cornerDisplayState(item('working'));
+    expect(display.word).toBe(display.status);
+    expect(cornerHeaderAgent({ status: display.status, activeTurnPubkeys: [] }).stateWord).toBe('working');
   });
 
   it('uses lifecycle only for PR/check narration', () => {

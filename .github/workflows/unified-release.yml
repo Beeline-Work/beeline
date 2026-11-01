@@ -514,13 +514,9 @@ jobs:
           set -euo pipefail
           npm install --global npm@^11.15.0
           npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null 2>&1 || npm publish --no-provenance "$HELPER_TARBALL"
-      # The local tarball smoke gates publishing; registry listing is advisory.
-      - name: Check helper npm visibility
-        timeout-minutes: 6
-        continue-on-error: true
-        env:
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-        run: node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}" --warn
+      # npm may process a successful publish for tens of minutes. The exact
+      # tarball was smoked above; Pages already serves the verified helper.
+      # Do not wait for registry visibility before recording release success.
 
   release_proof:
     # Stage the candidate on beta, then exercise an existing native binary.

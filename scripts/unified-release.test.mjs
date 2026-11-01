@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { NPM_VISIBILITY_TIMEOUT_MS } from './npm-package-visibility.mjs';
 import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
@@ -1076,7 +1075,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);
   assert.doesNotMatch(source, /rolling [0-9]+ release attempts/);
-  assert.match(source, /node scripts\/npm-package-visibility\.mjs usebeeline "\$\{RELEASE_VERSION#v\}"/);
+  assert.doesNotMatch(source, /npm-package-visibility/);
   assert.equal(source.match(/npm publish/g)?.length, 1);
 });
 
@@ -1751,12 +1750,6 @@ test('ios-review-node: App Review establishes the runner Node PATH before submis
   assert.equal(result.stdout, 'scripts/ios-store-build.mjs\nsubmit\n/tmp/ios-review-node/ios-build.json\n');
 });
 
-test('helper job accommodates the npm visibility deadline plus publication overhead', () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  const budgetMs = workflow.jobs.helper['timeout-minutes'] * 60_000;
-  assert.ok(budgetMs >= NPM_VISIBILITY_TIMEOUT_MS + 5 * 60_000, 'helper job must allow the default npm visibility deadline plus five minutes for setup and publication');
-});
-
 test('all helper builds pin compatible Rust before cache restore and keep locked builds', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   for (const name of ['helper', 'helper_macos']) {
@@ -1771,9 +1764,6 @@ test('all helper builds pin compatible Rust before cache restore and keep locked
   }
   const builder = readFileSync(new URL('./build-beeline-bundle.mjs', import.meta.url), 'utf8');
   assert.match(builder, /'--locked'/);
-  const smoke = workflow.jobs.helper.steps.find((step) => step.name === 'Check helper npm visibility');
-  assert.equal(smoke['timeout-minutes'], 6);
-  assert.ok(smoke['timeout-minutes'] * 60_000 > NPM_VISIBILITY_TIMEOUT_MS);
 });
 
 
@@ -2017,13 +2007,14 @@ test('public JSON release outputs survive punctuation masking across plan, OTA a
 });
 
 
-test('npm-delayed-visibility: exact tarball smoke gates publish and listing is advisory', () => {
+test('npm-delayed-visibility: exact tarball smoke gates publish without waiting for listing', () => {
   const steps = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8')).jobs.helper.steps;
   const pack = steps.find(step => step.id === 'helper_package');
   const publish = steps.find(step => step.name === 'Publish the exact helper CLI package');
-  const visibility = steps.find(step => step.name === 'Check helper npm visibility');
   assert.ok(pack && steps.indexOf(pack) < steps.indexOf(publish));
-  assert.ok(steps.indexOf(publish) < steps.indexOf(visibility));
+  const promote = steps.find(step => step.uses === './.github/actions/daemon-leg' && step.with.phase === 'promote');
+  assert.ok(promote && steps.indexOf(promote) < steps.indexOf(publish), 'Pages makes helper bundles available before npm publish');
+  assert.equal(steps.at(-1), publish, 'no post-publish registry wait or install');
   assert.ok(pack.run.indexOf('npm version') < pack.run.indexOf('npm pack'));
   assert.ok(pack.run.indexOf('npm pack') < pack.run.indexOf('node scripts/smoke-helper-package.mjs'));
   assert.match(pack.run, /smoke-helper-package.mjs "\$tarball" "\$\{RELEASE_VERSION#v\}"/);
@@ -2032,6 +2023,63 @@ test('npm-delayed-visibility: exact tarball smoke gates publish and listing is a
   assert.match(publish.env.HELPER_TARBALL, /steps.helper_package.outputs.tarball/);
   assert.match(publish.run, /npm publish --no-provenance "\$HELPER_TARBALL"/);
   assert.equal(publish['continue-on-error'], undefined);
-  assert.match(visibility.run, /--warn$/);
-  assert.equal(visibility['continue-on-error'], true);
+  assert.doesNotMatch(JSON.stringify(steps), /npm-package-visibility/);
 });
+
+for (const [scenario, visible, publishStatus] of [
+  ['publish succeeds while npm still returns E404', false, 0],
+  ['version already exists', true, 99],
+  ['publish fails', false, 42],
+]) {
+  test(`npm-delayed-visibility: ${scenario}`, () => {
+    const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+    const steps = workflow.jobs.helper.steps;
+    const publish = steps.find(step => step.name === 'Publish the exact helper CLI package');
+    const dir = mkdtempSync(join(tmpdir(), 'helper-publish-'));
+    try {
+      const calls = join(dir, 'calls');
+      // Run the actual workflow shell with npm processing or an existing version.
+      // An E404 after publish must never cause another registry read.
+      writeFileSync(join(dir, 'npm'), `#!/bin/bash
+printf '%s\\n' "$*" >> "$NPM_CALLS"
+case "$1" in
+  install) exit 0 ;;
+  view) ${visible ? "printf '0.0.9\\n'; exit 0" : "echo 'npm error code E404' >&2; exit 1"} ;;
+  publish) exit ${publishStatus} ;;
+  *) exit 98 ;;
+esac
+`);
+      chmodSync(join(dir, 'npm'), 0o755);
+      const result = spawnSync('bash', ['-c', publish.run], {
+        encoding: 'utf8', timeout: 5_000,
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}`,
+          RELEASE_VERSION: 'v0.0.9', HELPER_TARBALL: '/exact/usebeeline-0.0.9.tgz', NPM_CALLS: calls },
+      });
+      const success = visible || publishStatus === 0;
+      assert.equal(result.status, success ? 0 : publishStatus, result.stderr);
+      assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
+        'install --global npm@^11.15.0', 'view usebeeline@0.0.9 version',
+        ...(visible ? [] : ['publish --no-provenance /exact/usebeeline-0.0.9.tgz']),
+      ]);
+      assert.equal(steps.at(-1), publish, 'publication is the final helper gate');
+      assert.equal(publish['continue-on-error'], undefined);
+
+      const identity = { version: 'v0.0.9', sourceSha: NEW_SHA, releaseId: `v0.0.9-${NEW_SHA}` };
+      const state = initializeRelease({ ...identity, previous: deliveredPrevious(), selectedComponents: ['helper'] });
+      applyComponentCheckpoints(state, checkpointsFromJobs({
+        initialize: { outputs: { run_helper: 'true' } },
+        helper: { result: success ? 'success' : 'failure' },
+      }, identity));
+      if (success) {
+        finalizeRelease(state);
+        assert.equal(state.state, 'delivered');
+        assert.equal(state.components.helper.version, identity.version);
+      } else {
+        assert.equal(pendingComponents(state).helper, true);
+        assert.throws(() => finalizeRelease(state), /helper has no delivered or carried artifact/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

@@ -64,6 +64,19 @@ try {
     privatePayload: { kind: 'lifecycle', text: 'Background tool completed', authorId: worker, fromRoomId: opened.cornerId } });
   await db.query(`UPDATE agent_commands SET wake_after=NULL WHERE id=$1`, [queued.id]);
   await claim(turn);
+  // Exercise #3191's public restore projection while this worker is occupied.
+  const waiting = await call('createCorner', { ...authority(order), targetRoomId: room, name: 'waiting-proof', idempotencyKey: 'waiting-proof',
+    objective: 'Verify queued display', implementer: 'worker',
+    brief: { spec: 'Verify queued display', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } });
+  await db.query("INSERT INTO live_server_instances(instance_id) VALUES('proof-online')");
+  await db.query("INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id) VALUES($1,1,'proof-online','proof-online')", [worker]);
+  const queuedView = await call('getCornerRestoreState', { cornerId: waiting.cornerId }, worker);
+  if (!base) {
+    assert.equal(queuedView.queue, 'queued');
+    assert.equal(queuedView.queueBehind, 'answered-report');
+    console.log('R1 queued reason over HTTP:', queuedView.queue, queuedView.queueBehind);
+  }
+
   await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE request_id=$1`, [queued.turn_request_id]);
   const presence = new ConnectionPresence(db, live);
   try {
@@ -75,6 +88,12 @@ try {
   const inbox = await call('getAgentCommands', { roomId: opened.cornerId }, worker);
   assert.ok(inbox.commands.some(command => command.id === queued.id));
   await call('postAgentTurnReceipt', { ...authority(turn), agentId: worker, status: 'complete' }, worker);
+  const waitingCommand = (await call('getAgentCommands', { roomId: waiting.cornerId }, worker)).commands[0];
+  await claim(waitingCommand);
+  const runningView = await call('getCornerRestoreState', { cornerId: waiting.cornerId }, worker);
+  assert.equal(runningView.queue, undefined);
+  assert.equal(runningView.activity, 'running');
+  await call('postAgentTurnReceipt', { ...authority(waitingCommand), agentId: worker, status: 'complete' }, worker);
   const next = inbox.commands.find(command => command.id === queued.id);
   await claim(next);
   assert.equal((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`, [next.turnRequestId])).rows[0].status, 'working');

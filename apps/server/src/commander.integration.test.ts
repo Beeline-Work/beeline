@@ -1588,7 +1588,7 @@ it('OPEN-1: an agent-initiated opening does not authorize a worker revision', as
   const turn = await worker(opened.cornerId);
   await expect(daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: opened.cornerId,
     expectedRevision: 1, brief: { spec: 'Change the widget', change: 'Adjust scope' },
-  }, WORKER)).rejects.toThrow('corner brief approval must name a human message or commander order');
+  }, WORKER)).rejects.toThrow('brief.approval.sourceMessageId');
 });
 
 const duplicateReproduction = '572a0de1c06be02cb120b38294e3d9b80b9bdfa8cdf6e53dcb708819b41393c3';

@@ -32,7 +32,7 @@ it('Reproduction R-S12: returns the approval refusal over HTTP without capturing
       body: JSON.stringify({ brief: { spec: 'Test assignment', approval: { sourceMessageId: '' } } }),
     });
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: 'corner brief approval must name a human Room message' });
+    expect(await response.json()).toEqual({ error: 'brief.approval.sourceMessageId must contain 1–256 characters; cite the approving human message or active private commander order ID' });
     expect(Sentry.captureException).not.toHaveBeenCalled();
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));

@@ -8703,6 +8703,10 @@ export class DaemonService {
       );
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
+      if (input.hold === true) {
+        if (!commissionedBy) throw new Error('hold requires a human requester');
+        await setCornerHold(db, { cornerId }, commissionedBy, agentId);
+      }
       if (input.brief) {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(

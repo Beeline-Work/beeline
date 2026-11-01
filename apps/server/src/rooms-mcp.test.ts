@@ -1819,16 +1819,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(pass.text).toMatch(/NOT_CONFIGURED_REVIEWER|reviewer/);
       // No pull request and no checks: the merge gate stays closed.
       expect(await ok(client, 'merge_corner', { address: PUBLIC_CORNER })).toMatchObject({ status: 'blocked' });
-      // A hold needs a person's request.
+      // Agent callers cannot create holds, even under a person's request.
       const hold = await call(client, 'set_corner_hold', { address: PUBLIC_CORNER });
       expect(hold.error).toBe(true);
-      expect(hold.text).toContain('hold requires a human requester');
+      expect(hold.text).toContain('close the PR to stop it');
       // A person's tag makes that person the requester, as it does for an agent turn.
       const handle0 = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
       await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle0} hold the demo corner` }, USER);
-      const held = await ok(client, 'set_corner_hold', { address: PUBLIC_CORNER });
-      expect(held.holdId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(await ok(client, 'set_corner_hold', { address: PUBLIC_CORNER, releaseHoldId: held.holdId })).toBeDefined();
+      const held = await call(client, 'set_corner_hold', { address: PUBLIC_CORNER });
+      expect(held.error).toBe(true);
+      expect(held.text).toContain('close the PR to stop it');
       // An app has no checkout, so repository work needs another implementer.
       const repoRoom = randomUUID();
       await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility,repository_key,repository_remote,repository_resolution)

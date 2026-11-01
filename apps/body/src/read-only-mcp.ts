@@ -34,6 +34,7 @@ import {
   type Dirent,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import {
   cornerTextRefusal,
@@ -1517,6 +1518,8 @@ function withinRoot(root: string, resolved: string): boolean {
 export function resolveAttachPath(roots: string[], input: string): string {
   if (!input || input.includes('\0')) throw new Error('path must be a non-empty file path');
   if (!roots.length) throw new Error('no attachment roots are configured');
+  // Match the shell's home shortcut before applying the existing real-path boundary.
+  if (input.startsWith('~/')) input = join(homedir(), input.slice(2));
   const realRoots = roots.map((root) => realpathSync(root));
   const errorMessage = () =>
     `path resolves outside your checkout or writable session home (${realRoots.join(', ')})`;

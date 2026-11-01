@@ -6,11 +6,12 @@ import { expect, it } from 'vitest';
 import { scanErrorSurfaces, scanErrorPlaceholders } from '../../scripts/error-surface-audit.mjs';
 import exceptions from '../../design/error-surface-allowlist.json';
 
+// Parsing the whole sources tree exceeds the 5s default when the CI runner is busy.
 it('requires an individually documented inset for every contextual error', () => {
   const hits = scanErrorSurfaces(path.resolve('sources')) as { file: string; tag: string; source: string }[];
   expect(hits.map(({ file, tag, source, ancestors, layoutHash }: any) => ({ file, tag, source, ancestors, layoutHash }))).toEqual(exceptions.map(({ file, tag, source, ancestors, layoutHash }) => ({ file, tag, source, ancestors, layoutHash })));
   for (const item of exceptions) expect(item.reason.length).toBeGreaterThan(30);
-});
+}, 30_000);
 it('keeps page failures in standard rows with one trailing retry word', () => {
   for (const file of ['app/(app)/beeline/channels.tsx', 'app/(app)/beeline/members.tsx', 'app/(app)/beeline/corners/[roomId].tsx', 'app/(app)/beeline/workflow.tsx', 'app/(app)/beeline/workflow-run.tsx', 'components/SidebarView.tsx', 'components/DesktopRoomInspector.tsx']) {
     const source = fs.readFileSync(path.resolve('sources', file), 'utf8');
@@ -60,9 +61,10 @@ it('never puts a boxed retry button or boxed banner back into a failure surface'
   visit(path.resolve('sources'));
 });
 
+// Same full-tree parse as the inset scan; a busy runner has taken longer than 5s.
 it('rejects literal error placeholders throughout app source', () => {
   expect(scanErrorPlaceholders(path.resolve('sources'))).toEqual([]);
-});
+}, 30_000);
 it('recognizes quoted and encoded placeholders while allowing real interpolation', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-error-copy-'));
   try {

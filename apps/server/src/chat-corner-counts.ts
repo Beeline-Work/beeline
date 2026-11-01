@@ -25,12 +25,6 @@ export type CornerStateRow = {
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
   worker_active?: boolean;
-  /** True when the working state is an unclaimed command, not a live turn. */
-  worker_queued?: boolean;
-  /** True when every queued worker command is waiting on an offline helper. */
-  worker_offline?: boolean;
-  /** Another room where a queued worker already has a live turn. */
-  checkout_holder?: string | null;
   last_turn_ended_at?: Date | null;
   reviewer_active?: boolean;
   blocking?: boolean;
@@ -47,9 +41,6 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
     archived: Boolean(row.archived_at),
     locked: row.locked,
     turnRunning: row.worker_active === true,
-    workerQueued: row.worker_queued === true,
-    workerOffline: row.worker_offline === true,
-    ...(row.checkout_holder ? { queueBehind: row.checkout_holder } : {}),
     reviewerActive: row.reviewer_active,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
@@ -107,8 +98,8 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `      f.locked,f.lifecycle,f.workflow_state,f.workflow_outcome,
-      activity.worker_active,activity.worker_queued,activity.worker_offline,activity.reviewer_active,activity.checkout_holder,
+    columns: `f.locked,f.lifecycle,f.workflow_state,f.workflow_outcome,
+      activity.worker_active,activity.reviewer_active,
       span.last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
@@ -170,52 +161,32 @@ export function cornerWorkSql(ignoreCommander = false): string {
     OR command.reason='corner_review_dispatch'
     OR (command.reason='subscribed_event' AND EXISTS(
       SELECT 1 FROM messages source WHERE source.id=command.source_message_id AND ${checkPassed('source')})))`;
-  const helperOffline = `NOT EXISTS (
-    SELECT 1 FROM agent_connections connection
-    JOIN live_server_instances server ON server.instance_id=connection.instance_id
-    WHERE connection.agent_id=command.agent_id AND connection.released_at IS NULL
-      AND server.renewed_at>now()-interval '90 seconds')`;
   const noLiveTurn = `NOT EXISTS (
             SELECT 1 FROM agent_turns live
             WHERE live.room_id=command.room_id AND live.agent_id=command.agent_id
               AND live.request_id=command.turn_request_id
               AND COALESCE(live.generation_id,'') NOT LIKE 'pending:%')`;
-  const waitingWorker = `command.room_id=c.id AND NOT (${reviewerCommand}) AND ${noLiveTurn}
-          AND (${deliverableCommandSql('command')} OR ${heldCommandSql('command')})
-          ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}`;
   return `LEFT JOIN rooms parent ON parent.id=c.parent_id
     LEFT JOIN LATERAL (WITH activity_rows AS (
-        SELECT ${reviewerTurn} AS review, false AS queued, false AS offline
+        SELECT ${reviewerTurn} AS review
         FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
           ${ignoreCommander ? 'AND t.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
         UNION ALL
-        SELECT ${reviewerCommand}, true, ${helperOffline}
+        SELECT ${reviewerCommand}
         FROM agent_commands command
         WHERE command.room_id=c.id AND ${deliverableCommandSql('command')}
           ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND ${noLiveTurn}
         UNION ALL
-        SELECT ${reviewerCommand}, true, false
+        SELECT ${reviewerCommand}
         FROM agent_commands command
         WHERE command.room_id=c.id AND ${heldCommandSql('command')}
           ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND ${noLiveTurn}
       )
       SELECT COALESCE(bool_or(NOT review),false) worker_active,
-        COALESCE(bool_or(review),false) reviewer_active,
-        COALESCE(bool_or(NOT review AND queued)
-          AND NOT COALESCE(bool_or(NOT review AND NOT queued),false),false) worker_queued,
-        COALESCE(bool_and(CASE WHEN NOT review AND queued THEN offline END),false) worker_offline,
-        (SELECT other.name FROM agent_turns busy
-          JOIN rooms other ON other.id=busy.room_id
-          WHERE busy.room_id<>c.id AND busy.status='working'
-            AND COALESCE(busy.generation_id,'') NOT LIKE 'pending:%'
-            AND EXISTS (
-              SELECT 1 FROM agent_commands command
-              WHERE ${waitingWorker} AND command.agent_id=busy.agent_id)
-          ORDER BY busy.created_at DESC
-          LIMIT 1) checkout_holder
+        COALESCE(bool_or(review),false) reviewer_active
       FROM activity_rows
     ) activity ON true`;
 }
@@ -340,7 +311,7 @@ export function chatCornerCounts(
 ): Map<string, ChatCornerSummary> {
   const counts = new Map<string, ChatCornerSummary>();
   for (const row of rows) {
-    const { state, reason, itemId, blocker, queue, queueBehind } = cornerRowState(row);
+    const { state, reason, itemId, blocker } = cornerRowState(row);
     if (state === 'archived') continue;
     const count = counts.get(row.parent_id) ?? {
       cornerCount: 0,
@@ -362,8 +333,6 @@ export function chatCornerCounts(
       id: row.id,
       name: row.name,
       state,
-      ...(queue ? { queue } : {}),
-      ...(queueBehind ? { queueBehind } : {}),
       ...(reason ? { reason } : {}),
       ...(blocker ? { blocker } : {}),
       ...(itemId ? { itemId } : {}),

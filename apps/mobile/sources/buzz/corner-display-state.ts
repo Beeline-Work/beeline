@@ -10,10 +10,7 @@ export type CornerDisplayState = {
   readonly status: CornerState;
   readonly visual: CornerVisualState;
   readonly glyph: string;
-  /** Painted on the row and spoken by its existing label. A queue note joins this phrase; `status` stays the server state. */
-  readonly word: string;
-  /** Why a working corner has not started: the order is queued, or the helper is offline. */
-  readonly queueNote?: string;
+  readonly word: CornerState;
   readonly detail?: string;
   readonly prUrl?: string;
   readonly terminal: boolean;
@@ -23,8 +20,6 @@ export type CornerDisplayState = {
 
 export type CornerDisplayItem = {
   readonly state: CornerState;
-  readonly queue?: 'queued' | 'offline';
-  readonly queueBehind?: string;
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
   readonly itemId?: string;
@@ -69,20 +64,8 @@ export function cornerHeaderItem(
   return undefined;
 }
 
-/** The phrase a working corner shows while its order is still unclaimed. */
-export function cornerQueueNote(
-  queue: 'queued' | 'offline' | undefined,
-  behind?: string,
-): string | undefined {
-  if (queue === 'offline') return 'waiting for the agent to come back';
-  if (queue === 'queued' && behind?.trim()) return `queued behind ${behind.trim()}`;
-  if (queue === 'queued') return 'queued';
-  return undefined;
-}
-
 export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState {
   const { state } = item;
-  const queueNote = cornerQueueNote(item.queue, item.queueBehind);
   const visual: CornerVisualState =
     state === 'working' ? 'working' : state === 'review' ? 'needs-you' : state === 'waiting' ? 'waiting' : 'idle';
   const headerSuffix = item.lifecycle.checks === 'failing' || item.lifecycle.checksSummary?.status === 'failing'
@@ -90,10 +73,9 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
-    word: queueNote ? `${state} · ${queueNote}` : state,
+    word: state,
     visual,
     glyph: state === 'working' ? '◌' : state === 'review' ? '●' : state === 'waiting' ? 'Ⅱ' : '○',
-    ...(queueNote ? { queueNote } : {}),
     ...(detail ? { detail } : {}),
     ...(item.lifecycle.pr?.url ? { prUrl: item.lifecycle.pr.url } : {}),
     terminal: state === 'archived',
@@ -112,8 +94,6 @@ export type CornerHeaderAgentInput = {
   /** Absent until the corner's row lands; the header then shows no state. */
   readonly status?: CornerState;
   readonly headerSuffix?: 'checks failed';
-  /** From `cornerDisplayState`: the order is queued, or the helper is offline. */
-  readonly queueNote?: string;
   /** Pubkeys holding a live working receipt in this corner. */
   readonly activeTurnPubkeys: readonly string[];
 };
@@ -129,8 +109,12 @@ export type CornerHeaderAgent = {
 };
 
 export function cornerHeaderAgent(input: CornerHeaderAgentInput): CornerHeaderAgent {
-  const stateWord = [input.status, input.queueNote, input.headerSuffix].filter(Boolean).join(' · ') || undefined;
+  const base =
+    input.status && input.headerSuffix
+      ? `${input.status} · ${input.headerSuffix}`
+      : input.status;
   const reviewerTurnRunning = input.status === 'review' && input.activeTurnPubkeys.length > 0;
+  const stateWord = base;
   return {
     ...(input.ownerPubkey !== undefined ? { pubkey: input.ownerPubkey } : {}),
     reviewerTurnRunning,

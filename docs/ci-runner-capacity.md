@@ -85,7 +85,12 @@ Within successful local server shards, workspace setup took a median 11s
 (range 9–42s), balanced tests 9m16s, and the integration batches 2m45s.
 Preparation's workspace setup took a median 51s (44–74s). The composite-step
 timing includes dependency/build cache restore or installation; it does not
-separate npm install from the other setup operations.
+separate npm install from the other setup operations. Detailed logs for the
+16:27 example below show a cold preparation with root `npm ci` taking 9.5s,
+workspace build 15.8s, and mobile `npm ci` 19.4s. Its server shard restored the
+198 MiB dependency cache in about 6.1s and the 6 MiB exact-commit build cache
+in about 0.9s; both npm installs were skipped. These are individual log
+measurements, not medians over the entire sample.
 
 A later sample of 15 Checks runs created between 21:00 and 23:59 UTC had 38
 successful hosted server shards: median queue 19.5s and execution 13m53s.
@@ -106,7 +111,19 @@ they explain the bottleneck rather than establish a controlled speedup.
 
 ## Validation measurements
 
-The same-PR hosted baseline and mixed-pool comparison are recorded in the
-pull request with run URLs, end-to-end wall time, per-job queue/execution time,
-and runner names. Include cancelled supersession proof separately from full
-completed measurements; a cancelled baseline is not a complete comparison.
+The completed hosted baseline is
+[Checks, 45m49s](https://github.com/Beeline-Work/beeline/actions/runs/41248600918)
+and [Desktop, 23m45s](https://github.com/Beeline-Work/beeline/actions/runs/41248600874),
+both successful. The checked-out PR merge was
+`30c235ee5d66cd398779f0938e1e45845b467179`; compared with this task's base
+`7ab8ed06588c26801466b33964a74111d107f9ba`, server, Body, shared-package and CI
+workflow sources are identical. Only mobile UI changes differ. Treat overall
+timings as an observational comparison: source differences, cache warmth,
+runner assignment and repository traffic prevent a controlled speedup claim.
+
+The mixed-pool comparison is recorded in the pull request with run URLs,
+end-to-end wall time, per-job queue/execution time and runner names. A fresh
+hosted-only run on that PR also supplied supersession evidence: after more
+than 27 minutes, eleven Linux jobs were still queued, and the new push
+cancelled the old run. That cancelled run is queue/cancellation evidence,
+not a completed baseline measurement.

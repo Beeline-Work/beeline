@@ -34,7 +34,7 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables. SERVER INTEGRATION takes the verdict from hosted,
+# the tiny suite tables. SERVER INTEGRATION takes the verdict from both pools'
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
 # takes the verdict from four runners across both pools and the isolated claim latency
 # budget. Root Markdown and docs/ no longer count as unmapped executable paths.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 import { parse } from 'yaml';
 
@@ -37,6 +37,20 @@ test('PR heavy jobs use both hosted and isolated CI-only Linux pools', () => {
   }
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
   assert.match(mobile.run, /--maxWorkers=2 --minWorkers=2/);
+});
+
+test('CI-only capacity is confined to the selected Checks jobs, never release jobs', () => {
+  const directory = new URL('../.github/workflows/', import.meta.url);
+  const allowed = new Set(['typecheck', 'mobile-suite', 'server-suite-shard']);
+  for (const file of readdirSync(directory).filter((file) => /\.ya?ml$/.test(file))) {
+    const workflow = parse(readFileSync(new URL(file, directory), 'utf8'));
+    for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
+      const routing = JSON.stringify([job['runs-on'], job.strategy?.matrix]);
+      if (!routing.includes('beeline-ci')) continue;
+      assert.equal(file, 'checks.yml', `${file}:${name} uses CI-only capacity`);
+      assert.ok(allowed.has(name), `${name} must not join the shared pool implicitly`);
+    }
+  }
 });
 
 test('required contexts survive server runner consolidation', () => {

@@ -37,6 +37,25 @@ describe('MCP workspace consent', () => {
     listeners.get('toggle')!();
     expect(choices.every(choice => choice.checked)).toBe(true);
   });
+  it('keeps already-connected workspaces checked through deselect-all on reconnect', () => {
+    const html = renderMcpWorkspaceSelection([{ id: 'joined', name: 'Team', publicRoomCount: 1, selected: false, alreadyConnected: true }]);
+    expect(html).toContain('form="mcp-consent-form" checked disabled');
+    expect(html).toContain('already connected');
+    expect(html).toContain('type="hidden" name="workspace_ids" value="joined"');
+    const listeners = new Map<string, () => void>();
+    const choices = [{ checked: true, disabled: true }, { checked: true, disabled: false }]
+      .map(choice => ({ ...choice, addEventListener: () => {} }));
+    const toggle = { hidden: true, textContent: '', addEventListener: (_: string, fn: () => void) => listeners.set('toggle', fn) };
+    const allow = { disabled: false }, error = { hidden: true };
+    const nodes = { 'mcp-consent-form': { querySelector: () => allow }, 'select-all-workspaces': toggle, 'selection-error': error };
+    runInNewContext(MCP_WORKSPACE_SCRIPT, { document: { getElementById: (id: keyof typeof nodes) => nodes[id], querySelectorAll: () => choices } });
+    listeners.get('toggle')!();
+    expect(choices.map(choice => choice.checked)).toEqual([true, false]);
+    expect(allow.disabled).toBe(false);
+    expect(error.hidden).toBe(true);
+    listeners.get('toggle')!();
+    expect(choices.map(choice => choice.checked)).toEqual([true, true]);
+  });
   it('preserves saved selections and safely escapes names and IDs', () => {
     const html = renderMcpWorkspaceSelection([{ id: 'a"b', name: '<script>alert(1)</script>', publicRoomCount: 0, selected: false }]);
     expect(html).not.toContain(' checked');

@@ -393,11 +393,14 @@ export class RoomsMcpOAuth {
             this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
             return true;
           }
-          const workspaces = await this.database.query<{ id: string; name: string; publicRoomCount: number; selected: boolean }>(
+          const workspaces = await this.database.query<{ id: string; name: string; publicRoomCount: number; selected: boolean; alreadyConnected: boolean }>(
             `SELECT w.id,w.name,(SELECT count(*)::integer FROM rooms r WHERE r.workspace_id=w.id
                AND r.parent_id IS NULL AND r.direct_participants IS NULL AND r.archived_at IS NULL
                AND r.visibility='public') AS "publicRoomCount",
-               (member.workspace_ids IS NULL OR w.id=ANY(member.workspace_ids)) selected
+               (member.workspace_ids IS NULL OR w.id=ANY(member.workspace_ids)) selected,
+               EXISTS(SELECT 1 FROM memberships joined WHERE joined.workspace_id=w.id
+                 AND joined.identity_id=member.member_id AND joined.room_id IS NULL
+                 AND joined.removed_at IS NULL) AS "alreadyConnected"
              FROM memberships owner JOIN workspaces w ON w.id=owner.workspace_id
              LEFT JOIN rooms_mcp_members member ON member.client_id=$2 AND member.owner_id=owner.identity_id
              WHERE owner.identity_id=$1 AND owner.room_id IS NULL AND owner.removed_at IS NULL

@@ -1297,9 +1297,17 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await backfillMcpMemberRoomsAndAvatars(db);
       expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
       const reconnect = await prepareAuthorization(undefined, grant.clientId);
-      const checkboxes = reconnect.consentHtml.match(/<input\b[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      const checkboxes = reconnect.consentHtml.match(/<input\b[^>]*type="checkbox"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
       expect(checkboxes.find(input => input.includes(secondWorkspace))).toMatch(/\bchecked\b/);
-      expect(checkboxes.find(input => input.includes(WORKSPACE))).not.toMatch(/\bchecked\b/);
+      expect(checkboxes).toHaveLength(2);
+      for (const checkbox of checkboxes) expect(checkbox).toMatch(/\bchecked disabled\b/);
+      expect(reconnect.consentHtml.match(/already connected/g)).toHaveLength(2);
+      // Disabled checkboxes submit their stable IDs through matching hidden fields.
+      const hidden = reconnect.consentHtml.match(/<input\b[^>]*type="hidden"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      expect(hidden).toHaveLength(2);
+      const ids = hidden.map(input => /value="([^"]+)"/.exec(input)![1]);
+      expect((await post('/mcp/oauth/consent', { flow: reconnect.flow, decision: 'allow', workspace_selection: '1', workspace_ids: ids }, { cookie: reconnect.cookie, origin })).status).toBe(302);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
     } finally {
       await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]);
     }

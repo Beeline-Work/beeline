@@ -4,11 +4,12 @@ export interface McpConsentWorkspace {
   name: string;
   publicRoomCount: number;
   selected?: boolean;
+  alreadyConnected?: boolean;
 }
 const escape = (text: string) => text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 
 export function renderMcpWorkspaceSelection(workspaces: readonly McpConsentWorkspace[]): string {
-  return `<fieldset class="workspace-section" aria-labelledby="workspace-heading"><input type="hidden" name="workspace_selection" value="1" form="mcp-consent-form"><div class="workspace-heading"><p class="fine" id="workspace-heading">Workspaces</p><button id="select-all-workspaces" class="edit text-button" type="button" hidden>Select all</button></div><div class="workspace-list">${workspaces.map(workspace => `<label class="workspace"><input type="checkbox" name="workspace_ids" value="${escape(workspace.id)}" form="mcp-consent-form"${workspace.selected !== false ? ' checked' : ''}><span class="workspace-copy"><span>${escape(workspace.name)}</span><span class="meta">${workspace.publicRoomCount} public ${workspace.publicRoomCount === 1 ? 'Room' : 'Rooms'}</span></span></label>`).join('')}</div><p class="workspace-help fine">Choose the Workspaces this member can join. New connections start with all selected.</p><p class="fine" id="selection-error" role="status"${workspaces.some(workspace => workspace.selected !== false) ? ' hidden' : ''}>Select at least one Workspace to continue.</p></fieldset>`;
+  return `<fieldset class="workspace-section" aria-labelledby="workspace-heading"><input type="hidden" name="workspace_selection" value="1" form="mcp-consent-form"><div class="workspace-heading"><p class="fine" id="workspace-heading">Workspaces</p><button id="select-all-workspaces" class="edit text-button" type="button" hidden>Select all</button></div><div class="workspace-list">${workspaces.map(workspace => `<label class="workspace"><input type="checkbox" name="workspace_ids" value="${escape(workspace.id)}" form="mcp-consent-form"${workspace.alreadyConnected || workspace.selected !== false ? ' checked' : ''}${workspace.alreadyConnected ? ' disabled' : ''}><span class="workspace-copy"><span>${escape(workspace.name)}</span><span class="meta">${workspace.alreadyConnected ? 'already connected · ' : ''}${workspace.publicRoomCount} public ${workspace.publicRoomCount === 1 ? 'Room' : 'Rooms'}</span></span>${workspace.alreadyConnected ? `<input type="hidden" name="workspace_ids" value="${escape(workspace.id)}" form="mcp-consent-form">` : ''}</label>`).join('')}</div><p class="workspace-help fine">Choose the Workspaces this member can join. New connections start with all selected.</p><p class="fine" id="selection-error" role="status"${workspaces.some(workspace => workspace.alreadyConnected || workspace.selected !== false) ? ' hidden' : ''}>Select at least one Workspace to continue.</p></fieldset>`;
 }
 
 export const MCP_WORKSPACE_STYLE = `
@@ -19,7 +20,8 @@ export const MCP_WORKSPACE_SCRIPT = `
 (() => {
   const form = document.getElementById('mcp-consent-form');
   if (!form) return;
-  const choices = Array.from(document.querySelectorAll('input[name="workspace_ids"]'));
+  const choices = Array.from(document.querySelectorAll('input[type="checkbox"][name="workspace_ids"]'));
+  const editable = choices.filter(choice => !choice.disabled);
   const toggle = document.getElementById('select-all-workspaces');
   const error = document.getElementById('selection-error');
   const allow = form.querySelector('button[value="allow"]');
@@ -28,12 +30,12 @@ export const MCP_WORKSPACE_SCRIPT = `
     const count = choices.filter(choice => choice.checked).length;
     allow.disabled = count === 0;
     error.hidden = count > 0;
-    toggle.textContent = count === choices.length && count > 0 ? 'Deselect all' : 'Select all';
+    toggle.textContent = editable.length > 0 && editable.every(choice => choice.checked) ? 'Deselect all' : 'Select all';
   };
-  toggle.hidden = choices.length === 0;
+  toggle.hidden = editable.length === 0;
   toggle.addEventListener('click', () => {
-    const select = choices.some(choice => !choice.checked);
-    choices.forEach(choice => { choice.checked = select; });
+    const select = editable.some(choice => !choice.checked);
+    editable.forEach(choice => { choice.checked = select; });
     update();
   });
   choices.forEach(choice => choice.addEventListener('change', update));

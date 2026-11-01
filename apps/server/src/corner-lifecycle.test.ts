@@ -278,15 +278,12 @@ async function open(repository?: string, hold?: boolean): Promise<string> {
       generationId: 'g1',
       name: 'Ship-widget',
       objective: 'Ship the widget end to end',
-
+      ...(hold ? { hold } : {}),
       ...(repository ? { repository, targetBranch: 'main' } : {}),
       brief: brief(command.sourceMessageId),
     },
     A,
   );
-  // Legacy agent-set holds remain releasable after the new creation refusal.
-  if (hold) await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,set_by_agent_id,standing)
-    VALUES($1,$2,$3,'owner')`, [cornerId,H,A]);
   return cornerId;
 }
 
@@ -3632,7 +3629,7 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Reproduction R8-HOLD: legacy agent holds remain releasable but new holds are refused', async () => {
+  it('Reproduction R8-HOLD: an agent opening a held corner is its holder and can release it', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets', true);
     const holds = (await db.query(`SELECT id,actor_id,set_by_agent_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;
@@ -3644,13 +3641,11 @@ describe('the gate stays shut (AC-8)', () => {
     const command = (await commands(A, cornerId)).find(command => command.reason === 'corner_objective')!;
     await claim(command);
     await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
-      generationId: 'g1' }, A)).rejects.toThrow('close the PR');
+      generationId: 'g1' }, A)).resolves.toMatchObject({ holdId: holds[0]!.id });
     await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
       generationId: 'g1', releaseHoldId: holds[0]!.id }, A);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, approved: false, open: false });
-    await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId, generationId: 'g1' }, A)).rejects.toThrow('close the PR');
-    const again = (await db.query<{holdId:string}>(`INSERT INTO corner_merge_holds(corner_id,actor_id,set_by_agent_id,standing)
-      VALUES($1,$2,$3,'owner') RETURNING id "holdId"`,[cornerId,H,A])).rows[0]!;
+    const again = await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId, generationId: 'g1' }, A);
     expect((await github.prChecksStatus({ cornerId })).holds[0]).toMatchObject({ holderId: A });
     const humanHold = await phone.execute('setCornerHold', { cornerId }, H);
     expect((await github.prChecksStatus({ cornerId })).holds).toHaveLength(2);
@@ -3782,7 +3777,7 @@ describe('the gate stays shut (AC-8)', () => {
       await expect(daemon.execute('createCorner', { roomId: R, requestId: command.turnRequestId,
         generationId: 'g1', name: 'Held-work', objective: 'Keep this corner held', hold: true,
         brief: brief(command.sourceMessageId) }, A))
-        .rejects.toThrow('close the PR');
+        .rejects.toThrow(/current human Room membership required/);
       expect((await db.query(`SELECT count(*) n FROM rooms WHERE parent_id=$1`, [R])).rows).toEqual(count);
       expect((await db.query(`SELECT count(*) n FROM corner_merge_holds`)).rows).toEqual([{ n: 0 }]);
     } finally {

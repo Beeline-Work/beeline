@@ -18,7 +18,7 @@ export async function renderAgentAvatar(drawing: unknown): Promise<Buffer> {
   const shapes = drawing.map((shape: unknown) => {
     if (!shape || typeof shape !== 'object' || Array.isArray(shape))
       throw new Error('invalid avatar shape');
-    const item = shape as Record<string, unknown>;
+    const item: Record<string, unknown> = shape as Record<string, unknown>;
     const type = item.type;
     if (typeof type !== 'string' || !Object.hasOwn(attributes, type))
       throw new Error('unsupported avatar shape');

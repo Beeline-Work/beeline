@@ -673,6 +673,25 @@ describe('desktop Workspace navigation', () => {
     expect(control('profile-settings-navigation')).toBeDefined();
   });
 
+  it('returns from a searched Room to the full list with search closed and empty', async () => {
+    act(() => control('room-search-toggle').props.onPress());
+    await act(async () => control('desktop-room-search').props.onChangeText('Alpha'));
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-dm-a' })).toHaveLength(0);
+    act(() => control('desktop-room-room-a').props.onPress());
+    await act(async () => {
+      route.pathname = '/beeline/chat/room-a';
+      pathnameListeners.forEach((listener) => listener());
+    });
+    await act(async () => {
+      route.pathname = '/beeline/channels';
+      pathnameListeners.forEach((listener) => listener());
+    });
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-search' })).toHaveLength(0);
+    expect(control('desktop-room-dm-a')).toBeDefined();
+    act(() => control('room-search-toggle').props.onPress());
+    expect(control('desktop-room-search').props.value).toBe('');
+  });
+
   it('lists search matches without section heads', async () => {
     act(() => control('room-search-toggle').props.onPress());
     await act(async () => control('desktop-room-search').props.onChangeText('a'));

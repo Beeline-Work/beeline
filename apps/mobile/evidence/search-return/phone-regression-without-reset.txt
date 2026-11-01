@@ -1,0 +1,36 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/9f1d7ca914da0917c9d09e93b8d106523980525435ade2a5992e0d868c6ba7d8/apps/mobile
+
+stderr | sources/buzz/use-room-search.test.tsx > clears query and retracts the bar on list focus after opening a result
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ sources/buzz/use-room-search.test.tsx (1 test | 1 failed) 13ms
+   × clears query and retracts the bar on list focus after opening a result 13ms
+     → expected 'release' to be '' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/buzz/use-room-search.test.tsx > clears query and retracts the bar on list focus after opening a result
+AssertionError: expected 'release' to be '' // Object.is equality
+
+- Expected
++ Received
+
++ release
+
+ ❯ sources/buzz/use-room-search.test.tsx:26:32
+     24|   // The mounted list remains behind the pushed result. Back delivers …
+     25|   act(() => focus.current!());
+     26|   expect(screen().props.query).toBe('');
+       |                                ^
+     27|   expect(screen().props.searchOpen).toBe(false);
+     28|   act(() => screen().props.setSearchOpen(true));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  11:55:29
+   Duration  274ms (transform 70ms, setup 74ms, collect 26ms, tests 13ms, environment 0ms, prepare 47ms)
+

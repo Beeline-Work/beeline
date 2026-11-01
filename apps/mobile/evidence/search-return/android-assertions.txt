@@ -1,0 +1,1 @@
+SEARCH-RETURN-1 PASS: baseline retains release/results; fixed Back retracts search and restores full list; reopened field shows its empty placeholder.

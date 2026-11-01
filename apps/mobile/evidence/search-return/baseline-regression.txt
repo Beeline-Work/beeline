@@ -1,0 +1,73 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/9f1d7ca914da0917c9d09e93b8d106523980525435ade2a5992e0d868c6ba7d8/apps/mobile
+
+ ❯ sources/components/SidebarView.navigation.test.tsx (40 tests | 1 failed | 39 skipped) 162ms
+   ↓ desktop Workspace navigation > removes the deleted workspace from the permanent rail while a Room is open
+   ↓ desktop Workspace navigation > clears the permanent rail when its final workspace is deleted
+   ↓ desktop Workspace navigation > counts the Rooms of the shared Room list in the desktop toolbar
+   ↓ desktop Workspace navigation > keeps one shared projection across route hops without another GET
+   ↓ desktop Workspace navigation > keeps both Mac workspace headers below the overlay title bar
+   ↓ desktop Workspace navigation > keeps the Windows workspace header below its native window frame
+   ↓ desktop Workspace navigation > opens from Command-or-Control Shift S
+   ↓ desktop Workspace navigation > keeps the rail behind the avatar at 1024 px
+   ↓ desktop Workspace navigation > keeps the rail behind the avatar at 1280 px
+   ↓ desktop Workspace navigation > keeps the rail behind the avatar at 1360 px
+   ↓ desktop Workspace navigation > keeps the rail behind the avatar at 1440 px
+   ↓ desktop Workspace navigation > keeps the rail behind the avatar at 1600 px
+   ↓ desktop Workspace navigation > keeps the rail behind the avatar at 1920 px
+   ↓ desktop Workspace navigation > switches header, list, URL, and closes the switcher for an empty Workspace
+   ↓ desktop Workspace navigation > opens and closes the overlay rail without replacing the Room list
+   ↓ desktop Workspace navigation > opens desktop search from Command-or-Control K
+   ↓ desktop Workspace navigation > keeps profile settings reachable from the persistent desktop navigation as the viewer's own face
+   ↓ desktop Workspace navigation > gives search a visible focus state
+   ↓ desktop Workspace navigation > draws the heading agents, tray and search icons in one quiet grey
+   ↓ desktop Workspace navigation > routes the heading glyphs to Members and Tray, with no Workbench sidebar entry
+   ↓ desktop Workspace navigation > removes the old Workspace menu for owner
+   ↓ desktop Workspace navigation > removes the old Workspace menu for admin
+   ↓ desktop Workspace navigation > removes the old Workspace menu for member
+   × desktop Workspace navigation > returns from a searched Room to the full list with search closed and empty 159ms
+     → expected [ ReactTestInstance{ …(1) }, …(2) ] to have a length of +0 but got 3
+   ↓ desktop Workspace navigation > lists search matches without section heads
+   ↓ desktop Workspace navigation > carries the section creation controls in the section heads
+   ↓ desktop Workspace navigation > routes the section-head pluses to the existing Room dialog and direct-message picker
+   ↓ desktop Workspace navigation > hides the Rooms plus and the settings glyph from an ordinary member and takes nothing else away
+   ↓ desktop Workspace navigation > does not offer New Room to an agent even with an elevated Workspace role
+   ↓ desktop Workspace navigation > keeps Tray and profile settings from appearing selected together
+   ↓ desktop Workspace navigation > keeps Tray unselected on the Members route
+   ↓ desktop Workspace navigation > exposes the active conversation to assistive technology
+   ↓ desktop Workspace navigation > opens the Room corner list from a tap on the corner glyph
+   ↓ desktop Workspace navigation > opens a Room on a row click without opening its corner list
+   ↓ desktop Workspace navigation > opens a new corner from a long press on the Room corner glyph in the main pane
+   ↓ desktop Workspace navigation > offers an agent viewer no corner long press
+   ↓ desktop Workspace navigation > closes without routing when the current Workspace is picked
+   ↓ desktop Workspace navigation > uses a deep-linked Workspace URL as the persistent desktop sidebar authority
+   ↓ Room list search geometry > matches the filter row height, type and inset (desktop=false)
+   ↓ Room list search geometry > matches the filter row height, type and inset (desktop=true)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/components/SidebarView.navigation.test.tsx > desktop Workspace navigation > returns from a searched Room to the full list with search closed and empty
+AssertionError: expected [ ReactTestInstance{ …(1) }, …(2) ] to have a length of +0 but got 3
+
+- Expected
++ Received
+
+- 0
++ 3
+
+ ❯ sources/components/SidebarView.navigation.test.tsx:689:73
+    687|       pathnameListeners.forEach((listener) => listener());
+    688|     });
+    689|     expect(tree.root.findAllByProps({ testID: 'desktop-room-search' })…
+       |                                                                         ^
+    690|     expect(control('desktop-room-dm-a')).toBeDefined();
+    691|     act(() => control('room-search-toggle').props.onPress());
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 39 skipped (40)
+   Start at  11:51:52
+   Duration  2.99s (transform 1.47s, setup 249ms, collect 2.15s, tests 162ms, environment 0ms, prepare 114ms)
+

@@ -49,7 +49,9 @@ describe('Room participant roster layout', () => {
   it('reads in the Members page vocabulary: one title over the list, roles from the type scale', () => {
     // The title owns Add; there is no redundant section head.
     expect(source).toMatch(/rosterModalTitle}>{MEMBERS_LABEL}</);
-    expect(source).not.toContain('RoomListSectionHeader');
+    expect(source).not.toContain('<RoomListSectionHeader');
+    expect(source).toContain("import { SectionAddButton } from './RoomListSectionHeader'");
+    expect(source).toContain('<SectionAddButton');
     // One section, so no per-kind heads are left to drift apart.
     expect(source).not.toContain('room-roster-people-head');
     expect(source).not.toContain('room-roster-agents-head');

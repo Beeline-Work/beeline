@@ -19,7 +19,9 @@ describe('Shared section add control', () => {
     expect(roster).not.toContain('<RoomListSectionHeader');
     const heading = roster.slice(roster.indexOf('<View style={styles.rosterModalHeading}>'), roster.indexOf('<ScrollView'));
     expect(heading).toContain('{canAddMembers && (');
-    expect(heading).toContain('label="Add"');
+    expect(roster).toContain("import { SectionAddButton } from './RoomListSectionHeader'");
+    expect(heading).toContain('<SectionAddButton');
+    expect(heading).not.toContain('label="Add"');
     expect(heading).toContain('accessibilityLabel="Add members"');
     expect(heading).toContain('onPress={onAddMembers}');
     expect(heading).toContain('onPress={onClose}');
@@ -28,13 +30,15 @@ describe('Shared section add control', () => {
   it("uses a full phone target and preserves the desktop tap line", () => {
     const target = header.match(/sectionHeaderAction:\s*\{[\s\S]*?\n\s*\},/);
     expect(target).toBeTruthy();
-    // The box is one label line tall; the slop, not the box, makes it 44.
+    // Phones use a 44px box; desktop keeps its compact glyph plus hit slop.
     expect(target![0]).toContain('height: 44');
     expect(target![0]).toContain('width: 44');
     expect(header).toContain('compactAction: { width: ACTION_GLYPH, height: ACTION_GLYPH }');
     expect(header).toContain('const ACTION_GLYPH = 24');
     expect(target![0]).not.toMatch(/min(Height|Width): 44/);
-    expect(header).toContain('hitSlop={tapLineHeight ? ACTION_HIT_SLOP : undefined}');
+    expect(header).toContain('<SectionAddButton');
+    expect(header).toContain('compact={tapLineHeight}');
+    expect(header).toContain('hitSlop={compact ? ACTION_HIT_SLOP : undefined}');
     expect(header).toContain('top: (44 - ACTION_GLYPH) / 2');
     expect(header).toContain('left: (44 - ACTION_GLYPH) / 2');
     // Only the desktop sidebar keeps main's 44 px line; elsewhere the + adds no height.

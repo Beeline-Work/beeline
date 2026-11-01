@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { rememberStorageOwner, pruneArchivedCheckoutStorage } from '../apps/body/dist/storage-owners.js';
+import { rememberStorageOwner, pruneArchivedCheckoutStorage, reclaimArchivedMemberStorage } from '../apps/body/dist/storage-owners.js';
 import { helperStorageReport } from '../apps/body/dist/storage-report.js';
 const root = await mkdtemp(join(tmpdir(), 'beeline-archived-output-'));
 const checkout = join(root, 'beeline/corners/proof');
@@ -37,3 +37,25 @@ try {
   await exited;
   console.log('ARCHIVED-OUTPUT-1 PASS: built report identifies stale output; host sweep stops the child and deletes the entire dirty checkout');
 } finally { child?.kill('SIGKILL'); await rm(root, { recursive: true, force: true }); }
+
+// The reconciliation path must also clean homes with no checkout/owner record.
+const homeRoot = await mkdtemp(join(tmpdir(), 'beeline-archived-home-'));
+const home = join(homeRoot, 'beeline/agents', 'a'.repeat(64), 'rooms/proof');
+let homeChild;
+try {
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, 'data'), 'private');
+  homeChild = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: home, stdio: 'ignore' });
+  await new Promise((done, fail) => { homeChild.once('spawn', done); homeChild.once('error', fail); });
+  const exited = new Promise(done => homeChild.once('exit', done));
+  for (const states of [[], [{ roomId: 'proof', archived: false }]]) {
+    await reclaimArchivedMemberStorage(homeRoot, states);
+    assert.equal(await exists(home), true);
+    assert.equal(homeChild.exitCode, null);
+    assert.equal(homeChild.signalCode, null);
+  }
+  await reclaimArchivedMemberStorage(homeRoot, [{ roomId: 'proof', archived: true }]);
+  assert.equal(await exists(home), false);
+  await exited;
+  console.log('ARCHIVED-OUTPUT-1 PASS: built reconciliation preserves unknown/open homes; archived home without owner or checkout is deleted and child stopped');
+} finally { homeChild?.kill('SIGKILL'); await rm(homeRoot, { recursive: true, force: true }); }

@@ -211,6 +211,15 @@ export async function reclaimArchivedMemberStorage(supervisorRoot: string, state
       await reclaimOwnedCheckout(supervisorRoot, { ...owner, ended: true, endedAt: owner.endedAt ?? Date.now() }, { ...options, landedHeadSha: state.landedHeadSha });
     });
   }
+  // Server archive facts authorize home cleanup even when a checkout was
+  // never created or its owner record is missing. Stop attributed children
+  // before the generic storage reclaimer can defer an in-use home.
+  for (const state of archived) {
+    await SessionScheduler.withIdleHostRoom(state.roomId, async () => {
+      await removeArchivedCornerData(supervisorRoot, state.roomId,
+        resolve(supervisorRoot, 'beeline/corners', state.roomId), options);
+    });
+  }
   for (const agentId of await readdir(resolve(supervisorRoot, 'beeline/agents')).catch(() => [])) {
     if (!/^[a-f0-9]{64}$/.test(agentId)) continue;
     const runtime = await readFile(resolve(runtimeDirectory(supervisorRoot, agentId), 'runtime.json'), 'utf8').then(text => JSON.parse(text) as AgentRuntimeRecord, () => undefined);

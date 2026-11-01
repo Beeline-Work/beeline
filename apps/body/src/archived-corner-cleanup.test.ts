@@ -66,3 +66,26 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCH
     expect(await access(openRoot).then(() => true, () => false)).toBe(true);
   } finally { platformSpy.mockRestore(); broker.kill('SIGKILL'); openChild.kill('SIGKILL'); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
 }, 30_000);
+
+
+it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCHIVED-OUTPUT-1 removes a home without checkout or owner and stops its child; preserves open and unknown (%s)', async (platform) => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-home-only-'));
+  const home = resolve(root, 'beeline/agents', 'a'.repeat(64), 'rooms/closed');
+  await mkdir(home, { recursive: true });
+  await writeFile(resolve(home, 'data'), 'private');
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: home, stdio: 'ignore' });
+  await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
+  const exited = new Promise<void>(done => child.once('exit', () => done()));
+  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
+  try {
+    for (const states of [[], [{ roomId: 'closed', archived: false }]]) {
+      await reclaimArchivedMemberStorage(root, states);
+      expect(await access(home).then(() => true, () => false)).toBe(true);
+      expect(child.exitCode).toBe(null);
+      expect(child.signalCode).toBe(null);
+    }
+    await reclaimArchivedMemberStorage(root, [{ roomId: 'closed', archived: true }]);
+    expect(await access(home).then(() => true, () => false)).toBe(false);
+    await exited;
+  } finally { vi.unstubAllGlobals(); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
+}, 30_000);

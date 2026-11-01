@@ -718,7 +718,7 @@ jobs:
         working-directory: apps/mobile
         # Shared hosts expose all CPUs; keep each job's test worker count
         # bounded instead of multiplying that count by ten runner services.
-        run: npx vitest run --maxWorkers=2 --minWorkers=2
+        run: npx vitest run --maxWorkers=2 --minWorkers=2 --exclude sources/config/nativeFingerprint.test.ts
       - name: Verify Android release shrinking mods
         run: node --test scripts/android-shrinking.test.mjs
       - name: Typecheck the mobile app
@@ -922,8 +922,8 @@ jobs:
     needs: [changes, shared-package-tests]
     if: >-
       !cancelled() && (
-        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.nativeFingerprint == 'true') ||
-        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint'))
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && (needs.changes.outputs.nativeFingerprint == 'true' || needs.changes.outputs.mobileSuite == 'true')) ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite'))
       )
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -943,6 +943,9 @@ jobs:
       - name: Compare the native fingerprint with the committed runtime pin
         working-directory: apps/mobile
         run: npm run fingerprint:check
+      - name: Run the native fingerprint regression in isolation
+        working-directory: apps/mobile
+        run: npx vitest run sources/config/nativeFingerprint.test.ts --maxWorkers=1 --minWorkers=1
 
   # `packages/usebeeline/README.md` is the product README npm publishes; the root
   # README.md is a byte-for-byte copy so GitHub's front page shows the same text.

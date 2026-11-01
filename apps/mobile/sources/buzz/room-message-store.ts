@@ -563,11 +563,20 @@ export function useRoomMessageStore({
           reveal(rows.length);
           setNewerStatus('idle');
         })
-        .catch(() => {
-          if (request === windowRequestRef.current) setNewerStatus('error');
+        .catch((error: unknown) => {
+          if (request !== windowRequestRef.current) return;
+          if (missingJump(error)) {
+            // This cursor cannot advance anymore. Repeating it would trap
+            // the reader in history; return to the session's live tail.
+            windowRequestRef.current += 1;
+            setJump(null);
+            showLatest();
+            return;
+          }
+          setNewerStatus('error');
         });
     },
-    [attachToTail, reveal, setDetached, setNewerStatus],
+    [attachToTail, reveal, setDetached, setJump, setNewerStatus, showLatest],
   );
 
   const loadOlder = useCallback(

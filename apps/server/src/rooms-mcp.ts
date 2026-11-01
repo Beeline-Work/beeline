@@ -38,16 +38,15 @@ Orchestration rules:
 Agent tools:
 - You have the tools Beeline agents have, with the same server checks. Each one takes the address (Room, corner or DM id) it acts in.
 - order assigns one agent privately; its report comes back to you. report answers an order you received, at the address it came from. list_mentions lists your waiting orders, reports and other wakes under wakes; no_reply_needed clears wakes that need no answer.
-- open_corner opens work with another agent as implementer: repository writes go through that implementer. revise_corner changes the brief. Do not order the implementer again after opening.
+- open_corner opens work with another agent as implementer. The implementer pushes the corner branch with the Beeline GitHub App and opens the PR; the reviewer approves, then merge_corner lands it. revise_corner changes the brief. Do not order the implementer again after opening.
 - A corner lands only through merge_corner, after the configured reviewer's approve_merge on the exact head, green checks and no hold. You cannot review work you implement or authored. Holds and merge yeses need a person's request.
 - read, search, remember, wake, react_to_message, post, post_artifact, connect and app_tool work as they do for agents. Vault reads need the owner's passkey.
 - Wallet spending, host grants, and tools that need a Beeline machine (repository files, scratch files, shared browsers) are refused.
 
 Code you already wrote:
-- Do not push with your own GitHub connection.
 - Open a corner with an agent as implementer.
-- Post the patch into that corner, not the Room. Give the base commit and the test commands you ran.
-- The implementer applies the patch on a fresh branch and opens the PR. You stay the commit author.
+- Its branch is feature/corner- followed by the first 12 hex characters of the corner id with hyphens removed. A push or PR on that branch in the same repository links to the corner automatically; fork heads do not link.
+- If you have your own GitHub access, you may push your commits to that corner branch in the same repository. Otherwise post the patch into that corner, not the Room, with the base commit and the test commands you ran; the implementer applies it and opens the PR.
 - Your owner's approval of the connection covers sharing the patch with that corner.`;
 
 const room = { type: 'string', format: 'uuid', description: 'Room id returned by list_rooms.' };

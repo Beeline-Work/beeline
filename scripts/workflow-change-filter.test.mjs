@@ -263,27 +263,43 @@ test('documentation does not fan out Checks suites', () => {
 });
 
 test('representative PRs request fewer hosted runners without hiding check contexts', () => {
+  const commonJobs = ['changes', 'typecheck', 'shared-package-tests', 'dead-code'];
+  const mobileJobs = ['mobile-suite', 'mobile-export-reachability', 'native-fingerprint'];
+  const serverJobs = ['server-suite-shard', 'server-claim-latency', 'server-suite',
+    'server-integration', 'production-corpus-replay', 'auth-image'];
+  const expectedJobs = {
+    'mobile-only': [...commonJobs, ...mobileJobs, 'frame-budget', 'state-upgrade'],
+    mixed: [...commonJobs, ...mobileJobs, ...serverJobs, 'frame-budget', 'state-upgrade'],
+    'mixed-components': [...commonJobs, ...mobileJobs, ...serverJobs],
+  };
   const examples = [
     { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 13 },
-    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 8 },
-    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 17 },
-    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 15 },
+    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 9 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 18 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 16 },
     { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
   ];
   for (const example of examples) {
     const { gates } = evaluate(example.files).checks;
     const needs = Object.fromEntries(Object.keys(checksWorkflow.jobs).map((name) => [name, { result: 'success', outputs: gates }]));
     let runners = 0;
-    for (const job of Object.values(checksWorkflow.jobs)) {
+    const selectedJobs = [];
+    for (const [name, job] of Object.entries(checksWorkflow.jobs)) {
       const expression = String(job.if ?? 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
         .replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']");
       const enabled = new Function('needs', 'github', 'inputs', 'cancelled', `return (${expression});`)(
         needs, { event_name: 'pull_request' }, { suite: '' }, () => false,
       );
-      if (enabled) runners += job.strategy?.matrix?.shard?.length ?? 1;
+      if (enabled) {
+        selectedJobs.push(name);
+        runners += job.strategy?.matrix?.shard?.length ?? 1;
+      }
     }
     console.log(`${example.name}: baseline=${example.before} current=${runners} runner jobs (skipped checks excluded)`);
     assert.equal(runners, example.after, example.name);
+    if (expectedJobs[example.name]) {
+      assert.deepEqual(selectedJobs.sort(), expectedJobs[example.name].toSorted(), example.name);
+    }
   }
 });
 

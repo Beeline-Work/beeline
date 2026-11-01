@@ -1,3 +1,4 @@
+import { cornerNotifiedPersonSql } from './corner-notification.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
@@ -297,12 +298,22 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
           AND origin.parent_id IS NOT NULL AND (origin.archived_at IS NOT NULL
             OR fact.lifecycle->>'lifecycle' IN ('closed','landed')))
       OR (command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}'
-        AND command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it, set a hold, or close it.'
+        AND (command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it, set a hold, or close it.'
+          OR command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it or close its PR.')
         AND EXISTS (SELECT 1 FROM corner_attention_spans span
           WHERE span.corner_id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
             AND (span.last_state IS DISTINCT FROM 'idle' OR EXISTS (
               SELECT 1 FROM corner_facts fact WHERE fact.corner_id=span.corner_id
                 AND (fact.lifecycle->>'checks'='pending' OR fact.lifecycle->'checksSummary'->>'status'='pending')))))
+      OR (command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}'
+        AND command.private_payload->>'text' LIKE 'blocked: Corner % has been silent for two hours.%'
+        AND EXISTS(SELECT 1 FROM corner_attention_spans span JOIN corner_facts fact ON fact.corner_id=span.corner_id
+          WHERE span.corner_id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
+            AND (span.last_activity_at>command.created_at
+              OR fact.lifecycle->>'checks'='pending' OR fact.lifecycle->'checksSummary'->>'status'='pending'
+              OR EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=span.corner_id
+                AND schedule.next_run_at>now() AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))
+              OR ${cornerNotifiedPersonSql('span.corner_id')})))
       OR (command.private_payload->>'text' LIKE 'failed:%'
         AND EXISTS (SELECT 1 FROM rooms origin WHERE origin.parent_id IS NOT NULL AND origin.id::text=
           COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId'))

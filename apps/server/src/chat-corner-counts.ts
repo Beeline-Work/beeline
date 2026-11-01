@@ -2,6 +2,7 @@ import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
+import { notifiedMessageSql } from './corner-notification.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
 import type {
@@ -210,6 +211,7 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       JOIN memberships current_member ON current_member.room_id=c.parent_id
         AND current_member.identity_id=owed.person_id AND current_member.removed_at IS NULL
       WHERE owed.corner_id=c.id AND owed.blocking
+        AND ${notifiedMessageSql('item','owed.person_id')}
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
@@ -217,7 +219,10 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
           ELSE 'report' END FROM corner_report_blockers report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
-      WHERE report.corner_id=c.id
+      WHERE report.corner_id=c.id AND (
+        (recipient.kind='agent' AND EXISTS(SELECT 1 FROM agent_commands wake WHERE wake.id=report.report_id AND wake.state<>'cancelled'))
+        OR (recipient.kind='human' AND EXISTS(SELECT 1 FROM messages item WHERE item.id=report.message_id
+          AND ${notifiedMessageSql('item','report.person_id')})))
       UNION ALL
       SELECT hold.id::text,hold.actor_id,hold.set_at,'approve','merge-hold' FROM corner_merge_holds hold
       JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'

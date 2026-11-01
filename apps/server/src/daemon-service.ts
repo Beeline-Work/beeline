@@ -25,7 +25,7 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, stopCommandedTurn, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, stopCommandedTurn, reportToCommander, commanderReportAddress, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -9141,6 +9141,23 @@ export class DaemonService {
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
+    const status = /^(blocked|needs-decision|done|failed):/.exec(text)?.[1];
+    if (status &&
+      (await this.database.query(`SELECT 1 FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
+        WHERE room.id=$1 AND ${cornerImplementerSql('fact', 'room')}=$2`, [input.cornerId,agentId])).rowCount) {
+      // A worker can post from another control surface. Resolve the target's
+      // actual incoming assignment instead of reporting to the current DM's caller.
+      const reportCommand = command.room_id === input.cornerId.toLowerCase() ? command :
+        (await this.database.query<CommandRow>(`SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+          ORDER BY created_at DESC,id DESC LIMIT 1`, [input.cornerId,agentId])).rows[0];
+      if (!reportCommand) throw new CommandRefusalError('this corner has no commander return address', 409);
+      const route = await commanderReportAddress(this.database, input.cornerId, reportCommand, false, text);
+      const result = await this.report(text, agentId, reportCommand, this.database, false, status.replace('-', '_'));
+      if ('delivered' in result && result.delivered === false) throw new CommandRefusalError('commander could not receive report', 409);
+      return { ...result, effect: 'report' as const, address: route.returnRoom!, visibility: 'commander' as const,
+        reportsAssignment: true as const, stored: true as const, visible: false as const,
+        woken: [], notWoken: [], receipt: `Sent as a report to ${route.recipient} at ${route.returnRoom}. ${'receipt' in result ? result.receipt ?? '' : ''}` };
+    }
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
       command.room_id === input.cornerId.toLowerCase() ? command : undefined);
     const saved = (

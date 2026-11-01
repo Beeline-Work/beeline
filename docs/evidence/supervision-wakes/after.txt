@@ -1,0 +1,47 @@
+
+> @beeline/server@0.0.0 test
+> vitest run src/commander.integration.test.ts src/corner-attention.integration.test.ts -t SUPERVISION --maxWorkers=1 --minWorkers=1
+
+
+ RUN  v2.1.9 /home/lunchbox/.local/state/beeline/corners/3050feb6d35d986f9f7fca01efd9aa79d52759ff0857b9c6aa57cee3fedb88cb/apps/server
+
+stdout | src/commander.integration.test.ts
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+ ✓ src/commander.integration.test.ts (200 tests | 194 skipped) 5621ms
+   ✓ SUPERVISION-1: self-commanded status post wakes the opening DM and dedupes explicit report 774ms
+   ✓ SUPERVISION-1: needs-decision worker posts use the report path 571ms
+   ✓ SUPERVISION-1: done worker posts use the report path 408ms
+   ✓ SUPERVISION-1: failed worker posts use the report path 400ms
+   ✓ SUPERVISION-2: a self-commanded blocked corner wakes once after a silent stretch 431ms
+   ✓ SUPERVISION-3: agents cannot set or open with holds; human hold still gates merge 334ms
+stdout | src/corner-attention.integration.test.ts
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | src/corner-attention.integration.test.ts > SUPERVISION-2: queued silence wake is discarded after pending-ci
+{"kind":"report","event":"wake_dropped_stale","current":{"runId":null,"attempt":null,"headSha":null,"runStatus":null,"briefRevision":null},"recorded":{"brief":null,"runId":null,"review":{"headSha":null,"pullRequest":null,"briefRevision":null},"attempt":null,"headSha":null},"commandId":"38f6c11d6bac13f50bfe4d73a599ac2c6e902686c916a0bad1d101586ad64dd5"}
+
+stdout | src/corner-attention.integration.test.ts > SUPERVISION-2: queued silence wake is discarded after scheduled-wait
+{"kind":"report","event":"wake_dropped_stale","current":{"runId":null,"attempt":null,"headSha":null,"runStatus":null,"briefRevision":null},"recorded":{"brief":null,"runId":null,"review":{"headSha":null,"pullRequest":null,"briefRevision":null},"attempt":null,"headSha":null},"commandId":"0558a3b5ccba415000f8f6f1bc62167f62f9dc9f184300c3bfe9c3efbe42e443"}
+
+stdout | src/corner-attention.integration.test.ts > SUPERVISION-2: queued silence wake is discarded after new-work
+{"kind":"report","event":"wake_dropped_stale","current":{"runId":null,"attempt":null,"headSha":null,"runStatus":null,"briefRevision":null},"recorded":{"brief":null,"runId":null,"review":{"headSha":null,"pullRequest":null,"briefRevision":null},"attempt":null,"headSha":null},"commandId":"0f1888009b093d717e26a0f7d32ae7c8b32edb33c065564a15568aab161b70cc"}
+
+ ✓ src/corner-attention.integration.test.ts (78 tests | 66 skipped) 4562ms
+   ✓ SUPERVISION-2: held still wakes once after two silent hours 304ms
+
+  Snapshots  1 obsolete
+             ↳ src/corner-attention.integration.test.ts
+               · a merge hold shows Waiting with its real message and sends no extra wake > approved hold source line 1
+
+ Test Files  2 passed (2)
+      Tests  18 passed | 260 skipped (278)
+   Start at  09:32:31
+   Duration  14.69s (transform 1.82s, setup 0ms, collect 4.10s, tests 10.18s, environment 0ms, prepare 94ms)
+

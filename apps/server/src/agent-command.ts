@@ -1219,9 +1219,60 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
-    if (source.parent_id) await setCornerImplementer(db, source.room_id, target);
+    if (source.parent_id) {
+      const previous = await setCornerImplementer(db, source.room_id, target);
+      if (previous && previous !== target) await releaseCornerImplementer(db, source.room_id, previous, sourceId);
+    }
   }
   return false;
+}
+
+/** Wake reason for an implementer the owner swapped out; the helper runs no model turn for it. */
+export const IMPLEMENTER_RELEASED_REASON = 'implementer_released';
+
+/**
+ * A swapped-out implementer stops writing here. Its running turn is stopped
+ * like a person's stop, then one release command tells its helper to stop
+ * retained background tools, push unpushed work to a backup branch, delete
+ * its private copy and say which in the corner.
+ */
+async function releaseCornerImplementer(
+  db: SqlDatabase,
+  cornerId: string,
+  agentId: string,
+  sourceId: string,
+): Promise<void> {
+  await lockAgentCommandQueue(db, cornerId, agentId);
+  const running = (await db.query<CommandRow>(
+    `SELECT command.* FROM agent_turns turn
+     JOIN agent_commands command ON command.room_id=turn.room_id
+       AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
+       AND command.action IN ('input','resume')
+     WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
+       AND command.state='claimed'
+     ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1 FOR UPDATE OF command`,
+    [cornerId, agentId])).rows[0];
+  if (running) {
+    await createAgentCommand(db, {
+      id: createHash('sha256').update(`implementer-swap-stop:${sourceId}:${running.id}`).digest('hex'),
+      roomId: cornerId, agentId, sourceMessageId: sourceId, turnRequestId: running.turn_request_id,
+      action: 'stop', reason: 'implementer_swap_stop', parent: running, retainDepth: true,
+    });
+    await db.query(
+      `UPDATE agent_turns SET status='cancelled',created_at=now()
+       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
+      [cornerId, agentId, running.turn_request_id]);
+    await db.query(
+      `UPDATE agent_commands SET state='cancelled',completed_at=now()
+       WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+         AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+      [cornerId, agentId, running.turn_request_id]);
+  }
+  await createAgentCommand(db, {
+    id: createHash('sha256').update(`implementer-released:${sourceId}:${agentId}`).digest('hex'),
+    roomId: cornerId, agentId, sourceMessageId: sourceId, reason: IMPLEMENTER_RELEASED_REASON,
+    wakeNote: 'A person made another agent this corner\'s implementer. Stop working here.',
+  });
 }
 
 /**
@@ -1240,22 +1291,31 @@ async function setCornerImplementer(
   db: SqlDatabase,
   cornerId: string,
   agentId: string,
-): Promise<void> {
-  await db.query(
-    `UPDATE corner_facts fact
+): Promise<string | undefined> {
+  // Returns the implementer this tag replaced, read under the same row lock.
+  const result = await db.query<{ previous: string | null }>(
+    `WITH prior AS (
+       SELECT fact.corner_id,${cornerImplementerSql('fact', 'corner')} previous
+       FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+       WHERE fact.corner_id=$1 FOR UPDATE OF fact
+     )
+     UPDATE corner_facts fact
      SET worker_agent_id=$2,
          owner_agent_id=CASE WHEN fact.kind='human'
            THEN COALESCE(fact.owner_agent_id,$2) ELSE fact.owner_agent_id END,
          updated_at=now()
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN prior ON prior.corner_id=corner.id
      WHERE fact.corner_id=corner.id AND corner.id=$1
        AND $2<>COALESCE(${cornerReviewerSql()},'')
        AND NOT ($2=ANY(${cornerReviewerFallbacksSql()}))
        AND (fact.worker_agent_id IS DISTINCT FROM $2
-            OR (fact.kind='human' AND fact.owner_agent_id IS NULL))`,
+            OR (fact.kind='human' AND fact.owner_agent_id IS NULL))
+     RETURNING prior.previous`,
     [cornerId, agentId],
   );
+  return result.rows[0]?.previous ?? undefined;
 }
 
 export async function routeAgentResult(

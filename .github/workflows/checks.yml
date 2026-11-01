@@ -364,8 +364,7 @@ jobs:
     name: TYPECHECK
     if: ${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
     needs: shared-package-tests
-    # CI-only Linux capacity supplements hosted jobs; dispatch remains hosted.
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["self-hosted","Linux","X64","beeline-ci"]' || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -571,24 +570,11 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite' || inputs.suite == 'server-integration'))
       )
-    # Keep both pools busy: two hosted shards and two CI-only Linux shards.
-    # Preparation, status gates and the isolated PostgreSQL budget stay hosted
-    # so a busy local pool cannot block the entire workflow before tests start.
-    # Never substitute a release-runner label for beeline-ci.
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-        include:
-          - shard: 1
-            runner: '"ubuntu-latest"'
-          - shard: 2
-            runner: '["self-hosted","Linux","X64","beeline-ci"]'
-          - shard: 3
-            runner: '"ubuntu-latest"'
-          - shard: 4
-            runner: '["self-hosted","Linux","X64","beeline-ci"]'
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && matrix.runner || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -704,11 +690,8 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["self-hosted","Linux","X64","beeline-ci"]' || '"ubuntu-latest"') }}
-    # Quiet runs finish near 14 minutes. The shared 16-CPU pool stretched a
-    # still-passing suite past 20 minutes (279 of 665 files) and cancelled it,
-    # which fails FRAME-BUDGET and STATE-UPGRADE. 50 minutes covers that pace.
-    timeout-minutes: 50
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -722,9 +705,8 @@ jobs:
         working-directory: apps/mobile
         # Shared hosts expose all CPUs; keep each job's test worker count
         # bounded instead of multiplying that count by ten runner services.
-        # The six-hash fingerprint end-to-end test is not in this run: on this
-        # pool it missed a 10-minute cap while the other worker was still going.
-        # NATIVE FINGERPRINT runs that test alone.
+        # The six-hash fingerprint end-to-end test runs in NATIVE FINGERPRINT,
+        # alone, so this suite can finish inside the hosted job limit.
         run: npx vitest run --maxWorkers=2 --minWorkers=2
       - name: Verify Android release shrinking mods
         run: node --test scripts/android-shrinking.test.mjs

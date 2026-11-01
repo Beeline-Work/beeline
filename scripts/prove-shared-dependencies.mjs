@@ -1,10 +1,12 @@
 // Narrow built-helper proof: real npm installs and builds inside the helper's sandbox.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, stat, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, stat, rm, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  extraDependencyRoots,
+  dependencyFingerprint,
   prepareDependencyGeneration,
   installDependencyNpmGuard,
   collectDependencyStore,
@@ -61,6 +63,31 @@ try {
     });
     await prepare(cwd);
   }
+  const home = resolve(root, 'agent-home');
+  await mkdir(home);
+  const beforeCopies = await dependencyFingerprint(corners[0], home);
+  const extras = ['.verification', '.scratch', '.claude/worktrees/proof'].map(part => resolve(corners[0], part));
+  extras.push(resolve(home, 'temp-rig'), resolve(home, 'rig'));
+  for (const extra of extras) {
+    await mkdir(extra, { recursive: true });
+    for (const file of ['package.json', 'package-lock.json']) await copyFile(resolve(corners[0], file), resolve(extra, file));
+    execFileSync(process.execPath, [resolve('scripts/prepare-corner.mjs'), '--extra', extra], { cwd: corners[0] });
+  }
+  assert.notEqual(await dependencyFingerprint(corners[0], home), beforeCopies);
+  const requested = await extraDependencyRoots(corners[0], home);
+  assert.equal(requested.length, extras.length);
+  for (const extra of requested) {
+    await prepareDependencyGeneration({ root: extra, store, npm, cache,
+      install: async () => { throw new Error('Extra copy attempted a private install'); } });
+    assert.equal((await stat(resolve(extra, 'node_modules/shared-proof/index.js'))).ino,
+      (await stat(resolve(corners[0], 'node_modules/shared-proof/index.js'))).ino);
+    const write = run(extra, 'sh', ['-c', 'echo broken > node_modules/shared-proof/index.js']);
+    assert.notEqual(write.status, 0);
+    const build = run(extra, npm, ['run', 'build']);
+    assert.equal(build.status, 0, build.stderr);
+    assert.equal(await readFile(resolve(extra, 'built'), 'utf8'), '1.0.0');
+  }
+  for (const extra of extras) await rm(extra, { recursive: true });
   const dep = 'node_modules/shared-proof/index.js';
   const [first, second] = await Promise.all(corners.map((cwd) => stat(resolve(cwd, dep))));
   assert.equal(first.ino, second.ino);
@@ -113,6 +140,7 @@ try {
     JSON.stringify(
       {
         proof: 'DEPENDENCY-GENERATION-1',
+        extraCopies: { count: extras.length, privateInstalls: 0, sameInode: true, writeDenied: true, buildsPassed: true },
         sameInode: true,
         writeDenied: true,
         npmDiagnostic: true,

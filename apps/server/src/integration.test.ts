@@ -2440,14 +2440,15 @@ describe('monolith integration', () => {
     ).json()) as { items: Array<{ id: string }> };
     expect(addressedInbox.items).toContainEqual(expect.objectContaining({ id: 'd'.repeat(64) }));
 
-    const agentReply = (await (
-      await daemonOperation('postRoomMessage', {
-        roomId: dm.id,
-        requestId: 'd'.repeat(64),
-        triggerMessageId: 'd'.repeat(64),
-        text: 'I am here.',
-      })
-    ).json()) as { id: string };
+    // The oldest queued input owns the combined DM turn.
+    const replyResponse = await daemonOperation('postRoomMessage', {
+      roomId: dm.id,
+      requestId: 'c'.repeat(64),
+      triggerMessageId: 'd'.repeat(64),
+      text: 'I am here.',
+    });
+    expect(replyResponse.status).toBe(200);
+    const agentReply = (await replyResponse.json()) as { id: string };
     const directReplyId = 'e'.repeat(64);
     expect(
       (
@@ -2986,10 +2987,17 @@ describe('monolith integration', () => {
       .items;
     expect(conversationItems.at(-1)?.body).toBe('@bee What is your soul?');
     expect(conversationItems.some((item) => item.body.includes('did not answer'))).toBe(false);
+    // Both human inputs queued before claim form one turn owned by the oldest input.
+    const queued = (await database.query<{ id: string }>(
+      `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3`,
+      [ROOM, AGENT, messageId],
+    )).rows[0];
+    const claimed = await claimAgentCommand(database, ROOM, AGENT, queued.id, 'fixture-generation');
+    expect(claimed.coalesced_context).toContain(threadedMessageId);
     const delivered = next(socket, 'message-delta');
     const reply = await daemonOperation(
       'postRoomMessage',
-      { roomId: ROOM, requestId: threadedMessageId, text: 'I am Terra.' },
+      { roomId: ROOM, requestId: messageId, text: 'I am Terra.' },
       daemonToken,
     );
     expect(reply.status).toBe(200);
@@ -2997,14 +3005,14 @@ describe('monolith integration', () => {
       expect.objectContaining({
         type: 'message-delta',
         roomId: ROOM,
-        message: expect.objectContaining({ requestId: threadedMessageId, text: 'I am Terra.' }),
+        message: expect.objectContaining({ requestId: messageId, text: 'I am Terra.' }),
       }),
     );
     const answeredRoom = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as {
       messages: Array<{ requestId?: string; text: string }>;
     };
     expect(answeredRoom.messages).toContainEqual(
-      expect.objectContaining({ requestId: threadedMessageId, text: 'I am Terra.' }),
+      expect.objectContaining({ requestId: messageId, text: 'I am Terra.' }),
     );
     await daemonOperation(
       'postAgentDraft',
@@ -10106,6 +10114,7 @@ describe('monolith integration', () => {
         spec: folded,
         change: 'Old change',
         approval: {
+          kind: 'explicit-human-answer',
           sourceMessageId: approval,
           text: 'Yes, build that.',
           approvedBy: HUMAN,
@@ -10115,6 +10124,8 @@ describe('monolith integration', () => {
       expect.objectContaining({ revision: 1, spec: 'Revision one.' }),
     ]);
     expect(history.revisions[0]).not.toHaveProperty('approval');
+    for (const field of ['replyToMessageId', 'replyToAttachmentIds', 'replyToCreatedAt', 'approvedAt'])
+      expect(history.revisions[1].approval).not.toHaveProperty(field);
     await database.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1 AND revision=3`, [
       cornerId,
     ]);

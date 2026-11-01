@@ -1,3 +1,4 @@
+import { markDictatedMessageAccepted } from './dictation-timing';
 import { observeMessageOutbox } from './message-outbox-observer';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from './runtime-config';
@@ -19,7 +20,11 @@ export function startMessageOutbox(): Promise<void> {
     const connection = sharedLiveConnection();
     configureMessageOutboxDelivery({
       send: async event => {
-        try { return await transport.publishPreparedMessage(event); }
+        try {
+          const result = await transport.publishPreparedMessage(event);
+          markDictatedMessageAccepted(event.id);
+          return result;
+        }
         catch (error) {
           if (connection.diagnostics().state !== 1) void active?.connectionChanged(false);
           throw error;

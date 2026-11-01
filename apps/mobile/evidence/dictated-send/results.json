@@ -1,0 +1,1439 @@
+{
+  "timingKind": "harness, not device",
+  "collectedAtUtc": "2026-10-31T22:48:55.779242+00:00",
+  "baselineCommit": "7753811d8629a550a0bae8310ba9dcebf78c7288",
+  "finalGroqWaitMs": 1800,
+  "harnessSha256": "b3fd0727b4b73409564cf0d5b67afdbfdc6ff8ebf437ad0dfb40f3c550036a18",
+  "sourceSha256": {
+    "main": {
+      "buzz/speech-input.ts": "ff709cfaf759359aca0c7e596b889de62c618d25f039bdbd355ab8964c638360",
+      "buzz/speech-transcription.ts": "0eec273ff93445e8b34efcbe0879086cea4ef62f6ba6c925ab3708259b75046b",
+      "components/buzz/ConversationComposer.tsx": "853e1656e8f2d84f7401793381d5ad539bea164647d2167c06ed14546cdbcbd1"
+    },
+    "branch": {
+      "buzz/speech-input.ts": "6b89f83c8bfaede4719b2db42bfdd9e7f717a766df6b9728fb972b87a909164f",
+      "buzz/speech-transcription.ts": "2e40e5f47d3b7f75c83182d594a3d5210642aef42a8c7b3b44a30bf0a60096e9",
+      "components/buzz/ConversationComposer.tsx": "168ddbda2c575e7babe73d10cf62d4ea3a649f0e18c550ef64cdce8c5e9aa4dc"
+    }
+  },
+  "rig": {
+    "node": "v24.16.0",
+    "concurrentRepetitions": 5,
+    "repetitionsPerCase": 5,
+    "server": "isolated loopback Beeline deployment with real PostgreSQL, authenticated phone WebSocket, real Groq via vaulted egress",
+    "model": "whisper-large-v3-turbo",
+    "mockedBoundaries": [
+      "native recognizer",
+      "React Native view hosts",
+      "recording filesystem adapter",
+      "client auth storage and outbox persistence"
+    ],
+    "nativeFallback": "scripted LibriSpeech reference hypotheses with explicit substitutions; not measured phone ASR",
+    "batching": "Main missing-end, main immediate-end, branch missing-end, branch immediate-end; provider latency can vary between batches. Final branch batches were repeated after changing cap from 1500ms to 1800ms. Shipping branch batches repeated after enabling production-visible content-free timing logs."
+  },
+  "clipManifest": {
+    "source": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+    "attribution": "LibriSpeech (c) 2014 Vassil Panayotov, CC BY 4.0; public-domain audiobook speech",
+    "sourceIds": [
+      "6930-75918-0000",
+      "6930-75918-0001",
+      "6930-75918-0002",
+      "6930-75918-0003"
+    ],
+    "shortSeconds": 5.025,
+    "longSeconds": 46.07,
+    "pieceSeconds": [
+      3.42,
+      14.26,
+      4.96,
+      23.43
+    ],
+    "naturalPauses": [
+      {
+        "startSeconds": 3.34,
+        "endSeconds": 3.5,
+        "cutSeconds": 3.42
+      },
+      {
+        "startSeconds": 17.54,
+        "endSeconds": 17.84,
+        "cutSeconds": 17.68
+      },
+      {
+        "startSeconds": 22.54,
+        "endSeconds": 22.74,
+        "cutSeconds": 22.64
+      }
+    ],
+    "pcmConserved": true,
+    "sha256": {
+      "6930-75918-0000.flac": "9ce35224156f071ab58eb7feb8a5ceae600f6f9f353da2a6cbf797b6b1ac8a23",
+      "6930-75918-0001.flac": "3dfad7eb0793eddd5040d04f1f2f3046ceeee39e0ec461794856a350e1bd728e",
+      "6930-75918-0002.flac": "74ecfd628f49dca71995972c075fcc9904df804d49a4eb5b11fb712b3584f789",
+      "6930-75918-0003.flac": "0ec415739efc00adcbe70838f6c207ee4ae8b31639bad534138c3d26d890f58b",
+      "short.wav": "ca418189ed1db4ce1bf5e6940d51a9ce870d4d52f3ef9019ccdbb2189d1a0a9c",
+      "continuous.wav": "be6f02e37a6882b735d19a6b1e0d79e4c4e9ddde42557c63c6638fbbca41063b",
+      "piece-0.wav": "e5b198a80114407c080535a578750a007752517fd708c321fe5cb7137f2dd605",
+      "piece-1.wav": "4ac631f566eedfbfeac563ab73595ebdfa524ac4bcef189b3b54b0301e66d06e",
+      "piece-2.wav": "eb6589b6f9341af678807eb747d8f07318cd3ec37439c6d395ab9d6758ed4d45",
+      "piece-3.wav": "a54db66442230b6a982a4358b366784a0549d0e13acaad4d0311fac4c8502a56"
+    }
+  },
+  "cases": [
+    {
+      "variant": "main",
+      "requestedStopEnd": "never",
+      "take": "short",
+      "sendToRoomMedianMs": 2145,
+      "sendToRoomWorstMs": 2231,
+      "groqViaEgressMedianMs": 549,
+      "groqViaEgressWorstMs": 598,
+      "uploadToTextMedianMs": 585,
+      "uploadToTextWorstMs": 646,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 2100,
+          "groq": [
+            {
+              "roundTripMs": 585,
+              "providerMs": 549,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 2140,
+          "groq": [
+            {
+              "roundTripMs": 621,
+              "providerMs": 572,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 2231,
+          "groq": [
+            {
+              "roundTripMs": 646,
+              "providerMs": 598,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 2145,
+          "groq": [
+            {
+              "roundTripMs": 537,
+              "providerMs": 490,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 2229,
+          "groq": [
+            {
+              "roundTripMs": 549,
+              "providerMs": 519,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        }
+      ]
+    },
+    {
+      "variant": "main",
+      "requestedStopEnd": "never",
+      "take": "paused",
+      "sendToRoomMedianMs": 2140,
+      "sendToRoomWorstMs": 2237,
+      "groqViaEgressMedianMs": 549.5,
+      "groqViaEgressWorstMs": 13736,
+      "uploadToTextMedianMs": 576.0,
+      "uploadToTextWorstMs": 13765,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 2068,
+          "groq": [
+            {
+              "roundTripMs": 321,
+              "providerMs": 297,
+              "status": 200
+            },
+            {
+              "roundTripMs": 956,
+              "providerMs": 911,
+              "status": 200
+            },
+            {
+              "roundTripMs": 342,
+              "providerMs": 330,
+              "status": 200
+            },
+            {
+              "roundTripMs": 930,
+              "providerMs": 873,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 2140,
+          "groq": [
+            {
+              "roundTripMs": 391,
+              "providerMs": 371,
+              "status": 200
+            },
+            {
+              "roundTripMs": 639,
+              "providerMs": 597,
+              "status": 200
+            },
+            {
+              "roundTripMs": 367,
+              "providerMs": 354,
+              "status": 200
+            },
+            {
+              "roundTripMs": 650,
+              "providerMs": 601,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 2178,
+          "groq": [
+            {
+              "roundTripMs": 389,
+              "providerMs": 374,
+              "status": 200
+            },
+            {
+              "roundTripMs": 493,
+              "providerMs": 458,
+              "status": 200
+            },
+            {
+              "roundTripMs": 402,
+              "providerMs": 391,
+              "status": 200
+            },
+            {
+              "roundTripMs": 572,
+              "providerMs": 529,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 2107,
+          "groq": [
+            {
+              "roundTripMs": 442,
+              "providerMs": 429,
+              "status": 200
+            },
+            {
+              "roundTripMs": 13765,
+              "providerMs": 13736,
+              "status": 200
+            },
+            {
+              "roundTripMs": 351,
+              "providerMs": 348,
+              "status": 200
+            },
+            {
+              "roundTripMs": 1050,
+              "providerMs": 1018,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 2237,
+          "groq": [
+            {
+              "roundTripMs": 580,
+              "providerMs": 570,
+              "status": 200
+            },
+            {
+              "roundTripMs": 661,
+              "providerMs": 636,
+              "status": 200
+            },
+            {
+              "roundTripMs": 870,
+              "providerMs": 863,
+              "status": 200
+            },
+            {
+              "roundTripMs": 726,
+              "providerMs": 707,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "main",
+      "requestedStopEnd": "never",
+      "take": "continuous",
+      "sendToRoomMedianMs": 2123,
+      "sendToRoomWorstMs": 2191,
+      "groqViaEgressMedianMs": 1124,
+      "groqViaEgressWorstMs": 1469,
+      "uploadToTextMedianMs": 1209,
+      "uploadToTextWorstMs": 1497,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 2066,
+          "groq": [
+            {
+              "roundTripMs": 1109,
+              "providerMs": 1014,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 2191,
+          "groq": [
+            {
+              "roundTripMs": 1209,
+              "providerMs": 1124,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 2096,
+          "groq": [
+            {
+              "roundTripMs": 866,
+              "providerMs": 788,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 2123,
+          "groq": [
+            {
+              "roundTripMs": 1439,
+              "providerMs": 1380,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 2152,
+          "groq": [
+            {
+              "roundTripMs": 1497,
+              "providerMs": 1469,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "main",
+      "requestedStopEnd": "immediate",
+      "take": "short",
+      "sendToRoomMedianMs": 548,
+      "sendToRoomWorstMs": 621,
+      "groqViaEgressMedianMs": 450,
+      "groqViaEgressWorstMs": 526,
+      "uploadToTextMedianMs": 474,
+      "uploadToTextWorstMs": 547,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 594,
+          "groq": [
+            {
+              "roundTripMs": 529,
+              "providerMs": 501,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 621,
+          "groq": [
+            {
+              "roundTripMs": 547,
+              "providerMs": 526,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 548,
+          "groq": [
+            {
+              "roundTripMs": 474,
+              "providerMs": 450,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 492,
+          "groq": [
+            {
+              "roundTripMs": 406,
+              "providerMs": 386,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 472,
+          "groq": [
+            {
+              "roundTripMs": 395,
+              "providerMs": 380,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        }
+      ]
+    },
+    {
+      "variant": "main",
+      "requestedStopEnd": "immediate",
+      "take": "paused",
+      "sendToRoomMedianMs": 723,
+      "sendToRoomWorstMs": 962,
+      "groqViaEgressMedianMs": 473.0,
+      "groqViaEgressWorstMs": 856,
+      "uploadToTextMedianMs": 501.0,
+      "uploadToTextWorstMs": 896,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 948,
+          "groq": [
+            {
+              "roundTripMs": 353,
+              "providerMs": 300,
+              "status": 200
+            },
+            {
+              "roundTripMs": 594,
+              "providerMs": 550,
+              "status": 200
+            },
+            {
+              "roundTripMs": 331,
+              "providerMs": 318,
+              "status": 200
+            },
+            {
+              "roundTripMs": 896,
+              "providerMs": 850,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 962,
+          "groq": [
+            {
+              "roundTripMs": 523,
+              "providerMs": 471,
+              "status": 200
+            },
+            {
+              "roundTripMs": 830,
+              "providerMs": 797,
+              "status": 200
+            },
+            {
+              "roundTripMs": 489,
+              "providerMs": 475,
+              "status": 200
+            },
+            {
+              "roundTripMs": 896,
+              "providerMs": 856,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 623,
+          "groq": [
+            {
+              "roundTripMs": 413,
+              "providerMs": 370,
+              "status": 200
+            },
+            {
+              "roundTripMs": 538,
+              "providerMs": 513,
+              "status": 200
+            },
+            {
+              "roundTripMs": 374,
+              "providerMs": 360,
+              "status": 200
+            },
+            {
+              "roundTripMs": 552,
+              "providerMs": 525,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 723,
+          "groq": [
+            {
+              "roundTripMs": 464,
+              "providerMs": 433,
+              "status": 200
+            },
+            {
+              "roundTripMs": 513,
+              "providerMs": 492,
+              "status": 200
+            },
+            {
+              "roundTripMs": 362,
+              "providerMs": 350,
+              "status": 200
+            },
+            {
+              "roundTripMs": 648,
+              "providerMs": 630,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 530,
+          "groq": [
+            {
+              "roundTripMs": 411,
+              "providerMs": 398,
+              "status": 200
+            },
+            {
+              "roundTripMs": 795,
+              "providerMs": 784,
+              "status": 200
+            },
+            {
+              "roundTripMs": 352,
+              "providerMs": 344,
+              "status": 200
+            },
+            {
+              "roundTripMs": 422,
+              "providerMs": 414,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "main",
+      "requestedStopEnd": "immediate",
+      "take": "continuous",
+      "sendToRoomMedianMs": 1348,
+      "sendToRoomWorstMs": 3691,
+      "groqViaEgressMedianMs": 1181,
+      "groqViaEgressWorstMs": 3524,
+      "uploadToTextMedianMs": 1262,
+      "uploadToTextWorstMs": 3593,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 1216,
+          "groq": [
+            {
+              "roundTripMs": 1141,
+              "providerMs": 1033,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 1348,
+          "groq": [
+            {
+              "roundTripMs": 1262,
+              "providerMs": 1181,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 3691,
+          "groq": [
+            {
+              "roundTripMs": 3593,
+              "providerMs": 3524,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 1522,
+          "groq": [
+            {
+              "roundTripMs": 1406,
+              "providerMs": 1365,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 1282,
+          "groq": [
+            {
+              "roundTripMs": 1116,
+              "providerMs": 1093,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "branch",
+      "requestedStopEnd": "never",
+      "take": "short",
+      "sendToRoomMedianMs": 579,
+      "sendToRoomWorstMs": 761,
+      "groqViaEgressMedianMs": 533,
+      "groqViaEgressWorstMs": 718,
+      "uploadToTextMedianMs": 547,
+      "uploadToTextWorstMs": 734,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 579,
+          "groq": [
+            {
+              "roundTripMs": 547,
+              "providerMs": 533,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 761,
+          "groq": [
+            {
+              "roundTripMs": 734,
+              "providerMs": 718,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 563,
+          "groq": [
+            {
+              "roundTripMs": 534,
+              "providerMs": 523,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 613,
+          "groq": [
+            {
+              "roundTripMs": 574,
+              "providerMs": 567,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 472,
+          "groq": [
+            {
+              "roundTripMs": 423,
+              "providerMs": 414,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        }
+      ]
+    },
+    {
+      "variant": "branch",
+      "requestedStopEnd": "never",
+      "take": "paused",
+      "sendToRoomMedianMs": 913,
+      "sendToRoomWorstMs": 1000,
+      "groqViaEgressMedianMs": 547.0,
+      "groqViaEgressWorstMs": 927,
+      "uploadToTextMedianMs": 554.0,
+      "uploadToTextWorstMs": 945,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 706,
+          "groq": [
+            {
+              "roundTripMs": 415,
+              "providerMs": 394,
+              "status": 200
+            },
+            {
+              "roundTripMs": 615,
+              "providerMs": 590,
+              "status": 200
+            },
+            {
+              "roundTripMs": 557,
+              "providerMs": 548,
+              "status": 200
+            },
+            {
+              "roundTripMs": 663,
+              "providerMs": 624,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 983,
+          "groq": [
+            {
+              "roundTripMs": 323,
+              "providerMs": 302,
+              "status": 200
+            },
+            {
+              "roundTripMs": 635,
+              "providerMs": 613,
+              "status": 200
+            },
+            {
+              "roundTripMs": 537,
+              "providerMs": 528,
+              "status": 200
+            },
+            {
+              "roundTripMs": 945,
+              "providerMs": 913,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 756,
+          "groq": [
+            {
+              "roundTripMs": 350,
+              "providerMs": 334,
+              "status": 200
+            },
+            {
+              "roundTripMs": 768,
+              "providerMs": 751,
+              "status": 200
+            },
+            {
+              "roundTripMs": 523,
+              "providerMs": 515,
+              "status": 200
+            },
+            {
+              "roundTripMs": 704,
+              "providerMs": 681,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 913,
+          "groq": [
+            {
+              "roundTripMs": 510,
+              "providerMs": 497,
+              "status": 200
+            },
+            {
+              "roundTripMs": 551,
+              "providerMs": 538,
+              "status": 200
+            },
+            {
+              "roundTripMs": 501,
+              "providerMs": 494,
+              "status": 200
+            },
+            {
+              "roundTripMs": 860,
+              "providerMs": 846,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 1000,
+          "groq": [
+            {
+              "roundTripMs": 478,
+              "providerMs": 470,
+              "status": 200
+            },
+            {
+              "roundTripMs": 717,
+              "providerMs": 705,
+              "status": 200
+            },
+            {
+              "roundTripMs": 551,
+              "providerMs": 546,
+              "status": 200
+            },
+            {
+              "roundTripMs": 938,
+              "providerMs": 927,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "branch",
+      "requestedStopEnd": "never",
+      "take": "continuous",
+      "sendToRoomMedianMs": 1629,
+      "sendToRoomWorstMs": 1816,
+      "groqViaEgressMedianMs": 1494,
+      "groqViaEgressWorstMs": 1683,
+      "uploadToTextMedianMs": 1538,
+      "uploadToTextWorstMs": 1697,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 1036,
+          "groq": [
+            {
+              "roundTripMs": 987,
+              "providerMs": 901,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 1752,
+          "groq": [
+            {
+              "roundTripMs": 1684,
+              "providerMs": 1621,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 1629,
+          "groq": [
+            {
+              "roundTripMs": 1538,
+              "providerMs": 1494,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 908,
+          "groq": [
+            {
+              "roundTripMs": 790,
+              "providerMs": 760,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 1816,
+          "groq": [
+            {
+              "roundTripMs": 1697,
+              "providerMs": 1683,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "branch",
+      "requestedStopEnd": "immediate",
+      "take": "short",
+      "sendToRoomMedianMs": 543,
+      "sendToRoomWorstMs": 625,
+      "groqViaEgressMedianMs": 491,
+      "groqViaEgressWorstMs": 577,
+      "uploadToTextMedianMs": 502,
+      "uploadToTextWorstMs": 591,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 590,
+          "groq": [
+            {
+              "roundTripMs": 559,
+              "providerMs": 544,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 625,
+          "groq": [
+            {
+              "roundTripMs": 591,
+              "providerMs": 577,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 543,
+          "groq": [
+            {
+              "roundTripMs": 502,
+              "providerMs": 491,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 506,
+          "groq": [
+            {
+              "roundTripMs": 464,
+              "providerMs": 456,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 437,
+          "groq": [
+            {
+              "roundTripMs": 381,
+              "providerMs": 374,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 2
+        }
+      ]
+    },
+    {
+      "variant": "branch",
+      "requestedStopEnd": "immediate",
+      "take": "paused",
+      "sendToRoomMedianMs": 833,
+      "sendToRoomWorstMs": 1094,
+      "groqViaEgressMedianMs": 575.0,
+      "groqViaEgressWorstMs": 1023,
+      "uploadToTextMedianMs": 593.0,
+      "uploadToTextWorstMs": 1043,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 816,
+          "groq": [
+            {
+              "roundTripMs": 349,
+              "providerMs": 333,
+              "status": 200
+            },
+            {
+              "roundTripMs": 601,
+              "providerMs": 575,
+              "status": 200
+            },
+            {
+              "roundTripMs": 531,
+              "providerMs": 520,
+              "status": 200
+            },
+            {
+              "roundTripMs": 751,
+              "providerMs": 712,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 790,
+          "groq": [
+            {
+              "roundTripMs": 323,
+              "providerMs": 309,
+              "status": 200
+            },
+            {
+              "roundTripMs": 798,
+              "providerMs": 775,
+              "status": 200
+            },
+            {
+              "roundTripMs": 576,
+              "providerMs": 567,
+              "status": 200
+            },
+            {
+              "roundTripMs": 717,
+              "providerMs": 678,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 833,
+          "groq": [
+            {
+              "roundTripMs": 570,
+              "providerMs": 558,
+              "status": 200
+            },
+            {
+              "roundTripMs": 630,
+              "providerMs": 614,
+              "status": 200
+            },
+            {
+              "roundTripMs": 469,
+              "providerMs": 462,
+              "status": 200
+            },
+            {
+              "roundTripMs": 773,
+              "providerMs": 740,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 1094,
+          "groq": [
+            {
+              "roundTripMs": 585,
+              "providerMs": 575,
+              "status": 200
+            },
+            {
+              "roundTripMs": 778,
+              "providerMs": 762,
+              "status": 200
+            },
+            {
+              "roundTripMs": 548,
+              "providerMs": 542,
+              "status": 200
+            },
+            {
+              "roundTripMs": 1043,
+              "providerMs": 1023,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 936,
+          "groq": [
+            {
+              "roundTripMs": 360,
+              "providerMs": 354,
+              "status": 200
+            },
+            {
+              "roundTripMs": 766,
+              "providerMs": 754,
+              "status": 200
+            },
+            {
+              "roundTripMs": 532,
+              "providerMs": 526,
+              "status": 200
+            },
+            {
+              "roundTripMs": 881,
+              "providerMs": 859,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    },
+    {
+      "variant": "branch",
+      "requestedStopEnd": "immediate",
+      "take": "continuous",
+      "sendToRoomMedianMs": 1278,
+      "sendToRoomWorstMs": 1683,
+      "groqViaEgressMedianMs": 1152,
+      "groqViaEgressWorstMs": 1557,
+      "uploadToTextMedianMs": 1225,
+      "uploadToTextWorstMs": 1568,
+      "fallbacks": 0,
+      "samples": [
+        {
+          "repetition": 0,
+          "sendToRoomMs": 938,
+          "groq": [
+            {
+              "roundTripMs": 862,
+              "providerMs": 777,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 1,
+          "sendToRoomMs": 1278,
+          "groq": [
+            {
+              "roundTripMs": 1225,
+              "providerMs": 1152,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 2,
+          "sendToRoomMs": 1190,
+          "groq": [
+            {
+              "roundTripMs": 1108,
+              "providerMs": 1062,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 3,
+          "sendToRoomMs": 1492,
+          "groq": [
+            {
+              "roundTripMs": 1398,
+              "providerMs": 1365,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        },
+        {
+          "repetition": 4,
+          "sendToRoomMs": 1683,
+          "groq": [
+            {
+              "roundTripMs": 1568,
+              "providerMs": 1557,
+              "status": 200
+            }
+          ],
+          "fallback": false,
+          "sentVsWhisperWordErrors": 0,
+          "nativeVsWhisperWordErrors": 5
+        }
+      ]
+    }
+  ],
+  "calibration": {
+    "groqWaitMs": 1500,
+    "continuousSends": 10,
+    "fallbacks": 3,
+    "fallbackExamples": [
+      {
+        "endMode": "never",
+        "repetition": 0,
+        "sendToRoomMs": 1539,
+        "roundTripMs": 1606,
+        "wordDifferences": 5
+      },
+      {
+        "endMode": "never",
+        "repetition": 1,
+        "sendToRoomMs": 1517,
+        "roundTripMs": 1781,
+        "wordDifferences": 5
+      },
+      {
+        "endMode": "immediate",
+        "repetition": 4,
+        "sendToRoomMs": 1530,
+        "roundTripMs": 1572,
+        "wordDifferences": 5
+      }
+    ],
+    "comparisonWords": 126,
+    "scriptedErrors": [
+      {
+        "whisper": "princess",
+        "nativeFallback": "prices",
+        "occurrences": 2
+      },
+      {
+        "whisper": "France",
+        "nativeFallback": "friends",
+        "occurrences": 2
+      },
+      {
+        "whisper": "congratulations",
+        "nativeFallback": "congratulation",
+        "occurrences": 1
+      }
+    ]
+  },
+  "shippingInstrumentationSha256": "2a38b1adcdea6ebc038041641042379c64fe2d3b37a1e9fca241f3333e36f1b4"
+}

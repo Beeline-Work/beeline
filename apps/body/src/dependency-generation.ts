@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, readdir, lstat, rm, writeFile } from 'node:fs/promises';
-import { resolve, delimiter } from 'node:path';
+import { mkdir, readFile, readdir, realpath, lstat, rm, writeFile } from 'node:fs/promises';
+import { resolve, relative, isAbsolute, delimiter } from 'node:path';
 import { promisify } from 'node:util';
 import { withKernelLock } from './kernel-lock.js';
 import {
@@ -16,8 +16,45 @@ const exec = promisify(execFile);
 const marker = '.beeline-generation';
 export const dependencyRequest = '.beeline-dependency-request';
 
-export async function dependencyFingerprint(root: string): Promise<string> {
+/** Requests live in the corner, never in another agent's home or the host /tmp. */
+export async function extraDependencyRoots(root: string, home?: string): Promise<string[]> {
+  const registry = resolve(root, '.beeline-extra-dependencies');
+  const registryInfo = await lstat(registry).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (!registryInfo) return [];
+  if (!registryInfo.isDirectory() || registryInfo.isSymbolicLink()) throw new Error('Invalid extra dependency registry');
+  const entries = await readdir(registry).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  if (entries.length > 128) throw new Error('Too many extra dependency requests');
+  const allowed = await Promise.all([root, ...(home ? [home] : [])].map(path => realpath(path)));
+  const roots = new Set<string>();
+  for (const name of entries.sort()) {
+    if (!/^[a-f0-9]{64}$/.test(name)) continue;
+    const request = resolve(registry, name);
+    const info = await lstat(request);
+    if (!info.isFile() || info.size > 8192) throw new Error('Invalid extra dependency request');
+    const requested = (await readFile(request, 'utf8')).trim();
+    const canonical = await realpath(requested).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!canonical) continue; // A removed disposable rig no longer pins dependencies.
+    if (!allowed.some(parent => {
+      const child = relative(parent, canonical);
+      return child !== '' && child !== '..' && !child.startsWith('../') && !isAbsolute(child);
+    })) throw new Error('Extra dependencies must be inside this corner or its agent home');
+    roots.add(canonical);
+  }
+  return [...roots].sort();
+}
+
+export async function dependencyFingerprint(root: string, home?: string): Promise<string> {
   return JSON.stringify([
+    await Promise.all((await extraDependencyRoots(root, home)).map(async path => [path, await dependencyFingerprintForCopy(path)])),
     await readFile(resolve(root, dependencyRequest), 'utf8').catch(() => ''),
     await Promise.all(
       ['', 'apps/mobile'].map(async (part) => {
@@ -26,6 +63,11 @@ export async function dependencyFingerprint(root: string): Promise<string> {
       }),
     ),
   ]);
+}
+
+async function dependencyFingerprintForCopy(root: string): Promise<string> {
+  const plan = await readWarmPlan(root);
+  return isPlanRefusal(plan) ? plan.failure : plan.key;
 }
 
 /** Called outside the harness, after its previous mount namespace has stopped. */

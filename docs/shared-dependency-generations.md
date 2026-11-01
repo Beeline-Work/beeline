@@ -23,4 +23,12 @@ The proof creates two consumers, proves matching package inodes, attempts chmod/
 
 The fixture payload is 23 bytes: a shared Codex reference uses 23 bytes, two private Beeline installs use 46 bytes, and the shared Beeline payload uses 23 bytes. These are payload-only fixture measurements, not a full-helper memory or fleet disk parity result. Directory and npm metadata remain per checkout.
 
-Remaining fleet work: agent-created extra checkouts and the shared main comparison checkout; cache/target consolidation; full-helper disk and memory measurements; memory, emulator, index and idle-session reductions; the separately authorized squire cleanup. This PR does not claim the overall fleet parity acceptance bar.
+## Extra copies
+
+From the primary corner, register each disposable copy with `npm run corner:prepare -- --extra <path>`. This records a request without installing anything. At the next turn the helper validates the copy belongs to this corner or its agent home, prepares it through the same lockfile-keyed store, and seals its dependency directories before launching the harness. Registration and subsequent lockfile edits replace retained sessions. Deleted rigs stop pinning generations when their dependency hardlinks disappear.
+
+This covers `.verification`, `.scratch`, Claude worktrees and agent-home rigs. Keep temporary rigs under the corner or its agent home: the harness's private `/tmp` disappears with its namespace and cannot be prepared by the helper. Run the registration command from the primary corner even when the copy contains its own preparation script. The existing npm guard prevents private installation in managed sessions. This feature requires a helper release containing this change; the registration command alone does not retrofit an older running helper.
+
+The built-helper proof now registers five extra copies using the real preparation command, resolves requests through the helper, and supplies an installer that throws if any extra copy tries to install privately. Each copy shares the original package inode, denies writes through the sandbox and builds successfully. Fixture payload across the original two consumers plus five extras is 161 bytes before sharing and 23 bytes after sharing (the shared Codex reference is 23 bytes). This excludes per-copy metadata and process memory. It is not a full-helper parity claim.
+
+Remaining fleet work: the shared main comparison checkout; cache/target consolidation; full-helper disk and memory measurements; memory, emulator, index and idle-session reductions; the separately authorized squire cleanup. This PR does not claim the overall fleet parity acceptance bar.

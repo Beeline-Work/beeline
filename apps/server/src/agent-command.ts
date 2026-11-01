@@ -3,6 +3,7 @@ import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { recordMcpMention, recordMcpMemberWebhook } from './rooms-mcp-members.js';
+import { queueMcpWakeEvents } from './rooms-mcp-events.js';
 import { CORNER_CHECKS_BLOCKED_AFTER, cornerReportWaiting } from './corner-state.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
@@ -791,6 +792,11 @@ export async function createAgentCommand(
     await recordMcpMemberWebhook(db, input.agentId, appCallbackUrl, input.roomId, id,
         `${privatePayload?.kind === 'order' ? 'Order' : 'Wake'} (${input.reason}): ${privatePayload?.text ?? sourceText ?? ''}`.trim());
   }
+  // Rooms MCP agents have no helper. A live subscription is told in this same
+  // transaction; list_mentions remains the catch-up read. Machine agents have
+  // no subscription, so this inserts nothing for them.
+  if (result.rows[0] && ((input.action ?? 'input') === 'input' || input.action === 'resume'))
+    await queueMcpWakeEvents(db, result.rows[0].id);
   return command;
   });
 }

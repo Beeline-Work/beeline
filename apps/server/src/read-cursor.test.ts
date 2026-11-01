@@ -263,7 +263,7 @@ describe('the read cursor over the live phone surface', () => {
     await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
     const frames: Array<{ type?: string; reason?: string; commands?: unknown[] }> = [];
     socket.on('message', raw => frames.push(JSON.parse(String(raw))));
-    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM, roomStateProjections: true }));
     try {
       for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'subscribed'); i++) await settle();
       frames.length = 0;
@@ -294,7 +294,7 @@ describe('the read cursor over the live phone surface', () => {
     // Two sockets for the reader plus another member. Every reader device
     // receives a reconcile hint; the other member receives none.
     const sockets = await Promise.all(
-      [ownerToken, ownerToken, otherToken].map(async (token, index) => {
+      [ownerToken, ownerToken, otherToken, ownerToken].map(async (token, index) => {
         const socketOrigin = index === 0 ? origin : peerOrigin;
         const socket = new WebSocket(`${socketOrigin.replace('http', 'ws')}/v1/phone/live`, [
           `bearer.${token}`,
@@ -308,7 +308,8 @@ describe('the read cursor over the live phone surface', () => {
           const value = JSON.parse(raw.toString()) as { type?: string };
           if (value.type !== 'subscribed') frames.push(value);
         });
-        socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
+        socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM,
+          ...(index < 3 ? { roomStateProjections: true } : {}) }));
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('subscribe timeout')), 3000);
           socket.on('message', function onMessage(raw) {
@@ -340,6 +341,9 @@ describe('the read cursor over the live phone surface', () => {
           })]);
         }
         expect(sockets[2]!.frames).toEqual([]);
+        expect(sockets[3]!.frames).toEqual([expect.objectContaining({
+          type: 'invalidate', reason: 'postgres:room_read_marks',
+        })]);
         for (const base of [origin, peerOrigin]) {
           const response = await fetch(`${base}/v1/phone/rooms/${ROOM}`, {
             headers: { authorization: `Bearer ${ownerToken}` },
@@ -354,7 +358,7 @@ describe('the read cursor over the live phone surface', () => {
       for (const entry of sockets) entry.frames.length = 0;
       await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
       await settle();
-      expect(sockets.map((entry) => entry.frames)).toEqual([[], [], []]);
+      expect(sockets.map((entry) => entry.frames)).toEqual([[], [], [], []]);
     } finally {
       for (const entry of sockets) entry.socket.close();
     }

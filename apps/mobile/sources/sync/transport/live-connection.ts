@@ -715,6 +715,7 @@ export class LiveConnection {
         JSON.stringify({
           type: 'subscribe',
           sidebarPreviews: true,
+          roomStateProjections: true,
           roomIds: batch,
           ...(Object.keys(cursors).length ? { cursors } : {}),
         }),

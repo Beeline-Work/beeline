@@ -1274,9 +1274,9 @@ export function createBeelineServer(options: ServerOptions): Server {
                         } as const)
                       : undefined;
                   if (!target) {
-                    if ((event.reason === 'postgres:room_read_marks' && event.readerId === principal.identityId &&
+                    if (item.roomStateProjections === true && ((event.reason === 'postgres:room_read_marks' && event.readerId === principal.identityId &&
                           typeof options.phone.liveReadState === 'function') ||
-                        (event.reason === 'postgres:agent_commands' && typeof options.phone.liveRoomCommands === 'function')) {
+                        (event.reason === 'postgres:agent_commands' && typeof options.phone.liveRoomCommands === 'function'))) {
                       const readMark = event.reason === 'postgres:room_read_marks';
                       const stateKey = `${roomId}:${readMark ? 'read-state' : 'room-commands'}`;
                       beginRowRead(stateKey);

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
@@ -74,9 +74,10 @@ class DelayedDatabase implements SqlDatabase {
 }
 
 describe('agent reply completion latency', () => {
-  const database = new PgliteDatabase();
+  let database: PgliteDatabase;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
+    database = new PgliteDatabase();
     await migrate(database);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES
@@ -108,7 +109,7 @@ describe('agent reply completion latency', () => {
     await claimAgentCommand(database, ROOM, AGENT, command!.id, GENERATION);
   });
 
-  afterAll(async () => database.close());
+  afterEach(async () => database.close());
 
   it('dispatches the committed reply without a serial transaction tail', async () => {
     const timing: Timing = {};

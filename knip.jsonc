@@ -38,6 +38,8 @@
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         // HOLD-CITATION invokes the isolated built HTTP proof by path.
         "scripts/prove-agent-merge-holds.mjs",
+        // BRIEF-CITATION invokes the isolated built Body/HTTP proof by path.
+        "scripts/prove-brief-citation.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
         // VAULT-CARD-1 invokes the isolated built-server/Squire proof by path.

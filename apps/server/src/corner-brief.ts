@@ -25,7 +25,7 @@ export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = 
       `corner brief spec must contain 1–${CORNER_BRIEF_SPEC_MAX_LENGTH} characters of Markdown`,
     );
   if (draft.approval !== undefined && !boundedText(draft.approval?.sourceMessageId, 256))
-    throw new ExpectedRefusalError('corner brief approval must name a human Room message');
+    throw new ExpectedRefusalError('brief.approval.sourceMessageId must contain 1–256 characters; cite the approving human message or active private commander order ID');
   if (
     draft.change !== undefined &&
     (typeof draft.change !== 'string' || draft.change.length > 1_000)
@@ -314,7 +314,7 @@ export async function resolveCornerBriefApproval(
   draft: CornerBriefDraft,
   attachments: readonly CornerBriefAttachment[],
   initiatingMessageId?: string,
-  revision?: { cornerId: string; agentId: string },
+  revision?: { cornerId: string; agentId: string; command?: CommandRow },
   opening?: { agentId: string; roomId: string },
   humanCitation?: { agentId: string },
 ): Promise<{
@@ -342,7 +342,7 @@ export async function resolveCornerBriefApproval(
   }
   if (!humanCitation) validateCornerBrief(draft);
   if (revision && !draft.approval)
-    throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
+    throw new CommandRefusalError('brief.approval.sourceMessageId is required; cite the approving human message or active private commander order ID', 403);
   let sourceMessageId = draft.approval?.sourceMessageId ?? '';
   const initiating = sourceMessageId === initiatingMessageId;
   // Holds use this same message resolver, with live human/readability checks and
@@ -375,6 +375,36 @@ export async function resolveCornerBriefApproval(
   }
   let message: ApprovingMessage | undefined = cited;
   let commanderOrder = false;
+  // A revision can cite the current delivery just as an opening can. Only the
+  // server-owned incoming order from this corner's commander lends provenance;
+  // arbitrary command IDs and quoted text never do.
+  const delivery = revision?.command;
+  if (revision && delivery && delivery.agent_id === revision.agentId &&
+      ['pending', 'claimed'].includes(delivery.state)) {
+    const order = await commandOrder(db, delivery);
+    const commander = (await db.query(
+      `SELECT 1 FROM rooms WHERE id=$1 AND created_by=$2`,
+      [revision.cornerId, order.private_payload?.authorId ?? null],
+    )).rowCount > 0;
+    if (commander && order.private_payload?.kind === 'order' && sourceRoomIds.includes(order.room_id)) {
+      if (sourceMessageId === delivery.id || sourceMessageId === order.id) {
+        sourceMessageId = order.id;
+        message = { text: order.private_payload.text, author_id: order.private_payload.authorId,
+          room_id: order.room_id, kind: 'agent' };
+        commanderOrder = true;
+      } else if (sourceMessageId === delivery.root_source_message_id) {
+        message = (await db.query<ApprovingMessage>(
+          `SELECT message.text,message.author_id,identity.kind,message.room_id
+           FROM messages message JOIN identities identity ON identity.id=message.author_id
+           JOIN rooms source ON source.id=message.room_id
+           JOIN rooms corner ON corner.id=$2 AND corner.workspace_id=source.workspace_id
+           WHERE message.id=$1 AND identity.kind='human' AND message.deleted_at IS NULL
+             AND NOT identity.hidden_from_roster AND message.presentation<>'system'
+             AND message.system_event IS NULL`, [sourceMessageId, revision.cornerId],
+        )).rows[0];
+      }
+    }
+  }
   if (!message && initiating && !revision) {
     const active = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [sourceMessageId])).rows[0];
     const order = active ? await commandOrder(db, active) : undefined;
@@ -415,7 +445,7 @@ export async function resolveCornerBriefApproval(
     }
   }
   if (revision && (!message || message.kind !== 'human' && !commanderOrder))
-    throw new CommandRefusalError('corner brief approval must name a human message or commander order; the human author must be a current Room member', 403);
+    throw new CommandRefusalError("brief.approval.sourceMessageId must cite a human message from a current Room member or an active order from this corner's commander; use the delivered order ID or its forwarded root human message ID", 403);
   if (opening && !revision && (!message || message.kind !== 'human' && !commanderOrder)) {
     const revisionHash = cornerBriefRevisionHash(draft, attachments);
     return {
@@ -426,7 +456,7 @@ export async function resolveCornerBriefApproval(
     };
   }
   if (!message || message.kind !== 'human' && !commanderOrder)
-    throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
+    throw new CommandRefusalError('brief.approval.sourceMessageId is required; cite the approving human message or active private commander order ID', 403);
   // Evidence only: retain the reply's file provenance without exposing the DM
   // or participating in merge authorization.
   const evidence = message.kind === 'human' ? (await db.query<{

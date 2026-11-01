@@ -131,7 +131,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     implementer: { type: 'string', minLength: 1, description: 'Worker handle without @.' },
     reviewer: { type: 'string', minLength: 1, description: 'Independent reviewer handle without @.' }, hold: { type: 'boolean' }, sourceMessageId: { type: 'string' },
   }, ['room', 'brief', 'implementer']),
-  tool('revise_corner', 'Revise a corner. metadata needs name; install_brief needs name and brief; brief needs brief, expectedRevision and change.', {
+  tool('revise_corner', 'Revise a corner. metadata needs name; install_brief needs name and brief; brief needs brief, expectedRevision and change. Except for commander-direct revisions, brief.approval.sourceMessageId must cite an approving human message or active private commander order; the current commander delivery can supply its order/resume ID or forwarded root human message ID.', {
     address: address('Corner id.'), action: { type: 'string', enum: ['metadata', 'brief', 'install_brief'] }, reviewer: { type: 'string' },
     name: { type: 'string' }, objective: { type: 'string' }, brief, expectedRevision: { type: 'integer', minimum: 0 }, change: { type: 'string', maxLength: 1000 },
   }, ['address', 'action']),

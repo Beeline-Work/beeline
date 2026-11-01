@@ -15,7 +15,7 @@ import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
-import { createAgentCommand, noteBlockedCornerChecks, readAgentCommands } from './agent-command.js';
+import { createAgentCommand, noteBlockedCornerChecks, readAgentCommands, type CommandRow } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/server-command-intake.js';
@@ -1762,4 +1762,54 @@ it('ARTIFACT-READ-BY-ID reads sibling and parent artifacts without exposing priv
     await new Promise<void>((resolve,reject) => bridge.close(error => error ? reject(error) : resolve()));
     await rm(scratch,{recursive:true,force:true});
   }
+});
+
+// Reproduction BRIEF-CITATION: approval follows a commander delivery, including
+// a forwarded human source that the worker cannot read directly.
+it.each(['human', 'order', 'resume', 'ancestor'] as const)('Reproduction BRIEF-CITATION: revise using the delivered %s citation', async citation => {
+  const opened = await open();
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [opened.cornerId]);
+  const messageId = randomBytes(32).toString('hex');
+  await phone.execute('sendRoomMessage', { roomId: DM, messageId, text: 'Include the approved validation step' }, HUMAN);
+  const incoming = (await commands(DM, RUBY)).find(c => c.rootSourceMessageId === messageId)!;
+  await claim(incoming);
+  const delivered = await daemon.execute('order', {
+    ...authority(incoming), address: ROOM, agent: 'worker', text: 'Revise the assigned brief with the approved validation step',
+  }, RUBY);
+  let turn = (await commands(ROOM, WORKER)).find(c => c.id === delivered.id)!;
+  if (citation === 'resume' || citation === 'ancestor') {
+    const parent = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [turn.id])).rows[0]!;
+    await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [turn.id]);
+    const resumed = await createAgentCommand(db, { roomId: ROOM, agentId: WORKER, sourceMessageId: null,
+      action: 'resume', reason: 'report', parent, retainDepth: true });
+    turn = (await commands(ROOM, WORKER)).find(c => c.id === resumed!.id)!;
+  }
+  await claim(turn);
+  const sourceMessageId = citation === 'human' ? messageId : citation === 'ancestor' ? delivered.id : turn.id;
+  const revise = (citationId: string) => daemon.execute('reviseCornerBrief', {
+    ...authority(turn), cornerId: opened.cornerId, expectedRevision: 1,
+    brief: { spec: 'Build the widget and validate the result', change: 'Record the approved validation step',
+      repositoryWork: false, approval: { sourceMessageId: citationId } },
+  }, WORKER);
+  // Another message in the same private source is not forwarded approval.
+  const unrelated = randomBytes(32).toString('hex');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Unrelated scope')`, [unrelated, DM, HUMAN]);
+  await expect(revise(unrelated)).rejects.toThrow('brief.approval.sourceMessageId');
+  // Even the active delivery cannot lend approval from the worker or a peer.
+  for (const author of [WORKER, HUMAN]) {
+    await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE id=$1`, [delivered.id, author]);
+    await expect(revise(sourceMessageId)).rejects.toThrow('brief.approval.sourceMessageId');
+  }
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE id=$1`, [delivered.id, RUBY]);
+  if (citation === 'human') {
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [HUMAN]);
+    await expect(revise(sourceMessageId)).rejects.toThrow('brief.approval.sourceMessageId');
+    await db.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1`, [HUMAN]);
+  }
+  const revised = await revise(sourceMessageId);
+  expect(revised).toMatchObject({ revision: 2, approval: {
+    sourceMessageId: citation === 'human' ? messageId : delivered.id,
+    approvedBy: citation === 'human' ? HUMAN : RUBY,
+  } });
+  console.info(`Demonstrated BRIEF-CITATION: ${citation} delivery → revision 2 with server-resolved approval`);
 });

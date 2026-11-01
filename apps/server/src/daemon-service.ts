@@ -8783,7 +8783,7 @@ export class DaemonService {
         )).rows[0]?.approval_basis;
         if (corner.created_by !== agentId || stored?.kind !== 'commander-direct' ||
             stored.approvedBy !== agentId)
-          throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
+          throw new CommandRefusalError('brief.approval.sourceMessageId is required; cite the approving human message or active private commander order ID', 403);
         draft = { ...draft, approval: undefined };
       }
       validateCornerBrief(draft);
@@ -8833,7 +8833,7 @@ export class DaemonService {
         draft,
         attachments,
         command.private_payload ? command.id : command.root_source_message_id,
-        { cornerId: input.cornerId, agentId },
+        { cornerId: input.cornerId, agentId, command },
       );
       if (input.reviewer !== undefined) await setCornerReviewer(db, input.cornerId, input.reviewer, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));

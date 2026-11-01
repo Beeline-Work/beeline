@@ -541,7 +541,7 @@ describe('monolith integration', () => {
       expect(await refused.json()).toMatchObject({
         error: files.length
           ? expect.stringContaining('missing or unavailable in this Room')
-          : 'corner brief approval must name a human message or commander order; the human author must be a current Room member',
+          : "brief.approval.sourceMessageId must cite a human message from a current Room member or an active order from this corner's commander; use the delivered order ID or its forwarded root human message ID",
       });
       expect(
         (
@@ -638,7 +638,7 @@ describe('monolith integration', () => {
       const refused = await revise(unrelated, 2);
       expect(refused.status).toBe(403);
       expect(await refused.json()).toMatchObject({
-        error: 'corner brief approval must name a human message or commander order; the human author must be a current Room member',
+        error: "brief.approval.sourceMessageId must cite a human message from a current Room member or an active order from this corner's commander; use the delivered order ID or its forwarded root human message ID",
       });
       expect(
         (

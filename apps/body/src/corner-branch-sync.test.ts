@@ -81,7 +81,11 @@ async function remoteWithCornerBranch(): Promise<{ remote: string; scratch: stri
 
 /** Legacy shared checkouts remain supported by migration and archive cleanup. */
 async function materializeCornerWorktree(input: Parameters<typeof materializePrivateCorner>[0]) {
-  await materializePrivateCorner(input);
+  const privateCopy = await materializePrivateCorner(input);
+  // This fixture exercises legacy checkout recovery. Do not leave an unrelated,
+  // ownerless private copy for the reconciliation sweep to warn about.
+  await rm(privateCopy.path, { recursive: true, force: true });
+  await rm(privateCopy.gitCommonDir, { recursive: true, force: true });
   const gitCommonDir = cornerRepositoryCacheDir(input.supervisorRoot, input.remote);
   const path = resolve(input.supervisorRoot, 'beeline/corners', input.cornerId);
   await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'config', '--replace-all', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);

@@ -73,7 +73,7 @@ it('read-only assignments reuse the Room checkout, then select a private copy af
   } finally { run.mockRestore(); await coordinator.shutdown(); await rm(root, { recursive: true, force: true }); }
 });
 
-it('leaving reclaims only this agents published copy even when Room access has been revoked', async () => {
+it('membership retirement preserves private copies without archive authority', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'corner-leave-'));
   const identity = identityFromKey('11'.repeat(32), 'Bee');
   const runtime = { agent: { name: 'Bee', publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32) },
@@ -98,15 +98,13 @@ it('leaving reclaims only this agents published copy even when Room access has b
     // The reviewer may have detached to the published branch head.
     await exec('git', ['-C', mine!.path, 'checkout', '--detach']);
     const internal = coordinator as unknown as { reapCornerWorktree(worktree: object): Promise<void> };
-    await internal.reapCornerWorktree({ ...mine, cornerId: 'corner', branch: 'feature/corner', token: '' });
-    await expect(access(mine!.path)).rejects.toThrow();
-    await expect(access(mine!.gitCommonDir)).rejects.toThrow();
+    await expect(internal.reapCornerWorktree({ ...mine, cornerId: 'corner', branch: 'feature/corner', token: '' })).rejects.toThrow('membership revoked');
+    await expect(access(mine!.path)).resolves.toBeUndefined();
+    await expect(access(mine!.gitCommonDir)).resolves.toBeUndefined();
     await expect(access(peer!.path)).resolves.toBeUndefined();
-    await expect(internal.reapCornerWorktree({ ...mine, cornerId: 'corner', branch: 'feature/corner', token: '' })).resolves.toBeUndefined();
-    expect(await readStorageOwners(root)).toEqual([]);
-    expect(execute).not.toHaveBeenCalled();
-    // Whole-agent retirement must reclaim its copies even while another agent
-    // remains in this Workspace (the shared assets still belong to that peer).
+    expect(await readStorageOwners(root)).toHaveLength(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    // Whole-agent retirement is also not archive authority.
     const restarted = await materializeCornerWorktree({ ...input, committer: { name: 'Bee', publicKey: identity.publicKey } });
     await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'corner', kind: 'corners',
       itemId: restarted.path.split('/').pop()!, agentId: identity.publicKey, ended: false });
@@ -115,8 +113,8 @@ it('leaving reclaims only this agents published copy even when Room access has b
     await writeFile(resolve(peerRuntime, 'runtime.json'), JSON.stringify({ communityId: 'workspace' }));
     await markAgentStorageEnded(runtime);
     await pruneEndedOwnerStorage(root, { inUse: async () => false });
-    await expect(access(restarted.path)).rejects.toThrow();
-    await expect(access(restarted.gitCommonDir)).rejects.toThrow();
+    await expect(access(restarted.path)).resolves.toBeUndefined();
+    await expect(access(restarted.gitCommonDir)).resolves.toBeUndefined();
     await expect(access(peer!.path)).resolves.toBeUndefined();
   } finally { await coordinator.shutdown(); await rm(root, { recursive: true, force: true }); }
 });

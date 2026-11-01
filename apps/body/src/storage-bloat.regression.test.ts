@@ -88,7 +88,7 @@ it('reaps an archived squash-merged corner after access refusal, treating the Sq
   await git('git', ['-C', path, '-c', 'user.name=Bee', '-c', 'user.email=bee@example.test', 'commit', '-m', 'accepted head']);
   const landedHeadSha = (await git('git', ['-C', path, 'rev-parse', 'HEAD'])).stdout.trim();
   await file(resolve(root, 'beeline/agents', 'a'.repeat(64), 'corner-cleanup-refusals/corner.json'), '{"status":403}');
-  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'corner', kind: 'corners', itemId: 'corner', ended: true, landedHeadSha });
+  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'corner', kind: 'corners', itemId: 'corner', ended: true, archived: true, landedHeadSha });
   await pruneArchivedCheckoutStorage(root, { inUse: async () => false });
   expect(await exists(path)).toBe(false);
 });
@@ -153,7 +153,7 @@ it('reclaims a squash-merged agent copy and its private repository together', as
   await file(resolve(worktree.path, 'feature'), 'accepted by squash'); await git('git', ['-C', worktree.path, 'add', '.']);
   await git('git', ['-C', worktree.path, '-c', 'user.name=Bee', '-c', 'user.email=bee@example.test', 'commit', '-m', 'accepted']);
   const landedHeadSha = (await git('git', ['-C', worktree.path, 'rev-parse', 'HEAD'])).stdout.trim();
-  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'landed', kind: 'corners', itemId: basename(worktree.path), agentId: 'a'.repeat(64), ended: true, landedHeadSha });
+  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'landed', kind: 'corners', itemId: basename(worktree.path), agentId: 'a'.repeat(64), ended: true, archived: true, landedHeadSha });
   await pruneArchivedCheckoutStorage(root, { inUse: async () => false });
   expect(await exists(worktree.path)).toBe(false);
   await expect(git('git', [`--git-dir=${worktree.gitCommonDir}`, 'show-ref', '--verify', 'refs/heads/feature/landed'])).rejects.toBeDefined();

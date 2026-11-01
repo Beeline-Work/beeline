@@ -105,13 +105,23 @@ describe('delivery-driven presence', () => {
       .toEqual([{ status: 'working', generation_id: 'real-helper' }]);
   });
   it('uses one bounded query and never resolves tags in historical messages during recovery', async () => {
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       SELECT lpad(n::text,64,'0'),$1,$2,repeat('@bee historical message ',100),
-         now()-interval '1 day'
-       FROM generate_series(1,21630) n`,
-      [ROOM, HUMAN],
-    );
+    // One insert of this history blocks the worker for minutes. Vitest's result
+    // report then times out and every later test in the file is dropped. Short
+    // writes leave room for that report. The per-test limit stays above the
+    // whole insert, because yielding also lets the default 20s limit fire.
+    const historyRows = 21630;
+    const batchRows = 1500;
+    for (let start = 1; start <= historyRows; start += batchRows) {
+      const end = Math.min(historyRows, start + batchRows - 1);
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at)
+         SELECT lpad(n::text,64,'0'),$1,$2,repeat('@bee historical message ',100),
+           now()-interval '1 day'
+         FROM generate_series($3::int,$4::int) n`,
+        [ROOM, HUMAN, start, end],
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     await presence.announce(ROOM, AGENT, { lifecycleId: 'current' });
     const query = vi.spyOn(database, 'query');
     await presence.observe();
@@ -141,7 +151,7 @@ describe('delivery-driven presence', () => {
     const ambiguityScan = nodes.find((node) => node.Alias === 'rival_member');
     expect(ambiguityScan).toBeDefined();
     expect(ambiguityScan!['Actual Loops']).toBe(0);
-  });
+  }, 180_000);
 
   it('serializes and coalesces overlapping observations across Rooms', async () => {
     await presence.stop();

@@ -66,8 +66,25 @@ finally:
  for fd in fds: os.close(fd)
 `;
 
-// macOS has no /proc or pidfds. Require an exact cwd attribution and
-// revalidate both the process birth stamp and cwd immediately before signalling.
+// Read NUL-delimited argv from the kernel: ps command text loses argument
+// boundaries and could mistake a quoted mention of a path for a worker.
+const DARWIN_ARGV = String.raw`
+import ctypes,json,struct,sys
+libc=ctypes.CDLL(None,use_errno=True)
+mib=(ctypes.c_int*3)(1,49,int(sys.argv[1])) # CTL_KERN, KERN_PROCARGS2
+size=ctypes.c_size_t(1024*1024)
+buf=ctypes.create_string_buffer(size.value)
+if libc.sysctl(mib,3,buf,ctypes.byref(size),None,0)!=0: raise OSError(ctypes.get_errno())
+data=buf.raw[:size.value]
+argc=struct.unpack_from('i',data)[0]
+pos=data.index(b'\0',4)+1
+while pos<len(data) and data[pos]==0: pos+=1
+args=data[pos:].split(b'\0')[:argc]
+print(json.dumps([a.decode(errors='replace') for a in args]))
+`;
+
+// macOS has no /proc or pidfds. Revalidate birth, command and exact
+// cwd/argv attribution immediately before each signal.
 async function stopDarwinProcesses(roots: string[]): Promise<number> {
   roots = roots.map(canonicalStoragePath);
   const snapshot = async () => {
@@ -85,6 +102,14 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
     } catch { return undefined; }
   };
   const inside = (path: string | undefined) => path !== undefined && roots.some(root => path === root || path.startsWith(`${root}/`));
+  const attributed = async (pid: number): Promise<boolean> => {
+    if (inside(await cwd(pid))) return true;
+    try {
+      const { stdout } = await exec('/usr/bin/python3', ['-c', DARWIN_ARGV, String(pid)]);
+      const args = JSON.parse(stdout) as string[];
+      return args.some(arg => arg.startsWith('/') && inside(canonicalStoragePath(arg)));
+    } catch { return false; }
+  };
   const rows = await snapshot();
   const protectedPids = new Set([process.pid]);
   let parent = rows.find(row => row.pid === process.pid)?.parent;
@@ -98,10 +123,10 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
   }
   let stopped = 0;
   for (const row of rows) {
-    if (protectedPids.has(row.pid) || brokers.has(row.pid) || row.uid !== process.getuid?.() || !inside(await cwd(row.pid))) continue;
+    if (protectedPids.has(row.pid) || brokers.has(row.pid) || row.uid !== process.getuid?.() || !await attributed(row.pid)) continue;
     for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
       const current = (await snapshot()).find(candidate => candidate.pid === row.pid);
-      if (!current || current.birth !== row.birth || current.command !== row.command || !inside(await cwd(row.pid))) break;
+      if (!current || current.birth !== row.birth || current.command !== row.command || !await attributed(row.pid)) break;
       try { process.kill(row.pid, signal); if (signal === 'SIGTERM') stopped++; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
       if (signal === 'SIGTERM') await new Promise(done => setTimeout(done, 500));

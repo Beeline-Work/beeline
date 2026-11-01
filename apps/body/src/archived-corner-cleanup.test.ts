@@ -1,8 +1,14 @@
 import { promisify } from 'node:util';
-import { readlinkSync } from 'node:fs';
+import { readlinkSync, readFileSync } from 'node:fs';
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   const mocked = (...args: any[]) => {
+    if (args[0] === '/usr/bin/python3' && args[1][1].includes('KERN_PROCARGS2')) {
+      const callback = args.at(-1);
+      try { callback(null, JSON.stringify(readFileSync(`/proc/${args[1][2]}/cmdline`, 'utf8').split('\0').filter(Boolean)), ''); }
+      catch (error) { callback(error, '', ''); }
+      return;
+    }
     if (args[0] === '/sbin/mount') args[0] = '/bin/mount';
     if (args[0] === '/usr/sbin/lsof') {
       const callback = args.at(-1);
@@ -41,7 +47,10 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
   const openRoot = resolve(root, 'beeline/corners/open');
   await mkdir(openRoot, { recursive: true });
   const openChild = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: openRoot, stdio: 'ignore' });
-  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: path, stdio: 'ignore' });
+  const unrelated = spawn(process.execPath, ['-e', `/* mentions ${path}/worker.cjs */ setInterval(()=>{},1000)`], { cwd: root, stdio: 'ignore' });
+  const worker = resolve(path, 'worker.cjs');
+  await writeFile(worker, 'setInterval(()=>{},1000)');
+  const child = spawn(process.execPath, [worker], { cwd: root, stdio: 'ignore' });
   await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
   const exited = new Promise<void>(done => child.once('exit', () => done()));
   await writeFile(resolve(path, '.gitignore'), 'build/\n');
@@ -65,10 +74,12 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
     await exited;
     expect(broker.exitCode).toBe(null);
     expect(broker.signalCode).toBe(null);
+    expect(unrelated.exitCode).toBe(null);
+    expect(unrelated.signalCode).toBe(null);
     expect(openChild.exitCode).toBe(null);
     expect(openChild.signalCode).toBe(null);
     expect(await access(openRoot).then(() => true, () => false)).toBe(true);
-  } finally { platformSpy.mockRestore(); broker.kill('SIGKILL'); openChild.kill('SIGKILL'); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
+  } finally { platformSpy.mockRestore(); unrelated.kill('SIGKILL'); broker.kill('SIGKILL'); openChild.kill('SIGKILL'); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
 }, 30_000);
 
 

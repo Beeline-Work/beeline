@@ -92,6 +92,20 @@ recovery- and consent-only (the server supplies attribution): operators use them
 explicitly request the device proof, or make a deliberate store submission -
 never for a routine release.
 
+The helper leg smoke-tests the exact local npm tarball before publishing it.
+A successful `npm publish`, or an already existing version, completes that leg
+without waiting for npm's registry listing. A publish failure still fails the
+release. The final job records the helper version and publishes the GitHub
+release even while npm is processing the package; npm makes that same version
+installable when processing finishes, with no release rerun required.
+
+Installed helpers use the verified bundles published earlier by the daemon
+promotion step to `https://usebeeline.app/dl/manifest.json`, independently of
+npm. The final release notification wakes connected helpers; their first socket
+registration also checks this channel. Downloads and activation follow the
+[helper update channel](cli-bundle-channel.md), so npm processing does not delay
+fleet updates.
+
 The initializer compares the pinned main SHA with every component's own source
 SHA in the newest published GitHub Release's `release.json` (see *Release
 memory* below) and writes `release-plan.json`. Its explicit path map is

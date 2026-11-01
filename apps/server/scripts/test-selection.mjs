@@ -373,9 +373,14 @@ export function changedFunctions(ts, fileName, text, lines, { existing, existing
     }
     const statement = source.statements.find((node) => position >= node.getStart(source) && position < node.end);
     if (!statement || typeOnly(ts, statement)) continue;
-    // A declaration the old file did not have: only changed code can use it.
+    // New function declarations are inert until called. Other declarations
+    // can execute initializers, decorators or static blocks during import,
+    // even when no existing function refers to their new binding.
     const declared = declaredNames(ts, statement);
-    if (existing && declared.length && declared.every((name) => !existing.has(name))) continue;
+    if (existing && declared.length && declared.every((name) => !existing.has(name))) {
+      if (!ts.isFunctionDeclaration(statement)) fileLevel = true;
+      continue;
+    }
     if (exportedDeclaration(ts, statement) && declared.length) for (const name of declared) bindings.add(name);
     else if (loadLevel(ts, statement)) fileLevel = true;
     else {
@@ -415,8 +420,8 @@ function fileNames(ts, fileName, text) {
 }
 
 // One entry per changed path: status, and for code, the changed functions.
-// Functions and declarations new in this diff ran in no test on main, and
-// whatever calls them changed too, so they add nothing to select.
+// New function declarations ran in no test on main, and their callers changed
+// too. New executable declarations can affect every test that loads the file.
 export function describeChange(ts, { path, status, before, after, hunks }) {
   if (status !== 'M' || !codePattern.test(path)) return { path, status, fileLevel: true, names: [] };
   const previous = fileNames(ts, path, before);

@@ -180,12 +180,41 @@ test('a changed import or private constant selects the functions that use it, th
   assert.deepEqual(callback, { fileLevel: false, moduleLevel: false, names: ['(anonymous)'] });
 });
 
-test('new functions and declarations select nothing; code added inside an old function selects it', () => {
+test('new declarations select loading tests; code added inside an old function still selects it', () => {
   const before = 'export function show() {\n  return 1;\n}\n';
   const after = 'export const STEP = 2;\nexport function added() { return STEP; }\nexport function show() {\n  const twice = () => STEP * 2;\n  return twice();\n}\n';
   const diff = '@@ -0,0 +1,2 @@\n+export const STEP = 2;\n+export function added() { return STEP; }\n@@ -2 +4,2 @@\n-  return 1;\n+  const twice = () => STEP * 2;\n+  return twice();';
   assert.deepEqual(describeChange(ts, { path: 'apps/server/src/rooms.ts', status: 'M', before, after, hunks: parseHunks(diff) }),
-    { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: false, moduleLevel: false, names: ['show'] });
+    { path: 'apps/server/src/rooms.ts', status: 'M', fileLevel: true, moduleLevel: false, names: ['show'] });
+});
+
+test('new module initializers select the importing test that catches their failure (INITIALIZER-1)', () => {
+  const path = 'apps/server/src/rooms.ts';
+  const before = 'export function show() { return 1; }\n';
+  const loader = 'apps/server/src/rooms.test.ts';
+  const coverage = buildMap([{ test: loader, sources: { [path]: ['show'] }, reads: [] }],
+    { commit: 'abc', files: [path] });
+  const directory = mkdtempSync(join(tmpdir(), 'selection-initializer-'));
+  const module = join(directory, 'rooms.mjs');
+  const importingTest = join(directory, 'rooms.test.mjs');
+  writeFileSync(importingTest, "import assert from 'node:assert/strict';\nimport { show } from './rooms.mjs';\nassert.equal(show(), 1);\n");
+  writeFileSync(module, before);
+  assert.equal(spawnSync(process.execPath, [importingTest]).status, 0);
+  for (const addition of ['const registered = JSON.parse("invalid");',
+    'class Registered { static value = JSON.parse("invalid"); }']) {
+    const after = before + addition + '\n';
+    const change = describeChange(ts, { path, status: 'M', before, after, hunks: parseHunks('@@ -1,0 +2 @@') });
+    const selection = selectTests({ map: coverage, changes: [change], alwaysRun: [], testFiles: [loader] });
+    assert.deepEqual(selection.files, [loader], addition);
+    writeFileSync(module, after);
+    const result = spawnSync(process.execPath, [importingTest], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout + result.stderr, /SyntaxError/);
+  }
+  const inert = describeChange(ts, { path, status: 'M', before,
+    after: before + 'export function added() { return JSON.parse("invalid"); }\n',
+    hunks: parseHunks('@@ -1,0 +2 @@') });
+  assert.deepEqual(selectTests({ map: coverage, changes: [inert], alwaysRun: [], testFiles: [loader] }).files, []);
 });
 
 test('a changed export selects the importer functions that use it, and gives up on untraceable importers', () => {

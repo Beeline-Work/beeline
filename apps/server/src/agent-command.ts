@@ -23,6 +23,7 @@ import type {
   RoomInboxResult,
 } from '@beeline/api-contract/daemon';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
+import { IMPLEMENTER_RELEASED_REASON } from '@beeline/api-contract/daemon';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
@@ -1226,9 +1227,6 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   }
   return false;
 }
-
-/** Wake reason for an implementer the owner swapped out; the helper runs no model turn for it. */
-export const IMPLEMENTER_RELEASED_REASON = 'implementer_released';
 
 /**
  * A swapped-out implementer stops writing here. Its running turn is stopped

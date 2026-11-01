@@ -120,3 +120,102 @@ it('leaving reclaims only this agents published copy even when Room access has b
     await expect(access(peer!.path)).resolves.toBeUndefined();
   } finally { await coordinator.shutdown(); await rm(root, { recursive: true, force: true }); }
 });
+
+async function cornerFixture(prefix: string, implementerAgentId: (self: string) => string) {
+  const root = await mkdtemp(resolve(tmpdir(), prefix));
+  const identity = identityFromKey('11'.repeat(32), 'Bee');
+  const runtime = { agent: { name: 'Bee', publicKey: identity.publicKey, secretKeyHex: '11'.repeat(32) },
+    rooms: [], communityId: 'workspace', supervisorRoot: root,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'fixture' } } as AgentRuntimeRecord;
+  const remote = resolve(root, 'remote.git'), roomCheckout = resolve(root, 'room');
+  const posted: string[] = [];
+  const execute = vi.fn(async (name: string, input: { text?: string }) => {
+    if (name === 'getCornerRestoreState') return { cornerId: 'corner', objective: 'Fix it', closeRequested: false,
+      implementerAgentId: implementerAgentId(identity.publicKey), brief: { repositoryWork: true } };
+    if (name === 'getRoomRepositoryState') return { resolution: 'repository', key: 'owner/repo', remote: `file://${remote}` };
+    if (name === 'getRoomGitHubToken') return { token: 'fixture', expiresAt: Date.now() + 60_000 };
+    if (name === 'postRoomMessage') posted.push(input.text!);
+    return {};
+  });
+  const coordinator = new RoomRuntimeCoordinator(runtime, resolve(root, 'runtime.json'), { workspaceRoot: root } as never,
+    { daemonApi: { execute } as unknown as DaemonApiClient });
+  let loop!: MonolithCornerTurnLoop;
+  const run = vi.spyOn(MonolithCornerTurnLoop.prototype, 'run').mockImplementation(function (this: MonolithCornerTurnLoop) {
+    loop = this;
+    const signal = (this as unknown as { options: { signal: AbortSignal } }).options.signal;
+    return new Promise<void>(done => signal.addEventListener('abort', () => done(), { once: true }));
+  });
+  const internal = coordinator as unknown as { startCorner(input: { cornerId: string; parentRoomId: string }): Promise<void>;
+    materializeRoomCheckout(): Promise<string>; grantRunnerEndpoint(): Promise<undefined> };
+  vi.spyOn(internal, 'materializeRoomCheckout').mockResolvedValue(roomCheckout);
+  vi.spyOn(internal, 'grantRunnerEndpoint').mockResolvedValue(undefined);
+  await exec('git', ['init', '-b', 'main', roomCheckout]);
+  await writeFile(resolve(roomCheckout, 'file'), 'source');
+  await exec('git', ['-C', roomCheckout, 'add', '.']);
+  await exec('git', ['-C', roomCheckout, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base']);
+  await exec('git', ['clone', '--bare', roomCheckout, remote]);
+  await internal.startCorner({ cornerId: 'corner', parentRoomId: 'parent' });
+  const turn = loop as unknown as {
+    withCheckout(work: () => Promise<void>): Promise<void>;
+    releaseImplementer(requestId: string): Promise<void>;
+    retainBackgroundClient(client: unknown): Promise<void>;
+    commandContext: { current?: { reason: string } };
+    options: { worktreePath: string; repository: { readOnly: boolean } };
+  };
+  return {
+    root, remote, roomCheckout, identity, turn, posted,
+    own: agentCornerCheckoutPaths(root, 'corner', identity.publicKey),
+    close: async () => { run.mockRestore(); await coordinator.shutdown(); await rm(root, { recursive: true, force: true }); },
+  };
+}
+
+it('a commander or tagged agent reads the Room checkout; an order gives it a private copy', async () => {
+  const fixture = await cornerFixture('corner-commander-', () => 'c'.repeat(64));
+  const { turn, own, roomCheckout } = fixture;
+  try {
+    // Activation and an ordinary turn of a non-implementer take no copy.
+    await expect(access(own.path)).rejects.toThrow();
+    await turn.withCheckout(async () => {
+      expect(turn.options.worktreePath).toBe(roomCheckout);
+      expect(turn.options.repository.readOnly).toBe(true);
+    });
+    await expect(access(own.path)).rejects.toThrow();
+    // An order makes it a second writer with its own copy and branch checkout.
+    turn.commandContext.current = { reason: 'order' };
+    await turn.withCheckout(async () => {
+      expect(turn.options.worktreePath).toBe(own.path);
+      expect(turn.options.repository.readOnly).toBe(false);
+    });
+    expect((await exec('git', ['-C', own.path, 'branch', '--show-current'])).stdout.trim()).toMatch(/^feature\/corner-/);
+    // Its later turns keep that copy, so its edits are never stranded.
+    turn.commandContext.current = { reason: 'agent_tag' };
+    await turn.withCheckout(async () => expect(turn.options.worktreePath).toBe(own.path));
+  } finally { turn.commandContext.current = undefined; await fixture.close(); }
+});
+
+it('a swapped-out implementer stops its background jobs, pushes unpushed work to a backup branch, and deletes its copy', async () => {
+  const fixture = await cornerFixture('corner-swap-', self => self);
+  const { turn, own, remote, posted } = fixture;
+  try {
+    await turn.withCheckout(async () => expect(turn.options.worktreePath).toBe(own.path));
+    await writeFile(resolve(own.path, 'committed'), 'local commit');
+    await exec('git', ['-C', own.path, 'add', '.']);
+    await exec('git', ['-C', own.path, 'commit', '-m', 'unpushed']);
+    await writeFile(resolve(own.path, 'edit'), 'uncommitted');
+    const { EventEmitter } = await import('node:events');
+    const job = Object.assign(new EventEmitter(), { hasBackgroundTools: true, stop: vi.fn(async () => undefined) });
+    void turn.retainBackgroundClient(job);
+
+    await turn.releaseImplementer('release-request');
+
+    expect(job.stop).toHaveBeenCalledOnce();
+    await expect(access(own.path)).rejects.toThrow();
+    await expect(access(own.gitCommonDir)).rejects.toThrow();
+    const backup = `beeline/backup/corner-${fixture.identity.publicKey.slice(0, 8)}`;
+    const files = (await exec('git', [`--git-dir=${remote}`, 'ls-tree', '--name-only', backup])).stdout.split('\n');
+    expect(files).toEqual(expect.arrayContaining(['committed', 'edit', 'file']));
+    expect(posted).toEqual([expect.stringContaining(`to branch ${backup}`)]);
+    expect(posted[0]).toContain('1 background job session');
+    expect(posted[0]).toContain(`deleted my copy at ${own.path}`);
+  } finally { await fixture.close(); }
+});

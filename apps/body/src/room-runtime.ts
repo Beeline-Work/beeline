@@ -494,6 +494,37 @@ async function originContains(gitCommonDir: string, head: string): Promise<boole
   return Boolean(result.stdout.trim());
 }
 
+/**
+ * Before a swapped-out implementer's copy is deleted, every unpushed change
+ * goes to a backup branch on origin. The corner branch is never written, so
+ * the new implementer starts from what was pushed. Returns what was done.
+ */
+export async function saveCheckoutBeforeRelease(input: {
+  path: string; gitCommonDir: string; cornerId: string; agentId: string; env: NodeJS.ProcessEnv;
+}): Promise<string> {
+  const git = (args: string[]) => execFileAsync('git', ['-C', input.path, ...args],
+    { env: input.env, encoding: 'utf8', timeout: 120_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
+  const dirty = (await git(['status', '--porcelain=v1', '--untracked-files=all'])).stdout.trim();
+  if (dirty) {
+    await git(['add', '--all']);
+    await git(['commit', '--no-verify', '--quiet', '-m', 'Save unpushed work before implementer swap']);
+  }
+  const head = (await git(['rev-parse', '--verify', 'HEAD'])).stdout.trim();
+  const stash = await git(['rev-parse', '--verify', '--quiet', 'refs/stash']).then(r => r.stdout.trim(), () => '');
+  const unpushed = [head, ...(stash ? [stash] : [])];
+  const pending: string[] = [];
+  for (const commit of unpushed) if (!await originContains(input.gitCommonDir, commit)) pending.push(commit);
+  if (!pending.length) return 'I had no unpushed work.';
+  const backup = `beeline/backup/${input.cornerId.slice(0, 12)}-${input.agentId.slice(0, 8)}`;
+  const refspecs = pending.map((commit, index) =>
+    `${commit}:refs/heads/${backup}${index ? '-stash' : ''}`);
+  // No force: a repeated swap may only extend an earlier backup. A refused
+  // push throws, and the caller keeps the copy.
+  await git(['push', 'origin', ...refspecs]);
+  const what = dirty ? 'uncommitted edits (saved as one commit)' : 'unpushed commits';
+  return `I pushed my ${what}${stash ? ' and stash' : ''} to branch ${backup} (${head.slice(0, 12)}).`;
+}
+
 interface DesiredCorner {
   cornerId: string;
   parentRoomId: string;
@@ -1369,14 +1400,22 @@ export class RoomRuntimeCoordinator {
         : undefined;
       let worktree: { path: string; gitCommonDir: string } | undefined;
       let readCheckout: { path: string; gitCommonDir: string } | undefined;
-      const prepareCheckout = async (writable: boolean, implementerAgentId = restore.implementerAgentId) => {
+      const ownCheckout = repositoryBacked
+        ? agentCornerCheckoutPaths(this.runtime.supervisorRoot, corner.cornerId, this.agent.publicKey)
+        : undefined;
+      // Only a writer gets a private copy: the implementer, an agent given
+      // work here, or one that already holds a copy with its own edits. Other
+      // turns read the Room's checkout and never clone.
+      const prepareCheckout = async (repositoryWork: boolean, implementerAgentId = restore.implementerAgentId, assigned = false) => {
+        const writable = repositoryWork && (assigned || !implementerAgentId ||
+          implementerAgentId === this.agent.publicKey || existsSync(resolve(ownCheckout!.path, '.git')));
         if (!writable) {
           if (!readCheckout) {
             const path = await this.materializeRoomCheckout(corner.parentRoomId, repository);
             const common = (await execFileAsync('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
             readCheckout = { path, gitCommonDir: common };
           }
-          return readCheckout;
+          return { ...readCheckout, writable };
         }
         if (!worktree || !existsSync(resolve(worktree.path, '.git'))) {
           worktree = await this.materializeCornerWorktree({
@@ -1390,10 +1429,33 @@ export class RoomRuntimeCoordinator {
           if (running) running.worktree = { ...worktree, cornerId: corner.cornerId,
             branch: featureBranch!, parentRoomId: corner.parentRoomId, token: '' };
         }
-        return worktree;
+        return { ...worktree, writable };
+      };
+      const releaseCheckout = async (): Promise<string> => {
+        const own = worktree ?? (existsSync(resolve(ownCheckout!.path, '.git')) ? ownCheckout! : undefined);
+        if (!own) return 'I had no copy of this corner\'s code on this machine.';
+        const { token } = await this.options.daemonApi.execute('getRoomGitHubToken', { roomId: corner.parentRoomId });
+        let saved: string;
+        try {
+          saved = await saveCheckoutBeforeRelease({
+            path: own.path, gitCommonDir: own.gitCommonDir, cornerId: corner.cornerId,
+            agentId: this.agent.publicKey, env: githubGitEnv(token),
+          });
+        } catch (error) {
+          const why = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+          return `I could not push my unpushed work (${why}), so I kept my copy at ${own.path}.`;
+        }
+        await this.reapCornerWorktree({ ...own, cornerId: corner.cornerId, branch: featureBranch!,
+          parentRoomId: corner.parentRoomId, token: '' });
+        if (existsSync(own.path)) return `${saved} My copy at ${own.path} is still on disk; cleanup retries it.`;
+        worktree = undefined;
+        const running = this.running.get(corner.cornerId);
+        if (running) running.worktree = undefined;
+        return `${saved} I deleted my copy at ${own.path}.`;
       };
       const repositoryReadOnly = Boolean(restore.brief) && !cornerHasRepositoryWork(restore.brief);
       const checkout = repositoryBacked ? await prepareCheckout(!repositoryReadOnly) : undefined;
+      const activatedReadOnly = checkout ? !checkout.writable : repositoryReadOnly;
       const workspacePath = checkout?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!checkout) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       await writePrivateFileAtomically(
@@ -1423,11 +1485,12 @@ export class RoomRuntimeCoordinator {
         ...(checkout
           ? {
               prepareCheckout,
+              releaseCheckout,
               repository: {
                 featureBranch: featureBranch!,
                 targetBranch: targetBranch!,
                 gitCommonDir: checkout.gitCommonDir,
-                readOnly: repositoryReadOnly,
+                readOnly: activatedReadOnly,
                 githubToken: granted!.token,
               },
             }
@@ -1498,7 +1561,9 @@ export class RoomRuntimeCoordinator {
       console.log(
         worktree
           ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
-          : `[thin-core] serving repo-less corner ${corner.cornerId} at ${workspacePath}`,
+          : repositoryBacked
+            ? `[thin-core] serving corner ${corner.cornerId} read-only at ${workspacePath}`
+            : `[thin-core] serving repo-less corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
       this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');

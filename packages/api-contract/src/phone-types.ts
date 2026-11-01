@@ -90,10 +90,6 @@ export type CornerLifecycleView = {
 /** The server-owned corner state vocabulary. Clients render this field; they
  * never derive a second state from lifecycle, PR, check, or turn facts. */
 export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'archived';
-/** Why a working corner has not started the turn yet. `queued` means the
- * helper is connected and the order is waiting its turn. `offline` means
- * that helper has no live connection, so the order waits for it to come back. */
-export type CornerWorkQueue = 'queued' | 'offline';
 export type CornerBlocker = {
   readonly kind: 'message' | 'merge-hold' | 'report' | 'ci';
   readonly url?: string;
@@ -817,10 +813,6 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
-  /** Present while `state` is working because a command is still unclaimed. */
-  readonly queue?: CornerWorkQueue;
-  /** Room name of the turn this queued worker is behind. */
-  readonly queueBehind?: string;
   readonly reason?: CornerStateReason;
   readonly blocker?: CornerBlocker;
   readonly itemId?: string;
@@ -1171,10 +1163,6 @@ export type CornerListItem = {
   readonly corner: RoomViewHeader;
   readonly lifecycle: CornerLifecycleView;
   readonly state: CornerState;
-  /** Present while `state` is working because a command is still unclaimed. */
-  readonly queue?: CornerWorkQueue;
-  /** Room name of the turn this queued worker is behind. */
-  readonly queueBehind?: string;
   /** Timestamp of the fact that produced `state`. A working state uses the
    * latest child turn receipt rather than the corner metadata timestamp. */
   readonly stateAt?: number;

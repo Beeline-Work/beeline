@@ -80,16 +80,21 @@ finally:
 const DARWIN_ARGV = String.raw`
 import ctypes,json,struct,sys
 libc=ctypes.CDLL(None,use_errno=True)
-mib=(ctypes.c_int*3)(1,49,int(sys.argv[1])) # CTL_KERN, KERN_PROCARGS2
-size=ctypes.c_size_t(1024*1024)
-buf=ctypes.create_string_buffer(size.value)
-if libc.sysctl(mib,3,buf,ctypes.byref(size),None,0)!=0: raise OSError(ctypes.get_errno())
-data=buf.raw[:size.value]
-argc=struct.unpack_from('i',data)[0]
-pos=data.index(b'\0',4)+1
-while pos<len(data) and data[pos]==0: pos+=1
-args=data[pos:].split(b'\0')[:argc]
-print(json.dumps([a.decode(errors='replace') for a in args]))
+def argv(pid):
+    mib=(ctypes.c_int*3)(1,49,pid) # CTL_KERN, KERN_PROCARGS2
+    size=ctypes.c_size_t(1024*1024)
+    buf=ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib,3,buf,ctypes.byref(size),None,0)!=0: raise OSError(ctypes.get_errno())
+    data=buf.raw[:size.value]
+    argc=struct.unpack_from('i',data)[0]
+    pos=data.index(b'\0',4)+1
+    while pos<len(data) and data[pos]==0: pos+=1
+    return [a.decode(errors='replace') for a in data[pos:].split(b'\0')[:argc]]
+result={}
+for pid in json.loads(sys.argv[1]):
+    try: result[str(pid)]=argv(pid)
+    except (OSError,ValueError): pass # Exited or inaccessible: never attribute.
+print(json.dumps(result))
 `;
 
 // macOS has no /proc or pidfds. Revalidate birth, command and exact
@@ -113,8 +118,8 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
   const attributed = async (pid: number): Promise<boolean> => {
     if ((await files(pid)).some(inside)) return true;
     try {
-      const { stdout } = await exec('/usr/bin/python3', ['-c', DARWIN_ARGV, String(pid)]);
-      const args = JSON.parse(stdout) as string[];
+      const { stdout } = await exec('/usr/bin/python3', ['-c', DARWIN_ARGV, JSON.stringify([pid])]);
+      const args = (JSON.parse(stdout) as Record<string, string[]>)[pid] ?? [];
       return args.some(arg => arg.startsWith('/') && inside(canonicalStoragePath(arg)));
     } catch { return false; }
   };
@@ -129,9 +134,24 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
     changed = false;
     for (const row of rows) if (brokers.has(row.parent) && !brokers.has(row.pid)) { brokers.add(row.pid); changed = true; }
   }
+  // One host-wide file inventory and one kernel argv collector avoid paying
+  // lsof/Python startup for every unrelated process while holding storage idle.
+  const candidates = rows.filter(row => !protectedPids.has(row.pid) && !brokers.has(row.pid) && row.uid === process.getuid?.());
+  if (!candidates.length) return 0;
+  const fileOwners = new Set<number>();
+  {
+    const { stdout } = await exec('/usr/sbin/lsof', ['-nP', '-a', '-u', String(process.getuid!()), '-Fpn'], { maxBuffer: 32 * 1024 * 1024 });
+    let pid: number | undefined;
+    for (const line of stdout.split('\n')) {
+      if (line.startsWith('p')) pid = Number(line.slice(1));
+      else if (pid !== undefined && line.startsWith('n/') && inside(canonicalStoragePath(line.slice(1)))) fileOwners.add(pid);
+    }
+  }
+  const { stdout: argvOutput } = await exec('/usr/bin/python3', ['-c', DARWIN_ARGV, JSON.stringify(candidates.map(row => row.pid))], { maxBuffer: 32 * 1024 * 1024 });
+  const argumentsByPid = JSON.parse(argvOutput) as Record<string, string[]>;
   let stopped = 0;
-  for (const row of rows) {
-    if (protectedPids.has(row.pid) || brokers.has(row.pid) || row.uid !== process.getuid?.() || !await attributed(row.pid)) continue;
+  for (const row of candidates) {
+    if (!fileOwners.has(row.pid) && !(argumentsByPid[row.pid] ?? []).some(arg => arg.startsWith('/') && inside(canonicalStoragePath(arg)))) continue;
     for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
       const current = (await snapshot()).find(candidate => candidate.pid === row.pid);
       if (!current || current.birth !== row.birth || current.command !== row.command || !await attributed(row.pid)) break;

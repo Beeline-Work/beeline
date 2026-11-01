@@ -2100,14 +2100,18 @@ describe('list roles', () => {
     expect(await pendingCommandsFor(REVIEWER)).toBeGreaterThan(0);
   });
 
-  it('rejects assign_workflow_role targeting a person or someone outside the Room', async () => {
+  it.each([OWNER, OUTSIDER])('rejects assign_workflow_role targeting human/nonmember %s as an expected refusal', async (targetAgentId) => {
+    if (targetAgentId === OUTSIDER) {
+      await database.query(`UPDATE identities SET kind='agent' WHERE id=$1`, [OUTSIDER]);
+    }
     await reportPresence(WORKER_A, 'offline');
     await reportPresence(WORKER_B, 'offline');
     const { runId } = await startedListRun();
     const command = await commandFor(IMPLEMENTER);
-    await expect(
-      assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: OWNER }),
-    ).rejects.toThrow('is not a current agent member of this Room');
+    const refusal = assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId });
+    await expect(refusal).rejects.toThrow(`${targetAgentId} is not a current agent member of this Room`);
+    await expect(refusal).rejects.toBeInstanceOf(ExpectedRefusalError);
+    expect((await listRunCard(runId)).roleBindings.worker).toBeUndefined();
   });
 
   it('assign_workflow_role binds the Room member a handle from the member list names', async () => {

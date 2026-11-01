@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it } from 'vitest';
-import { PostgresDatabase, type ClosableDatabase } from './database.js';
+import { migrate, PostgresDatabase, type ClosableDatabase } from './database.js';
 import { migratedDatabase } from './test-support.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
 import { LiveHub } from './live.js';
@@ -35,6 +35,7 @@ async function fixture(agentId = JELLYBEAN) {
     db = new PostgresDatabase('',5,{mode:'migration',pool:new Pool({connectionString:postgresUrl,
       options:`-c search_path=${schema},public`,max:5})});
     cleanup = async () => { await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); };
+    await migrate(db);
   } else db = await migratedDatabase();
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Jellybean')`,[OWNER,JELLYBEAN]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[JELLYBEAN,OWNER]);

@@ -521,7 +521,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             ? `${push} Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
             : `${push} Open the pull request with gh.`),
         repositoryWork && '4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.',
-        repositoryWork && 'Add tests only if they fail without your change, even for new behavior. Read tests first; extend or parameterize instead of duplicating the same failure. List skipped tests and why in the handoff or PR body.',
+        repositoryWork && 'Add tests only if they fail without your change, even for new behavior. Read tests first; extend or parameterize instead of duplicating the same failure. List skipped tests and why in PR body or handover.',
         repositoryWork ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
         repositoryWork &&
           'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',

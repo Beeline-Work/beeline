@@ -882,7 +882,7 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
       for (const rule of [
         'Add tests only if they fail without your change, even for new behavior.',
         'Read tests first; extend or parameterize instead of duplicating the same failure.',
-        'List skipped tests and why in the handoff or PR body.',
+        'List skipped tests and why in PR body or handover.',
       ]) {
         expect(text.split(rule), name).toHaveLength(2);
         expect(text.indexOf(rule), name).toBeGreaterThan(text.indexOf('Implementer rules:'));

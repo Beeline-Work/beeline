@@ -11972,6 +11972,47 @@ describe('monolith integration', () => {
     expect((await operation('revokeAgentGrant', { grantId: third.grantId })).status).toBe(409);
   });
 
+  it.each(['pending', 'connecting'] as const)(
+    'CONNECTOR-OFFER-1: reuses a %s offer and preserves agent and intent boundaries', async (status) => {
+      await daemonOperation('postAgentMachineReport', {
+        machineId: 'connector-offer-repro', machineName: 'test-machine',
+      });
+      const input = { roomId: ROOM, connectorType: 'trusty-squire', reason: 'complete setup' };
+      const created = await daemonOperation('offerConnector', input);
+      expect(created.status).toBe(200);
+      const offer = await created.json() as { offerId: string; messageId: string };
+      await database.query(`UPDATE connector_offers SET status=$2 WHERE id=$1`, [offer.offerId, status]);
+      const originalCard = (await database.query(`SELECT card FROM messages WHERE id=$1`, [offer.messageId])).rows;
+
+      const repeated = await daemonOperation('offerConnector', input);
+      expect(await repeated.json()).toMatchObject({ offerId: offer.offerId, messageId: offer.messageId, joined: true });
+      expect(repeated.status).toBe(200);
+
+      // An existing reconnect/switch card must not be joined by an add request.
+      for (const intent of ['reconnect', 'switch']) {
+        await database.query(`UPDATE connector_offers SET intent=$2 WHERE id=$1`, [offer.offerId, intent]);
+        const incompatible = await daemonOperation('offerConnector', input);
+        expect(incompatible.status).toBe(409);
+        expect(await incompatible.json()).toMatchObject({ error: expect.stringContaining('another Trusty Squire card is already open') });
+      }
+      await database.query(`UPDATE connector_offers SET intent='add' WHERE id=$1`, [offer.offerId]);
+
+      const other = 'd'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Fixture','fixture')`, [other]);
+      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [other, HUMAN]);
+      await database.query(`UPDATE connector_offers SET agent_id=$2 WHERE id=$1`, [offer.offerId, other]);
+      const differentAgent = await daemonOperation('offerConnector', input);
+      expect(differentAgent.status).toBe(409);
+      expect(await differentAgent.json()).toMatchObject({ error: expect.stringContaining('already offered Trusty Squire here') });
+
+      expect((await database.query(`SELECT id,status,message_id FROM connector_offers WHERE room_id=$1`, [ROOM])).rows)
+        .toEqual([{ id: offer.offerId, status, message_id: offer.messageId }]);
+      expect((await database.query(`SELECT card FROM messages WHERE id=$1`, [offer.messageId])).rows).toEqual(originalCard);
+      expect((await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='connector-offer'`, [ROOM])).rows)
+        .toEqual([{ id: offer.messageId }]);
+    },
+  );
+
   it('runs the connector offer loop (R5): card addressed to the person, one affirmative tap gated to addressee or manager, pairing on the offering machine, settled card naming who acted, hidden resume line', async () => {
     const send = vi.fn(async () => undefined);
     const pushes = new PushDeliveryLoop(database, { send });

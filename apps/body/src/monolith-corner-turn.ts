@@ -1,5 +1,5 @@
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
-import { withKernelLock } from './kernel-lock.js';
+import { tryWithKernelLock } from './kernel-lock.js';
 import { extraDependencyRoots, dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
 import { roomPermissionDecision } from './monolith-room-turn.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
@@ -2710,7 +2710,7 @@ export class MonolithCornerTurnLoop {
     // `apps/mobile` has its own lockfile and store; harvesting it is what lets
     // the next fresh corner skip the whole mobile install.
     const mobilePath = resolve(worktreePath, 'apps/mobile');
-    const harvest = (input: { worktreePath: string; storeRoot: string }) => withKernelLock(`dependency-store:${resolve(input.storeRoot)}`, () => harvestWarmNodeModules(input));
+    const harvest = (input: { worktreePath: string; storeRoot: string }) => tryWithKernelLock(`dependency-store:${resolve(input.storeRoot)}`, () => harvestWarmNodeModules(input));
     const jobs = [
       harvest({
         worktreePath,
@@ -2728,6 +2728,7 @@ export class MonolithCornerTurnLoop {
     const run = Promise.all(jobs)
       .then((outcomes) => {
         for (const outcome of outcomes) {
+          if (!outcome) continue; // Busy store: cache reuse never queues a turn or shutdown.
           if (outcome.reason === 'already-warm' || outcome.reason === 'no-lockfile') continue;
           console.log(
             `[thin-core] corner ${cornerId} warm node_modules harvest: ${outcome.reason}${

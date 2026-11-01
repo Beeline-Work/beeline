@@ -4199,11 +4199,11 @@ describe('thin monolith corner turn', () => {
     expect(repositorySystemPrompt).not.toContain('Run npm run corner:prepare first.');
     expect(repositorySystemPrompt).not.toContain('corner:prepare');
     expect(repositorySystemPrompt).toContain("Follow beeline-triage");
-    expect(repositorySystemPrompt).toContain('the brief records a real-target Reproduction <id>');
+    expect(repositorySystemPrompt).toContain('Bugfix briefs need a real-target Reproduction <id>');
     expect(repositorySystemPrompt).toContain(
-      'or why it is not feasible and the closest stand-in',
+      'or why infeasible and the closest stand-in',
     );
-    expect(repositorySystemPrompt).toContain('explain any unavailable real-target proof and its stand-in');
+    expect(repositorySystemPrompt).toContain('why real-target proof is unavailable and its stand-in');
     expect(repositorySystemPrompt).not.toContain('do not write a fix for a bug you have not seen');
     expect(repositorySystemPrompt).not.toContain('report_to_room');
     expect(repositorySystemPrompt).not.toMatch(/report .* to the Room/i);

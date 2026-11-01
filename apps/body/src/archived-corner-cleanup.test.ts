@@ -94,3 +94,27 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
     await exited;
   } finally { vi.unstubAllGlobals(); child.kill('SIGKILL'); await exited; await rm(root, { recursive: true, force: true }); }
 }, 30_000);
+
+it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'] as const)('ARCHIVED-OUTPUT-1 retries interrupted private repository cleanup (%s)', async (platform) => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-interrupted-'));
+  const itemId = 'b'.repeat(64);
+  const repo = resolve(root, 'beeline/repositories', `agent-corner-${itemId}.git`);
+  execFileSync('git', ['init', '--bare', '-q', repo]);
+  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'closed', itemId, kind: 'corners' });
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: repo, stdio: 'ignore' });
+  await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
+  vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
+  try {
+    for (const states of [[], [{ roomId: 'closed', archived: false }]]) {
+      await reclaimArchivedMemberStorage(root, states);
+      await pruneArchivedCheckoutStorage(root);
+      await expect(access(repo)).resolves.toBeUndefined();
+      expect(child.signalCode).toBe(null);
+    }
+    await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'closed', itemId, kind: 'corners', archived: true });
+    await pruneArchivedCheckoutStorage(root);
+    expect(await access(repo).then(() => true, () => false)).toBe(false);
+    await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true);
+    await reclaimArchivedMemberStorage(root, [{ roomId: 'closed', archived: true }]);
+  } finally { vi.unstubAllGlobals(); child.kill('SIGKILL'); await rm(root, { recursive: true, force: true }); }
+}, 30_000);

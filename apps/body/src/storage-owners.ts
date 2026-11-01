@@ -66,9 +66,7 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
     const [commonDir, branch] = local;
     const repositories = canonicalStoragePath(resolve(supervisorRoot, 'beeline/repositories'));
     if (commonDir && canonicalStoragePath(commonDir).startsWith(`${repositories}/`)) {
-      if (/^agent-corner-[a-f0-9]{64}\.git$/.test(commonDir.split('/').pop() ?? '')) {
-        await rm(commonDir, { recursive: true, force: true });
-      } else if (branch?.startsWith('refs/heads/')) {
+      if (!/^agent-corner-[a-f0-9]{64}\.git$/.test(commonDir.split('/').pop() ?? '') && branch?.startsWith('refs/heads/')) {
         await execFileAsync('git', [`--git-dir=${commonDir}`, 'worktree', 'prune', '--expire=now']);
         const repoHead = await execFileAsync('git', [`--git-dir=${commonDir}`, 'symbolic-ref', 'HEAD']).then(result => result.stdout.trim(), () => undefined);
         if (repoHead !== branch) await execFileAsync('git', [`--git-dir=${commonDir}`, 'branch', '--delete', '--force', '--', branch.slice('refs/heads/'.length)])

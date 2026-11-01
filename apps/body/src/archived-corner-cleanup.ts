@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { lstat, readdir, rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { ordinaryDirectory, storageTree, hasMount, type WholeStorageOptions, type StorageReclaimEntry } from './helper-storage.js';
 import { stopKeptCornerEmulator } from './corner-emulator.js';
 import { canonicalStoragePath } from './storage-filesystem.js';
@@ -113,8 +113,13 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
 export async function removeArchivedCornerData(supervisorRoot: string, cornerId: string, checkout: string, options: WholeStorageOptions = {}): Promise<StorageReclaimEntry[]> {
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(cornerId)) throw new Error('invalid archived corner id');
   const base = resolve(supervisorRoot, 'beeline');
-  if (!checkout.startsWith(`${base}/corners/`)) throw new Error('invalid archived checkout root');
+  if (resolve(checkout) !== resolve(base, 'corners', basename(checkout))) throw new Error('invalid archived checkout root');
   const roots = [checkout];
+  // The private repository has the same deterministic key as the recorded
+  // checkout. Recover it without Git metadata after an interrupted deletion.
+  const itemId = basename(checkout);
+  if (/^[a-f0-9]{64}$/.test(itemId))
+    roots.push(resolve(base, 'repositories', `agent-corner-${itemId}.git`));
   for (const agent of await readdir(resolve(base, 'agents')).catch(() => [])) {
     if (/^[a-f0-9]{64}$/.test(agent)) roots.push(resolve(base, 'agents', agent, 'rooms', cornerId));
   }

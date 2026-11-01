@@ -6211,21 +6211,6 @@ export class PhoneService {
    */
   private async cancelAgentTurn(input: Input<'cancelAgentTurn'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    // Anyone in the Room may stop any agent turn there; a Room role never
-    // changes that. Membership is checked again under lock before settling.
-    const running = (
-      await this.database.query<{ author_id: string }>(
-        `SELECT trigger.author_id
-         FROM agent_turns turn
-         JOIN agent_commands command ON command.room_id=turn.room_id AND command.agent_id=turn.agent_id
-           AND command.turn_request_id=turn.request_id
-         JOIN messages trigger ON trigger.id=command.root_source_message_id
-         WHERE turn.room_id=$1 AND turn.request_id=$2 AND turn.agent_id=$3
-           AND turn.status='working'`,
-        [input.roomId, input.requestId, input.agentId],
-      )
-    ).rows[0];
-    if (!running) throw new Error('running turn not found');
     const stopper = await this.requireIdentity(viewerId);
     const agent = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
@@ -6243,6 +6228,31 @@ export class PhoneService {
       ).rows[0];
       if (!member) throw new Error('room access denied');
       await lockAgentCommandQueue(database, input.roomId, input.agentId);
+      // Resolve folded Stop handles and validate the running turn under the
+      // claim queue lock, held through cancellation.
+      const folded = (await database.query<{ turn_request_id: string }>(
+        `SELECT head.turn_request_id FROM agent_commands source
+         JOIN agent_commands head ON source.cancellation_reason='coalesced_into:'||head.id
+           AND head.room_id=source.room_id AND head.agent_id=source.agent_id
+         WHERE source.room_id=$1 AND source.agent_id=$2 AND source.turn_request_id=$3
+           AND source.reason IN ('human_tag','direct_message') AND source.state='cancelled'
+           AND head.state='claimed' ORDER BY head.created_at DESC LIMIT 1`,
+        [input.roomId, input.agentId, input.requestId])).rows[0];
+      if (folded) input = { ...input, requestId: folded.turn_request_id };
+      const running = (
+        await database.query<{ author_id: string }>(
+          `SELECT trigger.author_id
+           FROM agent_turns turn
+           JOIN agent_commands command ON command.room_id=turn.room_id AND command.agent_id=turn.agent_id
+             AND command.turn_request_id=turn.request_id
+           JOIN messages trigger ON trigger.id=command.root_source_message_id
+           WHERE turn.room_id=$1 AND turn.request_id=$2 AND turn.agent_id=$3
+             AND turn.status='working'`,
+          [input.roomId, input.requestId, input.agentId],
+        )
+      ).rows[0];
+      if (!running) throw new Error('running turn not found');
+
       const commands = await database.query<CommandRow>(
         `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
          AND action IN ('input','resume') ORDER BY created_at DESC,id DESC FOR UPDATE`,

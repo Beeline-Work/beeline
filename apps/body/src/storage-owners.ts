@@ -12,13 +12,16 @@ import { canonicalStoragePath } from './storage-filesystem.js';
 import { removeArchivedCornerData } from './archived-corner-cleanup.js';
 
 const execFileAsync = promisify(execFile);
-export interface StorageOwner { workspaceId: string; roomId: string; kind: 'corners' | 'room-checkouts'; itemId: string; ended?: boolean; endedAt?: number; landedHeadSha?: string }
+export interface StorageOwner { workspaceId: string; roomId: string; kind: 'corners' | 'room-checkouts'; itemId: string; agentId?: string; ended?: boolean; archived?: boolean; endedAt?: number; landedHeadSha?: string }
 function ownersRoot(supervisorRoot: string): string { return resolve(supervisorRoot, 'beeline', 'storage-owners'); }
 export async function rememberStorageOwner(supervisorRoot: string, owner: StorageOwner): Promise<void> {
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(owner.itemId)) throw new Error('invalid storage owner item');
   const path = resolve(ownersRoot(supervisorRoot), `${owner.kind}-${owner.itemId}.json`);
   const previous = await readFile(path, 'utf8').then(text => JSON.parse(text) as StorageOwner, () => undefined);
-  if (owner.ended || previous?.ended) {
+  owner = { ...owner, archived: owner.archived ?? previous?.archived };
+  if (owner.ended === false) {
+    owner = { ...owner, endedAt: undefined, landedHeadSha: undefined };
+  } else if (owner.ended || previous?.ended) {
     owner = { ...owner, ended: true, endedAt: previous?.endedAt ?? owner.endedAt ?? Date.now(), landedHeadSha: owner.landedHeadSha ?? previous?.landedHeadSha };
   }
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -33,11 +36,19 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
     owner = { ...owner, endedAt: options.now ?? Date.now() };
     if (!options.dryRun) await rememberStorageOwner(supervisorRoot, owner);
   }
+  if (owner.kind === 'corners' && owner.archived !== true) return [];
   const path = resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId);
   const published = async () => {
     try {
+      if (await execFileAsync('git', ['-C', path, 'rev-parse', '--verify', 'refs/stash']).then(() => true, () => false)) return false;
       if ((await execFileAsync('git', ['-C', path, 'status', '--porcelain=v1', '--untracked-files=all'], { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } })).stdout.trim()) return false;
       const landedHeadSha = options.landedHeadSha ?? owner.landedHeadSha;
+      if (owner.agentId) {
+        const unpublished = await execFileAsync('git', ['-C', path, 'rev-list', '--branches', '--not', '--remotes=origin',
+          ...(landedHeadSha && /^[a-f0-9]{40,64}$/.test(landedHeadSha) ? [landedHeadSha] : [])]);
+        if (unpublished.stdout.trim()) return false;
+      }
+
       if (landedHeadSha && /^[a-f0-9]{40,64}$/.test(landedHeadSha) &&
         (await execFileAsync('git', ['-C', path, 'rev-parse', 'HEAD'])).stdout.trim() === landedHeadSha) return true;
       const contained = await execFileAsync('git', ['-C', path, 'for-each-ref', '--format=%(refname)', '--contains=HEAD', 'refs/remotes/origin/']);
@@ -46,7 +57,7 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
   };
   const local = await execFileAsync('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--symbolic-full-name', 'HEAD'])
     .then(result => result.stdout.trim().split('\n'), () => []);
-  const entries = owner.kind === 'corners' && owner.ended
+  const entries = owner.kind === 'corners' && owner.archived === true
     ? await removeArchivedCornerData(supervisorRoot, owner.roomId, path, options)
     : await reclaimWholeStorageObject(path, true, { ...options, beforeRemove: published });
   if (entries.length && !options.dryRun && !await lstat(path).catch(() => undefined) && owner.kind === 'corners') {
@@ -54,11 +65,15 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
     // Otherwise a squash-merged head survives here and pins the entire clone.
     const [commonDir, branch] = local;
     const repositories = canonicalStoragePath(resolve(supervisorRoot, 'beeline/repositories'));
-    if (commonDir && canonicalStoragePath(commonDir).startsWith(`${repositories}/`) && branch?.startsWith('refs/heads/')) {
-      await execFileAsync('git', [`--git-dir=${commonDir}`, 'worktree', 'prune', '--expire=now']);
-      const repoHead = await execFileAsync('git', [`--git-dir=${commonDir}`, 'symbolic-ref', 'HEAD']).then(result => result.stdout.trim(), () => undefined);
-      if (repoHead !== branch) await execFileAsync('git', [`--git-dir=${commonDir}`, 'branch', '--delete', '--force', '--', branch.slice('refs/heads/'.length)])
-        .catch(error => console.warn(`[helper] archived local branch cleanup deferred ${path}:`, error));
+    if (commonDir && canonicalStoragePath(commonDir).startsWith(`${repositories}/`)) {
+      if (/^agent-corner-[a-f0-9]{64}\.git$/.test(commonDir.split('/').pop() ?? '')) {
+        await rm(commonDir, { recursive: true, force: true });
+      } else if (branch?.startsWith('refs/heads/')) {
+        await execFileAsync('git', [`--git-dir=${commonDir}`, 'worktree', 'prune', '--expire=now']);
+        const repoHead = await execFileAsync('git', [`--git-dir=${commonDir}`, 'symbolic-ref', 'HEAD']).then(result => result.stdout.trim(), () => undefined);
+        if (repoHead !== branch) await execFileAsync('git', [`--git-dir=${commonDir}`, 'branch', '--delete', '--force', '--', branch.slice('refs/heads/'.length)])
+          .catch(error => console.warn(`[helper] archived local branch cleanup deferred ${path}:`, error));
+      }
     }
     // Remove only now-stale worktree metadata. Published refs remain recoverable.
     const common = resolve(supervisorRoot, 'beeline', 'repositories');
@@ -129,6 +144,10 @@ export async function pruneEndedOwnerStorage(supervisorRoot: string, options: Wh
     const source = runtimeDirectory(supervisorRoot, owner.agentId);
     removed.push(...(await reclaimWholeStorageObject(source, true, options)).map(entry => entry.path));
     if ((!options.dryRun && !await endedRootCleared(source)) || await (options.inUse ?? (async path => (await capturePrivateProcessUse())(path)))(source)) continue;
+    for (const checkout of await readStorageOwners(supervisorRoot)) {
+      if (checkout.agentId === owner.agentId)
+        removed.push(...await reclaimOwnedCheckout(supervisorRoot, checkout, options));
+    }
     const agents = resolve(supervisorRoot, 'beeline', 'agents');
     let hasMember = false;
     for (const agent of await readdir(agents).catch(() => [])) {
@@ -148,7 +167,7 @@ export async function pruneEndedOwnerStorage(supervisorRoot: string, options: Wh
       }
     }
     const remainingCheckouts = (await readStorageOwners(supervisorRoot)).filter(checkout => checkout.workspaceId === owner.workspaceId);
-    if (!options.dryRun && (hasMember || (await endedRootCleared(resolve(workspaceAssetRoot(supervisorRoot, owner.workspaceId), '..')) &&
+    if (!options.dryRun && !remainingCheckouts.some(checkout => checkout.agentId === owner.agentId) && (hasMember || (await endedRootCleared(resolve(workspaceAssetRoot(supervisorRoot, owner.workspaceId), '..')) &&
       !(await Promise.all(remainingCheckouts.map(checkout => lstat(resolve(supervisorRoot, 'beeline', checkout.kind, checkout.itemId)).catch(() => undefined)))).some(Boolean))))
       await rm(resolve(root, name), { force: true });
   }
@@ -206,9 +225,9 @@ export async function reclaimArchivedMemberStorage(supervisorRoot: string, state
   for (const owner of await readStorageOwners(supervisorRoot)) {
     const state = byId.get(owner.roomId);
     if (!state) continue;
-    if (!options.dryRun) await rememberStorageOwner(supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
+    if (!options.dryRun) await rememberStorageOwner(supervisorRoot, { ...owner, archived: true, ended: true, landedHeadSha: state.landedHeadSha });
     await SessionScheduler.withIdleHostRoom(owner.roomId, async () => {
-      await reclaimOwnedCheckout(supervisorRoot, { ...owner, ended: true, endedAt: owner.endedAt ?? Date.now() }, { ...options, landedHeadSha: state.landedHeadSha });
+      await reclaimOwnedCheckout(supervisorRoot, { ...owner, archived: true, ended: true, endedAt: owner.endedAt ?? Date.now() }, { ...options, landedHeadSha: state.landedHeadSha });
     });
   }
   // Server archive facts authorize home cleanup even when a checkout was
@@ -285,7 +304,7 @@ export async function pruneOpenCheckoutObjects(supervisorRoot: string, states: r
   for (const owner of owners) {
     await options.progress?.();
     const state = byId.get(owner.roomId);
-    if (state?.archived !== false && state?.archived !== true && !owner.ended) continue;
+    if (state?.archived !== false && state?.archived !== true && (owner.kind === 'corners' || !owner.ended)) continue;
     const root = resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId);
     const work = async () => {
       const inUse = options.inUse ?? (async (path: string) => (await capturePrivateProcessUse(options.progress))(path));
@@ -312,7 +331,7 @@ export async function pruneArchivedCheckoutStorage(supervisorRoot: string, optio
   await pruneOpenCheckoutObjects(supervisorRoot, [], options);
   const { SessionScheduler } = await import('./session-scheduler.js');
   for (const owner of await readStorageOwners(supervisorRoot)) {
-    if (!owner.ended) continue;
+    if (owner.archived !== true) continue;
     await SessionScheduler.withIdleHostRoom(owner.roomId, async () => {
       await reclaimOwnedCheckout(supervisorRoot, owner, options);
     });
@@ -326,6 +345,10 @@ export async function pruneUnusedCheckoutStorage(supervisorRoot: string, options
   const candidates: Array<{ path: string; clone: boolean }> = [];
   for (const kind of ['corners', 'room-checkouts', 'repositories'] as const) {
     for (const itemId of await readdir(resolve(supervisorRoot, 'beeline', kind)).catch(() => [])) {
+      if (kind === 'corners') {
+        if (!recorded.has(`corners/${itemId}`)) console.warn(`[helper] corner copy ${itemId} ownership unknown; retained`);
+        continue;
+      }
       if (!/^[a-zA-Z0-9-]{1,80}$/.test(itemId) || recorded.has(`${kind}/${itemId}`)) continue;
       if (kind === 'repositories' && !/^(?:[a-f0-9]{64}|github-\d+-[a-f0-9]{12})$/.test(itemId)) continue;
       candidates.push({ path: resolve(supervisorRoot, 'beeline', kind, itemId), clone: kind === 'repositories' });

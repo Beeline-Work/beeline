@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile, utimes, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, it, vi } from 'vitest';
 import { identityFromKey, stageMonolithAgentRuntime, runtimeDirectory } from './runtime.js';
@@ -44,7 +44,7 @@ it('ends a Room, code corner, agent and last local Workspace; no payload byte su
   await exec('git', ['-C', seed, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'published']);
   const remote = resolve(root, 'remote.git'); await exec('git', ['clone', '--bare', seed, remote]);
   const code = await materializeCornerWorktree({ supervisorRoot: root, cornerId: 'corner', remote: `file://${remote}`, targetBranch: 'main', featureBranch: 'feature/corner', token: 'unused', committer: { name: 'Bee', publicKey: staged.runtime.agent.publicKey } });
-  const codeOwner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners' as const, itemId: 'corner' };
+  const codeOwner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners' as const, itemId: basename(code.path), agentId: staged.runtime.agent.publicKey };
   await rememberStorageOwner(root, codeOwner);
   await file(resolve(code.path, 'unpublished'), 'protect');
   expect(await reclaimOwnedCheckout(root, codeOwner)).toEqual([]);
@@ -55,7 +55,7 @@ it('ends a Room, code corner, agent and last local Workspace; no payload byte su
   expect(reclaimed.length).toBeGreaterThan(0);
   expect(await exists(corner)).toBe(false);
   expect(await readFile(squire, 'utf8')).toBe('squire');
-  expect(await reclaimOwnedCheckout(root, codeOwner)).toEqual([code.path]);
+  expect(await reclaimOwnedCheckout(root, { ...codeOwner, archived: true })).toEqual([code.path]);
   await retireRemovedAgent(staged.runtime, { run: vi.fn(async () => ({ stdout: 'not-found\n' })) });
   await pruneEndedOwnerStorage(root);
   expect(await exists(workspace)).toBe(false);
@@ -210,7 +210,7 @@ it('CLEANUP-DISK-1 archive deletes declared proof and unpublished dirty source',
   const proof = await declareCornerProofOutput(checkout, 'corner');
   await file(resolve(proof, 'recording.mp4'), 'generated video');
   const endedAt = Date.now();
-  const owner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners' as const, itemId: 'corner', ended: true, endedAt };
+  const owner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners' as const, itemId: 'corner', archived: true, ended: true, endedAt };
   await rememberStorageOwner(root, owner);
   await rememberStorageOwner(root, { ...owner, endedAt: endedAt + 86400_000 });
   expect((await readStorageOwners(root))[0]!.endedAt).toBe(endedAt);

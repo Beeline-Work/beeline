@@ -34,9 +34,9 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables. SERVER INTEGRATION takes the verdict from hosted,
+# the tiny suite tables. SERVER INTEGRATION takes the verdict from both pools'
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
-# takes the verdict from four combined runners and the isolated claim latency
+# takes the verdict from four runners across both pools and the isolated claim latency
 # budget. Root Markdown and docs/ no longer count as unmapped executable paths.
 # Dependencies are cached by lockfile/manifests; build outputs by exact commit.
 #
@@ -80,6 +80,7 @@ permissions:
   contents: read
   pull-requests: read
 
+# Superseded PR heads cancel here; dispatch and merge-group runs stay independent.
 concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -362,7 +363,8 @@ jobs:
     name: TYPECHECK
     if: ${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
     needs: shared-package-tests
-    runs-on: ubuntu-latest
+    # CI-only Linux capacity supplements hosted jobs; dispatch remains hosted.
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["self-hosted","Linux","X64","beeline-ci"]' || '"ubuntu-latest"') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -568,13 +570,24 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite' || inputs.suite == 'server-integration'))
       )
-    # Four runners share measured file durations. Each then executes two
-    # original integration batches in separate processes to bound PGlite RSS.
+    # Keep both pools busy: two hosted shards and two CI-only Linux shards.
+    # Preparation, status gates and the isolated PostgreSQL budget stay hosted
+    # so a busy local pool cannot block the entire workflow before tests start.
+    # Never substitute a release-runner label for beeline-ci.
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+        include:
+          - shard: 1
+            runner: '"ubuntu-latest"'
+          - shard: 2
+            runner: '["self-hosted","Linux","X64","beeline-ci"]'
+          - shard: 3
+            runner: '"ubuntu-latest"'
+          - shard: 4
+            runner: '["self-hosted","Linux","X64","beeline-ci"]'
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && matrix.runner || '"ubuntu-latest"') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -652,7 +665,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every hosted shard and the claim latency budget to pass
+      - name: Require every shard and the claim latency budget to pass
         env:
           SHARDS_RESULT: ${{ needs.server-suite-shard.result }}
           CLAIM_RESULT: ${{ needs.server-claim-latency.result }}
@@ -674,7 +687,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every hosted shard to pass
+      - name: Require every shard to pass
         env:
           SHARDS_RESULT: ${{ needs.server-suite-shard.result }}
         run: |
@@ -690,7 +703,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["self-hosted","Linux","X64","beeline-ci"]' || '"ubuntu-latest"') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -703,7 +716,9 @@ jobs:
           mobile: 'true'
       - name: Run the mobile vitest suite
         working-directory: apps/mobile
-        run: npx vitest run
+        # Shared hosts expose all CPUs; keep each job's test worker count
+        # bounded instead of multiplying that count by ten runner services.
+        run: npx vitest run --maxWorkers=2 --minWorkers=2
       - name: Verify Android release shrinking mods
         run: node --test scripts/android-shrinking.test.mjs
       - name: Typecheck the mobile app

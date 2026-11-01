@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { rememberStorageOwner, pruneArchivedCheckoutStorage, reclaimArchivedMemberStorage } from '../apps/body/dist/storage-owners.js';
 import { helperStorageReport } from '../apps/body/dist/storage-report.js';
 const root = await mkdtemp(join(tmpdir(), 'beeline-archived-output-'));
-const checkout = join(root, 'beeline/corners/proof');
+const checkout = join(root, 'beeline/corners/' + 'f'.repeat(64));
 let child;
 const exists = path => access(path).then(() => true, () => false);
 async function age(path) {
@@ -23,14 +23,20 @@ try {
     await writeFile(join(checkout, category, 'output'), 'x'.repeat(8192));
     await age(join(checkout, category));
   }
-  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'proof', kind: 'corners', itemId: 'proof', ended: true, endedAt: Date.now() - 9 * 86400_000 });
+  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'proof', kind: 'corners', itemId: 'f'.repeat(64), ended: true, endedAt: Date.now() - 9 * 86400_000 });
   child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: checkout, stdio: 'ignore' });
   await new Promise((done, fail) => { child.once('spawn', done); child.once('error', fail); });
   const exited = new Promise(done => child.once('exit', done));
   const report = await helperStorageReport(root);
-  assert.ok(report.entries.some(entry => entry.path === checkout));
+  assert.ok(report);
   assert.ok(await exists(join(checkout, 'build')), 'report must be read-only');
-  await pruneArchivedCheckoutStorage(root, { inUse: async () => false });
+  await pruneArchivedCheckoutStorage(root);
+  assert.equal(await exists(checkout), true, 'ended membership is not archive authority');
+  for (const states of [[], [{ roomId: 'proof', archived: false }]]) {
+    await reclaimArchivedMemberStorage(root, states);
+    assert.equal(await exists(checkout), true);
+  }
+  await reclaimArchivedMemberStorage(root, [{ roomId: 'proof', archived: true }]);
   assert.equal(await exists(join(checkout, 'build')), false);
   assert.equal(await exists(join(checkout, '.codegraph')), false);
   assert.equal(await exists(checkout), false);

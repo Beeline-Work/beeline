@@ -20,12 +20,12 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { reclaimArchivedMemberStorage, rememberStorageOwner } from './storage-owners.js';
+import { reclaimArchivedMemberStorage, rememberStorageOwner, reclaimOwnedCheckout, pruneArchivedCheckoutStorage } from './storage-owners.js';
 import { declareCornerProofOutput } from './corner-proof-output.js';
 
 it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] as const)('ARCHIVED-OUTPUT-1 deletes closed dirty/unpushed/proof data and stops its child; preserves open and unknown (%s)', async (platform) => {
   const root = await mkdtemp(resolve(platform === 'darwin-var' ? '/var/tmp' : tmpdir(), 'beeline-closed-corner-'));
-  const path = resolve(root, 'beeline/corners/closed');
+  const path = resolve(root, 'beeline/corners/' + 'f'.repeat(64));
   execFileSync('git', ['init', '-q', path]);
   await writeFile(resolve(path, 'source'), 'unpublished');
   execFileSync('git', ['-C', path, 'add', '.']);
@@ -34,7 +34,7 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
   await declareCornerProofOutput(path, 'closed');
   const home = resolve(root, 'beeline/agents', 'a'.repeat(64), 'rooms/closed');
   await mkdir(home, { recursive: true }); await writeFile(resolve(home, 'data'), 'private');
-  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'closed', itemId: 'closed', kind: 'corners' });
+  await rememberStorageOwner(root, { workspaceId: 'workspace', roomId: 'closed', itemId: 'f'.repeat(64), kind: 'corners', ended: true });
   const brokerScript = resolve(path, 'trusty-squire-broker.cjs');
   await writeFile(brokerScript, 'setInterval(()=>{},1000)');
   const broker = spawn(process.execPath, [brokerScript], { cwd: path, stdio: 'ignore' });
@@ -55,6 +55,9 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
       expect(await access(path).then(() => true, () => false)).toBe(true);
       expect(child.exitCode).toBe(null);
     }
+    await reclaimOwnedCheckout(root, { workspaceId: 'workspace', roomId: 'closed', itemId: 'f'.repeat(64), kind: 'corners', ended: true });
+    await pruneArchivedCheckoutStorage(root);
+    expect(await access(path).then(() => true, () => false)).toBe(true);
     await reclaimArchivedMemberStorage(root, [{ roomId: 'closed', archived: true }]);
     expect(await access(path).then(() => true, () => false)).toBe(false);
     expect(await access(home).then(() => true, () => false)).toBe(false);

@@ -1,0 +1,85 @@
+{
+  "reproduction": "QUEUED-TAGS-REPEAT",
+  "roomId": "bb91a1c7-7cad-4fde-aafc-94fccb651ac8",
+  "agentId": "c3dfbf8acbb4b6e9f11bd37119a5ce2f4f104257885d098d8e075c0b0c4c066b",
+  "note": "Read-only production command metadata captured 2026-10-31. Bodies excluded, including the sign-in code. Two human tags queued around a scheduled browser turn; separate report commands must remain separate.",
+  "running": {
+    "id": "da2b6324ec865e13aa67465c19b6a6943028efa9d15188013c3e740a6ede30de",
+    "source_message_id": "7cd4a6758f2cbb83b6fe860526c3badb0d1f85e29e1ef1e2ac2b15166bdfb56b",
+    "turn_request_id": "7cd4a6758f2cbb83b6fe860526c3badb0d1f85e29e1ef1e2ac2b15166bdfb56b",
+    "action": "input",
+    "reason": "schedule",
+    "created_at": "2026-10-31 19:10:40.010767+00",
+    "claimed_at": "2026-10-31 19:13:17.540988+00",
+    "completed_at": "2026-10-31 19:26:12.104209+00",
+    "state": "complete",
+    "root_command_id": "da2b6324ec865e13aa67465c19b6a6943028efa9d15188013c3e740a6ede30de",
+    "root_source_message_id": "3224961a527f3873056a745589c31cb8e8c2e10054941bf00f1ba62246268ef1",
+    "agent_depth": 0,
+    "author_id": "7218ea1ccc85c23065e08efd8fc7dd50f6ffd7bcc91b0a3d5a037853f2de1721"
+  },
+  "queued": [
+    {
+      "id": "b329749102d133f83f21a6268932c1fcf29ed9f903bf7e64308b5e2feff7dadc",
+      "source_message_id": "d070568bad30abb56d632d92b31df422a8b5504f13f4b0c56266bd8469729c30",
+      "turn_request_id": "d070568bad30abb56d632d92b31df422a8b5504f13f4b0c56266bd8469729c30",
+      "action": "input",
+      "reason": "human_tag",
+      "created_at": "2026-10-31 19:11:35.998933+00",
+      "claimed_at": "2026-10-31 19:26:42.508309+00",
+      "completed_at": "2026-10-31 19:26:48.050455+00",
+      "state": "complete",
+      "root_command_id": "b329749102d133f83f21a6268932c1fcf29ed9f903bf7e64308b5e2feff7dadc",
+      "root_source_message_id": "d070568bad30abb56d632d92b31df422a8b5504f13f4b0c56266bd8469729c30",
+      "agent_depth": 0,
+      "author_id": "34cf4160723acd12d205dfbe292614bfec9489b78812d1cd9846c00346903334"
+    },
+    {
+      "id": "ab2246d99a22a9849d1d80e2dc2f73e0c49600c4dd2926053f5a8f8d6eb34dab",
+      "source_message_id": "de2892a238dc5528e43b23244e215c060ae615b54f47a2edfe3b283a46110c2f",
+      "turn_request_id": "de2892a238dc5528e43b23244e215c060ae615b54f47a2edfe3b283a46110c2f",
+      "action": "input",
+      "reason": "human_tag",
+      "created_at": "2026-10-31 19:14:13.580751+00",
+      "claimed_at": "2026-10-31 19:26:48.562296+00",
+      "completed_at": "2026-10-31 19:26:54.959514+00",
+      "state": "complete",
+      "root_command_id": "ab2246d99a22a9849d1d80e2dc2f73e0c49600c4dd2926053f5a8f8d6eb34dab",
+      "root_source_message_id": "de2892a238dc5528e43b23244e215c060ae615b54f47a2edfe3b283a46110c2f",
+      "agent_depth": 0,
+      "author_id": "34cf4160723acd12d205dfbe292614bfec9489b78812d1cd9846c00346903334"
+    }
+  ],
+  "reports": [
+    {
+      "id": "55e0b11d3b8d8f1c4548d595ec9c6d06603003e1ae131beb98f87d01ee32bfdb",
+      "source_message_id": null,
+      "turn_request_id": "55e0b11d3b8d8f1c4548d595ec9c6d06603003e1ae131beb98f87d01ee32bfdb",
+      "action": "input",
+      "reason": "report",
+      "created_at": "2026-10-31 19:11:08.887661+00",
+      "claimed_at": "2026-10-31 19:26:13.120632+00",
+      "completed_at": "2026-10-31 19:26:41.981761+00",
+      "state": "complete",
+      "root_command_id": "48562d8998b5278a749856f3981f0ba628895f7a5e9ccc2cf60855d5df2122e3",
+      "root_source_message_id": "62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702",
+      "agent_depth": 0,
+      "author_id": null
+    },
+    {
+      "id": "1e54abd974ecde5d56039c91e7b21dda7b58609d08bac3f6b8fd8910d85471f3",
+      "source_message_id": null,
+      "turn_request_id": "1e54abd974ecde5d56039c91e7b21dda7b58609d08bac3f6b8fd8910d85471f3",
+      "action": "input",
+      "reason": "report",
+      "created_at": "2026-10-31 19:19:25.72712+00",
+      "claimed_at": "2026-10-31 19:26:55.345712+00",
+      "completed_at": "2026-10-31 19:27:05.631051+00",
+      "state": "complete",
+      "root_command_id": "48562d8998b5278a749856f3981f0ba628895f7a5e9ccc2cf60855d5df2122e3",
+      "root_source_message_id": "62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702",
+      "agent_depth": 0,
+      "author_id": null
+    }
+  ]
+}

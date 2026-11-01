@@ -1063,6 +1063,8 @@ export type CornerListResult = {
   }[];
 };
 export type CornerRestoreResult = {
+  /** Current server assignment, used to hand legacy local work to its writer. */
+  readonly implementerAgentId?: string;
   readonly cornerId: string;
   /** Explicit opening corner; absent on existing and Room/DM-opened corners. */
   readonly openedFromCornerId?: string;
@@ -1508,6 +1510,12 @@ export type CornerBriefDraft = {
   readonly change?: string;
 };
 export type CornerBriefApproval = {
+  /** Absent on legacy approvals; evidence only, never merge authority. */
+  readonly kind?: 'agent-initiated' | 'initiating-command' | 'explicit-human-answer' | 'commander-order' | 'commander-direct';
+  readonly replyToMessageId?: string | null;
+  readonly replyToAttachmentIds?: readonly string[];
+  readonly replyToCreatedAt?: string | null;
+  readonly approvedAt?: string;
   readonly sourceMessageId: string;
   /** The approving message's exact text, resolved by the server. */
   readonly text: string;

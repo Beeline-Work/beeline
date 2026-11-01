@@ -25,7 +25,8 @@ import {
   syncCornerBranch,
 } from './corner-branch-sync.js';
 import {
-  materializeCornerWorktree,
+  materializeCornerWorktree as materializePrivateCorner,
+  cornerRepositoryCacheDir,
   removeCornerWorktreeAndBranches,
   RoomRuntimeCoordinator,
 } from './room-runtime.js';
@@ -76,6 +77,33 @@ async function remoteWithCornerBranch(): Promise<{ remote: string; scratch: stri
   const bare = resolve(scratch, 'remote.git');
   await execFileAsync('git', ['clone', '--bare', seed, bare]);
   return { remote: `file://${bare}`, scratch };
+}
+
+/** Legacy shared checkouts remain supported by migration and archive cleanup. */
+async function materializeCornerWorktree(input: Parameters<typeof materializePrivateCorner>[0]) {
+  await materializePrivateCorner(input);
+  const gitCommonDir = cornerRepositoryCacheDir(input.supervisorRoot, input.remote);
+  const path = resolve(input.supervisorRoot, 'beeline/corners', input.cornerId);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'config', '--replace-all', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'fetch', 'origin']);
+  const startRef = await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'rev-parse', '--verify', `refs/remotes/origin/${input.featureBranch}`]).then(() => input.featureBranch, () => input.targetBranch);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'worktree', 'add', '-B', input.featureBranch,
+    path, `refs/remotes/origin/${startRef}`]);
+  await execFileAsync('git', [`--git-dir=${gitCommonDir}`, 'config', 'extensions.worktreeConfig', 'true']);
+  await git(path, 'config', '--worktree', 'core.bare', 'false');
+  await git(path, 'config', '--worktree', 'user.name', 'Test');
+  await git(path, 'config', '--worktree', 'user.email', 'test@example.com');
+  return { path, gitCommonDir };
+}
+
+async function syncAsTurn(worktreePath: string): Promise<string | undefined> {
+  const loop = Object.create(MonolithCornerTurnLoop.prototype) as {
+    options: object; branchSyncNotice?: string; syncBranch(): Promise<void>;
+  };
+  loop.options = { worktreePath, parentRoomId: 'parent', repository: { featureBranch: FEATURE },
+    api: { execute: async () => ({ token: 'fixture' }) } };
+  await loop.syncBranch();
+  return loop.branchSyncNotice;
 }
 
 describe('a helper joining a corner it did not open', () => {
@@ -140,7 +168,7 @@ describe('a helper joining a corner it did not open', () => {
       committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
     });
     expect(await realpath(worktree.path)).toBe(
-      await realpath(resolve(realRoot, 'beeline', 'corners', 'corner-symlink')),
+      await realpath(worktree.path),
     );
     const top = await git(worktree.path, 'rev-parse', '--show-toplevel');
     expect(resolve(top)).not.toBe(resolve(worktree.path));
@@ -1147,19 +1175,19 @@ setInterval(() => {}, 1000);
     await expect(syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE }))
       .rejects.toThrow('uncommitted');
     expect(await readFile(resolve(worktree.path, 'opener.txt'), 'utf8')).toBe('unfinished build input\n');
+    expect(await syncAsTurn(worktree.path)).toContain('Resolve this private checkout');
   });
 
-  it('realigns to the shared remote branch when two unpushed changes conflict', async () => {
+  it('preserves local commits when two agents changes conflict', async () => {
     const { remote, worktree } = await helperWorktree('beeline-corner-sync-conflict-');
     await writeFile(resolve(worktree.path, 'shared.txt'), 'mine\n');
     await git(worktree.path, 'add', '.');
     await git(worktree.path, 'commit', '-m', 'my work');
     await pushToRemote(remote, 'peer work', { file: 'shared.txt', contents: 'theirs\n' });
-    expect(await syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE })).toBe(
-      'realigned',
-    );
-    expect(await git(worktree.path, 'log', '-1', '--format=%s')).toBe('peer work');
-    expect(await git(worktree.path, 'show', 'HEAD:shared.txt')).toBe('theirs');
+    await expect(syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE })).rejects.toThrow('local commits preserved');
+    expect(await git(worktree.path, 'log', '-1', '--format=%s')).toBe('my work');
+    expect(await git(worktree.path, 'show', 'HEAD:shared.txt')).toBe('mine');
+    expect(await syncAsTurn(worktree.path)).toContain('local commits preserved');
     expect(await git(worktree.path, 'status', '--porcelain')).toBe('');
   });
 
@@ -1178,4 +1206,24 @@ setInterval(() => {}, 1000);
     await git(clone, 'commit', '-m', subject);
     await git(clone, 'push', 'origin', FEATURE);
   }
+});
+
+
+it('maps private copies through owners and preserves unknown mappings and retired open members', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-private-sweep-'));
+  roots.push(root);
+  const { rememberStorageOwner } = await import('./storage-owners.js');
+  const names = ['a', 'b', 'c', 'd'].map(c => c.repeat(64));
+  for (const name of names) await mkdir(resolve(root, 'beeline/corners', name), { recursive: true });
+  for (const [index, roomId] of ['closed', 'open', 'unknown'].entries())
+    await rememberStorageOwner(root, { workspaceId: 'workspace', roomId, kind: 'corners', itemId: names[index], ended: true });
+  const execute = vi.fn(async (_name: string, args: { cornerId: string }) => ({ archived: args.cornerId === 'closed' ? true : args.cornerId === 'open' ? false : undefined }));
+  const coordinator = new RoomRuntimeCoordinator({ agent: { publicKey: identityFromKey('11'.repeat(32), 'Bee').publicKey, secretKeyHex: '11'.repeat(32), name: 'Bee' }, rooms: [], communityId: 'workspace', supervisorRoot: root, transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' } } as unknown as AgentRuntimeRecord,
+    resolve(root, 'agent.json'), { workspaceRoot: root } as never, { daemonApi: { execute } as unknown as DaemonApiClient });
+  try {
+    await (coordinator as unknown as { sweepArchivedCornerWorktrees(corners: Map<string, never>): Promise<void> }).sweepArchivedCornerWorktrees(new Map());
+    await expect(access(resolve(root, 'beeline/corners', names[0]))).rejects.toThrow();
+    for (const name of names.slice(1)) await access(resolve(root, 'beeline/corners', name));
+    expect(execute.mock.calls.map(call => call[1].cornerId).sort()).toEqual(['closed', 'open', 'unknown']);
+  } finally { await coordinator.shutdown(); }
 });

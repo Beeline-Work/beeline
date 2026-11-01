@@ -48,14 +48,14 @@ export interface UnpublishedCornerWorktree {
 export function cornerRecoveryPointerPath(worktree: UnpublishedCornerWorktree): string {
   const checkout = resolve(worktree.path);
   if (
-    basename(checkout) !== worktree.cornerId ||
+    (basename(checkout) !== worktree.cornerId && !/^[a-f0-9]{64}$/.test(basename(checkout))) ||
     basename(dirname(checkout)) !== 'corners' ||
     basename(dirname(dirname(checkout))) !== 'beeline' ||
     !/^[a-zA-Z0-9-]{1,80}$/.test(worktree.cornerId)
   ) {
     throw new Error('refusing recovery pointer outside a Beeline corner checkout');
   }
-  return resolve(dirname(dirname(checkout)), 'recovery', 'corners', `${worktree.cornerId}.json`);
+  return resolve(dirname(dirname(checkout)), 'recovery', 'corners', `${basename(checkout)}.json`);
 }
 
 async function git(checkout: string, args: string[]): Promise<string> {

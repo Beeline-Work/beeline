@@ -200,6 +200,42 @@ describe('startDictationUpload', () => {
     expect(deleted).toEqual(['file:///a.wav']);
   });
 
+  it('DS1 keeps the deadline fixed when a long piece starts after Send', async () => {
+    vi.useFakeTimers();
+    try {
+      recordings.set('file:///long.wav', pcmWav(60));
+      sessionFetch.mockReturnValue(new Promise<Response>(() => {}));
+      const { startDictationUpload } = await load();
+      const upload = startDictationUpload([], 'en-US');
+      upload.add('file:///long.wav');
+      const settled = vi.fn();
+      void upload.finish(40).then(settled);
+      await vi.advanceTimersByTimeAsync(41);
+      expect(sessionFetch).toHaveBeenCalledTimes(1);
+      expect(settled).toHaveBeenCalledExactlyOnceWith(null);
+      expect(deleted).toEqual(['file:///long.wav']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('DS1 falls back within two seconds by default for a long outstanding take', async () => {
+    vi.useFakeTimers();
+    try {
+      recordings.set('file:///long.wav', pcmWav(60));
+      sessionFetch.mockReturnValue(new Promise<Response>(() => {}));
+      const { startDictationUpload } = await load();
+      const upload = startDictationUpload([], 'en-US');
+      upload.add('file:///long.wav');
+      const settled = vi.fn();
+      void upload.finish().then(settled);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(settled).toHaveBeenCalledExactlyOnceWith(null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops offering transcription after the server reports no Groq key', async () => {
     sessionFetch.mockResolvedValueOnce(
       Response.json({ error: 'transcription_unavailable' }, { status: 503 }),
@@ -232,7 +268,7 @@ describe('startDictationUpload', () => {
     expect(deleted).toEqual(['file:///late.wav']);
   });
 
-  it('sends a long note to Groq in chunks and waits for them past the base stop deadline', async () => {
+  it('sends a long note in chunks when an explicit test deadline allows the upload', async () => {
     // Reproduction R1: one 90 s piece closes at stop on a 1 Mbit/s uplink.
     vi.useFakeTimers();
     try {
@@ -252,7 +288,7 @@ describe('startDictationUpload', () => {
 
       const upload = startDictationUpload([], 'en-US');
       upload.add('file:///long.wav');
-      const result = upload.finish();
+      const result = upload.finish(10_000);
       await vi.advanceTimersByTimeAsync(30_000);
 
       expect(await result).toBe('part 1. part 2.');
@@ -264,7 +300,7 @@ describe('startDictationUpload', () => {
     }
   });
 
-  it('keeps the stop wait granted to a long piece when a short piece follows it', async () => {
+  it('does not extend the fixed deadline for a queued short piece', async () => {
     // Review F1: a 60 s piece answers after 6 s, then a 3 s piece after 1 s.
     vi.useFakeTimers();
     try {
@@ -291,7 +327,7 @@ describe('startDictationUpload', () => {
       const result = upload.finish();
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(await result).toBe('Long part. short part.');
+      expect(await result).toBeNull();
     } finally {
       vi.useRealTimers();
     }

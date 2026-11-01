@@ -113,3 +113,41 @@ it.skipIf(spawnSync('bwrap', ['--ro-bind', '/', '/', 'true']).status !== 0)(
   },
   60_000,
 );
+
+it('a hung private install never holds the shared dependency store against another agent', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'generation-concurrent-'));
+  const store = resolve(root, 'store');
+  const cache = resolve(root, 'cache');
+  const a = resolve(root, 'a'), b = resolve(root, 'b');
+  const lock = JSON.stringify({ name: 'fixture', lockfileVersion: 3,
+    packages: { '': { name: 'fixture' }, 'node_modules/proof': { version: '1.0.0' } } });
+  const install = async (cwd: string) => {
+    await mkdir(resolve(cwd, 'node_modules/proof'), { recursive: true });
+    await writeFile(resolve(cwd, 'node_modules/proof/package.json'), '{"name":"proof","version":"1.0.0"}');
+    await writeFile(resolve(cwd, 'node_modules/proof/index.js'), 'module.exports=1;');
+    await writeFile(resolve(cwd, 'node_modules/.package-lock.json'), '{"packages":{"node_modules/proof":{}}}');
+  };
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(done => { release = done; });
+  const started = new Promise<void>(done => { entered = done; });
+  for (const cwd of [a, b]) {
+    await mkdir(cwd);
+    await writeFile(resolve(cwd, 'package-lock.json'), lock);
+  }
+  const first = prepareDependencyGeneration({ root: a, store, cache, npm: '/unused',
+    install: async () => { entered(); await gate; await install(a); } });
+  await started;
+  const second = prepareDependencyGeneration({ root: b, store, cache, npm: '/unused', install: () => install(b) });
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([second, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('another agent is blocked by the hung install')), 2_000);
+    })]);
+    expect(await readFile(resolve(b, 'node_modules/proof/index.js'), 'utf8')).toBe('module.exports=1;');
+  } finally {
+    if (timer) clearTimeout(timer);
+    release();
+    await Promise.all([first, second]);
+    await rm(root, { recursive: true, force: true });
+  }
+});

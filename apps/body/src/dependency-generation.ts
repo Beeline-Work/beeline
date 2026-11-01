@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, readdir, lstat, rm, writeFile } from 'node:fs/promises';
-import { resolve, delimiter } from 'node:path';
+import { mkdir, readFile, readdir, realpath, lstat, rm, writeFile } from 'node:fs/promises';
+import { resolve, relative, isAbsolute, delimiter } from 'node:path';
 import { promisify } from 'node:util';
 import { withKernelLock } from './kernel-lock.js';
 import {
@@ -16,8 +16,45 @@ const exec = promisify(execFile);
 const marker = '.beeline-generation';
 export const dependencyRequest = '.beeline-dependency-request';
 
-export async function dependencyFingerprint(root: string): Promise<string> {
+/** Requests live in the corner, never in another agent's home or the host /tmp. */
+export async function extraDependencyRoots(root: string, home?: string): Promise<string[]> {
+  const registry = resolve(root, '.beeline-extra-dependencies');
+  const registryInfo = await lstat(registry).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (!registryInfo) return [];
+  if (!registryInfo.isDirectory() || registryInfo.isSymbolicLink()) throw new Error('Invalid extra dependency registry');
+  const entries = await readdir(registry).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  if (entries.length > 128) throw new Error('Too many extra dependency requests');
+  const allowed = await Promise.all([root, ...(home ? [home] : [])].map(path => realpath(path)));
+  const roots = new Set<string>();
+  for (const name of entries.sort()) {
+    if (!/^[a-f0-9]{64}$/.test(name)) continue;
+    const request = resolve(registry, name);
+    const info = await lstat(request);
+    if (!info.isFile() || info.size > 8192) throw new Error('Invalid extra dependency request');
+    const requested = (await readFile(request, 'utf8')).trim();
+    const canonical = await realpath(requested).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!canonical) continue; // A removed disposable rig no longer pins dependencies.
+    if (!allowed.some(parent => {
+      const child = relative(parent, canonical);
+      return child !== '' && child !== '..' && !child.startsWith('../') && !isAbsolute(child);
+    })) throw new Error('Extra dependencies must be inside this corner or its agent home');
+    roots.add(canonical);
+  }
+  return [...roots].sort();
+}
+
+export async function dependencyFingerprint(root: string, home?: string): Promise<string> {
   return JSON.stringify([
+    await Promise.all((await extraDependencyRoots(root, home)).map(async path => [path, await dependencyFingerprintForCopy(path)])),
     await readFile(resolve(root, dependencyRequest), 'utf8').catch(() => ''),
     await Promise.all(
       ['', 'apps/mobile'].map(async (part) => {
@@ -28,6 +65,11 @@ export async function dependencyFingerprint(root: string): Promise<string> {
   ]);
 }
 
+async function dependencyFingerprintForCopy(root: string): Promise<string> {
+  const plan = await readWarmPlan(root);
+  return isPlanRefusal(plan) ? plan.failure : plan.key;
+}
+
 /** Called outside the harness, after its previous mount namespace has stopped. */
 export async function prepareDependencyGeneration(input: {
   root: string;
@@ -36,41 +78,43 @@ export async function prepareDependencyGeneration(input: {
   cache: string;
   install?: () => Promise<void>;
 }): Promise<string[]> {
-  return withKernelLock(`dependency-store:${resolve(input.store)}`, async () => {
-    const plan = await readWarmPlan(input.root);
-    const installed = await readFile(resolve(input.root, 'node_modules', marker), 'utf8')
-      .then((text) => JSON.parse(text) as { key: string; trees: string[] })
-      .catch(() => undefined);
-    if (isPlanRefusal(plan)) {
-      if (plan.failure === 'unsafe-lockfile') throw new Error('Unsafe dependency lockfile');
-      for (const tree of (installed?.trees ?? []).filter(isContainedTreePath))
-        await rm(resolve(input.root, tree), { recursive: true, force: true });
-      await collectUnusedGenerations(input.store);
-      return [];
-    }
-    if (installed?.key === plan.key && !(await missingInstalledPackages(input.root)).length) {
-      await collectUnusedGenerations(input.store);
-      return plan.trees.map((tree) => resolve(input.root, tree));
-    }
-    // npm may run install scripts. Never let it see inodes shared with another checkout.
-    for (const tree of new Set([
-      ...plan.trees,
-      ...(installed?.trees ?? []).filter(isContainedTreePath),
-    ]))
+  const withStore = <T>(work: () => Promise<T>) =>
+    withKernelLock(`dependency-store:${resolve(input.store)}`, work, 30_000);
+  const plan = await readWarmPlan(input.root);
+  const installed = await readFile(resolve(input.root, 'node_modules', marker), 'utf8')
+    .then((text) => JSON.parse(text) as { key: string; trees: string[] })
+    .catch(() => undefined);
+  if (isPlanRefusal(plan)) {
+    if (plan.failure === 'unsafe-lockfile') throw new Error('Unsafe dependency lockfile');
+    for (const tree of (installed?.trees ?? []).filter(isContainedTreePath))
       await rm(resolve(input.root, tree), { recursive: true, force: true });
-    let seeded = await seedWarmNodeModules({ worktreePath: input.root, storeRoot: input.store });
+    await withStore(() => collectUnusedGenerations(input.store));
+    return [];
+  }
+  if (installed?.key === plan.key && !(await missingInstalledPackages(input.root)).length) {
+    await withStore(() => collectUnusedGenerations(input.store));
+    return plan.trees.map((tree) => resolve(input.root, tree));
+  }
+  // npm may run arbitrary install scripts. Remove this copy's shared aliases
+  // first, then install privately without owning the shared store.
+  for (const tree of new Set([
+    ...plan.trees,
+    ...(installed?.trees ?? []).filter(isContainedTreePath),
+  ])) await rm(resolve(input.root, tree), { recursive: true, force: true });
+  let seeded = await withStore(() => seedWarmNodeModules({ worktreePath: input.root, storeRoot: input.store }));
+  if (seeded.reason !== 'seeded') {
+    if (input.install) await input.install();
+    else await exec(input.npm, ['ci', '--no-audit', '--no-fund'], {
+      cwd: input.root,
+      env: { ...process.env, npm_config_cache: input.cache },
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  }
+  // Serialize only store publication, hardlink placement, and collection.
+  // A hung npm process in another checkout cannot hold this critical section.
+  return withStore(async () => {
     if (seeded.reason !== 'seeded') {
-      if (input.install) await input.install();
-      else
-        await exec(input.npm, ['ci', '--no-audit', '--no-fund'], {
-          cwd: input.root,
-          env: { ...process.env, npm_config_cache: input.cache },
-          maxBuffer: 16 * 1024 * 1024,
-        });
-      const harvested = await harvestWarmNodeModules({
-        worktreePath: input.root,
-        storeRoot: input.store,
-      });
+      const harvested = await harvestWarmNodeModules({ worktreePath: input.root, storeRoot: input.store });
       if (!['stored', 'already-warm'].includes(harvested.reason))
         throw new Error(`Dependency generation failed: ${harvested.reason}`);
       for (const tree of plan.trees)
@@ -132,6 +176,6 @@ export async function collectUnusedGenerations(store: string): Promise<string[]>
 
 export async function collectDependencyStore(store: string): Promise<string[]> {
   return withKernelLock(`dependency-store:${resolve(store)}`, () =>
-    collectUnusedGenerations(store),
+    collectUnusedGenerations(store), 30_000,
   );
 }

@@ -78,41 +78,43 @@ export async function prepareDependencyGeneration(input: {
   cache: string;
   install?: () => Promise<void>;
 }): Promise<string[]> {
-  return withKernelLock(`dependency-store:${resolve(input.store)}`, async () => {
-    const plan = await readWarmPlan(input.root);
-    const installed = await readFile(resolve(input.root, 'node_modules', marker), 'utf8')
-      .then((text) => JSON.parse(text) as { key: string; trees: string[] })
-      .catch(() => undefined);
-    if (isPlanRefusal(plan)) {
-      if (plan.failure === 'unsafe-lockfile') throw new Error('Unsafe dependency lockfile');
-      for (const tree of (installed?.trees ?? []).filter(isContainedTreePath))
-        await rm(resolve(input.root, tree), { recursive: true, force: true });
-      await collectUnusedGenerations(input.store);
-      return [];
-    }
-    if (installed?.key === plan.key && !(await missingInstalledPackages(input.root)).length) {
-      await collectUnusedGenerations(input.store);
-      return plan.trees.map((tree) => resolve(input.root, tree));
-    }
-    // npm may run install scripts. Never let it see inodes shared with another checkout.
-    for (const tree of new Set([
-      ...plan.trees,
-      ...(installed?.trees ?? []).filter(isContainedTreePath),
-    ]))
+  const withStore = <T>(work: () => Promise<T>) =>
+    withKernelLock(`dependency-store:${resolve(input.store)}`, work, 30_000);
+  const plan = await readWarmPlan(input.root);
+  const installed = await readFile(resolve(input.root, 'node_modules', marker), 'utf8')
+    .then((text) => JSON.parse(text) as { key: string; trees: string[] })
+    .catch(() => undefined);
+  if (isPlanRefusal(plan)) {
+    if (plan.failure === 'unsafe-lockfile') throw new Error('Unsafe dependency lockfile');
+    for (const tree of (installed?.trees ?? []).filter(isContainedTreePath))
       await rm(resolve(input.root, tree), { recursive: true, force: true });
-    let seeded = await seedWarmNodeModules({ worktreePath: input.root, storeRoot: input.store });
+    await withStore(() => collectUnusedGenerations(input.store));
+    return [];
+  }
+  if (installed?.key === plan.key && !(await missingInstalledPackages(input.root)).length) {
+    await withStore(() => collectUnusedGenerations(input.store));
+    return plan.trees.map((tree) => resolve(input.root, tree));
+  }
+  // npm may run arbitrary install scripts. Remove this copy's shared aliases
+  // first, then install privately without owning the shared store.
+  for (const tree of new Set([
+    ...plan.trees,
+    ...(installed?.trees ?? []).filter(isContainedTreePath),
+  ])) await rm(resolve(input.root, tree), { recursive: true, force: true });
+  let seeded = await withStore(() => seedWarmNodeModules({ worktreePath: input.root, storeRoot: input.store }));
+  if (seeded.reason !== 'seeded') {
+    if (input.install) await input.install();
+    else await exec(input.npm, ['ci', '--no-audit', '--no-fund'], {
+      cwd: input.root,
+      env: { ...process.env, npm_config_cache: input.cache },
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  }
+  // Serialize only store publication, hardlink placement, and collection.
+  // A hung npm process in another checkout cannot hold this critical section.
+  return withStore(async () => {
     if (seeded.reason !== 'seeded') {
-      if (input.install) await input.install();
-      else
-        await exec(input.npm, ['ci', '--no-audit', '--no-fund'], {
-          cwd: input.root,
-          env: { ...process.env, npm_config_cache: input.cache },
-          maxBuffer: 16 * 1024 * 1024,
-        });
-      const harvested = await harvestWarmNodeModules({
-        worktreePath: input.root,
-        storeRoot: input.store,
-      });
+      const harvested = await harvestWarmNodeModules({ worktreePath: input.root, storeRoot: input.store });
       if (!['stored', 'already-warm'].includes(harvested.reason))
         throw new Error(`Dependency generation failed: ${harvested.reason}`);
       for (const tree of plan.trees)
@@ -174,6 +176,6 @@ export async function collectUnusedGenerations(store: string): Promise<string[]>
 
 export async function collectDependencyStore(store: string): Promise<string[]> {
   return withKernelLock(`dependency-store:${resolve(store)}`, () =>
-    collectUnusedGenerations(store),
+    collectUnusedGenerations(store), 30_000,
   );
 }

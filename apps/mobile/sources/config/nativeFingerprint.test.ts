@@ -94,6 +94,7 @@ describe('native fingerprint gate', () => {
       'apps/mobile/native-fingerprint.json',
       'apps/mobile/plugins/**',
       'apps/mobile/patches/**',
+      'apps/mobile/sources/config/nativeFingerprint.test.ts',
     ]) {
       expect(checksWorkflow).toContain(`- '${path}'`);
     }
@@ -196,7 +197,10 @@ describe('native fingerprint gate', () => {
     expect(bothChanged.message).toContain('android.runtimeVersion is still "21"');
   });
 
-  it(
+  // Six real fingerprint runs. MOBILE SUITE shares two workers on a busy
+  // pool, and this test then misses a 10-minute cap. NATIVE FINGERPRINT runs
+  // it alone (BEELINE_FINGERPRINT_E2E=1). Local runs still execute it.
+  it.skipIf(process.env.CI === 'true' && process.env.BEELINE_FINGERPRINT_E2E !== '1')(
     'accepts this tree and rejects a real native edit, end to end',
     async () => {
       // The committed record must describe THIS tree: run the gate exactly as
@@ -298,11 +302,8 @@ module.exports = withoutIosPushCapabilities;\n`,
       expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "44"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
-    // Six real fingerprint runs, each hashing the whole mobile tree plus
-    // node_modules. A quiet runner does one in tens of seconds, but under the
-    // suite's competing workers each run slows several-fold and six of them
-    // outgrew 240s — the same head's NATIVE FINGERPRINT job (one run) passed.
-    // 600s keeps the 20-minute job comfortable at its observed ~5.5 minutes.
-    600_000,
+    // Six hashes of the mobile tree. One hash is about a minute and a half
+    // when the machine is quiet, so six need room past 10 minutes.
+    1_200_000,
   );
 });

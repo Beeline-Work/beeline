@@ -84,6 +84,37 @@ it.each([401, 403, 404])('parks a non-retryable %s discovery request while local
   } finally { stop(); controller.abort(); await running; }
 });
 
+it('keeps watchdog and discovery serving beyond the watchdog deadline while startup cleanup is blocked', async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>(done => { release = done; });
+  const execute = vi.fn(async () => ({ workspaceIds: ['workspace'], rooms: [] }));
+  const { core, wake } = await fixture(execute);
+  const coordinator = (core as unknown as { roomRuntime: RoomRuntimeCoordinator }).roomRuntime;
+  const cleanup = vi.spyOn(coordinator as unknown as {
+    retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void>;
+  }, 'retryPendingCornerReaps').mockImplementation(() => blocked);
+  const controller = new AbortController();
+  const established = vi.fn();
+  const running = core.run({ signal: controller.signal, onEstablished: established });
+  await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  const feed = vi.fn(async () => undefined);
+  const stop = startLocalWatchdog({ progress: feed }, () => 'serving',
+    () => core.requestWorkLoopProgress(), 60_000, { WATCHDOG_USEC: '180000000' });
+  try {
+    expect(established).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(feed).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledOnce(); // watchdog is local, never polling
+    wake();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    // Another discovery coalesces maintenance; it cannot start a second sweep.
+    expect(cleanup).toHaveBeenCalledOnce();
+  } finally {
+    stop(); controller.abort(); release(); await running;
+  }
+});
+
 
 it('acknowledges watchdog progress throughout 615 archived refusals while preservation is stalled', async () => {
   let release!: () => void;

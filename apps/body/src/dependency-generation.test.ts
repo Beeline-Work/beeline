@@ -2,14 +2,53 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
+import { withKernelLock } from './kernel-lock.js';
 import { wrapAgentCommand } from './bwrap-sandbox.js';
 import {
   prepareDependencyGeneration,
   installDependencyNpmGuard,
   collectUnusedGenerations,
+  collectDependencyStore,
   dependencyFingerprint,
 } from './dependency-generation.js';
+
+it('serves warm and cold copies immediately while another owner holds the dependency store', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'generation-busy-'));
+  const store = resolve(root, 'store'), cache = resolve(root, 'cache');
+  const warm = resolve(root, 'warm'), cold = resolve(root, 'cold');
+  const lock = JSON.stringify({ name: 'fixture', lockfileVersion: 3,
+    packages: { '': { name: 'fixture' }, 'node_modules/proof': { version: '1.0.0' } } });
+  const install = async (cwd: string) => {
+    await mkdir(resolve(cwd, 'node_modules/proof'), { recursive: true });
+    await writeFile(resolve(cwd, 'node_modules/proof/package.json'), '{"name":"proof","version":"1.0.0"}');
+    await writeFile(resolve(cwd, 'node_modules/.package-lock.json'), '{"packages":{"node_modules/proof":{}}}');
+  };
+  for (const cwd of [warm, cold]) {
+    await mkdir(cwd); await writeFile(resolve(cwd, 'package-lock.json'), lock);
+  }
+  await prepareDependencyGeneration({ root: warm, store, cache, npm: '/unused', install: () => install(warm) });
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>(done => { entered = done; });
+  const gate = new Promise<void>(done => { release = done; });
+  const owner = withKernelLock(`dependency-store:${resolve(store)}`, async () => { entered(); await gate; });
+  await held;
+  const privateInstall = vi.fn(() => install(cold));
+  let finished = false;
+  const consumers = Promise.all([
+    prepareDependencyGeneration({ root: warm, store, cache, npm: '/unused', install: async () => { throw new Error('warm copy reinstalled'); } }),
+    prepareDependencyGeneration({ root: cold, store, cache, npm: '/unused', install: privateInstall }),
+    collectDependencyStore(store),
+  ]).then(result => { finished = true; return result; });
+  try {
+    await vi.waitFor(() => expect(finished).toBe(true), { timeout: 1_000 });
+    expect(await consumers).toEqual([[resolve(warm, 'node_modules')], [resolve(cold, 'node_modules')], []]);
+    expect(privateInstall).toHaveBeenCalledOnce();
+  } finally {
+    release(); await owner; await consumers;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it.skipIf(spawnSync('bwrap', ['--ro-bind', '/', '/', 'true']).status !== 0)(
   'shares generations, seals writes, and builds independently after a lockfile change',

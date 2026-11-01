@@ -451,8 +451,9 @@ jobs:
       - uses: ./.github/actions/require-tools
         with:
           tools: git curl tar
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Reuse or provision the helper Rust toolchain
         if: needs.helper_macos.outputs.shipped != 'true'
+        run: bash scripts/ensure-helper-rust.sh
       - run: bash scripts/npm-ci-timed.sh
       - uses: ./.github/actions/buzz-agent-cache
         if: needs.helper_macos.outputs.shipped != 'true'
@@ -501,6 +502,7 @@ jobs:
           npm view "usebeeline@${version#v}" version >/dev/null 2>&1 || npm publish --no-provenance --workspace usebeeline
       # The Pages leg already proved the live manifest serves this release.
       - name: Smoke the exact helper package
+        timeout-minutes: 6
         env:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
         run: node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}"

@@ -72,9 +72,8 @@ try {
   await db.query("INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id) VALUES($1,1,'proof-online','proof-online')", [worker]);
   const queuedView = await call('getCornerRestoreState', { cornerId: waiting.cornerId }, worker);
   if (!base) {
-    assert.equal(queuedView.queue, 'queued');
-    assert.equal(queuedView.queueBehind, 'answered-report');
-    console.log('R1 queued reason over HTTP:', queuedView.queue, queuedView.queueBehind);
+    assert.equal(queuedView.state, 'working');
+    console.log('R1 waiting order over HTTP:', queuedView.state);
   }
 
   await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE request_id=$1`, [queued.turn_request_id]);
@@ -91,7 +90,6 @@ try {
   const waitingCommand = (await call('getAgentCommands', { roomId: waiting.cornerId }, worker)).commands[0];
   await claim(waitingCommand);
   const runningView = await call('getCornerRestoreState', { cornerId: waiting.cornerId }, worker);
-  assert.equal(runningView.queue, undefined);
   assert.equal(runningView.activity, 'running');
   await call('postAgentTurnReceipt', { ...authority(waitingCommand), agentId: worker, status: 'complete' }, worker);
   const next = inbox.commands.find(command => command.id === queued.id);

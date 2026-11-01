@@ -39,7 +39,7 @@ import {
   listenCornerEmulator,
   stopKeptCornerEmulator,
 } from './corner-emulator.js';
-import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { IMPLEMENTER_RELEASED_REASON, type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   openAcpConversation,
@@ -464,7 +464,11 @@ export interface MonolithCornerTurnOptions {
     githubToken: string;
     readOnly?: boolean;
   };
-  prepareCheckout?: (writable: boolean, implementerAgentId?: string) => Promise<{ path: string; gitCommonDir: string }>;
+  /** Gives a writer its private copy; every other turn gets the Room's read-only checkout. */
+  prepareCheckout?: (repositoryWork: boolean, implementerAgentId?: string, assigned?: boolean) =>
+    Promise<{ path: string; gitCommonDir: string; writable: boolean }>;
+  /** Saves unpushed work and deletes this agent's copy; returns what it did. */
+  releaseCheckout?: () => Promise<string>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -868,7 +872,7 @@ export class MonolithCornerTurnLoop {
     this.claudeLoginWatch = undefined;
   }
 
-  private async discardSession(preserveConversation = false): Promise<void> {
+  private async discardSession(preserveConversation = false, stopBackground = false): Promise<void> {
     if (!preserveConversation) this.warmTranscript.forgetSession();
     const client = this.client;
     this.stopClaudeLoginWatch();
@@ -880,8 +884,34 @@ export class MonolithCornerTurnLoop {
     this.sessionModel = null;
     const cancelled = this.closePushed || this.forcedStop || this.options.signal?.aborted ||
       (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
-    if (client?.hasBackgroundTools && !cancelled) void this.retainBackgroundClient(client);
+    if (client?.hasBackgroundTools && !cancelled && !stopBackground) void this.retainBackgroundClient(client);
     else if (client) await client.stop();
+  }
+
+  /**
+   * The owner made another agent this corner's implementer. Stop this
+   * agent's session and every retained background job, save unpushed work,
+   * delete its copy, and say which in the corner. No model turn runs.
+   */
+  private async releaseImplementer(requestId: string): Promise<void> {
+    const { api, cornerId } = this.options;
+    const retired = [...this.retiredClients.values()];
+    const jobs = retired.length + (this.client?.hasBackgroundTools ? 1 : 0);
+    await this.discardSession(false, true);
+    for (const client of retired) client.stop();
+    await Promise.all(retired.map(client => client.done));
+    const copy = this.options.releaseCheckout
+      ? await this.options.releaseCheckout()
+      : 'I had no copy of this corner\'s code.';
+    const stopped = jobs ? `I stopped my session and ${jobs} background job session${jobs === 1 ? '' : 's'}.` : 'I stopped my session.';
+    await api.execute('postRoomMessage', {
+      roomId: cornerId, requestId, presentation: 'message',
+      text: `Another agent is now this corner's implementer. ${stopped} ${copy}`,
+    });
+    await api.execute('postAgentTurnReceipt', {
+      agentId: this.agent.publicKey, roomId: cornerId, requestId,
+      status: 'complete', generationId: this.commandContext.generationId,
+    });
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
@@ -1741,12 +1771,14 @@ export class MonolithCornerTurnLoop {
       const restored = await this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId });
       // An unbriefed human corner still bootstraps on its feature branch;
       // repository publication remains gated by its first assigned brief.
-      const writable = !restored.brief || cornerHasRepositoryWork(restored.brief);
-      const checkout = await this.options.prepareCheckout(writable, restored.implementerAgentId);
+      const repositoryWork = !restored.brief || cornerHasRepositoryWork(restored.brief);
+      // An order gives work; a reviewer keeps its own detached copy (#3176).
+      const assigned = this.commandContext.current?.reason === 'order' || this.reviewerCheckout;
+      const checkout = await this.options.prepareCheckout(repositoryWork, restored.implementerAgentId, assigned);
       if (checkout.path !== this.options.worktreePath) await this.discardSession(true);
       this.options.worktreePath = checkout.path;
       this.options.repository.gitCommonDir = checkout.gitCommonDir;
-      this.options.repository.readOnly = !writable;
+      this.options.repository.readOnly = !checkout.writable;
     }
     try { return await work(); }
     catch (error) {
@@ -2077,7 +2109,7 @@ export class MonolithCornerTurnLoop {
                 ]);
                 const promptText = this.branchSyncNotice ? `${assembled.text}\n\nRepository state: ${this.branchSyncNotice}` : assembled.text;
                 if (!repositoryWork) {
-                  const scratch = this.options.repository?.readOnly ? this.options.config.agentHomeRoot : this.options.worktreePath;
+                  const scratch = this.options.worktreePath;
                   const usage = scratch ? await allocatedDirectoryBytes(scratch) : 0;
                   const text = `${promptText}\n\n${scratchBudgetMessage(usage)}`;
                   trace.notePromptWindow(text, this.modelContextTokens);
@@ -2252,7 +2284,7 @@ export class MonolithCornerTurnLoop {
                 narrationRunBoundary = 0;
                 currentNarrationRun = '';
                 trace.promptSent();
-                const scratchRoot = this.repositoryWork ? undefined : this.options.repository?.readOnly ? this.options.config.agentHomeRoot : this.options.worktreePath;
+                const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
                 const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
                 const promptClient = this.client!;
                 try {
@@ -2859,8 +2891,9 @@ export class MonolithCornerTurnLoop {
           await this.options.onCloseRequested();
           return true;
         },
-        run: (command) =>
-          this.prompt(
+        run: (command) => command.reason === IMPLEMENTER_RELEASED_REASON
+          ? this.releaseImplementer(command.turnRequestId)
+          : this.prompt(
             command.turnRequestId,
             command.source.body,
             command.source.attachments,

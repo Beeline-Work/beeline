@@ -63,6 +63,9 @@ import type {
 /** Maximum number of consecutive agent-authored turns in one Room exchange. */
 export const AGENT_TO_AGENT_HOP_CAP = 3;
 
+/** Wake reason for an implementer the owner swapped out; its helper releases the corner without a model turn. */
+export const IMPLEMENTER_RELEASED_REASON = 'implementer_released';
+
 export type CreateAgentScheduleInput = AgentRoomInput & {
   /** Plain schedule label, one to four words. */
   readonly title?: string;
@@ -1095,10 +1098,6 @@ export type CornerRestoreResult = {
     readonly headSha: string;
   };
   readonly state?: import('./phone-types.js').CornerState;
-  /** Set when `state` is working because a command is still waiting to be claimed. */
-  readonly queue?: import('./phone-types.js').CornerWorkQueue;
-  /** Room name of the turn this queued worker is behind. */
-  readonly queueBehind?: string;
   /** Worker or reviewer running/queued, or checks running; otherwise idle. */
   readonly activity?: 'running' | 'idle';
   /** The newest visible message (activity rows excluded); excerpt is at most 280 characters. */

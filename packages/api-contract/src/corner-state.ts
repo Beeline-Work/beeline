@@ -1,4 +1,4 @@
-import type { CornerBlocker, CornerLifecycleView, CornerState, CornerStateReason, CornerWorkQueue } from './phone-types.js';
+import type { CornerBlocker, CornerLifecycleView, CornerState, CornerStateReason } from './phone-types.js';
 
 /**
  * Where a corner's workflow run currently sits: the `toState` of its newest
@@ -15,12 +15,6 @@ export type CornerStateFacts = {
   readonly locked?: boolean;
   /** Running worker receipts; reviewer work has its own input. */
   readonly turnRunning: boolean;
-  /** A deliverable worker command is waiting and no live worker turn is running. */
-  readonly workerQueued?: boolean;
-  /** Every queued worker command is waiting on a helper with no live connection. */
-  readonly workerOffline?: boolean;
-  /** Another room where this worker already has a live turn, when this corner is only queued. */
-  readonly queueBehind?: string;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
@@ -37,10 +31,6 @@ export type DerivedCornerState = {
   readonly reason?: CornerStateReason;
   readonly itemId?: string;
   readonly blocker?: CornerBlocker;
-  /** Set when the corner is working because a command is still waiting to be claimed. */
-  readonly queue?: CornerWorkQueue;
-  /** Room name of the turn this queued worker is behind. */
-  readonly queueBehind?: string;
 };
 
 /** Recover a workflow stage from persisted lifecycle facts when no run is known.
@@ -73,8 +63,7 @@ export function cornerRunFromLifecycle(input: {
 /**
  * Precedence, first match. Workflow stages alone do not establish activity.
  * 1. archived — actually archived, or an ended run/lifecycle on an unlocked corner.
- * 2. working — a live non-reviewer turn, or a deliverable command still waiting
- *    for that worker. The queue note says the helper is lined up, or offline.
+ * 2. working — a live non-reviewer turn, including its queued pickup window.
  * 3. review — a live reviewer turn, or pending/not-yet-reported CI.
  * 4. waiting — an unresolved blocker, including reports and human merge holds.
  * 5. idle — everything else, including schedules and failing checks alone.
@@ -84,16 +73,11 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
     .some(state => state === 'landed' || state === 'closed');
   if (facts.archived || (!facts.locked && ended))
     return { state: 'archived' };
-  if (facts.turnRunning) {
-    if (facts.workerQueued) {
-      const queue = facts.workerOffline ? 'offline' : 'queued';
-      const behind = queue === 'queued' ? facts.queueBehind?.trim() : undefined;
-      return { state: 'working', queue, ...(behind ? { queueBehind: behind } : {}) };
-    }
-    return { state: 'working' };
-  }
+  if (facts.turnRunning) return { state: 'working' };
   const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
-  if (facts.reviewerActive || checks === 'pending' || checksNotReported(facts.lifecycle))
+  if (facts.reviewerActive || checks === 'pending' ||
+    facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending') ||
+    checksNotReported(facts.lifecycle))
     return { state: 'review' };
   if (facts.blocker) return { state: 'waiting', ...facts.blocker };
   return { state: 'idle' };

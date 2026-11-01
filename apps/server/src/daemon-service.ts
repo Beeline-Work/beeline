@@ -3921,12 +3921,7 @@ export class DaemonService {
           }
         : {}),
       ...(derived
-        ? {
-            state: derived.state,
-            ...(derived.queue ? { queue: derived.queue } : {}),
-            ...(derived.queueBehind ? { queueBehind: derived.queueBehind } : {}),
-            activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const),
-          }
+        ? { state: derived.state, activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const) }
         : {}),
       ...(row?.last_author_id && row.last_created_at && row.last_type
         ? {
@@ -8386,7 +8381,8 @@ export class DaemonService {
       );
     const result = await this.database.transaction(async (database) => {
       // One open offer per Room+connector, even when two agents race: lock
-      // first, then read any pending row (age does not create a second card).
+      // first, then read pending or connecting rows, matching the unique index
+      // (age does not create a second card).
       await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         `connector-offer:${input.roomId}:${connectorType}`,
       ]);
@@ -8398,7 +8394,7 @@ export class DaemonService {
           intent: string;
         }>(
           `SELECT id,agent_id,message_id,intent FROM connector_offers
-           WHERE room_id=$1 AND connector_type=$2 AND status='pending'
+           WHERE room_id=$1 AND connector_type=$2 AND status IN ('pending','connecting')
            ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
           [input.roomId, connectorType],
         )

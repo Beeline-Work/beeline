@@ -1757,6 +1757,64 @@ test('helper job accommodates the npm visibility deadline plus publication overh
   assert.ok(budgetMs >= NPM_VISIBILITY_TIMEOUT_MS + 5 * 60_000, 'helper job must allow the default npm visibility deadline plus five minutes for setup and publication');
 });
 
+test('helper reuses installed Rust or provisions stable with existing rustup, without an installer', () => {
+  const script = fileURLToPath(new URL('./ensure-helper-rust.sh', import.meta.url));
+  for (const scenario of ['installed', 'cargo-home', 'rustup', 'missing', 'rustup-fails']) {
+    const directory = mkdtempSync(join(tmpdir(), 'helper-rust-'));
+    try {
+      const bin = join(directory, 'bin');
+      const cargoBin = join(directory, '.cargo', 'bin');
+      mkdirSync(bin);
+      mkdirSync(cargoBin, { recursive: true });
+      const tool = (name, body, location = bin) => {
+        const path = join(location, name);
+        writeFileSync(path, `#!/bin/bash\n${body}\n`);
+        chmodSync(path, 0o755);
+      };
+      if (scenario !== 'missing') {
+        for (const name of ['rustc', 'cargo']) {
+          tool(name, scenario === 'installed' || scenario === 'cargo-home'
+            ? 'echo "installed tool"'
+            : '[[ "$RUSTUP_TOOLCHAIN" == stable ]]', scenario === 'cargo-home' ? cargoBin : bin);
+        }
+      }
+      if (scenario === 'rustup' || scenario === 'rustup-fails') {
+        tool('rustup', `echo "$*" >> "$HOME/rustup-calls"\nexit ${scenario === 'rustup' ? 0 : 1}`);
+      }
+      const envFile = join(directory, 'env');
+      const pathFile = join(directory, 'path');
+      const result = spawnSync('/bin/bash', [script], {
+        encoding: 'utf8',
+        env: { PATH: bin, HOME: directory, CARGO_HOME: join(directory, '.cargo'),
+          GITHUB_ENV: envFile, GITHUB_PATH: pathFile },
+      });
+      if (scenario === 'missing' || scenario === 'rustup-fails') {
+        assert.notEqual(result.status, 0, scenario);
+        if (scenario === 'missing') assert.match(result.stderr, /requires working rustc and cargo/);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        if (scenario === 'rustup') {
+          assert.equal(readFileSync(join(directory, 'rustup-calls'), 'utf8'), 'toolchain install stable --profile minimal\n');
+          assert.equal(readFileSync(envFile, 'utf8'), 'RUSTUP_TOOLCHAIN=stable\n');
+        }
+        if (scenario === 'cargo-home' || scenario === 'rustup') {
+          assert.equal(readFileSync(pathFile, 'utf8'), `${cargoBin}\n`);
+        }
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const steps = workflow.jobs.helper.steps;
+  const setup = steps.find((step) => step.run === 'bash scripts/ensure-helper-rust.sh');
+  assert.equal(setup.if, "needs.helper_macos.outputs.shipped != 'true'");
+  assert.ok(!steps.some((step) => /rust-toolchain/.test(step.uses ?? '')));
+  const smoke = steps.find((step) => step.name === 'Smoke the exact helper package');
+  assert.equal(smoke['timeout-minutes'], 6);
+  assert.ok(smoke['timeout-minutes'] * 60_000 > NPM_VISIBILITY_TIMEOUT_MS);
+});
+
 
 test('both native builds apply the one resolved store version before EAS, with no extra jobs or inputs', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));

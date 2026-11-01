@@ -82,22 +82,6 @@ describe('observed corner states', () => {
 it('Reproduction R1: a turn that just ended without a report is idle, not working', () => {
   expect(deriveCornerState(facts).state).toBe('idle');
 });
-it('a deliverable queued order stays working, and names an offline helper', () => {
-  expect(deriveCornerState({ ...facts, turnRunning: true, workerQueued: true })).toEqual({
-    state: 'working', queue: 'queued',
-  });
-  expect(deriveCornerState({ ...facts, turnRunning: true, workerQueued: true, workerOffline: true })).toEqual({
-    state: 'working', queue: 'offline',
-  });
-  expect(deriveCornerState({
-    ...facts, turnRunning: true, workerQueued: true, queueBehind: 'codex-dot-connect',
-  })).toEqual({ state: 'working', queue: 'queued', queueBehind: 'codex-dot-connect' });
-  expect(deriveCornerState({
-    ...facts, turnRunning: true, workerQueued: true, workerOffline: true, queueBehind: 'codex-dot-connect',
-  })).toEqual({ state: 'working', queue: 'offline' });
-  expect(deriveCornerState({ ...facts, turnRunning: true })).toEqual({ state: 'working' });
-  expect(deriveCornerState({ ...facts, reviewerActive: true })).toEqual({ state: 'review' });
-});
 it('FIC-1: a live implementer stays working regardless of failing-check age', () => {
   expect(deriveCornerState({ ...facts, turnRunning: true,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' } }).state).toBe('working');
@@ -199,4 +183,32 @@ describe('Reproduction R1: a merge hold blocks only the merge', () => {
       ...held, blocker: question, lifecycle: { lifecycle: 'in-review', checks: 'pending' },
     })).toEqual({ state: 'review' });
   });
+});
+
+it('CI-MIXED-1: failed checks stay review until every check settles', () => {
+  const lifecycle = {
+    ...pushed,
+    checks: 'failing' as const,
+    checksSummary: {
+      status: 'failing' as const, total: 2, failing: ['FRAME-BUDGET'], updatedAt: 1,
+      checks: [
+        { name: 'FRAME-BUDGET', status: 'failed' as const },
+        { name: 'SERVER', status: 'pending' as const },
+      ],
+    },
+  };
+  const mixed = { ...facts, lifecycle };
+  const blocker = { reason: 'question' as const };
+  expect(deriveCornerState(mixed)).toEqual({ state: 'review' });
+  expect(deriveCornerState({ ...mixed, blocker })).toEqual({ state: 'review' });
+  expect(deriveCornerState({ ...mixed, turnRunning: true })).toEqual({ state: 'working' });
+  const settled = {
+    ...mixed,
+    lifecycle: { ...lifecycle, checksSummary: {
+      ...lifecycle.checksSummary,
+      checks: [lifecycle.checksSummary.checks[0]!, { name: 'SERVER', status: 'passed' as const }],
+    } },
+  };
+  expect(deriveCornerState(settled)).toEqual({ state: 'idle' });
+  expect(deriveCornerState({ ...settled, blocker })).toEqual({ state: 'waiting', ...blocker });
 });

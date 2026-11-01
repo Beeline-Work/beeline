@@ -118,6 +118,7 @@ describe('no timer-driven helper server reads', () => {
     expect(intervals.sort()).toEqual([
       'agent-runtime.ts', // scratch sweep (local disk)
       'free-agent-idle.ts', // free agent Machine idle clock (local); at most one idle report per idle minute, never a read
+      'helper-usage.ts', // local disk/process telemetry; never reads the server
       'session-scheduler.ts', // idle session sweep (local)
       'shared-asset-capacity.ts', // private recovery reserve check (local disk)
       'systemd.ts', // local watchdog feed

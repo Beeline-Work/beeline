@@ -184,7 +184,9 @@ export async function sendOrder(
   if (target.parent_id)
     await recordAgentCommandCard(db, { id: queued.id, cornerId: address, kind: 'order', authorId: agentId, recipientId: worker, text });
   return { id: queued.id, createdAt: Math.floor(Date.now() / 1000),
-    effect: 'order', address, agent: worker, visibility: 'private', reportsAssignment: false,
+    effect: 'order', address, agent: worker, visibility: 'private',
+    // Unused receipt field. Nothing reads it; a subscribed Rooms MCP member is woken by the command row.
+    reportsAssignment: false,
     accepted: true, executionConfirmed: false, receipt: 'Order queued privately; not confirmation of execution.' };
 }
 

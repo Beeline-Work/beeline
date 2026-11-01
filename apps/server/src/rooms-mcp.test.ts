@@ -17,8 +17,8 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
-import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS } from './rooms-mcp-agent.js';
-import { claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
+import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendingMcpWakes } from './rooms-mcp-agent.js';
+import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { openSecrets } from './free-agents.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { runMaintenance } from './background.js';
@@ -163,7 +163,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const initialized = await eventCall(token, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'events-test', version: '1' } });
     expect(initialized.result.capabilities.events).toEqual({});
     expect((await eventCall(token, 'server/discover')).result.capabilities.events).toEqual({});
-    expect((await eventCall(token, 'events/list')).result.events).toMatchObject([{ name: 'mention', delivery: ['webhook'] }]);
+    expect((await eventCall(token, 'events/list')).result.events).toMatchObject([
+      { name: 'mention', delivery: ['webhook'] },
+      { name: 'wake', delivery: ['webhook'], payloadSchema: { required: expect.arrayContaining(['roomId', 'commandId', 'next']) } },
+    ]);
     expect((await eventCall(token, 'events/list', { cursor: 'invalid' })).error?.code).toBe(-32602);
     const first = await eventCall(token, 'events/subscribe', params);
     expect(first.error).toBeUndefined();
@@ -325,6 +328,127 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await deliverMcpMemberWebhooks(db, transport)).toBe(1);
     expect(attempts).toHaveLength(2);
     expect(attempts[1]).toBe(attempts[0]);
+  });
+  async function orderSubscribed(text: string) {
+    // A private parent command, not a public tag, so later Room reads do not
+    // record an unanswered @demo-agent mention.
+    const parent = await createAgentCommand(db, { roomId: ROOM, agentId: AGENT, sourceMessageId: null, reason: 'order',
+      privatePayload: { text, authorId: USER, fromRoomId: ROOM, kind: 'order' } });
+    const generationId = `gen-${randomBytes(4).toString('hex')}`;
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: parent!.id, generationId } as never, AGENT);
+    return { roomId: ROOM, requestId: parent!.turn_request_id, generationId };
+  }
+  async function settleDemoTurn(turn: { requestId: string }) {
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`, [ROOM, AGENT, turn.requestId]);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND state IN ('pending','claimed')`, [ROOM, AGENT, turn.requestId]);
+  }
+  it('MCP-WAKE-1: an order to a subscribed member queues one signed delivery and a retry queues none', async () => {
+    const { token, params, member, secret } = await eventFixture();
+    const subscription = (await eventCall(token, 'events/subscribe', params)).result as { id: string };
+    const other = await connected();
+    const otherSecret = 'whsec_' + randomBytes(32).toString('base64');
+    eventTransport = async (_url, init) => Response.json({ challenge: JSON.parse(init.body).challenge });
+    const otherSubscription = (await eventCall(other.token, 'events/subscribe', { ...params,
+      delivery: { mode: 'webhook', url: 'https://hooks.example/other-wake', secret: otherSecret } })).result as { id: string };
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const turn = await orderSubscribed('hand off the private audit');
+    const orderText = 'Audit the corner list privately.';
+    const sent = await daemon.execute('order', { ...turn, address: ROOM, agent: handle, text: orderText } as never, AGENT) as { id: string };
+    const again = await daemon.execute('order', { ...turn, address: ROOM, agent: handle, text: orderText } as never, AGENT) as { id: string };
+    expect(again.id).toBe(sent.id);
+    const rows = (await db.query<{ subscription_id: string; body: string }>('SELECT subscription_id,body FROM rooms_mcp_event_deliveries WHERE command_id=$1', [sent.id])).rows;
+    expect(rows.map(row => row.subscription_id)).toEqual([subscription.id]);
+    const body = JSON.parse(rows[0]!.body);
+    expect(body).toMatchObject({ name: 'wake', cursor: null, data: {
+      roomId: ROOM, commandId: sent.id, reason: 'order', kind: 'order', text: orderText,
+    } });
+    expect(body.data.next).toBe((await pendingMcpWakes(db, member)).find(wake => wake.id === sent.id)?.next);
+    expect(JSON.stringify(rows)).not.toContain(other.member);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_event_deliveries WHERE subscription_id=$1', [otherSubscription.id])).rowCount).toBe(0);
+    const received: unknown[] = [];
+    const transport = vi.fn(async (_url: string, init: { headers: Record<string, string>; body: string }) => {
+      received.push(new Webhook(secret).verify(init.body, init.headers));
+      return new Response(null, { status: 204 });
+    });
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(1);
+    expect(received).toEqual([body]);
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
+    expect(transport).toHaveBeenCalledTimes(1);
+    await settleDemoTurn(turn);
+  });
+  it.each(['unsubscribed', 'revoked', 'expired'])('MCP-WAKE-1: queues no delivery when the member is %s', async kind => {
+    const { token, params, member, grant } = await eventFixture();
+    if (kind !== 'unsubscribed') await eventCall(token, 'events/subscribe', params);
+    if (kind === 'revoked') await db.query('UPDATE rooms_mcp_connections SET revoked_at=now() WHERE client_id=$1', [grant.clientId]);
+    if (kind === 'expired') await db.query("UPDATE rooms_mcp_event_subscriptions SET expires_at=now()-interval '1 second' WHERE member_id=$1", [member]);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const turn = await orderSubscribed(kind + ' order stays quiet');
+    const sent = await daemon.execute('order', { ...turn, address: ROOM, agent: handle, text: 'Private text for ' + kind } as never, AGENT) as { id: string };
+    expect((await db.query('SELECT 1 FROM rooms_mcp_event_deliveries WHERE command_id=$1', [sent.id])).rowCount).toBe(0);
+    await settleDemoTurn(turn);
+  });
+  it('MCP-WAKE-1: a wake subscription takes the order and the mention subscription is not doubled', async () => {
+    const { token, params, member } = await eventFixture();
+    const mention = (await eventCall(token, 'events/subscribe', params)).result as { id: string };
+    eventTransport = async (_url, init) => Response.json({ challenge: JSON.parse(init.body).challenge });
+    const wake = (await eventCall(token, 'events/subscribe', { name: 'wake', arguments: {}, cursor: null,
+      delivery: { mode: 'webhook', url: 'https://hooks.example/wake-only', secret: 'whsec_' + randomBytes(32).toString('base64') } })).result as { id: string };
+    expect(wake.id).not.toBe(mention.id);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const turn = await orderSubscribed('prefer the wake subscription');
+    const sent = await daemon.execute('order', { ...turn, address: ROOM, agent: handle, text: 'Only the wake subscription.' } as never, AGENT) as { id: string };
+    expect((await db.query<{ subscription_id: string }>('SELECT subscription_id FROM rooms_mcp_event_deliveries WHERE command_id=$1', [sent.id])).rows)
+      .toEqual([{ subscription_id: wake.id }]);
+    await settleDemoTurn(turn);
+  });
+  it('MCP-WAKE-1: opening a corner with an MCP implementer queues one delivery', async () => {
+    const { token, params, member } = await eventFixture();
+    const subscription = (await eventCall(token, 'events/subscribe', params)).result as { id: string };
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const caller = await connected();
+    const opened = await caller.client.callTool({ name: 'open_corner', arguments: { room: ROOM, name: 'wake-corner',
+      objective: 'Check the nebula numbers', implementer: handle, brief: { spec: '## Intent\nCheck the nebula numbers.', repositoryWork: false } } }) as { isError?: boolean; content: { text: string }[] };
+    expect(opened.isError, opened.content[0]?.text).not.toBe(true);
+    const corner = JSON.parse(opened.content[0]!.text).data.address as string;
+    const rows = (await db.query<{ subscription_id: string; body: string }>('SELECT subscription_id,body FROM rooms_mcp_event_deliveries WHERE command_id IS NOT NULL AND subscription_id=$1', [subscription.id])).rows;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.body)).toMatchObject({ name: 'wake', data: {
+      roomId: corner, kind: 'order', reason: 'corner_objective', next: 'Do the work, then call report with this address.',
+    } });
+    expect(JSON.parse(rows[0]!.body).data.text).toContain('Check the nebula numbers');
+  });
+  it('MCP-WAKE-1: a report back to a subscribed commander queues one delivery', async () => {
+    const { token, params, member, client } = await eventFixture();
+    const subscription = (await eventCall(token, 'events/subscribe', params)).result as { id: string };
+    const ordered = JSON.parse(((await client.callTool({ name: 'order', arguments: { address: ROOM, agent: 'demo-agent', text: 'Check the nebula numbers.' } })) as { content: { text: string }[] }).content[0]!.text).data as { id: string };
+    const order = (await db.query<{ turn_request_id: string }>('SELECT turn_request_id FROM agent_commands WHERE id=$1', [ordered.id])).rows[0]!;
+    const generationId = 'gen-wake-report';
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: ordered.id, generationId } as never, AGENT);
+    await daemon.execute('report', { roomId: ROOM, requestId: order.turn_request_id, generationId, status: 'done', text: 'done: the numbers match' } as never, AGENT);
+    const rows = (await db.query<{ body: string }>(
+      `SELECT body FROM rooms_mcp_event_deliveries WHERE subscription_id=$1 AND command_id IS NOT NULL`, [subscription.id])).rows;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.body)).toMatchObject({ name: 'wake', data: {
+      roomId: ROOM, kind: 'report', reason: 'report', text: 'done: the numbers match',
+      next: 'Handle it, then call no_reply_needed with this address if nothing needs posting.',
+    } });
+    expect((await pendingMcpWakes(db, member)).some(wake => wake.kind === 'report')).toBe(true);
+    await settleDemoTurn({ requestId: order.turn_request_id });
+  });
+  it('MCP-WAKE-1: a scheduled wake and a lifecycle wake each queue one delivery', async () => {
+    const { token, params, member } = await eventFixture();
+    const subscription = (await eventCall(token, 'events/subscribe', params)).result as { id: string };
+    const source = await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'Morning check, no tags.' }, USER) as { messageId: string };
+    const scheduled = await createAgentCommand(db, { roomId: ROOM, agentId: member, sourceMessageId: source.messageId, reason: 'schedule' });
+    const lifecycle = await createAgentCommand(db, { roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'subscribed_event',
+      privatePayload: { text: 'The corner merged.', authorId: USER, fromRoomId: ROOM, kind: 'lifecycle' } });
+    const rows = (await db.query<{ command_id: string; body: string }>(
+      'SELECT command_id,body FROM rooms_mcp_event_deliveries WHERE subscription_id=$1 AND command_id=ANY($2::text[]) ORDER BY command_id',
+      [subscription.id, [scheduled!.id, lifecycle!.id]])).rows;
+    expect(rows).toHaveLength(2);
+    const byId = new Map(rows.map(row => [row.command_id, JSON.parse(row.body)]));
+    expect(byId.get(scheduled!.id)).toMatchObject({ name: 'wake', data: { reason: 'schedule', text: 'Morning check, no tags.', roomId: ROOM, commandId: scheduled!.id } });
+    expect(byId.get(lifecycle!.id)).toMatchObject({ name: 'wake', data: { reason: 'subscribed_event', kind: 'lifecycle', text: 'The corner merged.', roomId: ROOM } });
   });
   it.each(['consent', 'profile'])('MCP-WAKE-SETUP: %s saves once, delivers tags and never reads the key back', async path => {
     vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-wake-test-key');

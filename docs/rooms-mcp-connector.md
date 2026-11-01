@@ -66,7 +66,7 @@ Existing members were migrated once to join the public Rooms they had no members
 
 A connected app's member also gets the tools Beeline agents have (`apps/server/src/rooms-mcp-agent.ts`). Each call runs the same `DaemonService` operation an agent's tool call reaches, as the member, so membership, reviewer independence, the merge gate (reviewer pass, green checks, no hold), holds, grants and passkey approvals apply unchanged. Each tool takes the `address` it acts in, because an app has no current place.
 
-A call that needs turn authority opens a one-call server turn: an `agent_commands` row with reason `mcp_call`, claimed for that call and completed by the agent's own terminal receipt. Its requester is the latest person who tagged the member in that place, as a tag starts an agent's turn; holds and merge yeses need that person. `report` instead binds the oldest order waiting for the member at `address`; any other call there leaves the order waiting. Orders, reports, lifecycle and scheduled wakes addressed to the member call its webhook at once and appear under `list_mentions` `wakes`; `no_reply_needed(address)` clears wakes that need no answer.
+A call that needs turn authority opens a one-call server turn: an `agent_commands` row with reason `mcp_call`, claimed for that call and completed by the agent's own terminal receipt. Its requester is the latest person who tagged the member in that place, as a tag starts an agent's turn; holds and merge yeses need that person. `report` instead binds the oldest order waiting for the member at `address`; any other call there leaves the order waiting. Orders, reports, lifecycle and scheduled wakes addressed to the member call its webhook at once and appear under `list_mentions` `wakes`; `no_reply_needed(address)` clears wakes that need no answer. A member with a live MCP event subscription also gets a signed `wake` event in the same transaction as the `agent_commands` row (a mention subscription receives it until the member subscribes to `wake`). Private order text goes only to that member's subscription.
 
 An app has no checkout, so `open_corner` refuses the app itself as implementer of repository work. `post_artifact` takes `html` text or base64 `bytes` instead of a path and posts the file at once. `app_tool` serves `beeline:vault`, `beeline:onboarding`, `beeline:workflow`, `beeline:avatar` and read-only `beeline:wallet`, plus connected apps.
 
@@ -153,8 +153,13 @@ The bundled SVGs are unmodified official assets. Display PNGs are decoded and re
 
 Beeline's authenticated `/mcp` endpoint advertises `events` in Streamable HTTP
 `initialize` and MCP 2.0 `server/discover` (`2026-07-28`). Its `mention` event
-means a message tags the connected member or messages it directly. It has no
-caller-selected member filter: OAuth consent determines the recipient.
+means a message tags the connected member or messages it directly. Its `wake`
+event means an order, report, corner assignment, or scheduled or lifecycle
+wake is waiting. Neither event has a caller-selected member filter: OAuth
+consent determines the recipient. A live `mention` subscription receives
+`wake` deliveries until that member has a live `wake` subscription, so an
+agent already watching mentions is ordered without a second subscribe, and
+subscribing to both does not deliver one command twice.
 
 To connect after this server change is released:
 
@@ -191,10 +196,11 @@ Events use Standard Webhooks HMAC signatures, stable event IDs across bounded
 backoff retries, and a maximum body size of 256 KiB. Verification and delivery
 use the existing HTTPS/public-address/DNS-pinned transport and reject redirects.
 The event outbox is separate from the bearer ledger because it deduplicates by
-subscription/message, while the legacy ledger deduplicates by member/message;
-both drain through the existing webhook notification and maintenance loop.
-Delivery rechecks expiry, consent, current Room/Workspace access and message
-deletion. Unsubscribe/disconnect cascade pending deliveries. Completed delivery
+subscription/message and, for wakes, by subscription/command, while the legacy
+ledger deduplicates by member/message; both drain through the existing webhook
+notification and maintenance loop. Delivery rechecks expiry, consent, current
+Room/Workspace access, message deletion, and that a command wake is still
+pending. Unsubscribe/disconnect cascade pending deliveries. Completed delivery
 bodies and expired subscriptions are removed in bounded batches after seven days.
 
 This event has no protocol replay: `cursor` is always `null`, and non-null

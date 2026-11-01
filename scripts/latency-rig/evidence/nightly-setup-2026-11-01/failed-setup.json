@@ -1,0 +1,71 @@
+{
+  "runId": "night-2026-11-01-Flk7ip",
+  "night": "2026-11-01",
+  "head": "019254b5bc87f443f86bf6a065b43c25b09346d9",
+  "attempt": 2,
+  "final": true,
+  "recordedAt": "2026-11-01T08:03:51.603Z",
+  "pass": false,
+  "failures": [
+    "Capture skipped or produced no measured cases"
+  ],
+  "needsRerun": false,
+  "shouldAlert": true,
+  "hostLoad": [
+    {
+      "atMs": 1793520207192,
+      "load": [
+        6.26,
+        3.59,
+        2.26
+      ],
+      "freeMemory": 102472429568,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    }
+  ],
+  "setupErrors": [
+    "Setup aborted: private rig state uses 4937 MiB of the 5120 MiB scratch allowance before Android release build; insufficient scratch headroom. No measured capture produced.",
+    "Setup aborted: private rig state uses 4937 MiB of the 5120 MiB scratch allowance before Android release build; insufficient scratch headroom. No measured capture produced."
+  ],
+  "firstAttemptHostLoad": [
+    {
+      "atMs": 1793520166082,
+      "load": [
+        8.38,
+        3.49,
+        2.17
+      ],
+      "freeMemory": 102507298816,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    }
+  ],
+  "scheduleReceipt": {
+    "observedAt": "2026-10-30T13:40:21.052Z",
+    "title": "Nightly latency rig",
+    "scheduleId": "390f36c4-454d-475a-a789-0d3561bcdc92",
+    "roomId": "acca09be-d0fb-443d-a32f-31d1a9737023",
+    "roomName": "latency-rig",
+    "agentId": "7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877",
+    "agentHandle": "jellybean",
+    "cadence": {
+      "kind": "cron",
+      "timeZone": "America/New_York",
+      "expression": "0 3 * * *"
+    },
+    "runCount": 1,
+    "nextRunAt": 1793430000
+  },
+  "helperObserved": {
+    "observedAt": "2026-11-01T13:13:29.672Z",
+    "loadedRelease": "790602ab2156674e0121c5e8cec86b97cf685e20",
+    "version": "v0.1.130",
+    "containsScratchFix": false
+  },
+  "deliveredScratchPrompt": {
+    "at": "2026-11-01T08:00:15.320Z",
+    "text": "Scratch 13826 / 5120 MiB",
+    "chargedScope": "agentHomeRoot"
+  }
+}

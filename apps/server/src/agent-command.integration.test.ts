@@ -2763,3 +2763,25 @@ it('Reproduction stuck-turn-1: superseded review output completes its command an
     [corner,command!.turnRequestId,A])).rows).toEqual([{status:'failed'}]);
   console.log('Demonstrated stuck-turn-1: superseded review end → command complete, turn failed, phone corner no longer working; receipt replay preserves failure');
 });
+
+
+it('SILENT-END-1: late silent-tool results do not wake again; other completions and later triggers survive', async () => {
+  const queued = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
+  const command = (await commands(A, C)).find(c => c.id === queued!.id)!;
+  await claim(command);
+  const turn = { roomId: C, requestId: command.turnRequestId, generationId: 'g1' };
+  await daemon.execute('markAgentTurnSilent', turn, A);
+  await daemon.execute('postAgentTurnReceipt', { ...turn, status: 'complete', completionKind: 'no-reply' }, A);
+  for (const status of ['completed', 'failed'] as const) {
+    await daemon.execute('postBackgroundToolCompletion', {
+      ...turn, toolCallId: 'silent', title: 'mcp__beeline-agent__no_reply_needed', status,
+    }, A);
+  }
+  expect((await commands(A, C)).filter(c => c.reason === 'corner_background_tool')).toEqual([]);
+  await daemon.execute('postBackgroundToolCompletion', {
+    ...turn, toolCallId: 'build', title: 'Run build', status: 'completed',
+  }, A);
+  expect((await commands(A, C)).filter(c => c.reason === 'corner_background_tool')).toHaveLength(1);
+  const next = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
+  expect((await commands(A, C)).some(c => c.id === next!.id)).toBe(true);
+});

@@ -28,7 +28,7 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   }
   for (const reason of ['human_tag', 'direct_message', 'unknown']) {
     await context.enter({ ...command, reason });
-    await expect(callAgentTool('no_reply_needed', {}, 'silent-2')).rejects.toThrow('requires a nonhuman');
+    await expect(callAgentTool('no_reply_needed', {}, 'silent-2')).rejects.toThrow('Call post({text: <your reply>}), then end the turn.');
   }
   await context.leave();
   await expect(callAgentTool('no_reply_needed', {}, 'silent-3')).rejects.toThrow('no active server command');

@@ -48,14 +48,24 @@ createInterface({ input: process.stdin }).on('line', async line => {
   else if (message.method === 'session/prompt') {
     for (const item of updates) {
       if (item.silence) {
+        const silence = () => {
         try { execFileSync(process.execPath, ['--import', ${JSON.stringify(createRequire(import.meta.url).resolve('tsx'))}, '--input-type=module', '-e', ${JSON.stringify(`
           import { callAgentTool } from '${pathToFileURL(join(process.cwd(), 'src/read-only-mcp.ts')).href}';
           process.env.BEELINE_DAEMON_BASE_URL = 'http://fixture';
           process.env.BEELINE_DAEMON_TOKEN = 'fixture';
           // The replayed tool is advertised on every harness now.
-          globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
-          if (await callAgentTool('no_reply_needed', {}, 'silent') !== JSON.stringify({ acknowledged: true })) throw new Error('Silence was not acknowledged');
+          globalThis.fetch = async () => ({ ok: true, json: async () => ({ items: [] }) });
+          const parallel = ${JSON.stringify(updates.some(item => item.parallel))};
+          const calls = parallel
+            ? [callAgentTool('read', { facet: 'messages' }, 'parallel-read'), callAgentTool('no_reply_needed', {}, 'silent')]
+            : [callAgentTool('no_reply_needed', {}, 'silent')];
+          const results = await Promise.all(calls);
+          if (results.at(-1) !== JSON.stringify({ acknowledged: true })) throw new Error('Silence was not acknowledged');
         `)}], { env: { ...process.env, ...toolEnv }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (error) { process.stderr.write(error.stderr); process.exit(1); }
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 'silent', status: 'completed' });
+        };
+        if (item.background) setTimeout(silence, 100);
+        else silence();
       } else update(item);
     }
     reply({ stopReason: 'end_turn' });
@@ -65,10 +75,10 @@ createInterface({ input: process.stdin }).on('line', async line => {
 `;
 
 /** Run production session setup and publishing against a scripted ACP peer. */
-async function turnWrites(scope: 'room' | 'corner', agentKind: BodyConfig['agentKind']) {
+async function turnWrites(scope: 'room' | 'corner', agentKind: BodyConfig['agentKind'], shape = 'alone') {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-publishing-'));
   const script = join(root, 'harness.mjs');
-  await writeFile(script, harnessSource([...tool('silent', 'no_reply_needed'), { silence: true }, text('This closing text must disappear.')]));
+  await writeFile(script, harnessSource([tool('silent', 'mcp__beeline-agent__no_reply_needed')[0]!, { silence: true, background: shape === 'background', parallel: shape === 'parallel' }, text('This closing text must disappear.')]));
   const identity = identityFromKey('11'.repeat(32), 'Bee');
   const human = '22'.repeat(32);
   const agent = {
@@ -150,3 +160,10 @@ it.each(['room', 'corner'] as const)('Reproduction R1: production %s ACP environ
     expect(writes).toContainEqual({ name: 'postAgentTurnReceipt', input: expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }) });
   }
 }, 60_000);
+
+
+it.each(['background', 'parallel'])('SILENT-END-1: production corner keeps authority for %s silence and posts no continuation', async shape => {
+  const writes = await turnWrites('corner', 'claude', shape);
+  expect(writes.filter(write => write.name === 'postRoomMessage' || write.name === 'postBackgroundToolCompletion')).toEqual([]);
+  expect(writes).toContainEqual({ name: 'postAgentTurnReceipt', input: expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }) });
+}, 30_000);

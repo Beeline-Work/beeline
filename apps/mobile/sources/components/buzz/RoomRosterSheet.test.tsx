@@ -322,7 +322,9 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
     const add = renderer.root.findByProps({ testID: 'room-roster-add-members' });
     expect(add.props.accessibilityLabel).toBe('Add members');
-    expect(add.props.label).toBe('Add');
+    const target = add.findAllByType('Pressable' as any).at(-1)!;
+    expect(target.props.style({ pressed: false })[0]).toMatchObject({ width: 44, height: 44 });
+    expect(add.findAllByType('Svg' as any)).toHaveLength(1);
     act(() => add.props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);
   });

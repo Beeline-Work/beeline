@@ -4770,23 +4770,25 @@ export function BuzzChatSurface({
   const handleRemoveRoomMember = useCallback(
     async (participant: RoomMemberOption) => {
       if (!transport || !canManageWorkspace || participant.pubkey === userPubkey) return;
-      const confirmed = await Modal.confirm(
+      await Modal.confirm(
         `Remove ${participant.name}?`,
         `Their membership will be removed and this ${ROOM_LABEL} will disappear from their workspace list.`,
-        { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
+        {
+          cancelText: 'Cancel', confirmText: 'Remove', destructive: true, pendingText: 'Removing…',
+          onConfirm: async () => {
+            setMembershipActionPubkey(participant.pubkey);
+            setMembershipError(null);
+            try {
+              await transport.removeRoomMember(decodedId, participant.pubkey);
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (err) {
+              throw new Error(appErrorCopy(err, `Could not remove ${participant.name}.`));
+            } finally {
+              setMembershipActionPubkey(null);
+            }
+          },
+        },
       );
-      if (!confirmed) return;
-      setMembershipActionPubkey(participant.pubkey);
-      setMembershipError(null);
-      void transport
-        .removeRoomMember(decodedId, participant.pubkey)
-        .then(() => {
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        })
-        .catch((err) => {
-          setMembershipError(appErrorCopy(err, `Could not remove ${participant.name}.`));
-        })
-        .finally(() => setMembershipActionPubkey(null));
     },
     [canManageWorkspace, decodedId, transport, userPubkey],
   );

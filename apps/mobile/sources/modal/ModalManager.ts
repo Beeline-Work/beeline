@@ -38,6 +38,8 @@ class ModalManagerClass implements IModal {
       cancelText?: string;
       confirmText?: string;
       destructive?: boolean;
+      onConfirm?: () => Promise<void>;
+      pendingText?: string;
     },
   ): Promise<boolean> {
     if (!this.showModalFn) {
@@ -52,6 +54,8 @@ class ModalManagerClass implements IModal {
       cancelText: options?.cancelText,
       confirmText: options?.confirmText,
       destructive: options?.destructive,
+      onConfirm: options?.onConfirm,
+      pendingText: options?.pendingText,
     } as Omit<ModalConfig, 'id'>);
 
     return new Promise<boolean>((resolve) => {

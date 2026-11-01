@@ -31,7 +31,7 @@ const roomView = vi.hoisted(() => ({
 }));
 const share = vi.hoisted(() => vi.fn(async () => undefined));
 const modal = vi.hoisted(() => ({
-  confirm: vi.fn(async () => true),
+  confirm: vi.fn(async (_title?: string, _body?: string, _options?: { onConfirm?: () => Promise<void> }) => true),
   prompt: vi.fn(async () => null as string | null),
 }));
 const navigation = vi.hoisted(() => ({
@@ -595,7 +595,7 @@ beforeEach(() => {
     agentsTruncated: state.workspace.agentsTruncated,
   }));
   client.resolveDirectMessage.mockReset().mockResolvedValue({ channelId: 'dm-room' });
-  modal.confirm.mockResolvedValue(true);
+  modal.confirm.mockImplementation(async (_title?: string, _body?: string, options?: { onConfirm?: () => Promise<void> }) => { await options?.onConfirm?.(); return true; });
   modal.prompt.mockResolvedValue(null);
 });
 
@@ -731,12 +731,12 @@ describe('Members workspace management', () => {
     expect(people.props.accessibilityLabel).toBe('Add people');
     expect(agents.props.accessibilityLabel).toBe('Add agents');
     {
-      const box = people.props.style({ pressed: false })[0];
+      const box = people.findAllByType('Pressable').at(-1)!.props.style({ pressed: false })[0];
       expect(box.height).toBeGreaterThanOrEqual(44);
       expect(box.width).toBeGreaterThanOrEqual(44);
     }
     {
-      const box = agents.props.style({ pressed: false })[0];
+      const box = agents.findAllByType('Pressable').at(-1)!.props.style({ pressed: false })[0];
       expect(box.height).toBeGreaterThanOrEqual(44);
       expect(box.width).toBeGreaterThanOrEqual(44);
     }
@@ -1784,6 +1784,8 @@ describe('Members workspace management', () => {
       cancelText: 'Cancel',
       confirmText: 'Remove agent',
       destructive: true,
+      pendingText: 'Removing…',
+      onConfirm: expect.any(Function),
     });
     expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
@@ -1947,7 +1949,7 @@ describe('Members workspace management', () => {
       expect.stringMatching(
         /every Room.*paired host.*drains active sessions.*runtime configuration/i,
       ),
-      { cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true },
+      { cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true, pendingText: 'Removing…', onConfirm: expect.any(Function) },
     );
     expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });

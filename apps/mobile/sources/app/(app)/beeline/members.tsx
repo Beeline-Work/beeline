@@ -994,26 +994,29 @@ export default function BuzzMembers({
     if (!selectedAgent || !canRemoveSelectedAgent || !workspaceId) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
     const name = selectedAgent.agent.identity.name;
-    const confirmed = await Modal.confirm(
+    await Modal.confirm(
       `Remove ${name}?`,
       'This removes the agent from every Room and the Workspace. The paired host then confirms that removal, drains active sessions, stops the daemon, and deletes its runtime configuration. Re-pairing is required to restore it.',
-      { cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true },
+      {
+        cancelText: 'Cancel', confirmText: 'Remove agent', destructive: true, pendingText: 'Removing…',
+        onConfirm: async () => {
+          setWorking('remove-agent');
+          setError(null);
+          try {
+            const client = await writeClient();
+            await client.removeAgent(workspaceId, pubkey);
+            if (recordScope) recordWorkspaceRemoval(recordScope, pubkey);
+            closeAgentSettings();
+            if (profileAgentId) (onClose ?? (() => router.back()))();
+            setOpenModelAxis(null);
+          } catch (reason) {
+            throw new Error(appErrorCopy(reason, 'Could not remove agent.'));
+          } finally {
+            setWorking(null);
+          }
+        },
+      },
     );
-    if (!confirmed) return;
-    setWorking('remove-agent');
-    setError(null);
-    try {
-      const client = await writeClient();
-      await client.removeAgent(workspaceId, pubkey);
-      if (recordScope) recordWorkspaceRemoval(recordScope, pubkey);
-      closeAgentSettings();
-      if (profileAgentId) (onClose ?? (() => router.back()))();
-      setOpenModelAxis(null);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not remove agent.`));
-    } finally {
-      setWorking(null);
-    }
   };
 
   const modelAxes = useMemo(() => {

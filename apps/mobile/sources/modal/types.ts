@@ -29,6 +29,9 @@ export interface ConfirmModalConfig extends BaseModalConfig {
   cancelText?: string;
   confirmText?: string;
   destructive?: boolean;
+  /** Keep the confirmation open while this action runs; failures remain retryable. */
+  onConfirm?: () => Promise<void>;
+  pendingText?: string;
 }
 
 export interface PromptDraft {
@@ -92,6 +95,8 @@ export interface IModal {
       cancelText?: string;
       confirmText?: string;
       destructive?: boolean;
+      onConfirm?: () => Promise<void>;
+      pendingText?: string;
     },
   ): Promise<boolean>;
   prompt(

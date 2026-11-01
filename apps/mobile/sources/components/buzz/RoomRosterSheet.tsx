@@ -1,3 +1,4 @@
+import { SectionAddButton } from './RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React, { useEffect, useState } from 'react';
@@ -134,10 +135,8 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             <Text style={styles.rosterModalTitle}>{MEMBERS_LABEL}</Text>
           </View>
           {canAddMembers && (
-            <Button
-              label="Add"
+            <SectionAddButton
               style={styles.rosterModalAdd}
-              variant="quiet"
               accessibilityLabel="Add members"
               testID="room-roster-add-members"
               onPress={onAddMembers}

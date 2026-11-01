@@ -11,6 +11,25 @@ interface WebAlertModalProps {
 /** Historical export name; the implementation is app-wide and Hull-native. */
 export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps) {
   const isConfirm = config.type === 'confirm';
+  const pendingRef = React.useRef(false);
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const submit = async () => {
+    if (pendingRef.current || config.type !== 'confirm') return;
+    if (!config.onConfirm) { onConfirm?.(true); return; }
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      await config.onConfirm();
+      onConfirm?.(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not complete this action. Try again.');
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
   const buttons = isConfirm
     ? [
         { text: config.cancelText || 'Cancel', style: 'cancel' as const },
@@ -28,7 +47,9 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
         .at(-1)?.index
     : undefined;
   const actions: HullDialogAction[] = buttons.map((button, index) => ({
-    label: button.text,
+    label: pending && isConfirm && index === 1 ? (config.pendingText ?? 'Working…') : button.text,
+    loading: pending && isConfirm && index === 1,
+    disabled: pending || Boolean(button.disabled),
     testID: isConfirm
       ? index === 0
         ? 'hull-confirm-cancel'
@@ -38,7 +59,9 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
       button.style === 'destructive' ? 'destructive' : index === primaryIndex ? 'primary' : 'quiet',
     onPress: () => {
       if (isConfirm) {
-        onConfirm?.(index === 1);
+        if (pendingRef.current) return;
+        if (index === 1) void submit();
+        else onConfirm?.(false);
         return;
       }
       button.onPress?.();
@@ -47,6 +70,7 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
   }));
 
   const dismiss = () => {
+    if (pendingRef.current) return;
     if (isConfirm) onConfirm?.(false);
     else onClose();
   };
@@ -54,8 +78,8 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
   return (
     <HullDialog
       actions={actions}
-      body={config.message}
-      dismissOnBackdrop={isConfirm}
+      body={[config.message, error].filter(Boolean).join('\n\n')}
+      dismissOnBackdrop={isConfirm && !pending}
       onRequestClose={dismiss}
       scrimTestID={isConfirm ? 'hull-confirm-dismiss' : undefined}
       testID="hull-alert-dialog"

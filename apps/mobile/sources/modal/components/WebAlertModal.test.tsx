@@ -8,6 +8,11 @@ vi.mock('@/components/buzz/HullDialog', async () => {
   return { HullDialog: (props: any) => ReactModule.createElement('HullDialog', props) };
 });
 
+vi.mock('@/components/buzz/HullActionSheet', () => ({ HullActionSheetCancel: () => null, HullActionSheetModal: () => null, HullActionSheetRow: () => null }));
+vi.mock('./WebPromptModal', () => ({ WebPromptModal: () => null }));
+vi.mock('./CustomModal', () => ({ CustomModal: () => null }));
+import { Modal } from '../ModalManager';
+import { ModalProvider } from '../ModalProvider';
 import { WebAlertModal } from './WebAlertModal';
 
 (
@@ -15,6 +20,59 @@ import { WebAlertModal } from './WebAlertModal';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('Hull alert and confirm adapter', () => {
+  it('dismisses the mounted confirmation after one successful remove press', async () => {
+    let finish!: () => void;
+    const remove = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<ModalProvider><></></ModalProvider>); });
+    let confirmation!: Promise<boolean>;
+    act(() => { confirmation = Modal.confirm('Remove Claude?', 'Remove this Room membership.',
+      { confirmText: 'Remove', pendingText: 'Removing…', onConfirm: remove }); });
+    const dialog = () => renderer!.root.findByType('HullDialog' as any);
+    act(() => dialog().props.actions[1].onPress());
+    expect(dialog().props.actions[1].loading).toBe(true);
+    await act(async () => finish());
+    await expect(confirmation).resolves.toBe(true);
+    expect(remove).toHaveBeenCalledOnce();
+    expect(renderer!.root.findAllByType('HullDialog' as any)).toHaveLength(0);
+    act(() => renderer!.unmount());
+  });
+
+  it('runs removal once, shows progress and closes after the request completes', async () => {
+    let finish!: () => void;
+    const remove = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const close = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<WebAlertModal config={{ id: 'remove', type: 'confirm',
+      title: 'Remove Claude?', confirmText: 'Remove', pendingText: 'Removing…', onConfirm: remove }}
+      onClose={vi.fn()} onConfirm={close} />); });
+    const dialog = () => renderer!.root.findByType('HullDialog' as any);
+    const press = dialog().props.actions[1].onPress;
+    act(() => { press(); press(); });
+    expect(remove).toHaveBeenCalledOnce();
+    expect(dialog().props.actions[1]).toMatchObject({ label: 'Removing…', loading: true, disabled: true });
+    act(() => dialog().props.onRequestClose());
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(close).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('keeps a failed removal open with an error and permits one retry', async () => {
+    const remove = vi.fn().mockRejectedValueOnce(new Error('Could not remove Claude. Offline.')).mockResolvedValueOnce(undefined);
+    const close = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<WebAlertModal config={{ id: 'remove', type: 'confirm',
+      title: 'Remove Claude?', confirmText: 'Remove', onConfirm: remove }} onClose={vi.fn()} onConfirm={close} />); });
+    const dialog = () => renderer!.root.findByType('HullDialog' as any);
+    await act(async () => dialog().props.actions[1].onPress());
+    expect(close).not.toHaveBeenCalled();
+    expect(dialog().props.body).toContain('Could not remove Claude. Offline.');
+    expect(dialog().props.actions[1]).toMatchObject({ label: 'Remove', disabled: false });
+    await act(async () => dialog().props.actions[1].onPress());
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
   it('keeps ordinary alerts non-dismissible outside their actions and preserves button callbacks', () => {
     const close = vi.fn();
     const acknowledge = vi.fn();

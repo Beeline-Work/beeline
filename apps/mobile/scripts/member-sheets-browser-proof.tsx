@@ -20,7 +20,7 @@ async function run() {
   for (const name of ['6 Astra', '6.1 Sol', 'deepseek-v4.1-flash'])
     assert(roster.textContent?.includes(name), `Real model ${name}`);
   const add = byId('room-roster-add-members');
-  assert(add?.textContent === 'Add', 'Manager has labelled Add');
+  assert(add?.getAttribute('aria-label') === 'Add members' && Boolean(add.querySelector('svg')), 'Manager has shared plus action');
   const close = roster.querySelector<HTMLElement>('[aria-label="Close Room roster"]')!;
   assert(add.parentElement === close.parentElement, 'Add and Close share heading');
   add.click();

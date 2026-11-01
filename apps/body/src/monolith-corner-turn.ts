@@ -1,6 +1,7 @@
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
 import { tryWithKernelLock } from './kernel-lock.js';
 import { extraDependencyRoots, dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
+import { CODE_OWNED_HOST_MCP_NAMES } from './mcp-route-class.js';
 import { roomPermissionDecision } from './monolith-room-turn.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { modelContextWindowTokens } from './model-context-window.js';
@@ -56,6 +57,7 @@ import {
   grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
+  hostImportedMcpServerNames,
   isExpiredHarnessLoginError,
   prepareRoomAgentHome,
   repairRoomAgentCredentialLinks,
@@ -66,6 +68,7 @@ import {
   claimGrantedHostRoutes,
   grantedHostRouteWires,
   grantedSquireHostRoute,
+  ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
@@ -1386,6 +1389,10 @@ export class MonolithCornerTurnLoop {
       agentKind: this.options.config.agentKind,
     });
     let mountedServers: string[] = [];
+    const hostServers = ungatedHostServers(
+      [...CODE_OWNED_HOST_MCP_NAMES, ...hostImportedMcpServerNames({ operatorHome, agentKind: this.options.config.agentKind })],
+      mountedHostRoutes,
+    );
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
       harnessCommand: selectedCommand,
@@ -1397,7 +1404,7 @@ export class MonolithCornerTurnLoop {
       autoApprovePermissions: !repository?.readOnly,
       ...(repository?.readOnly ? { osSandbox: Boolean(this.options.config.bwrapPath) } : {}),
       permissionHandler: async request => repository?.readOnly
-        ? roomPermissionDecision(request, { mountedServers, shellSandboxed: Boolean(this.options.config.bwrapPath), sandboxHome: homeOverlay.HOME })
+        ? roomPermissionDecision(request, { mountedServers, hostServers, shellSandboxed: Boolean(this.options.config.bwrapPath), sandboxHome: homeOverlay.HOME })
         : 'allow',
       onUsage: (usage) => {
         void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })

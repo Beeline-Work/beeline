@@ -2183,11 +2183,12 @@ describe('corner close-request delivery', () => {
     }
   });
 
-  it.each(['repository', 'readonly-repository', 'scratch', 'android-operator', 'goose-unpinned'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
+  it.each(['repository', 'readonly-repository', 'readonly-ungranted', 'scratch', 'android-operator', 'goose-unpinned'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
     vi.stubEnv('ANDROID_HOME', '');
     vi.stubEnv('ANDROID_SDK_ROOT', '');
     const execute = vi.fn(async (name: string) => {
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'listAgentGrants' && shape !== 'readonly-ungranted') return { grants: [{ grantId: 'squire-route', kind: 'mcp', target: 'squire', status: 'approved' }] };
       if (name === 'getWorkspaceRoster') return { members: [] };
       if (name === 'getCornerRestoreState') return {
         cornerId: 'corner-id', closeRequested: false,
@@ -2210,7 +2211,7 @@ describe('corner close-request delivery', () => {
     if (shape !== 'scratch') {
       await execFileAsync('git', ['init', worktree]);
       internal.options.repository!.gitCommonDir = join(worktree, '.git');
-      internal.options.repository!.readOnly = shape === 'readonly-repository';
+      internal.options.repository!.readOnly = shape.startsWith('readonly-');
     } else internal.options.repository = undefined;
     internal.options.worktreePath = worktree;
     await mkdir(runtimeDir, { recursive: true });
@@ -2249,9 +2250,14 @@ describe('corner close-request delivery', () => {
       expect(fixture.clientOptions()).toBeDefined();
       const selected = fixture.clientOptions()!;
       expect(selected.agentCommand).toBe('/usr/bin/bwrap');
-      if (shape === 'readonly-repository') {
+      if (shape.startsWith('readonly-')) {
         expect(fixture.acp.sessionNew).toHaveBeenCalledWith(expect.objectContaining({ mode: 'readonly' }));
         expect(selected.autoApprovePermissions).toBe(false);
+        // R1: the scheduled triage corner uses this same read-only activation.
+        expect(await selected.permissionHandler!({ toolCall: { kind: 'other', title: 'mcp__beeline-agent__report_feedback', rawInput: { summary: 'triage' } } } as never)).toBe('allow');
+        for (const tool of ['list_credentials', 'use_credential']) {
+          expect(await selected.permissionHandler!({ toolCall: { kind: 'other', title: `mcp__squire__${tool}`, rawInput: {} } } as never)).toBe(shape === 'readonly-ungranted' ? 'reject' : 'allow');
+        }
         expect(await selected.permissionHandler!({ toolCall: { kind: 'edit', title: 'edit source' } } as never)).toBe('reject');
       }
       if (shape === 'android-operator') {
@@ -2283,7 +2289,7 @@ describe('corner close-request delivery', () => {
           join(selected.agentEnv!.npm_config_cache!, '../../tools/should-fail'),
         ], { env: selected.agentEnv, encoding: 'utf8' });
         expect(child.status, child.stderr).toBe(0);
-        if (shape === 'readonly-repository') {
+        if (shape.startsWith('readonly-')) {
           const probe = spawnSync('/usr/bin/bwrap', [...args.slice(0, separator + 1), '/bin/sh', '-c',
             '! touch "$1/readonly-proof" 2>/dev/null', 'probe', worktree], { env: selected.agentEnv, encoding: 'utf8' });
           expect(probe.status, probe.stderr).toBe(0);

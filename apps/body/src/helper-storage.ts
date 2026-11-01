@@ -318,10 +318,6 @@ async function captureMountUse(): Promise<(path: string) => boolean> {
   };
 }
 export async function hasMount(path: string): Promise<boolean> { return (await captureMountUse())(path); }
-export async function storageObjectInUse(root: string, options: WholeStorageOptions = {}): Promise<boolean> {
-  return await (options.inUse ?? (async path => (await capturePrivateProcessUse(options.progress))(path)))(root) ||
-    await hasMount(root) || await emulatorLeased(root, options.emulatorLeaseRoot);
-}
 function observeMountUse(): (path: string) => Promise<boolean> {
   let capturedAt = -Infinity;
   let mounted: (path: string) => boolean = () => true;
@@ -339,6 +335,7 @@ export async function reclaimHelperStorage(input: {
   runtimeDir: string;
   readStates(): Promise<readonly StorageRoomState[]>;
   withIdleRoom(roomId: string, task: () => Promise<void>): Promise<boolean>;
+  removeArchived?: (roomId: string) => Promise<StorageReclaimEntry[]>;
   relatedRoots?: (roomId: string) => readonly string[];
   progress?: () => Promise<void>;
   inUse?: (root: string) => Promise<boolean>;
@@ -378,6 +375,10 @@ export async function reclaimHelperStorage(input: {
     if (!await ordinaryDirectory(root)) continue;
     const ownerInUse = async () => (await Promise.all([root, ...(input.relatedRoots?.(room.name) ?? [])].map(observedUse))).some(Boolean);
     await input.withIdleRoom(room.name, async () => {
+      if (state.archived && input.removeArchived) {
+        entries.push(...await input.removeArchived(room.name));
+        return;
+      }
       if (await ownerInUse() || await emulatorLeased(root, input.emulatorLeaseRoot)) return;
       if (!input.dryRun && !await settleClaudeLogin(root, input.operatorHome ?? homedir())) return;
       const tree = await storageTree(root, input.progress);

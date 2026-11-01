@@ -420,7 +420,7 @@ describe('agent schedule background posting', () => {
     }
   });
 
-  it('fires an agent-created schedule as a scheduler-authored system prompt and auto-deletes after maxRuns', async () => {
+  it.each([1, 2])('Reproduction schedule-silent-end-1: agent schedule runs %i times and deletes silently', async (maxRuns) => {
     const database = await fixture();
     try {
       const daemon = new DaemonService(database, new LiveHub());
@@ -431,7 +431,7 @@ describe('agent schedule background posting', () => {
           roomId: ROOM,
           prompt: 'Post exactly: hello @methoxine-debug',
           cadence: { kind: 'interval', everyMinutes: 1 },
-          maxRuns: 2,
+          maxRuns,
         },
         AGENT,
       );
@@ -443,7 +443,7 @@ describe('agent schedule background posting', () => {
           [created.scheduleId],
         );
       const loop = new AgentScheduleLoop(database);
-      for (let run = 0; run < 2; run += 1) {
+      for (let run = 0; run < maxRuns; run += 1) {
         await forceDue();
         expect(await loop.runOnce()).toBe(1);
       }
@@ -459,7 +459,7 @@ describe('agent schedule background posting', () => {
                  WHERE source_message_id=messages.id) woke
          FROM messages ORDER BY created_at`,
       );
-      expect(messages.rowCount).toBe(3);
+      expect(messages.rowCount).toBe(maxRuns);
       // Never authored by the agent itself: the scheduler identity posts a
       // system-presentation line mentioning the agent.
       expect(messages.rows[0]).toEqual({
@@ -478,12 +478,7 @@ describe('agent schedule background posting', () => {
           consequence: 'Post exactly: hello @methoxine-debug',
         },
       });
-      expect(messages.rows[1]).toEqual(messages.rows[0]);
-      expect(messages.rows[2]).toMatchObject({
-        text: 'The schedule expired · reached its limit of 2 runs',
-        presentation: 'system',
-        woke: [],
-      });
+      for (const message of messages.rows) expect(message).toEqual(messages.rows[0]);
       // The scheduler identity is hidden from rosters.
       expect(
         (
@@ -501,7 +496,7 @@ describe('agent schedule background posting', () => {
       const scheduledItems = inbox.items.filter(
         (item) => item.type === 'system' && item.systemEvent?.verb === SCHEDULE_RAN_VERB,
       );
-      expect(scheduledItems).toHaveLength(2);
+      expect(scheduledItems).toHaveLength(maxRuns);
       const [command] = (await daemon.execute('getAgentCommands', { roomId: ROOM }, AGENT))
         .commands;
       await daemon.execute(
@@ -525,7 +520,7 @@ describe('agent schedule background posting', () => {
         [AGENT],
       );
       expect(replies.rows).toEqual([{ text: 'hello @methoxine-debug' }]);
-      // The schedule deleted itself after the second run.
+      // The final run deletes the schedule without another transcript line.
       expect(
         (await database.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [created.scheduleId]))
           .rowCount,

@@ -1,6 +1,6 @@
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
 import { withKernelLock } from './kernel-lock.js';
-import { dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
+import { extraDependencyRoots, dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
 import { withCornerCheckoutLock } from './corner-checkout-lock.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { modelContextWindowTokens } from './model-context-window.js';
@@ -904,7 +904,7 @@ export class MonolithCornerTurnLoop {
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
-      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath),
+      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath, this.options.config.agentHomeRoot),
       devices: grantedDevices,
       isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
@@ -1330,6 +1330,12 @@ export class MonolithCornerTurnLoop {
       if (existsSync(resolve(mobile, 'node_modules')) || existsSync(resolve(this.options.worktreePath, dependencyRequest))) dependencyPaths.push(...await prepareDependencyGeneration({
         root: mobile, store: mobileNodeModulesStoreDir(this.options.runtime.supervisorRoot), npm, cache: npmCacheDir, install: install(mobile),
       }));
+      for (const extra of await extraDependencyRoots(this.options.worktreePath, this.options.config.agentHomeRoot)) {
+        dependencyPaths.push(...await prepareDependencyGeneration({
+          root: extra, store: warmNodeModulesStoreDir(this.options.runtime.supervisorRoot),
+          npm, cache: npmCacheDir, install: install(extra),
+        }));
+      }
       if (dependencyPaths.length && this.options.config.agentHomeRoot) {
         agentEnv.PATH = await installDependencyNpmGuard(this.options.config.agentHomeRoot, npm, agentEnv.PATH ?? process.env.PATH ?? '');
         agentEnv.BEELINE_READONLY_DEPENDENCIES = '1';
@@ -1379,7 +1385,7 @@ export class MonolithCornerTurnLoop {
       this.options.worktreePath,
     );
     const fingerprint = sessionConfigFingerprint({
-      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath),
+      dependencyGeneration: await dependencyFingerprint(this.options.worktreePath, this.options.config.agentHomeRoot),
       devices: grantedDevices,
       isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,

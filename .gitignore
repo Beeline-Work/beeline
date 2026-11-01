@@ -82,3 +82,6 @@ agent-home/
 
 # Dependency mount request, consumed by the helper on activation.
 .beeline-dependency-request
+
+# Helper dependency requests for disposable copies
+.beeline-extra-dependencies/

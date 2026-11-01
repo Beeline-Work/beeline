@@ -893,6 +893,29 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
     }
   });
+  it('hands finished local code to a corner implementer in every connected-app surface', async () => {
+    const { client } = await connected();
+    const instructions = client.getInstructions();
+    for (const rule of [
+      'The implementer pushes the corner branch with the Beeline GitHub App and opens the PR; the reviewer approves, then merge_corner lands it.',
+      'Open a corner with an agent as implementer.',
+      'feature/corner- followed by the first 12 hex characters of the corner id with hyphens removed',
+      'A push or PR on that branch in the same repository links to the corner automatically; fork heads do not link.',
+      'you may push your commits to that corner branch in the same repository',
+      'post the patch into that corner, not the Room, with the base commit and the test commands you ran',
+      "Your owner's approval of the connection covers sharing the patch with that corner.",
+    ]) expect(instructions).toContain(rule);
+    expect(instructions).not.toContain('you have no checkout');
+    expect(instructions).not.toContain('Do not push with your own GitHub connection');
+    const tools = (await client.listTools()).tools;
+    const handoff = "Code work goes in a corner with another agent as implementer: use feature/corner- plus the first 12 hex characters of its id with hyphens removed; push existing commits there in the same repository with your own GitHub access, or post the patch in that corner, not the Room, with base commit and test commands for the implementer to apply and push with the Beeline GitHub App; your owner's connection approval covers sharing the patch.";
+    for (const name of ['open_corner', 'post_artifact']) {
+      expect(tools.find(tool => tool.name === name)?.description).toContain(handoff);
+      expect(tools.find(tool => tool.name === name)?.description).not.toContain('you have no checkout');
+    }
+    const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
+    expect(setup).toContain('Repository writes go through a corner implementer.');
+  });
   it('connects a real SDK client, reads, searches, posts as the member and wakes an agent', async () => {
     const { client, token, grant, member } = await connected();
     const tools = await client.listTools(); expect(tools.tools).toHaveLength(9 + MCP_AGENT_TOOLS.length);

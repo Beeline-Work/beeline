@@ -1089,7 +1089,7 @@ describe('GitHub phone operations', () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
-    const branch = 'feature/corner-333333333333';
+    const branch = 'feature/corner-' + corner.replaceAll('-', '').slice(0, 12);
     const headSha = '1'.repeat(40);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
     await database.query(

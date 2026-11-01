@@ -3,6 +3,7 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { cornerShortTitle } from '@beeline/api-contract/phone';
+import { cornerQueueNote } from '@/buzz/corner-display-state';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
 import { InlineRow } from './IndexRow';
@@ -33,12 +34,14 @@ export function DesktopRoomCorners({
     >
       {corners.map((corner) => {
         const ready = corner.state === 'waiting';
+        const note = cornerQueueNote(corner.queue);
+        const shown = note ? `${corner.state} · ${note}` : corner.state;
         return (
           <InlineRow
             key={corner.id}
             onPress={() => onOpen(corner.id, corner.name)}
             accessibilityRole="button"
-            accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
+            accessibilityLabel={`Open corner ${corner.name}, ${shown}`}
             style={styles.corner}
             testID={`desktop-corner-${corner.id}`}
           >
@@ -47,7 +50,7 @@ export function DesktopRoomCorners({
               {cornerShortTitle(item.room.name, corner.name, corner.id)}
             </Text>
             <CornerWaitingPulse state={corner.state}>
-              <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
+              <Text style={[styles.state, ready && styles.waiting]}>{shown}</Text>
             </CornerWaitingPulse>
           </InlineRow>
         );

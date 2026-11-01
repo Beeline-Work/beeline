@@ -82,6 +82,22 @@ describe('observed corner states', () => {
 it('Reproduction R1: a turn that just ended without a report is idle, not working', () => {
   expect(deriveCornerState(facts).state).toBe('idle');
 });
+it('a deliverable queued order stays working, and names an offline helper', () => {
+  expect(deriveCornerState({ ...facts, turnRunning: true, workerQueued: true })).toEqual({
+    state: 'working', queue: 'queued',
+  });
+  expect(deriveCornerState({ ...facts, turnRunning: true, workerQueued: true, workerOffline: true })).toEqual({
+    state: 'working', queue: 'offline',
+  });
+  expect(deriveCornerState({
+    ...facts, turnRunning: true, workerQueued: true, queueBehind: 'codex-dot-connect',
+  })).toEqual({ state: 'working', queue: 'queued', queueBehind: 'codex-dot-connect' });
+  expect(deriveCornerState({
+    ...facts, turnRunning: true, workerQueued: true, workerOffline: true, queueBehind: 'codex-dot-connect',
+  })).toEqual({ state: 'working', queue: 'offline' });
+  expect(deriveCornerState({ ...facts, turnRunning: true })).toEqual({ state: 'working' });
+  expect(deriveCornerState({ ...facts, reviewerActive: true })).toEqual({ state: 'review' });
+});
 it('FIC-1: a live implementer stays working regardless of failing-check age', () => {
   expect(deriveCornerState({ ...facts, turnRunning: true,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' } }).state).toBe('working');

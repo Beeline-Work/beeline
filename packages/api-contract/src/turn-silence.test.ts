@@ -129,6 +129,14 @@ describe('turn silence classification', () => {
 });
 
 describe('turn silence phrasing', () => {
+  it('names a busy checkout as a wait, including after the retry budget', () => {
+    const fault = 'corner checkout is in use by another agent; retry after its turn and background tools finish';
+    const line = phraseTurnSilence('Jellybean', { kind: 'hiccup', fault }, { givingUp: true });
+    expect(`${line.verb} · ${line.consequence}`).toBe(`is waiting · ${fault}`);
+    expect(line.consequence).not.toContain('offline');
+    expect(line.consequence).not.toContain('Stopped retrying');
+  });
+
   it('uses the approved remedies and stays inside the 200-character cap', () => {
     const lines = [
       phraseTurnSilence('Candy', { kind: 'hiccup', fault: 'the turn stalled' }),

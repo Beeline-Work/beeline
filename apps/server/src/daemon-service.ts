@@ -3921,7 +3921,12 @@ export class DaemonService {
           }
         : {}),
       ...(derived
-        ? { state: derived.state, activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const) }
+        ? {
+            state: derived.state,
+            ...(derived.queue ? { queue: derived.queue } : {}),
+            ...(derived.queueBehind ? { queueBehind: derived.queueBehind } : {}),
+            activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const),
+          }
         : {}),
       ...(row?.last_author_id && row.last_created_at && row.last_type
         ? {

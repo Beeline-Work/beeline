@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  checkNpmPackageVisibility,
   NPM_VIEW_TIMEOUT_MS,
   NPM_VISIBILITY_TIMEOUT_MS,
   npmVisibilityTimeoutMs,
@@ -195,4 +197,34 @@ test('malformed npm metadata fails immediately without retrying', async () => {
   );
 
   assert.equal(slept, false);
+});
+
+
+test('npm-delayed-visibility: warn mode exits zero after E404 deadline and reports non-404 errors', async () => {
+  for (const stderr of ['npm error code E404', 'npm error code E401']) {
+    let clock = 0;
+    const logs = [];
+    assert.equal(await checkNpmPackageVisibility({
+      packageName: PACKAGE, version: VERSION, timeoutMs: 10,
+      lookup: async () => ({ status: 1, stderr }),
+      now: () => clock, sleep: async ms => { clock += ms; }, log: () => {},
+    }, { warn: true, log: line => logs.push(line) }), 0);
+    assert.match(logs[0], /^::warning::/);
+    assert.match(logs[0], stderr.includes('E404') ? /not visible after 10ms/ : /E401/);
+  }
+});
+
+
+test('warn CLI returns exit zero with a GitHub warning for a registry timeout', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'npm-warning-cli-'));
+  try {
+    const npm = join(directory, 'npm');
+    writeFileSync(npm, `#!${process.execPath}\nconsole.error('npm error code E404'); process.exit(1);\n`);
+    chmodSync(npm, 0o755);
+    const result = spawnSync(process.execPath, ['scripts/npm-package-visibility.mjs', PACKAGE, VERSION, '--warn'], {
+      encoding: 'utf8', env: { ...process.env, PATH: directory, NPM_VISIBILITY_TIMEOUT_MS: '1000' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /::warning::.*not visible after 1000ms/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -492,19 +492,35 @@ jobs:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
           pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+      - name: Pack and smoke the exact helper CLI package
+        id: helper_package
+        timeout-minutes: 5
+        env:
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          npm version "${RELEASE_VERSION#v}" --allow-same-version --no-git-tag-version --workspace usebeeline
+          package_dir="$RUNNER_TEMP/helper-package"
+          mkdir -p "$package_dir"
+          npm pack --workspace usebeeline --pack-destination "$package_dir"
+          tarball="$package_dir/usebeeline-${RELEASE_VERSION#v}.tgz"
+          node scripts/smoke-helper-package.mjs "$tarball" "${RELEASE_VERSION#v}"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
       - name: Publish the exact helper CLI package
+        env:
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          HELPER_TARBALL: ${{ steps.helper_package.outputs.tarball }}
         run: |
           set -euo pipefail
           npm install --global npm@^11.15.0
-          version="${{ needs.initialize.outputs.release_version }}"
-          npm version "${version#v}" --allow-same-version --no-git-tag-version --workspace usebeeline
-          npm view "usebeeline@${version#v}" version >/dev/null 2>&1 || npm publish --no-provenance --workspace usebeeline
-      # The Pages leg already proved the live manifest serves this release.
-      - name: Smoke the exact helper package
+          npm view "usebeeline@${RELEASE_VERSION#v}" version >/dev/null 2>&1 || npm publish --no-provenance "$HELPER_TARBALL"
+      # The local tarball smoke gates publishing; registry listing is advisory.
+      - name: Check helper npm visibility
         timeout-minutes: 6
+        continue-on-error: true
         env:
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-        run: node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}"
+        run: node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}" --warn
 
   release_proof:
     # Stage the candidate on beta, then exercise an existing native binary.

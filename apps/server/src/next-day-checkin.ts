@@ -125,15 +125,19 @@ export async function checkinOutputAllowed(db: SqlDatabase, roomId: string, agen
   return enabled() && !current.skip_reason && current.room_id===roomId && current.agent_id===agentId;
 }
 
-export type CheckinEmail = { to: string; subject: string; text: string; html: string; key: string };
+export type CheckinEmail = { to: string; agentName: string; subject: string; text: string; html: string; key: string };
 export function renderCheckinEmail(agentName: string, text: string, url: string, agents: EmailAgent[] = [], imageOrigin = 'https://server.usebeeline.app') {
-  return { subject: `${agentName} picked up where you left off`,
+  return { agentName, subject: `${agentName} picked up where you left off`,
     text: `${text}\n\nOpen in Beeline: ${url}\n\nThis is a one-time note from your starter agent.`,
     html: checkinEmailHtml(agentName,text,url,agents,imageOrigin) };
 }
 async function sendEmail(mail: CheckinEmail): Promise<string> {
-  const key = process.env.BEELINE_EMAIL_API_KEY, from = process.env.BEELINE_EMAIL_FROM;
-  if (!key || !from) return 'unconfigured';
+  const key = process.env.BEELINE_EMAIL_API_KEY, configuredFrom = process.env.BEELINE_EMAIL_FROM;
+  if (!key || !configuredFrom) return 'unconfigured';
+  const address = configuredFrom.match(/<([^<>]+)>\s*$/)?.[1]?.trim() ?? configuredFrom.trim();
+  const name = mail.agentName.replace(/["'<>\r\n\\]/g, '').trim() || 'Beeline';
+  // Quote the display name so commas and other mailbox punctuation remain part of the name.
+  const from = `"${name}" <${address}>`;
   const response = await externalFetch('https://api.resend.com/emails', { method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': mail.key },
     body: JSON.stringify({ from, to: [mail.to], subject: mail.subject, text: mail.text, html: mail.html }),

@@ -178,6 +178,34 @@ describe('next morning check-in (not a defect report)',()=>{
     if(email) expect(emails[0]?.html).toContain(`/beeline/chat/${R}?communityId=${W}`);
     await runner().runOnce(); expect(emails).toHaveLength(email?1:0);
   });
+  it.each([
+    ['Beebee','Beeline <checkin@usebeeline.app>','Beebee'],
+    ['Luna','checkin@usebeeline.app','Luna'],
+    ['Bee"<bee>\'\r\n','Beeline <checkin@usebeeline.app>','Beebee'],
+    ['"<>\'  ','Beeline <checkin@usebeeline.app>','Beeline'],
+    ['Bee, the fox','Beeline <checkin@usebeeline.app>','Bee, the fox'],
+  ])('sends the starter display name through Resend safely: %s',async(name,configuredFrom,expectedName)=>{
+    vi.stubEnv('BEELINE_EMAIL_API_KEY','test-only-key');
+    vi.stubEnv('BEELINE_EMAIL_FROM',configuredFrom);
+    await db.query(`UPDATE identities SET name=$2 WHERE id=$1`,[A,name]);
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);
+    await first();await runner().runOnce();await reply();
+    const request=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('{}',{status:200}));
+    try {
+      const actualSender=new NextDayCheckin(db,'https://web.usebeeline.app',undefined,()=>clock);
+      await actualSender.runOnce();await actualSender.runOnce();
+      expect(request).toHaveBeenCalledTimes(1);
+      const [url,init]=request.mock.calls[0]!;
+      expect(url).toBe('https://api.resend.com/emails');
+      const payload=JSON.parse(init!.body as string);
+      expect(payload.from).toBe(`"${expectedName}" <checkin@usebeeline.app>`);
+      expect(payload.to).toEqual(['outside@example.test']);
+      expect(payload.subject).toBe(`${name} picked up where you left off`);
+      expect(payload.text).toBe('@outside We were planning your pottery class. Shall we pick the first project?\n\nOpen in Beeline: https://web.usebeeline.app/beeline/chat/'+R+'?communityId='+W+'\n\nThis is a one-time note from your starter agent.');
+      expect(init!.headers).toMatchObject({'Idempotency-Key':`next-day-${U}`});
+      expect((await record())?.email_status).toBe('sent');
+    } finally {request.mockRestore();}
+  });
   it('skips missing email configuration without blocking the Room message',async()=>{
     vi.stubEnv('BEELINE_EMAIL_API_KEY',''); vi.stubEnv('BEELINE_EMAIL_FROM','');
     await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login) VALUES('google','outside',$1,'google','app','outside@example.test')`,[U]);

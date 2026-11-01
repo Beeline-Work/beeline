@@ -706,7 +706,7 @@ describe('a worker records a later waiver in its corner brief', () => {
     // A stored snapshot does not substitute for current membership.
     await db.query(`UPDATE corner_brief_revisions SET approval_basis=approval_basis || $2::jsonb WHERE corner_id=$1`,
       [opened.cornerId, JSON.stringify({ kind: 'explicit-human-answer', sourceMessageId: outside, approvedBy: STRANGER, snapshot: 'Approved' })]);
-    await expect(revise(turn, opened.cornerId, 1, outside)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, outside)).rejects.toThrow('brief.approval.sourceMessageId');
     expect((await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER)).brief?.revision).toBe(1);
   });
 
@@ -722,7 +722,7 @@ describe('a worker records a later waiver in its corner brief', () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof.');
     await db.query(`UPDATE rooms SET direct_participants=NULL WHERE id=$1`, [rooms.get(waiver)]);
-    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 
   it('accepts an earlier private order from the corner\'s commander', async () => {
@@ -760,7 +760,7 @@ describe('a worker records a later waiver in its corner brief', () => {
     const command = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null,
       reason: 'order', privatePayload: { text: 'Skip proof.', authorId: RUBY, fromRoomId: ROOM, kind: 'order' } });
     await db.query(`UPDATE agent_commands SET state=$2 WHERE id=$1`, [command!.id, state]);
-    await expect(revise(turn, opened.cornerId, 1, command!.id)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, command!.id)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 
   it('APPROVAL-CITATIONS: rejects reuse of a stored order after cancellation', async () => {
@@ -769,7 +769,7 @@ describe('a worker records a later waiver in its corner brief', () => {
       reason: 'order', privatePayload: { text: 'Skip proof.', authorId: RUBY, fromRoomId: ROOM, kind: 'order' } });
     expect((await revise(turn, opened.cornerId, 1, command!.id)).revision).toBe(2);
     await db.query(`UPDATE agent_commands SET state='cancelled' WHERE id=$1`, [command!.id]);
-    await expect(revise(turn, opened.cornerId, 2, command!.id)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 2, command!.id)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 
   it('APPROVAL-CITATIONS: stored approval does not authorize another agent as commander', async () => {
@@ -778,14 +778,14 @@ describe('a worker records a later waiver in its corner brief', () => {
       reason: 'order', privatePayload: { text: 'Skip proof.', authorId: OUTSIDER, fromRoomId: ROOM, kind: 'order' } });
     await db.query(`UPDATE corner_brief_revisions SET approval_basis=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
       JSON.stringify({ kind: 'commander-order', sourceMessageId: command!.id, approvedBy: OUTSIDER, snapshot: 'Skip proof.' })]);
-    await expect(revise(turn, opened.cornerId, 1, command!.id)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, command!.id)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 
   it('APPROVAL-CITATIONS: refuses an agent-authored parent Room message', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const id = randomBytes(32).toString('hex');
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Approved')`, [id, ROOM, RUBY]);
-    await expect(revise(turn, opened.cornerId, 1, id)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, id)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 
   it('HUMAN-01: accepts any human member approval in a DM shared with the worker', async () => {
@@ -812,7 +812,7 @@ describe('a worker records a later waiver in its corner brief', () => {
   it('refuses an agent\'s DM message that is not an order', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const waiver = await directMessage(RUBY, RUBY, 'Waive the proof for this corner.');
-    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 
   it('refuses a private order to the corner from an agent that is not its commander', async () => {
@@ -821,7 +821,7 @@ describe('a worker records a later waiver in its corner brief', () => {
       [WS, ROOM, OUTSIDER]);
     const outside = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null,
       reason: 'order', privatePayload: { text: 'Skip the proof.', authorId: OUTSIDER, fromRoomId: ROOM, kind: 'order' } });
-    await expect(revise(turn, opened.cornerId, 1, outside!.id)).rejects.toThrow('must name a human message or commander order');
+    await expect(revise(turn, opened.cornerId, 1, outside!.id)).rejects.toThrow('brief.approval.sourceMessageId');
   });
 });
 

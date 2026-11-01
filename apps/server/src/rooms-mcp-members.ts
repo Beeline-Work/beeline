@@ -95,12 +95,12 @@ async function replaceMcpMemberAvatar(db: SqlDatabase, memberId: string, avatar:
 
 /**
  * Approving a connection creates one member owned by the person. Like any
- * agent it joins every public top-level Room of the person's Workspaces;
+ * agent it joins public top-level Rooms in the approved Workspaces;
  * other Rooms add or remove it through the normal Members sheet.
  */
 export async function ensureMcpMember(
   db: SqlDatabase,
-  input: { clientId: string; ownerId: string; modelLabel: string },
+  input: { clientId: string; ownerId: string; modelLabel: string; workspaceIds?: string[] },
 ): Promise<string | undefined> {
   const client = (await db.query<{ name: string; redirects: string[]; logo: string | null }>(
     'SELECT name,redirects,logo FROM rooms_mcp_clients WHERE id=$1', [input.clientId])).rows[0];
@@ -117,18 +117,36 @@ export async function ensureMcpMember(
     ).rows[0];
     if (!owner) return undefined;
     const memberId = mcpMemberIdentityId(input.clientId, input.ownerId);
+    // Lock Workspaces in a stable order, then recheck and lock the owner's
+    // membership. A concurrent leave cannot race an approval into granting access.
+    for (const workspaceId of [...owner.workspaces].sort()) {
+      await tx.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE', [workspaceId]);
+    }
+    const current = await tx.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL
+       AND removed_at IS NULL AND workspace_id=ANY($2::uuid[]) FOR SHARE`, [input.ownerId, owner.workspaces]);
+    const eligible = current.rows.map(row => row.workspace_id);
+    const previous = (await tx.query<{ workspace_ids: string[] | null }>(
+      `SELECT workspace_ids FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2 FOR UPDATE`,
+      [input.clientId, input.ownerId])).rows[0];
+    if (input.workspaceIds !== undefined && (!input.workspaceIds.length
+      || new Set(input.workspaceIds).size !== input.workspaceIds.length
+      || input.workspaceIds.some(id => !eligible.includes(id)))) {
+      throw new McpToolError('Choose at least one of your current Workspaces');
+    }
+    const selection = input.workspaceIds ?? previous?.workspace_ids ?? null;
+    const workspaces = selection === null ? eligible : selection.filter(id => eligible.includes(id));
+    const previousMemberships = await tx.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`, [memberId]);
+    const addedWorkspaces = input.workspaceIds === undefined ? [] : workspaces.filter(
+      id => !previousMemberships.rows.some(row => row.workspace_id === id));
     const taken = await tx.query<{ handle: string }>(
       `SELECT DISTINCT identity.handle FROM memberships membership
        JOIN identities identity ON identity.id=membership.identity_id
        WHERE membership.workspace_id=ANY($1::uuid[]) AND membership.removed_at IS NULL
          AND identity.handle IS NOT NULL`,
-      [owner.workspaces],
+      [workspaces],
     );
-    for (const workspaceId of owner.workspaces) {
-      // Serialize handle allocation on the Workspace, then keep the member's
-      // handle stable across reconnects by letting it win its own snapshot.
-      await tx.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE', [workspaceId]);
-    }
     const created = await tx.query(
       `INSERT INTO identities(id,kind,name,handle,hidden_from_roster) VALUES($1,'agent',$2,$3,false)
        ON CONFLICT(id) DO UPDATE SET hidden_from_roster=false,updated_at=now()
@@ -142,20 +160,27 @@ export async function ensureMcpMember(
       [memberId, input.ownerId, modelLabel],
     );
     const fresh = (await tx.query<{ fresh: boolean }>(
-      `INSERT INTO rooms_mcp_members(client_id,owner_id,member_id,model_label) VALUES($1,$2,$3,$4)
-       ON CONFLICT(client_id,owner_id) DO UPDATE SET model_label=EXCLUDED.model_label
+      `INSERT INTO rooms_mcp_members(client_id,owner_id,member_id,model_label,workspace_ids) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(client_id,owner_id) DO UPDATE SET model_label=EXCLUDED.model_label,workspace_ids=EXCLUDED.workspace_ids
        RETURNING (xmax=0) fresh`,
-      [input.clientId, input.ownerId, memberId, modelLabel],
+      [input.clientId, input.ownerId, memberId, modelLabel, selection],
     )).rows[0]?.fresh ?? false;
-    if (owner.workspaces.length) {
+    if (input.workspaceIds !== undefined) {
+      // Consent narrowing immediately cuts off reads, writes, catch-up and event
+      // delivery, all of which recheck current Room and Workspace membership.
+      await tx.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1
+        AND removed_at IS NULL AND NOT (workspace_id=ANY($2::uuid[]))`, [memberId, workspaces]);
+    }
+    if (workspaces.length) {
       await tx.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          SELECT workspace_id,NULL,$1,'member' FROM unnest($2::uuid[]) workspace_id
          ON CONFLICT(workspace_id,identity_id) WHERE room_id IS NULL
          DO UPDATE SET removed_at=NULL`,
-        [memberId, owner.workspaces],
+        [memberId, workspaces],
       );
-      await tx.query(JOIN_PUBLIC_ROOMS, [memberId, owner.workspaces, fresh]);
+      await tx.query(JOIN_PUBLIC_ROOMS, [memberId, workspaces, fresh]);
+      if (!fresh && addedWorkspaces.length) await tx.query(JOIN_PUBLIC_ROOMS, [memberId, addedWorkspaces, true]);
     }
     if (avatar) await defaultMcpMemberAvatar(tx, memberId, avatar);
     return memberId;

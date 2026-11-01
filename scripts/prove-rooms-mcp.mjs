@@ -194,10 +194,10 @@ try {
   response = await browser(response.headers.get('location'));
   const target = new URL(redirectUrl);
   assert.ok(!response.headers.get('content-security-policy').includes('form-action'));
-  const html = await response.text(); assert.match(html, /Joins as/); assert.match(html, /Read your public Rooms/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
+  const html = await response.text(); assert.match(html, /Joins as/); assert.match(html, /Read public Rooms in selected Workspaces/); assert.match(html, /Post as Grok/); assert.match(html, /Connector Reviewer/);
   transcript('Built Beeline GitHub login completed, consumed a one-use ticket, and showed the joining member, account, read scope and write scope on consent. Upstream GitHub is a local test double.');
   if (process.argv.includes('--wake-setup')) process.env.BEELINE_MCP_WEBHOOK_KEY = 'synthetic-proof-sealing-key';
-  response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow', ...(process.argv.includes('--wake-setup') ? { wake_url: 'https://hooks.example/proof', wake_key: ' Bearer synthetic-wake-key ' } : {}) }) });
+  response = await browser('/mcp/oauth/consent', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ flow, decision: 'allow', workspace_selection: '1', workspace_ids: workspace, ...(process.argv.includes('--wake-setup') ? { wake_url: 'https://hooks.example/proof', wake_key: ' Bearer synthetic-wake-key ' } : {}) }) });
   assert.equal(response.status, 302);
   const callback = new URL(response.headers.get('location'));
   assert.equal(callback.searchParams.get('state'), 'local-proof-state'); assert.equal(callback.searchParams.get('iss'), origin);

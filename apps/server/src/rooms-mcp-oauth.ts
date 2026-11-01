@@ -1,3 +1,4 @@
+import { renderMcpWorkspaceSelection, MCP_WORKSPACE_SCRIPT, MCP_WORKSPACE_STYLE } from './rooms-mcp-consent-ui.js';
 import { readFileSync } from 'node:fs';
 import { fetchMcpLogo, bundledMcpLogo, mcpClientName } from './rooms-mcp-logos.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -7,7 +8,7 @@ import type { TokenAuth } from './auth.js';
 import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
-import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { MCP_STARTER_ROUTINE_STEPS, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -43,14 +44,16 @@ span.plate{display:grid;place-items:center;padding:0;font-weight:500}
 .perm strong{display:block;font-weight:500}.perm span{font-size:13px;line-height:19px;color:var(--quiet)}
 label{display:block;font-weight:500;margin-bottom:8px}.field{margin-bottom:24px}.field p{font-size:13px;line-height:19px;color:var(--quiet);margin:8px 0 0}
 input{width:100%;height:44px;font:16px SG,system-ui,sans-serif;padding:0 12px;border:1px solid var(--strong);border-radius:3px;background:var(--raised);color:var(--t1)}
-.routine{margin-top:32px;padding-top:24px;border-top:1px solid var(--border)}.routine h2{font-size:16px;line-height:23px;font-weight:500;margin:0 0 8px}.routine-text{white-space:pre-line;color:var(--t2);margin:16px 0}.copy{min-height:44px;padding:0;border:0;background:transparent;color:var(--brass);font:inherit;cursor:pointer}.copy-status{font-size:13px;line-height:19px;color:var(--quiet)}
-.foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}`;
+.routine{margin-top:32px;padding-top:24px;border-top:1px solid var(--border)}.routine h2{font-size:16px;line-height:23px;font-weight:500;margin:0 0 8px}.routine-text{color:var(--t2);margin:16px 0;padding-left:24px}.routine-text li{padding-left:4px;margin-bottom:16px}.routine-text li:last-child{margin-bottom:0}.copy{min-height:44px;padding:0;border:0;background:transparent;color:var(--brass);font:inherit;cursor:pointer}.copy-status{font-size:13px;line-height:19px;color:var(--quiet)}
+.foot{margin:auto 0 0;padding-top:24px;display:flex;justify-content:center;gap:16px;font-size:13px;line-height:19px}${MCP_WORKSPACE_STYLE}`;
 // Static code only; owner, app and Room text never enter executable script.
-const COPY_ROUTINE_SCRIPT = `document.getElementById('copy-routine').addEventListener('click', async () => {
+const COPY_ROUTINE_SCRIPT = `${MCP_WORKSPACE_SCRIPT}
+document.getElementById('copy-routine').addEventListener('click', async () => {
   const prompt = document.getElementById('starter-routine');
   const status = document.getElementById('copy-status');
   try {
-    await navigator.clipboard.writeText(prompt.textContent);
+    const text = Array.from(prompt.querySelectorAll('li')).map((step, index) => (index + 1) + '. ' + step.textContent).join('\\n\\n');
+    await navigator.clipboard.writeText(text);
     status.textContent = 'Copied';
   } catch {
     const range = document.createRange();
@@ -67,7 +70,7 @@ export function mcpJson(response: ServerResponse, status: number, value: unknown
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   response.end(JSON.stringify(value));
 }
-export async function mcpBody(request: IncomingMessage, maxBytes = 32_768): Promise<Record<string, unknown>> {
+export async function mcpBody(request: IncomingMessage, maxBytes = 32_768, repeated: readonly string[] = []): Promise<Record<string, unknown>> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
@@ -79,8 +82,10 @@ export async function mcpBody(request: IncomingMessage, maxBytes = 32_768): Prom
   if (request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded') {
     const params = new URLSearchParams(raw);
     const names = [...new Set(params.keys())];
-    if (names.some(key => params.getAll(key).length !== 1)) throw new Refusal('invalid_request', 'duplicate_parameter', names);
-    return Object.fromEntries(params);
+    if (names.some(key => !repeated.includes(key) && params.getAll(key).length !== 1)) throw new Refusal('invalid_request', 'duplicate_parameter', names);
+    const result: Record<string, unknown> = Object.fromEntries(params);
+    for (const key of repeated) if (params.has(key)) result[key] = params.getAll(key);
+    return result;
   }
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Refusal('invalid_request', 'body_not_object');
@@ -389,17 +394,26 @@ export class RoomsMcpOAuth {
             this.page(response, `Name ${flow.name}'s Beeline member`, `${this.brand(flow)}<h1>Name ${client}'s Beeline member</h1>${who}<form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="joiner_name">Name</label><input id="joiner_name" name="joiner_name" value="${escape(name)}" maxlength="60"></div><div class="field"><label for="joiner_handle">Handle</label><input id="joiner_handle" name="joiner_handle" value="${escape(handle)}" maxlength="40"><p>Tag it as @${escape(handle)} in a Room.</p></div><div class="row"><a class="btn" href="/mcp/oauth/consent?flow=${flow.id}">Cancel</a><button class="btn primary" name="decision" value="save">Save</button></div></form>`);
             return true;
           }
+          const workspaces = await this.database.query<{ id: string; name: string; publicRoomCount: number; selected: boolean }>(
+            `SELECT w.id,w.name,(SELECT count(*)::integer FROM rooms r WHERE r.workspace_id=w.id
+               AND r.parent_id IS NULL AND r.direct_participants IS NULL AND r.archived_at IS NULL
+               AND r.visibility='public') AS "publicRoomCount",
+               (member.workspace_ids IS NULL OR w.id=ANY(member.workspace_ids)) selected
+             FROM memberships owner JOIN workspaces w ON w.id=owner.workspace_id
+             LEFT JOIN rooms_mcp_members member ON member.client_id=$2 AND member.owner_id=owner.identity_id
+             WHERE owner.identity_id=$1 AND owner.room_id IS NULL AND owner.removed_at IS NULL
+             ORDER BY lower(w.name),w.id`, [flow.identity_id, flow.client_id]);
           const memberLogo = existing?.avatar_base64 ? `data:image/webp;base64,${existing.avatar_base64.replace(/\s/g, '')}` : flow.logo;
           const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div><p class="head">It can</p><div class="perms"><div class="perm"><strong>Read your public Rooms</strong><span>It joins every public Room, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div>${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For clients with their own HTTPS receiver. For ChatGPT or Codex dots using MCP Events, leave these fields blank; the host supplies its callback when you ask it to monitor mentions. Paste a receiver token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><div id="starter-routine" class="routine-text">${escape(MCP_STARTER_ROUTINE)}</div><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div>${renderMcpWorkspaceSelection(workspaces.rows)}<p class="head">It can</p><div class="perms"><div class="perm"><strong>Read public Rooms in selected Workspaces</strong><span>It joins their public Rooms, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div>${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form id="mcp-consent-form" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For clients with their own HTTPS receiver. For ChatGPT or Codex dots using MCP Events, leave these fields blank; the host supplies its callback when you ask it to monitor mentions. Paste a receiver token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><ol id="starter-routine" class="routine-text">${MCP_STARTER_ROUTINE_STEPS.map(step => `<li>${escape(step)}</li>`).join('')}</ol><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
         }
         return true;
       }
       if (request.method === 'POST' && path === '/mcp/oauth/consent') {
         if (request.headers.origin !== this.origin) throw new Refusal('invalid_request', 'origin_mismatch');
-        const input = await mcpBody(request);
+        const input = await mcpBody(request, 32_768, ['workspace_ids']);
         if (input.decision === 'save') {
           const name = typeof input.joiner_name === 'string' ? input.joiner_name.trim().replace(/\s+/g, ' ') : '';
           const handle = typeof input.joiner_handle === 'string' ? input.joiner_handle.trim().replace(/^@+/, '').toLowerCase() : '';
@@ -418,7 +432,17 @@ export class RoomsMcpOAuth {
           const target = new URL(flow.redirect_uri);
           target.searchParams.set('state', flow.state); target.searchParams.set('iss', this.origin);
           if (input.decision === 'allow') {
-            await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name });
+            const workspaceIds = typeof input.workspace_ids === 'string' ? [input.workspace_ids] : input.workspace_ids;
+            if (input.workspace_selection !== '1' || !Array.isArray(workspaceIds) || !workspaceIds.length
+              || workspaceIds.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)))
+              throw new Refusal('invalid_request', 'workspaces_invalid');
+            try {
+              await ensureMcpMember(db, { clientId: flow.client_id, ownerId: flow.identity_id, modelLabel: flow.name,
+                workspaceIds: workspaceIds.map(id => (id as string).toLowerCase()) });
+            } catch (error) {
+              if (error instanceof McpToolError) throw new Refusal('invalid_request', 'workspaces_invalid');
+              throw error;
+            }
             const member = await mcpMemberId(db, flow.client_id, flow.identity_id);
             if (member && (flow.joiner_name || flow.joiner_handle)) {
               try {
@@ -568,6 +592,7 @@ export const BROWSER_REFUSALS: Record<string, string> = {
   body_not_object: 'The form data is not in a shape Beeline reads.',
   invalid_json: 'The form data is not valid JSON.',
   handle_taken: 'Handle already taken. Choose a different handle for this connection; the existing member stays unchanged.',
+  workspaces_invalid: 'Choose at least one Workspace you currently belong to.',
   joiner_invalid: 'The name or handle is not valid. A handle uses only lowercase letters, digits and underscores.',
   flow_not_signed_in: 'You have not signed in to Beeline for this connection yet.',
   wake_unavailable: 'Auth tokens are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',

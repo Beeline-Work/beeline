@@ -76,7 +76,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   async function post(path: string, input: Record<string, unknown>, headers: Record<string, string> = {}) {
     return fetch(origin + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
   }
-  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', wake: Record<string, string> = {}) {
+  async function prepareAuthorization(scope = 'rooms:read rooms:write', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback') {
     const registered = await post('/mcp/oauth/register', { client_name: 'Local MCP reviewer', redirect_uris: ['http://127.0.0.1:9876/callback'], token_endpoint_auth_method: 'none' });
     expect(registered.status).toBe(201);
     const client = clientId ? { client_id: clientId } : await registered.json() as { client_id: string };
@@ -100,13 +100,18 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     const consentHtml = await page.text();
     expect(consentHtml).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
-    const result = await post('/mcp/oauth/consent', { flow, decision, ...wake }, { cookie, origin });
+    return { consentHtml, consent, clientId: client.client_id, verifier, cookie, flow };
+  }
+  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', wake: Record<string, unknown> = {}) {
+    const prepared = await prepareAuthorization(scope, clientId, redirectUri);
+    const { flow, cookie } = prepared;
+    const result = await post('/mcp/oauth/consent', { flow, decision, workspace_selection: '1', workspace_ids: [WORKSPACE], ...wake }, { cookie, origin });
     expect(result.status).toBe(302);
     const target = new URL(result.headers.get('location')!);
     expect(target.href.startsWith(redirectUri + '?')).toBe(true);
     expect(target.searchParams.get('state')).toBe('review-state');
     expect(target.searchParams.get('iss')).toBe(origin);
-    return { consentHtml, consent, clientId: client.client_id, code: target.searchParams.get('code'), verifier, error: target.searchParams.get('error'), cookie, flow };
+    return { ...prepared, code: target.searchParams.get('code'), error: target.searchParams.get('error') };
   }
   async function exchange(grant: Awaited<ReturnType<typeof authorize>>, overrides: Record<string, unknown> = {}) {
     return post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: grant.clientId, code: grant.code, code_verifier: grant.verifier,
@@ -620,7 +625,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       };
       let response = await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=other`, { headers: { cookie }, redirect: 'manual' });
       await scrub('login', 'provider_invalid', response);
-      response = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+      response = await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin });
       await scrub('consent submit', 'flow_not_signed_in', response);
       await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
       response = await fetch(`${origin}/mcp/oauth/callback/github?state=${flow}&ticket=ticket-sentinel-123`, { headers: { cookie }, redirect: 'manual' });
@@ -684,7 +689,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
       const callback = (provider: string, ticket?: string) => fetch(`${origin}/mcp/oauth/callback/${provider}?state=${flow}${ticket ? `&ticket=${ticket}` : ''}`, { headers: { cookie }, redirect: 'manual' });
       await page('Choosing how to sign in', 'login', 'provider_invalid', await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=other`, { headers: { cookie }, redirect: 'manual' }));
-      await page('Saving your choice', 'consent submit', 'flow_not_signed_in', await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin }));
+      await page('Saving your choice', 'consent submit', 'flow_not_signed_in', await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin }));
       await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
       await page('Signing in with Google', 'callback', 'ticket_missing', await callback('google'));
       await page('Signing in with GitHub', 'callback', 'provider_mismatch', await callback('github', 'ticket-sentinel-123'));
@@ -694,21 +699,23 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await page('Saving your choice', 'consent submit', 'joiner_invalid', await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: 'Bad Handle!' }, { cookie, origin }));
       await page('Saving your choice', 'consent submit', 'decision_invalid', await post('/mcp/oauth/consent', { flow, decision: 'maybe' }, { cookie, origin }));
       await page('Saving your choice', 'consent submit', 'wake_invalid',
-        await post('/mcp/oauth/consent', { flow, decision: 'allow', wake_url: 'http://localhost', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], wake_url: 'http://localhost', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
       const previousKey = process.env.BEELINE_MCP_WEBHOOK_KEY;
       delete process.env.BEELINE_MCP_WEBHOOK_KEY;
       try {
         await page('Saving your choice', 'consent submit', 'wake_unavailable',
-          await post('/mcp/oauth/consent', { flow, decision: 'allow', wake_url: 'https://hooks.example/wake', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
+          await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], wake_url: 'https://hooks.example/wake', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
         expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [registered.client_id])).rowCount).toBe(0);
       } finally {
         if (previousKey === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY;
         else process.env.BEELINE_MCP_WEBHOOK_KEY = previousKey;
       }
+      await page('Saving your choice', 'consent submit', 'workspaces_invalid',
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [] }, { cookie, origin }));
       const takenHandle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [USER])).rows[0]!.handle;
       expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: takenHandle }, { cookie, origin })).status).toBe(302);
       await page('Saving your choice', 'consent submit', 'handle_taken',
-        await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin }));
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin }));
       await page('Returning to your session', 'handoff', 'handoff_invalid', await fetch(`${origin}/mcp/oauth/handoff?state=state-sentinel-123&code=x`));
       // Every sentence is driven by a real refusal, and each reason reads differently.
       expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
@@ -833,7 +840,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
     expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Pidoong', joiner_handle: handle }, { cookie, origin })).status).toBe(302);
-    const refused = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    const refused = await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin });
     expect(refused.status).toBe(400);
     expect(await refused.text()).toContain('Handle already taken');
     expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [client.client_id])).rowCount).toBe(0);
@@ -860,7 +867,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     for (const line of MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()))
       expect(page).toContain(`<li>${line.replaceAll("'", '&#39;')}</li>`);
     expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
-    expect(page).toContain('Read your public Rooms'); expect(page).toContain('It joins every public Room'); expect(page).toContain('Post as Grok Bot');
+    expect(page).toContain('Read public Rooms in selected Workspaces'); expect(page).toContain('It joins their public Rooms'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
     expect(page).toContain('<img class="mark" src="data:image/svg+xml;base64,'); expect(page).not.toContain('>b</span>');
     const editPage = await fetch(`${origin}/mcp/oauth/consent?flow=${flow}&edit=1`, { headers: { cookie } });
@@ -877,7 +884,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Firstmate', joiner_handle: 'firstmate' }, { cookie, origin })).status).toBe(302);
     const renamed = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
     expect(renamed).toContain('Firstmate'); expect(renamed).toContain('@firstmate');
-    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin });
     expect(allowed.status).toBe(302);
     const code = new URL(allowed.headers.get('location')!).searchParams.get('code')!;
     expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
@@ -1282,6 +1289,135 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).toBe(true);
     expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(ROOM);
   });
+  it('MCP-WORKSPACE-1: limits initial membership through exchange and refresh, and preserves memberships when reconnect deselects', async () => {
+    const secondWorkspace = randomUUID(), secondRoom = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other eligible Workspace')`, [secondWorkspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [secondWorkspace, USER]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'Excluded public Room','public')`, [secondRoom, secondWorkspace]);
+    try {
+      const grant = await authorize();
+      expect(grant.consentHtml).toContain('Workspaces');
+      expect(grant.consentHtml).toContain('Other eligible Workspace');
+      const member = (await db.query<{ member_id: string; workspace_ids: string[] }>(
+        'SELECT member_id,workspace_ids FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2', [grant.clientId, USER])).rows[0]!;
+      expect(member.workspace_ids).toEqual([WORKSPACE]);
+      const response = await exchange(grant);
+      expect(response.status).toBe(200);
+      const tokens = await response.json() as { access_token: string; refresh_token: string };
+      const client = new Client({ name: 'workspace-selection-proof', version: '1.0.0' }); clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
+      const activeWorkspaces = async () => (await db.query<{ workspace_id: string }>(
+        'SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id', [member.member_id])).rows.map(row => row.workspace_id);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE]);
+      expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(secondRoom);
+      expect((await client.callTool({ name: 'read_messages', arguments: { room: secondRoom } })).isError).toBe(true);
+      expect((await client.callTool({ name: 'send_message', arguments: { room: secondRoom, text: 'must not send' } })).isError).toBe(true);
+      expect((await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token,
+        client_id: grant.clientId, resource: origin + '/mcp' })).status).toBe(200);
+      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
+      await backfillMcpMemberRoomsAndAvatars(db);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE]);
+      // Reconnecting may add a Workspace; deselection preserves existing memberships.
+      const both = await authorize(undefined, 'allow', grant.clientId, undefined, { workspace_ids: [WORKSPACE, secondWorkspace] });
+      expect((await exchange(both)).status).toBe(200);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+      const narrowed = await authorize(undefined, 'allow', grant.clientId, undefined, { workspace_ids: [secondWorkspace] });
+      expect((await exchange(narrowed)).status).toBe(200);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+      expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND workspace_id=$2 AND removed_at IS NULL', [member.member_id, WORKSPACE])).rowCount).toBeGreaterThan(0);
+      expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).not.toBe(true);
+      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
+      await backfillMcpMemberRoomsAndAvatars(db);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+      const reconnect = await prepareAuthorization(undefined, grant.clientId);
+      const checkboxes = reconnect.consentHtml.match(/<input\b[^>]*type="checkbox"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      expect(checkboxes.find(input => input.includes(secondWorkspace))).toMatch(/\bchecked\b/);
+      expect(checkboxes).toHaveLength(2);
+      for (const checkbox of checkboxes) expect(checkbox).toMatch(/\bchecked disabled\b/);
+      expect(reconnect.consentHtml.match(/already connected/g)).toHaveLength(2);
+      // Disabled checkboxes submit their stable IDs through matching hidden fields.
+      const hidden = reconnect.consentHtml.match(/<input\b[^>]*type="hidden"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      expect(hidden).toHaveLength(2);
+      const ids = hidden.map(input => /value="([^"]+)"/.exec(input)![1]);
+      expect((await post('/mcp/oauth/consent', { flow: reconnect.flow, decision: 'allow', workspace_selection: '1', workspace_ids: ids }, { cookie: reconnect.cookie, origin })).status).toBe(302);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+    } finally {
+      await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]);
+    }
+  });
+  it('MCP-WORKSPACE-1: legacy connections retain all-Workspace behavior until explicit re-consent', async () => {
+    const grant = await authorize();
+    await db.query('UPDATE rooms_mcp_members SET workspace_ids=NULL WHERE client_id=$1', [grant.clientId]);
+    const laterWorkspace = randomUUID(), laterRoom = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'New legacy Workspace')`, [laterWorkspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [laterWorkspace, USER]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'Legacy public Room','public')`, [laterRoom, laterWorkspace]);
+    try {
+      const member = await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
+      expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL', [member, laterRoom])).rowCount).toBe(1);
+      expect((await db.query<{ workspace_ids: string[] | null }>('SELECT workspace_ids FROM rooms_mcp_members WHERE client_id=$1', [grant.clientId])).rows[0]!.workspace_ids).toBeNull();
+      await authorize(undefined, 'allow', grant.clientId);
+      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
+      expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND workspace_id=$2 AND removed_at IS NULL', [member, laterWorkspace])).rowCount).toBe(2);
+    } finally { await db.query('DELETE FROM workspaces WHERE id=$1', [laterWorkspace]); }
+  });
+  it('MCP-WORKSPACE-1: approving the default checked fields joins every current Workspace', async () => {
+    const secondWorkspace = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Default selected Workspace')`, [secondWorkspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [secondWorkspace, USER]);
+    try {
+      const { consentHtml, flow, cookie, clientId } = await prepareAuthorization();
+      const checkboxes = consentHtml.match(/<input\b[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      expect(checkboxes).toHaveLength(2);
+      expect(checkboxes.every(input => /\bchecked\b/.test(input))).toBe(true);
+      const workspaceIds = checkboxes.map(input => /value="([^"]+)"/.exec(input)![1]);
+      expect((await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: workspaceIds }, { cookie, origin })).status).toBe(302);
+      const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE client_id=$1', [clientId])).rows[0]!.member_id;
+      const joined = (await db.query<{ workspace_id: string }>('SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL', [member])).rows.map(row => row.workspace_id);
+      expect(joined.sort()).toEqual([WORKSPACE, secondWorkspace].sort());
+    } finally { await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]); }
+  });
+  it('MCP-WORKSPACE-1: rejects empty, malformed, duplicate and foreign selections without granting membership', async () => {
+    const prepared = await prepareAuthorization();
+    const { flow, cookie, clientId } = prepared;
+    for (const selection of [
+      {}, { workspace_selection: '1' }, { workspace_selection: '1', workspace_ids: [] },
+      { workspace_selection: '1', workspace_ids: ['not-a-workspace'] },
+      { workspace_selection: '1', workspace_ids: [randomUUID()] },
+      { workspace_selection: '1', workspace_ids: [WORKSPACE, WORKSPACE] },
+      { workspace_selection: '1', workspace_ids: { id: WORKSPACE } },
+    ]) {
+      const response = await post('/mcp/oauth/consent', { flow, decision: 'allow', ...selection }, { cookie, origin });
+      expect(response.status).toBe(400);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [clientId])).rowCount).toBe(0);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_codes WHERE client_id=$1', [clientId])).rowCount).toBe(0);
+    }
+    // Eligibility is rechecked on POST, not trusted from the earlier page.
+    const staleWorkspace = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Departed Workspace')`, [staleWorkspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role,removed_at) VALUES($1,$2,'member',now())`, [staleWorkspace, USER]);
+    try {
+      expect((await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [staleWorkspace] }, { cookie, origin })).status).toBe(400);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [clientId])).rowCount).toBe(0);
+    } finally { await db.query('DELETE FROM workspaces WHERE id=$1', [staleWorkspace]); }
+  });
+  it('MCP-WORKSPACE-1: accepts repeated workspace form fields but still rejects duplicate security parameters', async () => {
+    const secondWorkspace = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second form Workspace')`, [secondWorkspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [secondWorkspace, USER]);
+    try {
+      const { flow, cookie, clientId } = await prepareAuthorization();
+      const body = new URLSearchParams({ flow, decision: 'allow', workspace_selection: '1' });
+      body.append('workspace_ids', WORKSPACE); body.append('workspace_ids', secondWorkspace);
+      const submit = (value: URLSearchParams) => fetch(origin + '/mcp/oauth/consent', { method: 'POST', redirect: 'manual',
+        headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded' }, body: value });
+      const duplicateFlow = new URLSearchParams(body); duplicateFlow.append('flow', flow);
+      expect((await submit(duplicateFlow)).status).toBe(400);
+      expect((await submit(body)).status).toBe(302);
+      const saved = (await db.query<{ workspace_ids: string[] }>('SELECT workspace_ids FROM rooms_mcp_members WHERE client_id=$1', [clientId])).rows[0]!;
+      expect([...saved.workspace_ids].sort()).toEqual([WORKSPACE, secondWorkspace].sort());
+    } finally { await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]); }
+  });
   it('joins every public top-level Room on Allow, and other Rooms through Members', async () => {
     const { member, client } = await connected();
     const rooms = async () => (await db.query<{ room_id: string }>(
@@ -1572,7 +1708,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     // Another member in the Workspace holds the plain handle already.
     expect(page).toContain(`@${memberHandle}_2`);
     await db.query(`UPDATE identities SET handle='demo-agent' WHERE id=$1`, [AGENT]);
-    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow' }, { cookie, origin });
+    const allowed = await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin });
     const target = new URL(allowed.headers.get('location')!);
     expect(target.origin + target.pathname).toBe(handoff);
     // The person's browser lands on Beeline's own page, which keeps the code for the session.

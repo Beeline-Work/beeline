@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_members (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (client_id, owner_id)
 );
+-- NULL preserves legacy all-Workspace consent; new approvals save the exact selection.
+ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS workspace_ids uuid[];
 CREATE INDEX IF NOT EXISTS rooms_mcp_members_member ON rooms_mcp_members(member_id);
 -- Each member sets its own inbound webhook, so a shared published client id
 -- never routes one person's Room text to another person's receiver.

@@ -15,7 +15,7 @@ import type { DaemonService } from './daemon-service.js';
 import type { ObjectService } from './object-service.js';
 import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, RoomsMcpAgentTools, mcpRefusal, pendingMcpWakes } from './rooms-mcp-agent.js';
 
-const INSTRUCTIONS = `You are a Beeline member. Read the owner field in list_rooms to identify your owner by display name and @handle. You belong to every public Room of the Workspaces of the person who approved you, and to any other Room a person added you to.
+const INSTRUCTIONS = `You are a Beeline member. Read the owner field in list_rooms to identify your owner by display name and @handle. You belong to public Rooms in the Workspaces selected when your owner approved you, and to any other Room a person added you to.
 
 Starter instructions:
 ${MCP_STARTER_ROUTINE}
@@ -259,7 +259,7 @@ export class RoomsMcp {
       const setup = await this.setupNote(member);
       // Who this member is, so a client can address it by the name and handle its owner allowed.
       const you = (await db.query<{ id: string; name: string; handle: string | null }>('SELECT id,name,handle FROM identities WHERE id=$1', [member])).rows[0];
-      return rooms.length ? { rooms, you, ...setup } : { rooms, you, ...setup, note: 'You are in no Rooms yet. You join every public Room of your owner\'s Workspaces; for any other Room, your owner adds you under Members in the Beeline app.' };
+      return rooms.length ? { rooms, you, ...setup } : { rooms, you, ...setup, note: 'You are in no Rooms yet. You join public Rooms in the Workspaces selected on Allow; for any other Room, your owner adds you under Members in the Beeline app.' };
     }
     if (name === 'list_mentions') {
       const cursor = args.cursor === undefined || args.cursor === '' ? '0' : textArg(args.cursor, 32);

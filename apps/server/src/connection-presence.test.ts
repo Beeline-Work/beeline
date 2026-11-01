@@ -312,6 +312,23 @@ describe('delivery-driven presence', () => {
     await elapsed();
     expect((await body()).status).toBe('online');
   });
+  it('does not call a live helper offline when no turn starts', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    await database.query(
+      `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('live-helper',clock_timestamp())
+       ON CONFLICT (instance_id) DO UPDATE SET renewed_at=clock_timestamp()`,
+    );
+    await database.query(
+      `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+       VALUES($1,1,'live-helper','live-helper')`,
+      [AGENT],
+    );
+    await message();
+    await elapsed();
+    expect((await body()).status).toBe('online');
+    expect((await database.query(`SELECT 1 FROM messages WHERE card_type='turn-failed'`)).rowCount).toBe(0);
+  });
   it('does not let activity in another Room conceal this failed delivery', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });

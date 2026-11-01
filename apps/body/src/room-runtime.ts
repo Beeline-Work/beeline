@@ -46,7 +46,6 @@ import { runtimeIdentity } from './runtime.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { agentCornerCheckoutPaths, materializeAgentCornerCheckout } from './agent-corner-checkout.js';
 import {
-  checkRepositoryCachesOnce,
   CRASH_SAFE_CLONE_ARGS,
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
@@ -487,6 +486,12 @@ export class RoomRuntimeCoordinator {
    */
   private readonly archiveCleanupAbandoned = new Set<string>();
   private preservationFlight?: Promise<void>;
+  private maintenanceFlight?: Promise<void>;
+  private maintenanceRequest?: {
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>;
+    states: readonly StorageRoomState[];
+  };
+  private readonly desiredChannels = new Set<string>();
   private reconciliationProgressListener?: () => void | Promise<void>;
   private reconciliationStage = 'idle';
   private reconciliationStageAt = Date.now();
@@ -663,7 +668,6 @@ export class RoomRuntimeCoordinator {
 
   private async yieldReconciliation(): Promise<void> {
     await new Promise<void>(resolveYield => setImmediate(resolveYield));
-    if (!this.stopped) await this.reconciliationProgressListener?.();
   }
 
   setInteractiveIdleListener(listener: () => void): void {
@@ -808,10 +812,10 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
-    // A reboot can leave empty objects in a shared repo cache; repair them
-    // (and turn on crash-safe writes) before any Room or corner fetches.
-    await checkRepositoryCachesOnce(this.runtime.supervisorRoot);
+    // Repository repair is scoped to the first fetch of each active cache;
+    // archived object stores never delay command intake on helper restart.
     await this.yieldReconciliation();
+    if (!this.stopped) await this.reconciliationProgressListener?.();
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
     // Bind waiting surfaces before any fan-out, cleanup or corner listing.
     // Their intake runs independently while the rest of this sweep continues.
@@ -825,7 +829,8 @@ export class RoomRuntimeCoordinator {
       try {
         if (room.parentRoomId) {
           this.monolithCornerParents.set(room.roomId, room.parentRoomId);
-          await this.startCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
+          this.pendingCornerCommands.add(room.roomId);
+          await this.watchCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
         } else {
           this.surfaceHealth.discover(room.roomId, 'room');
           await this.startRoom(room.roomId);
@@ -930,15 +935,7 @@ export class RoomRuntimeCoordinator {
     // Readiness belongs to durable command intake, never local retention work.
     await onServing?.();
     if (this.stopped) return 'member';
-    this.noteReconciliationStage('corner-reaping');
-    const attemptedReaps = new Set([...desired, ...this.pendingCornerReaps.keys()]);
-    await this.retryPendingCornerReaps(desired);
-    if (this.stopped) return 'member';
-    this.noteReconciliationStage('archived-corner-storage');
-    await this.sweepArchivedCornerWorktrees(archivedCorners, attemptedReaps);
-    if (this.stopped) return 'member';
-    await this.reapClosedCornerEmulators(desired);
-    if (this.stopped) return 'member';
+
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -952,9 +949,6 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
-    this.noteReconciliationStage('room-storage');
-    await this.sweepRoomPrivateStorage(bootstrap.storageRooms ?? []);
-    if (this.stopped) return 'member';
     // Archived corners are discovered for local cleanup through their exact
     // checkout IDs. Their parent mapping serves only a running intake.
     for (const cornerId of this.monolithCornerParents.keys()) {
@@ -965,7 +959,47 @@ export class RoomRuntimeCoordinator {
     for (const [roomId, running] of this.running)
       if (existingRooms.has(roomId)) running.body.requestReconciliation();
     if (this.roomRemovalConfirmations.size) this.wakeDiscovery();
+    this.scheduleStorageMaintenance(archivedCorners, desired, bootstrap.storageRooms ?? []);
     return 'member';
+  }
+
+  /** Retention cannot hold discovery or its watchdog acknowledgement hostage.
+   * One sweep runs at a time; discovery coalesces its latest facts for the next
+   * pass and updates the active set immediately, including during a slow reap.
+   * Maintenance yields do not acknowledge a blocked foreground discovery. */
+  private scheduleStorageMaintenance(
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    desired: ReadonlySet<string>,
+    states: readonly StorageRoomState[],
+  ): void {
+    this.desiredChannels.clear();
+    for (const channel of desired) this.desiredChannels.add(channel);
+    this.maintenanceRequest = { archived, states };
+    if (this.maintenanceFlight) return;
+    this.maintenanceFlight = (async () => {
+      await this.yieldReconciliation();
+      while (!this.stopped && this.maintenanceRequest) {
+        const request = this.maintenanceRequest;
+        this.maintenanceRequest = undefined;
+        const attemptedReaps = new Set([...this.desiredChannels, ...this.pendingCornerReaps.keys()]);
+        await this.retryPendingCornerReaps(this.desiredChannels);
+        if (this.stopped) return;
+        await this.sweepArchivedCornerWorktrees(request.archived, new Set([...attemptedReaps, ...this.desiredChannels]));
+        if (this.stopped) return;
+        await this.reapClosedCornerEmulators(this.desiredChannels);
+        if (this.stopped) return;
+        await this.sweepRoomPrivateStorage(request.states);
+      }
+    })().catch(error => console.error('[thin-core] storage maintenance deferred:', error))
+      .finally(() => {
+        this.maintenanceFlight = undefined;
+        // A discovery can queue fresh facts between the final loop check and
+        // this promise settling. Do not lose that last coalesced request.
+        if (!this.stopped && this.maintenanceRequest) {
+          const { archived, states } = this.maintenanceRequest;
+          this.scheduleStorageMaintenance(archived, new Set(this.desiredChannels), states);
+        }
+      });
   }
 
   /**
@@ -1488,7 +1522,7 @@ export class RoomRuntimeCoordinator {
     const cornerId = corner.cornerId;
     if (this.running.has(cornerId)) return;
     if (this.idleCornerSubscriptions.has(cornerId)) {
-      if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+      if (this.pendingCornerCommands.has(cornerId)) void this.activateWatchedCorner(corner);
       return;
     }
     if (!this.options.daemonApi.liveSubscribe) {
@@ -1517,7 +1551,9 @@ export class RoomRuntimeCoordinator {
       },
     );
     this.idleCornerSubscriptions.set(cornerId, release);
-    if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+    // Migration can copy a large legacy tree. Intake for every other Room and
+    // the local watchdog must remain available while this bounded start runs.
+    if (this.pendingCornerCommands.has(cornerId)) void this.activateWatchedCorner(corner);
   }
 
   private unwatchCorner(cornerId: string): void {
@@ -1803,7 +1839,7 @@ export class RoomRuntimeCoordinator {
       if (this.archiveCleanupAbandoned.has(cornerId) || await this.cleanupWasRefused(cornerId)) continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
       try {
-        await this.reapCornerWorktree(worktree);
+        await this.reapIdleCornerWorktree(worktree, desired);
       } catch (error) {
         if (hasUnpublishedWork(error)) {
           // Nothing will ever push this work for an abandoned corner, so
@@ -1896,10 +1932,24 @@ export class RoomRuntimeCoordinator {
         await rememberStorageOwner(this.runtime.supervisorRoot, owner);
         await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, { progress: () => this.yieldReconciliation() });
         localIds.delete(itemId);
+
       } catch (error) {
         console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
       }
     }
+  }
+
+  private async reapIdleCornerWorktree(worktree: CornerWorktree, desired: ReadonlySet<string>): Promise<void> {
+    const eligible = () => !this.stopped && !desired.has(worktree.cornerId) &&
+      !this.running.has(worktree.cornerId) && !this.startingCorners.has(worktree.cornerId) &&
+      !this.idleCornerSubscriptions.has(worktree.cornerId);
+    if (!eligible()) return;
+    await this.scheduler.withIdleStorage(worktree.cornerId, async () => {
+      if (!eligible()) return;
+      this.storageMaintenanceRooms.add(worktree.cornerId);
+      try { await this.reapCornerWorktree(worktree); }
+      finally { this.storageMaintenanceRooms.delete(worktree.cornerId); }
+    });
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
@@ -2070,6 +2120,7 @@ export class RoomRuntimeCoordinator {
       }
     };
     if (this.membershipDrain) await untilDeadline(this.membershipDrain);
+    if (this.maintenanceFlight) await untilDeadline(this.maintenanceFlight);
     if (this.preservationFlight) await untilDeadline(this.preservationFlight.catch(() => undefined));
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();

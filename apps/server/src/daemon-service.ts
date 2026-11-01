@@ -463,6 +463,7 @@ export class DaemonService {
     authenticatedAgentId: string,
   ): Promise<Output<Name>> {
     for (let attempt = 0; ; attempt++) {
+      let committed = false;
       try {
     input = { ...input };
     const candidate = input as Record<string, unknown>;
@@ -1008,6 +1009,7 @@ export class DaemonService {
         }
         return result;
       });
+      committed = true;
       for (const task of committedTasks) {
         try {
           await task(this.database);
@@ -2265,10 +2267,11 @@ export class DaemonService {
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
       } catch (error) {
-        // Activity and failed receipts have transactional writes and buffered live events.
+        // These operations have transactional writes and buffered live events.
         // Retry the owning transaction, including authorization, after rollback;
         // a nested transaction cannot recover an aborted PostgreSQL transaction.
         const retryableWrite = name === 'postAgentActivity' ||
+          (name === 'reviseCornerBrief' && !committed) ||
           (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
         if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
           !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
@@ -3918,7 +3921,12 @@ export class DaemonService {
           }
         : {}),
       ...(derived
-        ? { state: derived.state, activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const) }
+        ? {
+            state: derived.state,
+            ...(derived.queue ? { queue: derived.queue } : {}),
+            ...(derived.queueBehind ? { queueBehind: derived.queueBehind } : {}),
+            activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const),
+          }
         : {}),
       ...(row?.last_author_id && row.last_created_at && row.last_type
         ? {

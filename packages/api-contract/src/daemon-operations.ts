@@ -1095,6 +1095,10 @@ export type CornerRestoreResult = {
     readonly headSha: string;
   };
   readonly state?: import('./phone-types.js').CornerState;
+  /** Set when `state` is working because a command is still waiting to be claimed. */
+  readonly queue?: import('./phone-types.js').CornerWorkQueue;
+  /** Room name of the turn this queued worker is behind. */
+  readonly queueBehind?: string;
   /** Worker or reviewer running/queued, or checks running; otherwise idle. */
   readonly activity?: 'running' | 'idle';
   /** The newest visible message (activity rows excluded); excerpt is at most 280 characters. */

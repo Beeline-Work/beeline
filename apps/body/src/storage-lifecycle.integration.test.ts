@@ -55,7 +55,9 @@ it('ends a Room, code corner, agent and last local Workspace; no payload byte su
   expect(reclaimed.length).toBeGreaterThan(0);
   expect(await exists(corner)).toBe(false);
   expect(await readFile(squire, 'utf8')).toBe('squire');
-  expect(await reclaimOwnedCheckout(root, { ...codeOwner, archived: true })).toEqual([code.path]);
+  expect(await reclaimOwnedCheckout(root, { ...codeOwner, archived: true })).toEqual([code.path, code.gitCommonDir]);
+  expect(await exists(code.path)).toBe(false);
+  expect(await exists(code.gitCommonDir)).toBe(false);
   await retireRemovedAgent(staged.runtime, { run: vi.fn(async () => ({ stdout: 'not-found\n' })) });
   await pruneEndedOwnerStorage(root);
   expect(await exists(workspace)).toBe(false);

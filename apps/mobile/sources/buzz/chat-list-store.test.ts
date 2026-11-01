@@ -742,3 +742,16 @@ describe('the Room screen reads the live list', () => {
     await act(async () => renderer.unmount());
   });
 });
+
+it('Send: pushed read and command state update other devices without follow-up reads', async () => {
+  const chats = vi.fn(async () => listOf([row('room-a', 10, { unread: true })]));
+  const handle = join(chats, () => true);
+  await vi.advanceTimersByTimeAsync(10);
+  emit({ monolithLive: { type: 'read-state', roomId: 'room-a',
+    readCursor: { messageId: 'sent', firstUnreadMessageId: null, unreadCount: 0 } } });
+  emit({ monolithLive: { type: 'room-commands', roomId: 'room-a', commands: [] } });
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(chats).toHaveBeenCalledTimes(1);
+  expect(handle.current()?.chats[0]?.unread).toBe(false);
+  handle.release();
+});

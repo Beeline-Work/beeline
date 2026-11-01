@@ -11,9 +11,9 @@ export const READ_CURSOR_DEBOUNCE_MS = 200;
 
 /** A provisional row is painted from an unsettled turn, not stored mail. */
 function isProvisional(
-  message: Pick<ChatDisplayMessage, 'isAgentDraft' | 'isAgentLiveTurn' | 'isAgentActivity'>,
+  message: Pick<ChatDisplayMessage, 'isAgentDraft' | 'isAgentLiveTurn' | 'isAgentActivity' | 'isPendingSend'>,
 ): boolean {
-  return Boolean(message.isAgentDraft || message.isAgentLiveTurn || message.isAgentActivity);
+  return Boolean(message.isAgentDraft || message.isAgentLiveTurn || message.isAgentActivity || message.isPendingSend);
 }
 
 /**

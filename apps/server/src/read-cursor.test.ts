@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { migrate } from './database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
@@ -258,6 +258,38 @@ describe('the read cursor over the live phone surface', () => {
     expect((await cursor(otherToken))?.unreadCount).toBe(4);
   });
 
+  it('Send projects read and queued-command state to a second device without covering reads', async () => {
+    const socket = new WebSocket(`${peerOrigin.replace('http', 'ws')}/v1/phone/live`, [`bearer.${ownerToken}`]);
+    await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const frames: Array<{ type?: string; reason?: string; commands?: unknown[] }> = [];
+    socket.on('message', raw => frames.push(JSON.parse(String(raw))));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
+    try {
+      for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'subscribed'); i++) await settle();
+      frames.length = 0;
+      const roomReads = vi.spyOn(phone, 'readRoom');
+      const listReads = vi.spyOn(phone, 'readChats');
+      const response = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+        roomId: ROOM, messageId: 'e'.repeat(64), text: '@bee help with this please',
+      });
+      expect(response.status).toBe(200);
+      for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'room-commands'); i++) await settle();
+      expect(frames).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'message-delta' }),
+        expect.objectContaining({ type: 'read-state', readCursor: expect.objectContaining({
+          messageId: 'e'.repeat(64), unreadCount: 0,
+        }) }),
+        expect.objectContaining({ type: 'room-commands', commands: [expect.objectContaining({
+          requestId: 'e'.repeat(64), agentPubkey: AGENT,
+        })] }),
+      ]));
+      expect(frames.filter(frame => frame.type === 'invalidate' &&
+        ['postgres:agent_commands', 'postgres:room_read_marks'].includes(frame.reason ?? ''))).toEqual([]);
+      expect(roomReads).not.toHaveBeenCalled();
+      expect(listReads).not.toHaveBeenCalled();
+    } finally { socket.close(); vi.restoreAllMocks(); }
+  });
+
   it('NET-READS-2: publishes each committed read change once to reader devices across server hubs', async () => {
     // Two sockets for the reader plus another member. Every reader device
     // receives a reconcile hint; the other member receives none.
@@ -304,7 +336,7 @@ describe('the read cursor over the live phone surface', () => {
         await settle();
         for (const entry of sockets.slice(0, 2)) {
           expect(entry.frames).toEqual([expect.objectContaining({
-            type: 'invalidate', reason: 'postgres:room_read_marks',
+            type: 'read-state', readCursor: expect.objectContaining({ unreadCount }),
           })]);
         }
         expect(sockets[2]!.frames).toEqual([]);

@@ -1458,6 +1458,24 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('Send: pushed queued commands paint without a follow-up Room read', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: result => { current = result; },
+    })); });
+    await flushEffects();
+    const commands = [{ requestId: 'sent', agentPubkey: 'agent-a', createdAt: 1 }];
+    await act(async () => controls.subscriptions[0]!.emit({ monolithLive: {
+      type: 'room-commands', roomId: 'room-a', commands,
+    } } as unknown as MonolithSurfaceEvent));
+    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+    expect(current.roomSurface?.pendingAgentCommands).toEqual(commands);
+    await act(async () => renderer.unmount());
+  });
+
   it('signals a targetless phone-write so an open Room can paint without remounting', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;

@@ -28,7 +28,7 @@ vi.mock('@react-native-community/netinfo', () => {
 });
 
 import { AppState } from 'react-native';
-import { beginRoomDraw, finishRoomDraw, observeVisibleRoomRows } from '@/buzz/room-draw-barrier';
+import { abandonRoomDraw, roomDrawGeneration, beginRoomDraw, finishRoomDraw, observeVisibleRoomRows } from '@/buzz/room-draw-barrier';
 import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
 import { monolithSession } from '@/auth/monolith-session';
 import { liveFrameEpoch } from './live-frame-epoch';
@@ -1856,6 +1856,21 @@ describe('phone socket request/reply', () => {
     observeVisibleRoomRows('r', ['newest']); finishRoomDraw('newest', 'r'); await vi.advanceTimersByTimeAsync(0);
     expect(frames().map(v => v.op)).toEqual(['readRoom', 'readChats']);
     sockets[0]!.emit({ t: 'res', id: frames()[1].id, ok: true, result: {} }); await optional; connection.dispose();
+  });
+  it('corner open sends only its covering Room request before paint', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open(); beginRoomDraw('corner');
+    const reads = [connection.request('readRoom', { roomId: 'corner' }),
+      connection.request('listRoomWorkflowRuns', { roomId: 'corner' }),
+      connection.request('readHistory', { roomId: 'corner' })];
+    const frames = () => sockets[0]!.sent.map(v => JSON.parse(v)).filter(v => v.t === 'req');
+    try {
+      expect(frames().map(v => v.op)).toEqual(['readRoom']);
+    } finally {
+      connection.dispose();
+      abandonRoomDraw(roomDrawGeneration());
+      await Promise.allSettled(reads);
+    }
   });
   it('bounds authorization and a socket that never opens with the same request deadline', async () => {
     const sockets = stubSockets(), { connection } = createConnection(vi.fn(() => new Promise(() => {})));

@@ -1274,6 +1274,25 @@ export function createBeelineServer(options: ServerOptions): Server {
                         } as const)
                       : undefined;
                   if (!target) {
+                    if ((event.reason === 'postgres:room_read_marks' && event.readerId === principal.identityId &&
+                          typeof options.phone.liveReadState === 'function') ||
+                        (event.reason === 'postgres:agent_commands' && typeof options.phone.liveRoomCommands === 'function')) {
+                      const readMark = event.reason === 'postgres:room_read_marks';
+                      const stateKey = `${roomId}:${readMark ? 'read-state' : 'room-commands'}`;
+                      beginRowRead(stateKey);
+                      return withLiveDbTask(async () => readMark
+                        ? options.phone.liveReadState(roomId, principal.identityId)
+                        : options.phone.liveRoomCommands(roomId, principal.identityId))
+                        .then((state) => {
+                          if (client.readyState !== client.OPEN || !currentEpoch()) return;
+                          if (state === null) { sendFrame(wireEvent); return; }
+                          if (!admitRow(stateKey, sequence !== undefined ? { epoch, sequence } : undefined,
+                            JSON.stringify(state))) return;
+                          sendFrame(readMark ? { type: 'read-state', roomId, readCursor: state }
+                            : { type: 'room-commands', roomId, commands: state });
+                        }).catch(() => { if (client.readyState === client.OPEN) sendFrame(wireEvent); })
+                        .finally(() => endRowRead(stateKey));
+                    }
                     if (event.reason === 'corner-status' &&
                         typeof options.phone.liveChatCornerStatus === 'function') {
                       const statusKey = `${roomId}:corner-status`;
@@ -1349,8 +1368,20 @@ export function createBeelineServer(options: ServerOptions): Server {
                           // resource path as the covering read.
                         }
                       }
+                      let starPrompt;
+                      if (result.delta.type === 'message-delta' &&
+                          typeof options.phone.liveStarPrompt === 'function') {
+                        const message = result.delta.message;
+                        if ((message.author.kind === 'agent' && ((message.attachments?.length ?? 0) > 0 ||
+                            message.reactions?.some(reaction => reaction.emoji === '👍' && reaction.reacted))) ||
+                            message.systemEvent?.kind === 'workflow-handoff') {
+                          try { starPrompt = await options.phone.liveStarPrompt(principal.identityId); }
+                          catch { /* Keep the committed message available when optional eligibility fails. */ }
+                        }
+                      }
                       const publicDelta = { ...result.delta,
-                        ...(workflowRuns ? { workflowRuns } : {}) };
+                        ...(workflowRuns ? { workflowRuns } : {}),
+                        ...(starPrompt ? { starPrompt: starPrompt.prompt } : {}) };
                       if (!currentEpoch()) return;
                       // Never roll a row back after a newer projection.
                       if (!admitRow(rowKey,

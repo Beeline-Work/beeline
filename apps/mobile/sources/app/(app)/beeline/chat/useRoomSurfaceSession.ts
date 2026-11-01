@@ -616,6 +616,8 @@ export function useRoomSurfaceSession({
     // replaying these in order on top of the read keeps what the socket said.
     let readStamp = 0;
     let messageDeltasDuringRead: RoomViewMessage[] | undefined;
+    let commandsDuringRead: RoomView['pendingAgentCommands'];
+    let cursorDuringRead: RoomView['viewer']['readCursor'];
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
@@ -875,6 +877,24 @@ export function useRoomSurfaceSession({
               }
               return;
             }
+            if (live.type === 'read-state' || live.type === 'room-commands') {
+              if (live.roomId !== channelId) return;
+              if (messageDeltasDuringRead) {
+                if (live.type === 'read-state') cursorDuringRead = live.readCursor;
+                else commandsDuringRead = live.commands;
+              }
+              const current = reconciledViewRef.current;
+              if (live.type === 'read-state' && live.readCursor.messageId)
+                readCursorRef.current?.acknowledge(live.readCursor.messageId);
+              if (!current) return;
+              const next = live.type === 'read-state'
+                ? { ...current, viewer: { ...current.viewer, readCursor: live.readCursor } }
+                : { ...current, pendingAgentCommands: live.commands };
+              reconciledViewRef.current = next;
+              setRoomSurface(next);
+              scheduleCacheWrite();
+              return;
+            }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
               if (live.roomId !== channelId) return;
               const deltaMessage = live.type === 'message-delta'
@@ -913,6 +933,8 @@ export function useRoomSurfaceSession({
                 // replayed with this row, so a second GET adds no information.
                 return;
               }
+              if (live.type === 'message-delta' && live.message.author.pubkey === readCursorViewerRef.current)
+                readCursorRef.current?.acknowledge(live.message.id);
               const next =
                 live.type === 'message-delta'
                   ? reconcileRoomMessageDelta(current, deltaMessage!)
@@ -1231,6 +1253,8 @@ export function useRoomSurfaceSession({
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
             messageDeltasDuringRead = [];
+            commandsDuringRead = undefined;
+            cursorDuringRead = undefined;
             try {
               const prefetched = openingPrefetch;
               openingPrefetch = null;
@@ -1265,7 +1289,10 @@ export function useRoomSurfaceSession({
             applyView(
               replayedMessages.reduce(
                 reconcileRoomMessageDelta,
-                view,
+                { ...view,
+                  ...(commandsDuringRead ? { pendingAgentCommands: commandsDuringRead } : {}),
+                  ...(cursorDuringRead ? { viewer: { ...view.viewer, readCursor: cursorDuringRead } } : {}),
+                },
               ),
               identity.publicKey,
               relayUrl,

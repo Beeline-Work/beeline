@@ -182,6 +182,7 @@ class ChatListStore {
     if (this.closed) return;
     const live = 'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
     if (live && 'roomId' in live) this.heard.add(live.roomId);
+    if (live?.type === 'room-commands') return;
     if (live?.type === 'sidebar-preview') {
       // A projection cannot establish a complete transcript, including edits
       // and deletions whose missing body is not detectable from the newest id.
@@ -193,7 +194,7 @@ class ChatListStore {
       const address = surfaceAddress(this.key.relayUrl, this.key.viewerPubkey, `/room/${live.roomId}`);
       cacheRoomMessageDelta(mobileSurfaceCache, address, live);
     }
-    if (live?.type === 'sidebar-preview' || live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
+    if (live?.type === 'read-state' || live?.type === 'sidebar-preview' || live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
       if (this.reading) this.deltasDuringRead.push(live);
       const held = this.current();
       if (!held) { this.requestRead(); return; }

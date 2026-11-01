@@ -274,7 +274,6 @@ export type ChatDisplayMessage = {
   roomUpdate?: { digest?: string };
   reference?: RoomViewMessage['reference'];
   corner?: { subchannelId: string; agentPubkey?: string; state: CornerState };
-  cornerApp?: NonNullable<RoomViewMessage['cornerApp']>;
   agentTurn?: {
     requestId: string;
     agentPubkey: string;
@@ -433,7 +432,6 @@ export function displayRoomMessage(
           },
         }
       : {}),
-    ...(message.cornerApp ? { cornerApp: { ...message.cornerApp } } : {}),
     ...(message.targetBranch
       ? {
           targetBranchProposal: {

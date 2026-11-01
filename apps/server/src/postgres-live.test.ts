@@ -1058,7 +1058,7 @@ describe('Postgres live fanout', () => {
       `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
 
     // Every other projected column: objective, initiator, owner, row stamp,
-    // brief revision, app binding and the newest chat message.
+    // brief revision and the newest chat message.
     const priorGoalNudges = textNudges().length;
     await expectNudge(() => database.query(
       `UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]));
@@ -1075,13 +1075,6 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
        VALUES($1,1,'brief',$2,$3)`, [corner, agent, ROOM]));
-    const installation = '99999999-9999-4999-8999-999999999999';
-    await database.query(
-      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,manifest)
-       VALUES($1,$2,$3,'{}'::jsonb)`, [installation, WORKSPACE, AUTHOR]);
-    await expectNudge(() => database.query(
-      `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
-       VALUES($1,$2,gen_random_uuid(),$3)`, [corner, installation, AUTHOR]));
     await expectNudge(() => database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('latest-1',$1,$2,'done')`,
       [corner, agent]));

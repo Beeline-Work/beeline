@@ -1,18 +1,10 @@
-import { CloseButton } from '@/components/buzz/CloseGlyph';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { ContentTarget } from '@/components/buzz/IndexRow';
+import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { BuiltInSlashVerb, BuiltInSlashVerbId } from '@/buzz/slash-verbs';
 import type { AgentPaletteCommand } from '@/buzz/slash-verbs';
-
-export type CornerAppPaletteCommand = {
-  slug: string;
-  command: string;
-  title: string;
-  description?: string;
-};
 
 export function SlashVerbPicker({
   verbs,
@@ -27,8 +19,6 @@ export function SlashVerbPicker({
   /** True once the agent's published list resolved empty or absent: quiet honesty line. */
   agentLacksCommands,
   onSelectCommand,
-  apps,
-  onSelectApp,
 }: {
   verbs: readonly BuiltInSlashVerb[];
   /** The slash token currently typed, without the leading `/` ('' when open on just '/'). */
@@ -41,12 +31,8 @@ export function SlashVerbPicker({
   agentName?: string;
   agentLacksCommands?: boolean;
   onSelectCommand: (name: string) => void;
-  /** Corner-scoped commands supplied by the RoomView, never hardcoded here. */
-  apps?: readonly CornerAppPaletteCommand[];
-  onSelectApp?: (slug: string) => void;
 }) {
   const commandCount = commands?.length ?? 0;
-  const appCount = apps?.length ?? 0;
   const heading = agentName ? `COMMANDS · ${agentName.toUpperCase()}` : 'COMMANDS';
   return (
     <View accessibilityLabel="Available commands" style={styles.root} testID="slash-verb-picker">
@@ -61,7 +47,7 @@ export function SlashVerbPicker({
           control={styles.dismiss}
         />
       </View>
-      {commandCount > 0 || appCount > 0 || verbs.length > 0 ? (
+      {commandCount > 0 || verbs.length > 0 ? (
         <ScrollView
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -79,7 +65,7 @@ export function SlashVerbPicker({
           {(commands ?? []).map((command, index) => {
             const selected = index === highlightedIndex;
             return (
-              <TouchableOpacity
+              <ContentTarget
                 accessibilityLabel={`/${command.name}. ${command.description ?? 'Advertised command'}`}
                 accessibilityRole={command.toggle === undefined ? 'button' : 'switch'}
                 accessibilityState={
@@ -117,49 +103,14 @@ export function SlashVerbPicker({
                     {command.toggle ? 'ON' : 'OFF'}
                   </Text>
                 )}
-              </TouchableOpacity>
-            );
-          })}
-          {(apps ?? []).map((app, appIndex) => {
-            const index = commandCount + appIndex;
-            const selected = index === highlightedIndex;
-            return (
-              <ContentTarget
-                accessibilityLabel={`/${app.command}. Open ${app.title}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                key={`app:${app.slug}`}
-                onPress={() => onSelectApp?.(app.slug)}
-                style={({ pressed }) => [
-                  styles.row,
-                  styles.commandRow,
-                  selected && styles.rowSelected,
-                  pressed && styles.rowPressed,
-                ]}
-                testID={`slash-corner-app-${app.slug}`}
-              >
-                <Text numberOfLines={1} style={[styles.command, styles.agentCommand]}>
-                  /{app.command}
-                </Text>
-                <View style={styles.copy}>
-                  <Text numberOfLines={1} style={styles.label}>
-                    {app.title}
-                  </Text>
-                  {app.description ? (
-                    <Text numberOfLines={2} style={styles.description}>
-                      {app.description}
-                    </Text>
-                  ) : null}
-                </View>
-                <ChevronGlyph color={styles.enter.color} size={CHEVRON_ROW_SIZE} />
               </ContentTarget>
             );
           })}
           {verbs.map((verb, verbIndex) => {
-            const index = commandCount + appCount + verbIndex;
+            const index = commandCount + verbIndex;
             const selected = index === highlightedIndex;
             return (
-              <TouchableOpacity
+              <ContentTarget
                 accessibilityLabel={`/${verb.command}. ${verb.description}`}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
@@ -180,7 +131,7 @@ export function SlashVerbPicker({
                   </Text>
                 </View>
                 <Text style={styles.enter}>↵</Text>
-              </TouchableOpacity>
+              </ContentTarget>
             );
           })}
         </ScrollView>

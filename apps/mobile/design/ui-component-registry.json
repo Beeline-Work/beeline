@@ -109,11 +109,6 @@
     "components/buzz/ConversationRow.tsx": ["ConversationRow", "cornerMark"],
     "components/buzz/CopiedToast.tsx": ["toast", "useCopiedToast"],
     "components/buzz/corner-brief-viewer.ts": [],
-    "components/buzz/CornerAppScreen.tsx": [
-      "CornerAppBlockView",
-      "CornerAppRow",
-      "CornerAppScreen"
-    ],
     "components/buzz/CornerGlyph.tsx": ["CORNER_POINTS", "CornerGlyph"],
     "components/buzz/CornerActionsSheet.tsx": ["CornerActionsSheet"],
     "components/buzz/CornerLockAction.tsx": ["CornerLockAction"],
@@ -660,16 +655,6 @@
     "components/buzz/CopiedToast.tsx": {
       "f7608a1c8b3a9b524cac": 1
     },
-    "components/buzz/CornerAppScreen.tsx": {
-      "081da508d7ea69dea79d": 1,
-      "27c9c90a0fba7fe17c62": 1,
-      "3a86610ee1a38bf62906": 1,
-      "416ce6813f207e5aa97e": 1,
-      "5b3e65669e23f32d0db2": 1,
-      "5ce68da4df44909a4745": 1,
-      "8daca9d5134758d5c378": 1,
-      "b902812eb93169c3efe3": 1
-    },
     "components/buzz/CornerObjectiveLine.tsx": {
       "04353acfb735120e1174": 1,
       "0f1b82564c4bea047d3e": 1,
@@ -872,12 +857,7 @@
       "e62022b6dce6f6ed3561": 1
     },
     "components/buzz/SlashVerbPicker.tsx": {
-      "03ef32a48dc30509846f": 1,
-      "088d5eab1d1d3ea3dfe1": 1,
-      "570f6940b8b231db211e": 1,
-      "61837e79ba8e3d30dc94": 1,
-      "647daa733eb59f72ff49": 1,
-      "f104cd1c93b153a81d96": 1
+      "03ef32a48dc30509846f": 1
     },
     "components/buzz/TranscriptCard.tsx": {
       "1efa450b4113d8417e86": 1,

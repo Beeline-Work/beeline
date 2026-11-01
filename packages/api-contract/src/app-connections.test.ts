@@ -35,7 +35,7 @@ describe('app sign-in card continuation', () => {
 
 describe('app identity', () => {
   it('reads a name, a website and an API URL as the same app', () => {
-    for (const builtin of ['beeline:corner_app', 'beeline corner app', 'beelinecornerapp', 'corner_app',
+    for (const builtin of [
       'beeline:workflow', 'beeline:browser_share']) expect(appIdentity(builtin)).toBeUndefined();
     expect(appIdentity('Linear')).toEqual({ key: 'linear' });
     expect(appIdentity('linear.app')).toEqual({ key: 'linear', domain: 'linear.app' });

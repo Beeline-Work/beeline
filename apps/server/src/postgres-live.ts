@@ -15,7 +15,7 @@ import {
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
-  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings', 'corner_merge_holds',
+  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_merge_holds',
 ]);
 const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
 

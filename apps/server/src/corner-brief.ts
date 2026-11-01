@@ -241,7 +241,7 @@ async function humanRoomMember(db: SqlDatabase, cornerId: string, roomId: string
 }
 
 /** Later approvals may reuse a stored approval, a shared DM, or a commander order. */
-async function laterCornerApproval(
+async function laterBriefApproval(
   db: SqlDatabase,
   revision: { cornerId: string; agentId: string },
   sourceMessageId: string,
@@ -306,7 +306,7 @@ async function laterCornerApproval(
  * message; its exact text and author come from the Room, and whether it was
  * the command that opened this work or a later answer is decided here.
  * A revision of an existing corner also accepts the later approvals in
- * `laterCornerApproval`.
+ * `laterBriefApproval`.
  */
 export async function resolveCornerBriefApproval(
   db: SqlDatabase,
@@ -395,7 +395,7 @@ export async function resolveCornerBriefApproval(
   if (revision && message?.kind === 'human' && !(await humanRoomMember(db, revision.cornerId, message.room_id, message.author_id)))
     message = undefined;
   if (revision && (!message || message.kind !== 'human' && !commanderOrder)) {
-    const later = await laterCornerApproval(db, revision, sourceMessageId);
+    const later = await laterBriefApproval(db, revision, sourceMessageId);
     if (later && 'stored' in later) {
       const revisionHash = cornerBriefRevisionHash(draft, attachments);
       const { repositoryWork: _previous, ...stored } = later.stored;

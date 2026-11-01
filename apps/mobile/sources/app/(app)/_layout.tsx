@@ -197,7 +197,6 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
-        <Stack.Screen name="beeline/corner-app/[slug]" options={{ headerShown: false }} />
         <Stack.Screen name="text-selection" options={{ headerShown: false }} />
       </Stack>
       {/* One corner-open notice over every screen: pending, or unreachable with Retry. */}

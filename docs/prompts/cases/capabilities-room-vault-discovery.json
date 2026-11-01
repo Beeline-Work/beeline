@@ -1,21 +1,21 @@
 {
-  "id": "capabilities-room-skips-corner-app",
+  "id": "capabilities-room-vault-discovery",
   "section": "turn.capabilities",
-  "summary": "A Room agent asked for a Corner App does not call the corner-only app from the Room.",
+  "summary": "A Room agent discovers the built-in vault app without installing a connection.",
   "place": "room",
   "session": {},
   "turn": {
     "task": {
-      "body": "@ruby publish a Corner App right here in this Room with a /standup command for the team.",
+      "body": "@ruby show me what the built-in Beeline vault app can do here. Discover its tools.",
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
   },
   "pass": {
-    "noCall": "app_tool",
+    "call": "app_tool",
     "args": {
-      "app": "beeline:corner_app"
+      "app": "beeline:vault"
     }
   },
   "scenario": {
@@ -41,7 +41,7 @@
           "places": [
             {
               "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
-              "name": "capabilities-room-skips-corner-app",
+              "name": "capabilities-room-vault-discovery",
               "kind": "room"
             }
           ]
@@ -62,7 +62,7 @@
           "facet": "members"
         },
         "result": {
-          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+          "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
         }
       },
       {
@@ -72,8 +72,8 @@
         },
         "result": {
           "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
-          "name": "capabilities-room-skips-corner-app",
-          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "name": "capabilities-room-vault-discovery",
+          "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
           "repository": {
             "linked": false
           },

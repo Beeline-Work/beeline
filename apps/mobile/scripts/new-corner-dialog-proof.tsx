@@ -50,8 +50,8 @@ async function run() {
   );
   check('dialog has one name field', dialog?.querySelectorAll('input').length === 1);
   check(
-    'dialog has no subtitle or Corner App reference',
-    !dialog?.textContent?.includes('human-owned') && !dialog?.textContent?.includes('Corner App'),
+    'dialog has no subtitle',
+    !dialog?.textContent?.includes('human-owned'),
   );
 
   const input = dialog!.querySelector<HTMLInputElement>('input')!;

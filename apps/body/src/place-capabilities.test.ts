@@ -57,7 +57,6 @@ describe.each(PLACES.flatMap(place => [false, true].map(repositoryOnboarding => 
     }
     for (const app of ALL_APPS.filter(app => !offered.includes(app)))
       await expect(callAgentTool('app_tool', { app }, 'discover'), app).rejects.toThrow('Beeline apps here');
-    expect(offered.includes('beeline:corner_app')).toBe(corner);
   });
 
   it('states the discovered apps in one short block of the turn prompt', async () => {
@@ -69,7 +68,7 @@ describe.each(PLACES.flatMap(place => [false, true].map(repositoryOnboarding => 
     expect(Buffer.byteLength(block!)).toBeLessThanOrEqual(260);
     const [works, cornerOnly = ''] = block!.split('Corner only:');
     expect(appsIn(works!)).toEqual(offered);
-    expect(appsIn(cornerOnly)).toEqual(corner ? [] : ['beeline:corner_app']);
+    expect(appsIn(cornerOnly)).toEqual([]);
     expect(block!.includes('schedule run')).toBe(commandReason === 'schedule');
   });
 });

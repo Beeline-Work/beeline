@@ -147,7 +147,7 @@ The 238 runtime cases in `integration.test.ts` were checked against the unit and
 | 1–1799 | 22 declarations | Workspace, invite, membership, and reviewer settings |
 | 1800–2999 | 18 declarations | Room messages, membership, push, and authenticated reads |
 | 3000–4999 | 42 declarations | live replay, corner reading, transcript paging, and mention routing |
-| 5000–6999 | 37 declarations | schedule HTTP, auth, media, human corners, and Corner Apps |
+| 5000–6999 | 37 declarations | schedule HTTP, auth, media, human corners, |
 | 7000–9999 | 41 declarations | GitHub, corner merge/close, turn control, and owed state |
 | 10000–11999 | 26 declarations | briefs, grants, agent ownership, and tool authority |
 | 12000–12999 | 11 declarations | Workbench and Trusty Squire approvals |

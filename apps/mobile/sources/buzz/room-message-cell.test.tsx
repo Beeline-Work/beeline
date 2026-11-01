@@ -433,7 +433,7 @@ describe('RoomMessageCell', () => {
       if (item.writePermission) {
         const busy = context.permissionActionId === item.writePermission.permissionId;
         if (context.canManageWorkspace !== true || context.viewerIsAgent === true) {
-          return React.createElement('wait', { testID: 'corner-approval-audience-wait', id: item.id });
+          return React.createElement('wait', { testID: 'brief-approval-audience-wait', id: item.id });
         }
         return React.createElement('button', {
           testID: 'write-permission-allow',
@@ -532,7 +532,7 @@ describe('RoomMessageCell', () => {
 
     show({ ...initial, permissionActionId: 'permission', grantActionId: 'g-1', canManageWorkspace: false });
     expect(renderer.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'brief-approval-audience-wait' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'grant-waiting' })).toBeDefined();
     expect(counts.get('kept')).toBe(1);
 

@@ -70,8 +70,6 @@ import {
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
-  readCornerAppDefinition,
-  readCornerAppManifest,
 } from '@beeline/api-contract/phone';
 import type {
   AgentGrantView,
@@ -80,7 +78,6 @@ import type {
   ChatListView,
   ChatListItem,
   ChatListCorner,
-  CornerAppView,
   CornerListView,
   CornerLifecycleView,
   InviteView,
@@ -492,9 +489,6 @@ type CornerRow = RoomHeaderRow & OpenCornerFactsRow & {
   agent_handle: string | null;
   agent_avatar: string | null;
   latest_turn_created_at: Date | null;
-  app_installation_id: string | null;
-  app_instance_id: string | null;
-  app_manifest: unknown | null;
   /** The corner's latest brief revision; null when it has no brief. */
   brief_revision: number | null;
 };
@@ -537,22 +531,6 @@ interface RoomReadRow {
     } | null;
     owed: boolean;
     brief: CornerBriefRow | null;
-    bound_app: {
-      id: string;
-      instance_id: string;
-      manifest: unknown;
-      developer_agent_id: string | null;
-      developer_name: string | null;
-      developer_handle: string | null;
-    } | null;
-    apps: Array<{
-      definition: unknown;
-      author_agent_id: string;
-      author_name: string;
-      author_handle: string | null;
-      revision: number;
-      updated_at: Date;
-    }>;
     briefing: MessageRow[];
     tools: MessageRow[];
   } | null;
@@ -966,8 +944,6 @@ function projectedMessage(
       return { ...base, daemonFact: titledDaemonFact(row.card) };
     case 'corner':
       return { ...base, corner: row.card as NonNullable<RoomViewMessage['corner']> };
-    case 'corner-app':
-      return { ...base, cornerApp: row.card as NonNullable<RoomViewMessage['cornerApp']> };
     default:
       return base;
   }
@@ -2171,8 +2147,6 @@ export class PhoneService {
     const parent = corner?.parent ?? undefined;
     const facts = corner?.facts ?? undefined;
     const cornerBrief = corner?.brief ? projectCornerBrief(roomId, corner.brief) : undefined;
-    const boundApp = corner?.bound_app ?? undefined;
-    const cornerAppRows = corner?.apps ?? [];
     const briefingRows = corner?.briefing ?? [];
     const cornerLifecycle = corner
       ? {
@@ -2235,32 +2209,6 @@ export class PhoneService {
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
     const briefAuthorHandle = corner?.brief?.author_handle;
     const { messages, toolRows } = messageResult;
-    const boundManifest = readCornerAppManifest(boundApp?.manifest);
-    const cornerApps: CornerAppView[] = cornerAppRows.flatMap((row) => {
-      const definition = readCornerAppDefinition(row.definition);
-      return definition
-        ? [
-            {
-              ...definition,
-              authorId: row.author_agent_id,
-              authorName: row.author_name,
-              ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
-              revision: row.revision,
-              updatedAt: unix(row.updated_at),
-            },
-          ]
-        : [];
-    });
-    if (boundManifest?.humanUi?.kind === 'native' && boundApp) {
-      cornerApps.unshift({
-        ...boundManifest.humanUi.definition,
-        ...(boundApp.developer_agent_id ? { authorId: boundApp.developer_agent_id } : {}),
-        authorName: boundApp.developer_name ?? boundManifest.developer,
-        ...(boundApp.developer_handle ? { authorHandle: boundApp.developer_handle } : {}),
-        revision: 1,
-        updatedAt: unix(room.updated_at),
-      });
-    }
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
     const briefing = await this.decorateCornerOpenCards(room.parent_id ?? roomId, collapsePermissionCards(
@@ -2364,16 +2312,6 @@ export class PhoneService {
       ...(room.parent_id ? { cornerLocked: facts?.locked === true } : {}),
       ...(cornerLifecycle ? { cornerLifecycle: cornerLifecycle.lifecycle } : {}),
       ...(cornerLifecycle?.owed !== undefined ? { cornerOwed: cornerLifecycle.owed } : {}),
-      ...(cornerApps.length ? { cornerApps } : {}),
-      ...(boundApp && boundManifest
-        ? {
-            boundApp: {
-              id: boundApp.id,
-              instanceId: boundApp.instance_id,
-              manifest: boundManifest,
-            },
-          }
-        : {}),
       watchFilters: roomFilters(
         roomId,
         room.workspace_id,
@@ -2793,7 +2731,6 @@ export class PhoneService {
       };
       corner_rows: CornerRow[];
       viewer_row: IdentityRow;
-      app_rows: Array<{ id: string; manifest: unknown }>;
       deck: DeckCornerFacts | null;
     }>(`WITH authorized AS (
         SELECT r.*,workspace_member.role workspace_role
@@ -2809,9 +2746,6 @@ export class PhoneService {
           FROM selected_corners c),'[]'::jsonb) corner_rows,
         jsonb_build_object('id',viewer.id,'kind',viewer.kind,'name',viewer.name,
           'handle',viewer.handle,'avatar',viewer.avatar,'face_id',viewer.face_id) viewer_row,
-        COALESCE((SELECT jsonb_agg(jsonb_build_object('id',app.id,'manifest',app.manifest)
-          ORDER BY app.connected_at DESC,app.id)
-          FROM corner_app_installations app WHERE app.workspace_id=authorized.workspace_id),'[]'::jsonb) app_rows,
         ${deck ? `CASE WHEN authorized.parent_id IS NULL AND authorized.archived_at IS NULL
           THEN jsonb_build_object(
             'needs_you',${roomNeedsYouSql('authorized')},
@@ -2832,7 +2766,6 @@ export class PhoneService {
       ['created_at','updated_at','archived_at','repository_updated_at',
         'latest_created_at','latest_turn_created_at']));
     const viewerIdentity = identity(loaded.viewer_row, this.publicOrigin);
-    const appRows = { rows: loaded.app_rows };
     // The archived read asks for one row past the page; its presence is what
     // says another page exists.
     const pageSize = archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE;
@@ -2844,10 +2777,6 @@ export class PhoneService {
       corners: this.projectCorners(rows),
       ...(archived && more && last?.archived_us ? { nextArchived: `${last.archived_us},${last.id}` } : {}),
       ...(!archived && more && last?.created_us ? { nextOpen: `${last.created_us},${last.id}` } : {}),
-      apps: appRows.rows.flatMap((row) => {
-        const manifest = readCornerAppManifest(row.manifest);
-        return manifest ? [{ id: row.id, manifest }] : [];
-      }),
       viewer: {
         identity: viewerIdentity,
         // The Workspace role: a Room, corner or DM role grants nothing.
@@ -3038,20 +2967,6 @@ export class PhoneService {
                LEFT JOIN identities brief_author ON brief_author.id=brief.author_id
                WHERE brief.corner_id=authorized_room.id
                ORDER BY brief.revision DESC LIMIT 1),
-             'bound_app',(SELECT jsonb_build_object(
-               'id',installation.id,'instance_id',binding.instance_id,
-               'manifest',installation.manifest,'developer_agent_id',installation.developer_agent_id,
-               'developer_name',developer.name,'developer_handle',developer.handle)
-               FROM corner_app_bindings binding
-               JOIN corner_app_installations installation ON installation.id=binding.installation_id
-               LEFT JOIN identities developer ON developer.id=installation.developer_agent_id
-               WHERE binding.corner_id=authorized_room.id),
-             'apps',COALESCE((SELECT jsonb_agg(to_jsonb(app_row)
-               ORDER BY app_row.updated_at DESC,app_row.slug)
-               FROM (SELECT app.definition,app.author_agent_id,author.name author_name,
-                 author.handle author_handle,app.revision,app.updated_at,app.slug
-                 FROM corner_apps app JOIN identities author ON author.id=app.author_agent_id
-                 WHERE app.corner_id=authorized_room.id) app_row),'[]'::jsonb),
              'briefing',COALESCE((SELECT jsonb_agg(to_jsonb(corner_briefing_rows)
                ORDER BY corner_briefing_rows.created_at DESC,corner_briefing_rows.id ASC)
                FROM corner_briefing_rows),'[]'::jsonb),
@@ -3074,7 +2989,6 @@ export class PhoneService {
           'updated_at',
         ]);
       for (const turn of row.turns) reviveDates(turn, ['started_at', 'created_at']);
-      for (const app of row.corner.apps) reviveDates(app, ['updated_at']);
       for (const message of [
         ...row.transcript,
         ...row.activity,
@@ -3298,8 +3212,6 @@ export class PhoneService {
         initiator.face_id initiator_face,
         li.kind latest_author_kind,li.name latest_author_name,agent.identity_id agent_id,
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
-        app_binding.installation_id app_installation_id,
-        app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
         ${archivedMicros}::text archived_us,
         ${createdMicros}::text created_us,
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
@@ -3316,8 +3228,6 @@ export class PhoneService {
         WHERE i.id=f.owner_agent_id
           AND i.kind='agent' LIMIT 1
       ) agent ON true
-      LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id
-      LEFT JOIN corner_app_installations app_installation ON app_installation.id=app_binding.installation_id
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND ${facts.member}
         AND EXISTS (SELECT 1 FROM authorized) ${keyset} ${order} ${limit}`;
   }
@@ -3332,7 +3242,6 @@ export class PhoneService {
       const derived = cornerRowState({ ...corner, lifecycle });
       const header = roomHeader(corner, this.publicOrigin);
       const about = corner.objective?.trim() || header.about;
-      const appManifest = readCornerAppManifest(corner.app_manifest);
       return {
         corner: about ? { ...header, about } : header,
         lifecycle,
@@ -3373,15 +3282,6 @@ export class PhoneService {
             }
           : {}),
         ...(corner.brief_revision !== null ? { briefRevision: corner.brief_revision } : {}),
-        ...(corner.app_installation_id && corner.app_instance_id && appManifest
-          ? {
-              app: {
-                id: corner.app_installation_id,
-                instanceId: corner.app_instance_id,
-                manifest: appManifest,
-              },
-            }
-          : {}),
         ...(corner.latest_id &&
         corner.latest_created_at &&
         corner.latest_author_id &&
@@ -6761,14 +6661,6 @@ export class PhoneService {
         )
       ).rows[0];
       if (!parent) throw new Error('room access denied');
-      if (input.appInstallationId) {
-        const installed = await database.query(
-          `SELECT 1 FROM corner_app_installations
-           WHERE id=$1 AND workspace_id=$2 FOR SHARE`,
-          [input.appInstallationId, parent.workspace_id],
-        );
-        if (!installed.rowCount) throw new Error('Corner App is not installed in this Workspace');
-      }
       // A retried open names the same id: the first attempt's corner is the
       // answer, and nothing below runs twice.
       const inserted = await database.query(
@@ -6794,13 +6686,6 @@ export class PhoneService {
         workspaceId: parent.workspace_id,
         implementerAgentId: viewerId,
       });
-      if (input.appInstallationId) {
-        await database.query(
-          `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
-           VALUES($1,$2,$3,$4)`,
-          [id, input.appInstallationId, randomUUID(), viewerId],
-        );
-      }
       // Every new corner leaves a static opening in its Room. A resident
       // requesting message anchors it; scratch openings stay at their open time.
       // No kind: a person opening a scratch corner wakes no subscriber.
@@ -8605,9 +8490,6 @@ export class PhoneService {
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
         ['corner_merge_holds', 'set_by_agent_id'],
-        ['corner_apps', 'author_agent_id'],
-        ['corner_app_installations', 'installed_by'],
-        ['corner_app_bindings', 'bound_by'],
         ['workflow_owner_transfers', 'actor_id'],
         ['workflow_owner_transfers', 'previous_owner_id'],
         ['workflow_owner_transfers', 'new_owner_id'],
@@ -8620,7 +8502,6 @@ export class PhoneService {
       for (const [table, column] of [
         ['corner_facts', 'reviewer_agent_id'],
         ['rooms', 'reviewer_agent_id'],
-        ['corner_app_installations', 'developer_agent_id'],
         ['connector_offers', 'accepted_by'],
         ['agent_schedules', 'owner_id'],
         ['agent_schedules', 'updated_by'],

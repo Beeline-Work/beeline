@@ -118,7 +118,7 @@ export function builtinBeelineApp(input: string, context = ''): string | undefin
     && /\b(?:link|connect|set[ -]up|choose|card)\b/.test(request)
     && !/\b(?:payment|wallet|stripe)\b/.test(request)) return 'beeline:onboarding';
   const key = text.replace(/[ _-]/g, '');
-  for (const name of ['workflow', 'wallet', 'browser_share', 'corner_app', 'avatar', 'onboarding']) {
+  for (const name of ['workflow', 'wallet', 'browser_share', 'avatar', 'onboarding']) {
     const alias = name.replace(/_/g, '');
     if (key === `beeline${alias}` || (name !== 'wallet' && key === alias)) return `beeline:${name}`;
   }

@@ -35,11 +35,6 @@
     "coldDepthMax": 1
   },
   {
-    "path": "/beeline/corner-app/[slug]",
-    "coldHttpMax": 1,
-    "coldDepthMax": 1
-  },
-  {
     "path": "/beeline/corners/[roomId]",
     "coldHttpMax": 1,
     "coldDepthMax": 1

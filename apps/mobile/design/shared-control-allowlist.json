@@ -486,24 +486,6 @@
     "reason": "Shared reader disclosure primitive; no row-height changes in this sweep."
   },
   {
-    "file": "components/buzz/SlashVerbPicker.tsx",
-    "line": 83,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "1937c044ea200e31df76",
-    "control": "<TouchableOpacity accessibilityLabel={`/${command.name}. ${command.description ?? 'Advertised command'}`} accessibilityRole={command.toggle === undefined ? 'button' : 'switch'} accessibilityState={ command.toggle === undefined ? { selected } : { selected, checked: command.toggle } } key={`command:${command.name}`} onPress={() => onSelectCommand(command.name)} style={[styles.row, styles.commandRow,",
-    "reason": "Structured command suggestion options retain command descriptions and selection."
-  },
-  {
-    "file": "components/buzz/SlashVerbPicker.tsx",
-    "line": 158,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "aaff59da7ee0b21481ca",
-    "control": "<TouchableOpacity accessibilityLabel={`/${verb.command}. ${verb.description}`} accessibilityRole=\"button\" accessibilityState={{ selected }} key={verb.id} onPress={() => onSelect(verb.id)} style={[styles.row, selected && styles.rowSelected]} testID={`slash-verb-${verb.id}`} > <Text numberOfLines={1} style={styles.command}> /{verb.command} </Text> <View style={styles.copy}> <Text numberOfLines={1} s",
-    "reason": "Structured command suggestion options retain command descriptions and selection."
-  },
-  {
     "file": "components/buzz/WorkflowRunLine.tsx",
     "line": 344,
     "rule": "6a",

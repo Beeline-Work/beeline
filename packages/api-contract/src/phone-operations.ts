@@ -580,7 +580,6 @@ export type CreateHumanCornerInput = RoomInput & {
   readonly cornerId?: string;
   /** The phone generated `title`; the corner's agent is asked to rename it from the first steer. */
   readonly titleGenerated?: boolean;
-  readonly appInstallationId?: string;
   /**
    * The parent-Room message this corner was opened from (the mobile
    * swipe-right forward). When it names a message in that Room, the server

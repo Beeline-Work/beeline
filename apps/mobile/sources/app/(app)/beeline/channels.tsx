@@ -611,7 +611,7 @@ export default function BuzzChannels() {
           attempt,
           createCorner: transport
             ? (id, title, cornerId) =>
-                transport.createHumanCorner(id, title, undefined, undefined, true, cornerId)
+                transport.createHumanCorner(id, title, undefined, true, cornerId)
             : null,
           openCorner: (cornerId, title) =>
             router.push(cornerHref(cornerId, roomId, title, 'room-list')),

@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 import { runBrowserProof, webProofShims } from './browserProof';
 
 /**
- * The shipped corner-open notices, Corner App failure and Task
+ * The shipped corner-open notices and Task
  * Tray approval rows, rendered in Chrome at phone width in both themes and
  * read back from the DOM. With BEELINE_DESIGN_PROOF_DIR set each frame is
  * also saved as a screenshot for comparison with the approved mocks.
@@ -23,9 +23,6 @@ const FRAMES = {
   'room-list-pending': {
     'corner-open-pending': 'Opening corner…Still opening…',
   },
-  'corner-app-error': {
-    'corner-app-screen': "Corner AppCould not load this app. Couldn't reach Beeline.",
-  },
   tray: {
     'tray-approval-grant': 'BBC asks to run2dgit push --force-with-leasePush ledger fixes to feat/ledger.experiments/sec-filing-desk · for @Johnny',
     'tray-approval-squire': 'Ruby needs your passkey for40mReveal GROQ_API_KEYWrite it into the Fly secret for push-gateway.@Trusty Squire · for you · expires in 20m',
@@ -33,7 +30,7 @@ const FRAMES = {
   },
 } as const;
 
-it('renders corner-open notices, a Corner App failure and tray approval rows in both themes', async () => {
+it('renders corner-open notices and tray approval rows in both themes', async () => {
   const mobile = process.cwd();
   const directory = await mkdtemp(path.join(mobile, 'sources/test/corner-open-tray-'));
   try {
@@ -46,7 +43,6 @@ it('renders corner-open notices, a Corner App failure and tray approval rows in 
       import { useUnistyles } from 'react-native-unistyles';
       import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
       import { CornerOpenRow, CornerOpenToast } from '@/components/buzz/CornerOpenToast';
-      import { CornerAppScreen } from '@/components/buzz/CornerAppScreen';
       import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
       import { cornerOpenStarted, cornerOpenTappedAgain, cornerOpenUnreachable } from '@/buzz/corner-open-status';
       import regularFont from '@/assets/fonts/SpaceGrotesk-Regular.ttf';
@@ -97,8 +93,6 @@ it('renders corner-open notices, a Corner App failure and tray approval rows in 
             {existing}
           </>}
           {frame === 'room-list-pending' && <>{existing}{existing}</>}
-          {frame === 'corner-app-error' && <CornerAppScreen onBack={() => undefined}
-            unavailableMessage="Could not load this app. Couldn't reach Beeline." />}
           {frame === 'tray' && tray.map(item => <View key={item.messageId} testID={'tray-approval-' + item.messageId}>
             <NeedsYouCell item={item} now={now} desktop={false} onOpen={() => undefined} onDismiss={() => undefined} />
           </View>)}

@@ -17,7 +17,6 @@ export const BEELINE_LEXICON: readonly string[] = [
   WORKSPACE_LABEL,
   ROOM_LABEL,
   CORNER_LABEL,
-  'corner app',
   'brief',
   'handoff',
   'grant',

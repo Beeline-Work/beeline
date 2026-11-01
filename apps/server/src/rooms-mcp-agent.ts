@@ -41,8 +41,6 @@ export const MCP_AGENT_EXCLUSIONS: Readonly<Record<string, string>> = {
   scratch_status: MACHINE,
   share_browser: MACHINE,
   end_browser_share: MACHINE,
-  publish_corner_app: MACHINE,
-  open_corner_app: MACHINE,
 };
 
 type Args = Record<string, unknown>;
@@ -85,7 +83,6 @@ const APP_ROUTES: Record<string, Record<string, Route | string>> = {
     set: { op: 'set_avatar', required: ['drawing'], description: 'Set your avatar from a drawing.' },
   },
   browser_share: { start: 'share_browser', end: 'end_browser_share' },
-  corner_app: { publish: 'publish_corner_app', open: 'open_corner_app' },
 };
 /** The first-party operations a connected app can call through app_tool. */
 export const MCP_APP_ROUTE_OPERATIONS: readonly string[] = Object.values(APP_ROUTES)

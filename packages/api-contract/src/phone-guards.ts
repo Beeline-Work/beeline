@@ -71,13 +71,6 @@ import {
 } from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
 import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
-import {
-  readCornerAppDefinition,
-  readCornerAppManifest,
-  type CornerAppBindingView,
-  type CornerAppInstallationView,
-  type CornerAppView,
-} from './corner-apps.js';
 
 /**
  * Phone surface readers project a known-safe view from a wire payload.
@@ -873,52 +866,6 @@ function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner'
   return { id: item.id, state: item.state };
 }
 
-function readMessageCornerApp(value: unknown): NonNullable<RoomViewMessage['cornerApp']> | null {
-  const item = record(value);
-  return item &&
-    typeof item.slug === 'string' &&
-    typeof item.title === 'string' &&
-    integer(item.revision)
-    ? { slug: item.slug, title: item.title, revision: item.revision }
-    : null;
-}
-
-function readCornerApp(value: unknown): CornerAppView | null {
-  const item = record(value);
-  const definition = readCornerAppDefinition(item);
-  if (
-    !item ||
-    !definition ||
-    (item.authorId !== undefined && !hex64(item.authorId)) ||
-    typeof item.authorName !== 'string' ||
-    !integer(item.revision) ||
-    !integer(item.updatedAt)
-  )
-    return null;
-  return {
-    ...definition,
-    ...(typeof item.authorId === 'string' ? { authorId: item.authorId } : {}),
-    authorName: item.authorName,
-    ...(typeof item.authorHandle === 'string' ? { authorHandle: item.authorHandle } : {}),
-    revision: item.revision,
-    updatedAt: item.updatedAt,
-  };
-}
-
-function readCornerAppInstallation(value: unknown): CornerAppInstallationView | null {
-  const item = record(value);
-  const manifest = readCornerAppManifest(item?.manifest);
-  return item && uuid(item.id) && manifest ? { id: item.id, manifest } : null;
-}
-
-function readCornerAppBinding(value: unknown): CornerAppBindingView | null {
-  const installation = readCornerAppInstallation(value);
-  const item = record(value);
-  return installation && item && uuid(item.instanceId)
-    ? { ...installation, instanceId: item.instanceId }
-    : null;
-}
-
 function readPermission(value: unknown): NonNullable<RoomViewMessage['permission']> | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
@@ -1155,7 +1102,6 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('activity', readList(item.activity, readActivity)),
     ...field('durableFact', oneOf(item.durableFact, ['failure', 'merge', 'action'])),
     ...field('corner', readMessageCorner(item.corner)),
-    ...field('cornerApp', readMessageCornerApp(item.cornerApp)),
     ...field('permission', readPermission(item.permission)),
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
@@ -1511,7 +1457,6 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),
-    ...field('app', readCornerAppBinding(item.app)),
     ...field(
       'briefRevision',
       integer(item.briefRevision) && item.briefRevision > 0 ? item.briefRevision : undefined,
@@ -1748,8 +1693,6 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
     ...field('cornerLocked', typeof item.cornerLocked === 'boolean' ? item.cornerLocked : undefined),
     ...field('cornerOwed', typeof item.cornerOwed === 'boolean' ? item.cornerOwed : undefined),
-    ...field('cornerApps', readList(item.cornerApps, readCornerApp, 24)),
-    ...field('boundApp', readCornerAppBinding(item.boundApp)),
   };
 }
 
@@ -2022,7 +1965,6 @@ export function readCornerListView(value: unknown): CornerListView | null {
     ...field('nextOpen', typeof item.nextOpen === 'string' && item.nextOpen.length <= 128
       ? item.nextOpen : undefined),
     ...field('summary', readCornerSummary(item.summary)),
-    ...field('apps', readList(item.apps, readCornerAppInstallation, 100)),
     viewer: readViewer(item.viewer),
     watchFilters: readWatchFilters(item.watchFilters),
   };

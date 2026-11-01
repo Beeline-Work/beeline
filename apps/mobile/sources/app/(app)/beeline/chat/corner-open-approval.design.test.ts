@@ -12,7 +12,7 @@ describe('corner-open approval card design contract', () => {
   it('offers the decision only to the requester or a Workspace owner or admin', () => {
     expect(variants).toContain('viewerPubkey === permission.requesterPubkey');
     expect(variants).toContain('viewerPubkey === permission.requesterPubkey || viewerCanManage');
-    expect(variants).toContain('corner-approval-audience-wait');
+    expect(variants).toContain('brief-approval-audience-wait');
   });
 
   it('keeps the mutated approved card visible and links it to the corner', () => {

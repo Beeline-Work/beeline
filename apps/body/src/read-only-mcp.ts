@@ -3181,9 +3181,7 @@ async function availableCapabilities(checkOnboarding = true): Promise<string[]> 
 /** The refusal for a Beeline app that does not work here names the apps that do. */
 function placeRefusal(app: string): string {
   const here = placeBeelineApps(Boolean(process.env.BEELINE_DAEMON_CORNER_ID)).join(', ');
-  return app === 'beeline:corner_app'
-    ? `${app} works only in a corner; use it there. Beeline apps here: ${here}.`
-    : `${app} ${app.slice('beeline:'.length) in CAPABILITY_ROUTES ? 'is unavailable in this place' : 'is not a Beeline app'}. Beeline apps here: ${here}.`;
+  return `${app} ${app.slice('beeline:'.length) in CAPABILITY_ROUTES ? 'is unavailable in this place' : 'is not a Beeline app'}. Beeline apps here: ${here}.`;
 }
 
 async function executeAgentOperation(
@@ -3803,33 +3801,6 @@ async function executeAgentOperation(
         throw new Error('A shared browser sessionId is required');
       await daemonExecute('endComputerSession', { roomId: agentScheduleRoomId(), sessionId: args.sessionId });
       return 'Browser share ended';
-    }
-    case 'publish_corner_app': {
-      const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-      if (!cornerId) throw new Error('publish_corner_app requires a corner turn');
-      const result = await daemonExecute('putCornerApp', {
-        cornerId,
-        definition: {
-          version: 1,
-          slug: args.slug,
-          title: args.title,
-          ...(typeof args.description === 'string' ? { description: args.description } : {}),
-          command: args.command,
-          blocks: args.blocks,
-        },
-      });
-      return `published /${String(args.command)} at revision ${String(result.revision ?? '?')}`;
-    }
-    case 'open_corner_app': {
-      const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-      if (!cornerId) throw new Error('open_corner_app requires a corner turn');
-      const context = await activeCommandContext();
-      const result = await daemonExecute('requestCornerAppOpen', {
-        cornerId,
-        slug: args.slug,
-        requestId: context.requestId,
-      });
-      return `posted app ${String(result.slug ?? args.slug)} at revision ${String(result.revision ?? '?')}`;
     }
     case 'rename_corner': {
       const cornerId = targetCornerId(args);

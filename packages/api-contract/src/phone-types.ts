@@ -7,11 +7,6 @@ import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
 import type { AgentSignInCardView } from './agent-sign-in.js';
-import type {
-  CornerAppBindingView,
-  CornerAppInstallationView,
-  CornerAppView,
-} from './corner-apps.js';
 
 export interface AttachmentReference {
   url: string;
@@ -273,12 +268,6 @@ export type RoomViewMessage = {
   readonly corner?: {
     readonly id: string;
     readonly state: CornerState;
-  };
-  /** An agent request to open one persisted app in this corner. */
-  readonly cornerApp?: {
-    readonly slug: string;
-    readonly title: string;
-    readonly revision: number;
   };
   readonly permission?: {
     readonly permissionId: string;
@@ -735,10 +724,6 @@ export type RoomView = {
   readonly cornerOwed?: boolean;
   /** People control whether agents may archive this corner. */
   readonly cornerLocked?: boolean;
-  /** Native, code-free apps persisted on this corner and shared with its members. */
-  readonly cornerApps?: readonly CornerAppView[];
-  /** Optional installed app whose human surface owns this corner. */
-  readonly boundApp?: CornerAppBindingView;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 
@@ -1177,7 +1162,6 @@ export type CornerListItem = {
   /** The server's Mine rule; see `ChatListCorner.mine`. */
   readonly mine?: true;
   readonly agent?: RoomViewIdentity;
-  readonly app?: CornerAppBindingView;
   /** The corner's latest brief revision. Absent when it has no brief. */
   readonly briefRevision?: number;
   readonly latestMessage?: {
@@ -1198,8 +1182,6 @@ export type CornerListView = {
   /** On the first open page of a top-level Room: the Room list row's corner
    *  summary, read in the same statement as the rows. */
   readonly summary?: RoomCornerSummary;
-  /** Apps connected to this Workspace and available for a new corner. */
-  readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };

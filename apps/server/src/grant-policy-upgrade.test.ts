@@ -74,7 +74,7 @@ describe('withdrawSupersededGrantAsks', () => {
     const builtin = '20000000-0000-4000-8000-000000000001';
     const external = '20000000-0000-4000-8000-000000000002';
     const approved = '20000000-0000-4000-8000-000000000003';
-    await pendingAsk(builtin, 'mcp', 'connection-install:beelinecornerapp');
+    await pendingAsk(builtin, 'mcp', 'connection-install:beelineavatar');
     await pendingAsk(external, 'mcp', 'connection-install:linear');
     await pendingAsk(approved, 'mcp', 'connection-install:beelineworkflow');
     await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2,decided_at=now() WHERE id=$1`, [approved, OWNER]);

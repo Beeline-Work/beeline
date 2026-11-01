@@ -465,8 +465,8 @@ describe('minimal agent surface', () => {
     expect(calls[1]!.input).toMatchObject({ cornerId: 'target', beforeRevision: 3 });
   });
   it.each(['status', 'ensure', 'discover'])('built-in connect %s never calls external setup', async mode => {
-    for (const service of ['beeline:corner_app', 'beeline:workflow', 'beeline:browser_share',
-      'beeline corner app', 'beelinecornerapp', 'corner_app']) {
+    for (const service of ['beeline:workflow', 'beeline:browser_share',
+      'beeline workflow', 'beelineworkflow']) {
       expect(JSON.parse(await callAgentTool('connect', { mode, service, reason: 'Use built-in app', continuation: 'Use its tools.' }, 'builtin')))
         .toMatchObject({ status: 'ready', next: expect.stringContaining('app_tool') });
     }
@@ -508,16 +508,6 @@ describe('minimal agent surface', () => {
         input: expect.objectContaining({ roomId: 'corner', runId: 'live-run', attempt: 7 }),
       },
     ]);
-  });
-  it('does not expose corner apps outside corners or IO fallbacks with proven native access', async () => {
-    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
-    await expect(callAgentTool('app_tool', { app: 'beeline:corner_app' }, 'd')).rejects.toThrow(
-      'works only in a corner',
-    );
-    vi.stubEnv('BEELINE_NATIVE_IO_PROVEN', '1');
-    await expect(callAgentTool('scratch_io', { action: 'quota' }, 'd')).rejects.toThrow(
-      'unavailable',
-    );
   });
   it('requires creation names and event trigger words, and forwards them', async () => {
     const schema = agentToolsFor(true, false).find(tool => tool.name === 'wake')!.inputSchema;
@@ -675,4 +665,16 @@ it('OPEN-1: opening and commander revision approval are optional in the schema',
   const revision = tools.find((tool) => tool.name === 'revise_corner')!;
   expect(Check(revision.inputSchema, { action: 'brief', address: 'target', expectedRevision: 1,
     change: 'Adjust scope', brief: { spec: 'Adjust widget' } })).toBe(true);
+});
+
+it('keeps retired app capabilities out of agent discovery in every place', () => {
+  const retired = ['corner', 'app'].join('_');
+  for (const corner of [false, true]) {
+    expect(JSON.stringify(agentToolsFor(true, false, corner))).not.toContain(retired);
+  }
+});
+
+it('does not expose IO fallbacks with proven native access', async () => {
+  vi.stubEnv('BEELINE_NATIVE_IO_PROVEN', '1');
+  await expect(callAgentTool('scratch_io', { action: 'quota' }, 'd')).rejects.toThrow('unavailable');
 });

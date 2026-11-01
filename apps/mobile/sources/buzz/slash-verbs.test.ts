@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { BEELINE_SLASH_COMMANDS } from '@beeline/buzz-client';
 import {
   availableSlashVerbs,
-  availableCornerAppCommands,
   slashVerbQuery,
   agentMentionSlashQuery,
   insertAgentSlashCommand,
@@ -82,29 +81,6 @@ describe('Buzz composer built-in slash verbs', () => {
     expect(availableSlashVerbs(allAvailable, '').some((verb) => verb.command === 'release')).toBe(
       false,
     );
-  });
-});
-
-describe('dynamic Corner App commands', () => {
-  const apps = [
-    {
-      version: 1 as const,
-      slug: 'release-board',
-      title: 'Release board',
-      description: 'Current deployment facts',
-      command: 'release-board',
-      blocks: [],
-      authorId: 'a'.repeat(64),
-      authorName: 'Hoots',
-      revision: 1,
-      updatedAt: 1,
-    },
-  ];
-
-  it('discovers server-projected commands by command, title, or description', () => {
-    expect(availableCornerAppCommands(apps, 'release')).toEqual(apps);
-    expect(availableCornerAppCommands(apps, 'deployment')).toEqual(apps);
-    expect(availableCornerAppCommands(apps, 'missing')).toEqual([]);
   });
 });
 

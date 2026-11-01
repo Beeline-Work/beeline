@@ -413,8 +413,6 @@ describe('deleteAccount', () => {
       'agent_schedules.creator_id', 'agent_schedules.owner_id', 'agent_schedules.updated_by',
       'agent_turn_traces.agent_id', 'agent_turns.agent_id', 'agents.owner_id',
       'computer_sessions.agent_id', 'connector_offers.accepted_by',
-      'corner_app_bindings.bound_by', 'corner_app_installations.developer_agent_id',
-      'corner_app_installations.installed_by', 'corner_apps.author_agent_id',
       'corner_brief_revisions.author_id', 'corner_facts.commissioned_by',
       'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
       'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',

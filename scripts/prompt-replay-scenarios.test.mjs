@@ -6,7 +6,7 @@ import { createStub } from './prompt-replay-stub.mjs';
 import { gradeNative } from './prompt-subscription-replay.mjs';
 
 test('canonical local app discovery is read-only and operations use only recorded aliases', () => {
-  for (const app of ['corner_app', 'workflow', 'onboarding']) {
+  for (const app of ['workflow', 'onboarding']) {
     const discovered = replayScenarioResult({}, { name: 'app_tool', args: { app: `beeline:${app}` } }, {});
     assert.deepEqual(discovered.result.tools, Object.values(CAPABILITY_TOOLS[app]));
     assert.equal(discovered.boundary, undefined);

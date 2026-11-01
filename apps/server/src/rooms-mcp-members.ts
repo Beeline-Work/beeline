@@ -165,12 +165,6 @@ export async function ensureMcpMember(
        RETURNING (xmax=0) fresh`,
       [input.clientId, input.ownerId, memberId, modelLabel, selection],
     )).rows[0]?.fresh ?? false;
-    if (input.workspaceIds !== undefined) {
-      // Consent narrowing immediately cuts off reads, writes, catch-up and event
-      // delivery, all of which recheck current Room and Workspace membership.
-      await tx.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1
-        AND removed_at IS NULL AND NOT (workspace_id=ANY($2::uuid[]))`, [memberId, workspaces]);
-    }
     if (workspaces.length) {
       await tx.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)

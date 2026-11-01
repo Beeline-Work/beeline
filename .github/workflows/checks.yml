@@ -116,6 +116,7 @@ jobs:
       - uses: actions/checkout@v4
         if: github.event_name == 'merge_group'
         with:
+          # Merge-group path filtering compares the base and head histories.
           fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
@@ -411,7 +412,7 @@ jobs:
       # Runs on every pull request, after npm ci, so a filter that opens
       # every suite again fails here even when the diff is not a workflow.
       - name: Check path filters skip untouched suites
-        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs
+        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs
       - name: Test nightly Checks orchestration
         run: node --test scripts/nightly-checks.test.mjs
 
@@ -539,15 +540,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20.19'
-          cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
+      - uses: ./.github/actions/ci-workspace
       - name: Require the Intel runner
         run: test "$(uname -m)" = x86_64
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth && npm run build -w @beeline/body
       - name: Fresh-install the native Intel Mac bundle
         run: npm run bundle:beeline -- --platform darwin-x64
         env:
@@ -588,6 +584,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Coverage artifact selection needs ancestry and distance from each map.
           fetch-depth: 0
           filter: blob:none
       - uses: actions/setup-node@v4
@@ -867,16 +864,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+      - uses: ./.github/actions/ci-workspace
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
-      - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth && npm run build -w @beeline/body
       - name: Replay sanitized corpus and time production hot reads
         env:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
@@ -918,18 +910,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/ci-workspace
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      # The isolated mobile app resolves `expo/tsconfig.base.json` (vitest's
-      # tsconfig parse) and its file-linked @beeline/* deps only from its own
-      # node_modules — a root-only npm ci never provides it.
-      - name: Install mobile dependencies
-        working-directory: apps/mobile
-        run: npm ci
+          mobile: 'true'
       - run: npm test --prefix apps/mobile -- --run sources/buzz/surface-runtime.frame-budget.test.ts
 
   state-upgrade:
@@ -960,16 +943,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/ci-workspace
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
-      # Same isolated-app requirement as FRAME-BUDGET above.
-      - name: Install mobile dependencies
-        working-directory: apps/mobile
-        run: npm ci
+          mobile: 'true'
       # The daemon durable-state half of this lane is retired, not
       # relocated: that feature and its test were deleted deliberately, and a
       # workflow line left behind is not a reason to bring either back. The
@@ -996,14 +972,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Flag store builds before merge
         if: github.event_name == 'pull_request'
         continue-on-error: true
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: node scripts/pr-store-build.mjs "$PR_BASE_SHA"
+        run: |
+          git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
+          node scripts/pr-store-build.mjs "$PR_BASE_SHA"
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: 'true'

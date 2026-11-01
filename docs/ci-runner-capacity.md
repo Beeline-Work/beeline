@@ -41,8 +41,9 @@ Each runner has its own persistent directory and systemd unit:
   `_tool`; npm uses the CI user's persistent home cache.
 - `/etc/systemd/system/beeline-ci@.service`, instances `01` through `10`.
 - `/etc/systemd/system/beeline-ci.slice` bounds the pool to 80 GiB, with
-  reclaim pressure at 64 GiB and CPU weight 25. Each service has a two-CPU
-  quota and a 10 GiB memory limit. These limits apply only to the new pool.
+  reclaim pressure at 64 GiB, CPU weight 25, and a shared 16-CPU quota on the
+  20-CPU host. Each service has a 10 GiB memory limit and can use idle CPUs
+  within that shared budget. These limits apply only to the new pool.
 
 The services start with `env -i` and only the CI home, system binary path,
 locale and per-runner tool-cache path. They run with no capabilities and
@@ -100,6 +101,14 @@ The old pool was not slower at executing the median shard. Actions history
 does not contain CPU utilization or throttling counters, so it cannot prove
 CPU contention. The new pool exposes systemd CPU/memory accounting for future
 measurements.
+
+An initial provisioning trial demonstrated why CPU limits belong on the
+pool rather than each service: with the host 74% idle, one server job hit
+its two-CPU quota in 7,822 of 9,213 periods and accumulated 706s of throttling.
+The final configuration removes those per-service caps, retains the pool's
+low scheduling weight, and caps the whole pool at 16 CPUs. Test worker counts
+remain bounded. The trial was superseded before recording a final full-run
+comparison, so that comparison uses the final resource policy throughout.
 
 Example: [the 16:27 local run](https://github.com/Beeline-Work/beeline/actions/runs/40359272561)
 waited until 17:32:37 to start shared package preparation, then its first server

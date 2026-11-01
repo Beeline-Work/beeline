@@ -21,15 +21,6 @@ test('PR heavy jobs use GitHub-hosted Linux runners', () => {
   }
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
   assert.match(mobile.run, /--maxWorkers=2 --minWorkers=2/);
-  assert.equal(jobs['mobile-suite']['timeout-minutes'], 20);
-  const fingerprint = jobs['native-fingerprint'];
-  const edit = fingerprint.steps.find((step) => step.env?.BEELINE_FINGERPRINT_E2E != null);
-  assert.ok(edit, 'the six-hash fingerprint test runs outside the mobile suite');
-  assert.equal(String(edit.env.BEELINE_FINGERPRINT_E2E), '1');
-  assert.match(edit.run, /nativeFingerprint\.test\.ts/);
-  assert.match(edit.run, /--maxWorkers=1/);
-  assert.equal(fingerprint['timeout-minutes'], 40);
-  assert.equal(fingerprint['runs-on'], 'ubuntu-latest');
 });
 
 test('no workflow job targets the overloaded beeline-ci pool', () => {

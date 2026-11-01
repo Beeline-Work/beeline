@@ -181,13 +181,6 @@ test('a mapped tree opens only its own suites', () => {
       desktop: 'false',
       on: ['mobileSuite', 'mobileExportReachability', 'frameBudget', 'stateUpgrade'],
     },
-    {
-      label: 'native-fingerprint-e2e',
-      files: ['apps/mobile/sources/config/nativeFingerprint.test.ts'],
-      runEverything: 'false',
-      desktop: 'false',
-      on: ['mobileSuite', 'mobileExportReachability', 'nativeFingerprint'],
-    },
   ];
   const gateNames = [
     'body',

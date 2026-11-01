@@ -191,7 +191,7 @@ it('a commander or tagged agent reads the Room checkout; an order gives it a pri
   } finally { turn.commandContext.current = undefined; await fixture.close(); }
 });
 
-it('a swapped-out implementer stops its background jobs, pushes unpushed work to a backup branch, and deletes its copy', async () => {
+it('a swapped-out implementer stops its background jobs and backs up work while preserving an open corner', async () => {
   const fixture = await cornerFixture('corner-swap-', self => self);
   const { turn, own, remote, posted } = fixture;
   try {
@@ -207,18 +207,18 @@ it('a swapped-out implementer stops its background jobs, pushes unpushed work to
     await turn.releaseImplementer('release-request');
 
     expect(job.stop).toHaveBeenCalledOnce();
-    await expect(access(own.path)).rejects.toThrow();
-    await expect(access(own.gitCommonDir)).rejects.toThrow();
+    await expect(access(own.path)).resolves.toBeUndefined();
+    await expect(access(own.gitCommonDir)).resolves.toBeUndefined();
     const backup = `beeline/backup/corner-${fixture.identity.publicKey.slice(0, 8)}`;
     const files = (await exec('git', [`--git-dir=${remote}`, 'ls-tree', '--name-only', backup])).stdout.split('\n');
     expect(files).toEqual(expect.arrayContaining(['committed', 'edit', 'file']));
     expect(posted).toEqual([expect.stringContaining(`to branch ${backup}`)]);
     expect(posted[0]).toContain('1 background job session');
-    expect(posted[0]).toContain(`deleted my copy at ${own.path}`);
+    expect(posted[0]).toContain(`My copy at ${own.path} is still on disk`);
   } finally { await fixture.close(); }
 });
 
-it('a swap publishes every stash entry before deleting the old copy', async () => {
+it('a swap publishes every stash entry while preserving the open corner copy', async () => {
   const fixture = await cornerFixture('corner-swap-stashes-', self => self);
   const { turn, own, remote, posted } = fixture;
   try {
@@ -236,8 +236,8 @@ it('a swap publishes every stash entry before deleting the old copy', async () =
       expect((await exec('git', [`--git-dir=${remote}`, 'show', `${ref}:file`])).stdout)
         .toBe(index === 0 ? 'older stashed work' : 'newer stashed work');
     }
-    await expect(access(own.path)).rejects.toThrow();
-    await expect(access(own.gitCommonDir)).rejects.toThrow();
-    expect(posted[0]).toContain(`deleted my copy at ${own.path}`);
+    await expect(access(own.path)).resolves.toBeUndefined();
+    await expect(access(own.gitCommonDir)).resolves.toBeUndefined();
+    expect(posted[0]).toContain(`My copy at ${own.path} is still on disk`);
   } finally { await fixture.close(); }
 });

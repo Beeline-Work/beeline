@@ -704,7 +704,10 @@ jobs:
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
     runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["self-hosted","Linux","X64","beeline-ci"]' || '"ubuntu-latest"') }}
-    timeout-minutes: 20
+    # Quiet runs finish near 14 minutes. The shared 16-CPU pool stretched a
+    # still-passing suite past 20 minutes (279 of 665 files) and cancelled it,
+    # which fails FRAME-BUDGET and STATE-UPGRADE. 50 minutes covers that pace.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
         with:

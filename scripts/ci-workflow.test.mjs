@@ -37,6 +37,7 @@ test('PR heavy jobs use both hosted and isolated CI-only Linux pools', () => {
   }
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
   assert.match(mobile.run, /--maxWorkers=2 --minWorkers=2/);
+  assert.equal(jobs['mobile-suite']['timeout-minutes'], 50);
 });
 
 test('CI-only capacity is confined to the selected Checks jobs, never release jobs', () => {

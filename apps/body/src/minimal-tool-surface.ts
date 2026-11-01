@@ -817,7 +817,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "order",
-    "description": "Privately assign one agent besides yourself. A Room requires agent; a corner defaults to its implementer. Corners may name any parent-Room agent in the corner or parent Room; DMs, other Rooms and ancestor corners are forbidden. Reports return to the sender. Receipt confirms acceptance, not completion.",
+    "description": "Privately assign one agent besides yourself. A Room requires agent; a corner defaults to its implementer. Corners may name any parent-Room agent in the corner or parent Room; DMs, other Rooms and ancestor corners are forbidden. Reports return to the sender. Receipt confirms acceptance, not completion. Local proof paths are refused; attach required files to the target corner brief with revise_corner instead.",
     "inputSchema": {
       "type": "object",
       "required": ["address", "text"],
@@ -862,7 +862,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "report",
-    "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong.",
+    "description": "Report the assigned outcome one step up through command provenance. Status and text prefix must agree: done:, blocked:, failed:, needs-decision:. No address. Feedback is separate from assignment completion. Optional `to`: who receives this report, when the default recipient is wrong. Local proof paths are refused. First upload each proof with post_artifact, then cite its attachment filename instead of a local path.",
     "inputSchema": {
       "type": "object",
       "required": ["status", "text"],

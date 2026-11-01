@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { Check } from 'typebox/value';
 import { callAgentTool, agentToolsFor } from './read-only-mcp.js';
 
@@ -118,6 +119,19 @@ it('Reproduction upload-1: a successfully queued replacement unblocks the report
 });
 
 for (const name of ['order', 'report', 'post']) {
+  it.each([
+    'done: proof=`/tmp/worker-only/evidence.log`',
+    'done: [proof](file:///tmp/worker-only/evidence.log)',
+    'done: proof=evidence.txt',
+    'done: read `./evidence.txt`',
+  ])(`Reproduction handoff-files-unreachable: ${name} refuses %s`, async (text) => {
+    setupTurn(`handoff-${name}-${text}`);
+    const fetchMock = vi.fn(async () => Response.json({ delivered: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(callAgentTool(name, { text, ...(name === 'order' ? { address: '22222222-2222-4222-8222-222222222222', agent: 'worker' } : name === 'report' ? { status: 'done' } : {}) }, 'handoff')).rejects.toThrow(/post_artifact/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it(`Reproduction files-1: ${name} refuses a foreign workspace temp path before sending`, async () => {
     setupTurn(`foreign-${name}`);
     const fetchMock = vi.fn(async () => Response.json({ delivered: true }));
@@ -127,6 +141,30 @@ for (const name of ['order', 'report', 'post']) {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 }
+
+it('keeps tracked source citations deliverable while refusing generated checkout proofs', async () => {
+  setupTurn('tracked-source');
+  const checkout = mkdtempSync(join(scratch, 'checkout-'));
+  execFileSync('/usr/bin/git', ['init', checkout], { stdio: 'ignore' });
+  writeFileSync(join(checkout, 'source.ts'), 'export const value = 1;');
+  writeFileSync(join(checkout, 'proof.log'), 'private proof');
+  execFileSync('/usr/bin/git', ['-C', checkout, 'add', 'source.ts']);
+  vi.stubEnv('BEELINE_ATTACH_ROOT', checkout);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ delivered: true })));
+  await expect(callAgentTool('report', { status: 'done', text: 'done: changed source.ts' }, 'source')).resolves.toContain('delivered');
+  await expect(callAgentTool('report', { status: 'done', text: 'done: proof.log' }, 'proof')).rejects.toThrow('post_artifact');
+});
+
+it('refuses relative proof paths in the writable home without reading outside the allow-list', async () => {
+  setupTurn('scratch-proof');
+  const home = mkdtempSync(join(scratch, 'home-'));
+  writeFileSync(join(home, 'capture.png'), 'synthetic image');
+  vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', home);
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  await expect(callAgentTool('report', { status: 'done', text: 'done: `capture.png`' }, 'proof')).rejects.toThrow('post_artifact');
+  expect(fetchMock).not.toHaveBeenCalled();
+});
 
 it('Reproduction upload-1: an unrelated successful file cannot hide missing evidence', async () => {
   setupTurn('unrelated-success');

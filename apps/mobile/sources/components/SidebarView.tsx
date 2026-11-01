@@ -5,7 +5,7 @@ import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { InlineRow } from '@/components/buzz/IndexRow';
-import { useTextDraft } from '@/buzz/use-text-draft';
+import { removeRoomSearchDrafts } from '@/buzz/room-search-drafts';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -192,8 +192,13 @@ export const SidebarView = React.memo(function SidebarView() {
   const [viewerIdentity, setViewerIdentity] = React.useState<RoomViewIdentity | null>(null);
   const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
-  const [query, setQuery] = useTextDraft(`sidebar-room-search:${workspaceId}`, '', identityPubkey);
+  const [query, setQuery] = React.useState('');
   const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
+  React.useEffect(() => { void removeRoomSearchDrafts(); }, []);
+  React.useEffect(() => {
+    setQuery('');
+    setDesktopSearchOpen(false);
+  }, [pathname, workspaceId, identityPubkey]);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const refreshedForWorkspaceIds = React.useRef(new Set<string>());
@@ -380,6 +385,8 @@ export const SidebarView = React.memo(function SidebarView() {
     (roomId: string) => {
       dispatchRoomOpenTap(roomId, {
         navigate: (id) => {
+          setQuery('');
+          setDesktopSearchOpen(false);
           navigateToRoom(router, id);
         },
       });
@@ -626,7 +633,11 @@ export const SidebarView = React.memo(function SidebarView() {
               search={messageSearch}
               now={Date.now()}
               onOpen={(result) => {
-                if (workspaceId) router.push(messageSearchHref(result, workspaceId) as Href);
+                if (workspaceId) {
+                  setQuery('');
+                  setDesktopSearchOpen(false);
+                  router.push(messageSearchHref(result, workspaceId) as Href);
+                }
               }}
             />
           </ScrollView>

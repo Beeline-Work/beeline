@@ -1,0 +1,24 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/9f1d7ca914da0917c9d09e93b8d106523980525435ade2a5992e0d868c6ba7d8/apps/mobile
+
+stdout | sources/components/SidebarView.navigation.test.tsx > desktop Workspace navigation > removes the deleted workspace from the permanent rail while a Room is open
+Reproduction workspace-removal: permanent desktop rail removed Alpha Workspace and opened remaining workspace without a room retry
+
+stdout | sources/components/SidebarView.navigation.test.tsx > desktop Workspace navigation > keeps one shared projection across route hops without another GET
+Shared Sidebar projection: 10 route hops kept first row with zero extra GETs in 30 ms (test renderer).
+
+ ✓ sources/components/SidebarView.navigation.test.tsx (40 tests) 711ms
+stderr | sources/buzz/use-room-search.test.tsx > clears query and retracts the bar on list focus after opening a result
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/buzz/use-room-search.test.tsx (1 test) 10ms
+ ✓ sources/buzz/use-message-search.test.tsx (10 tests) 24ms
+ ✓ sources/components/buzz/MessageSearchResults.test.tsx (6 tests) 20ms
+ ✓ sources/buzz/text-draft-store.test.ts (18 tests) 13ms
+ ✓ sources/buzz/room-search-drafts.test.ts (1 test) 2ms
+
+ Test Files  6 passed (6)
+      Tests  76 passed (76)
+   Start at  11:55:50
+   Duration  2.64s (transform 541ms, setup 137ms, collect 911ms, tests 779ms, environment 1ms, prepare 248ms)
+

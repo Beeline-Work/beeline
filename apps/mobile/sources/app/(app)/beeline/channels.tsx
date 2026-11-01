@@ -5,6 +5,7 @@ import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
+import { useRoomSearch } from '@/buzz/use-room-search';
 import {
   useNeedsYouCount,
 } from '@/buzz/needs-you-store';
@@ -255,10 +256,8 @@ export default function BuzzChannels() {
     '',
     identity?.publicKey ?? null,
   );
-  const [query, setQuery] = useTextDraft(`room-search:${
-    activeCommunityId}`,
-    '',
-    identity?.publicKey ?? null,
+  const { query, setQuery, searchOpen, setSearchOpen } = useRoomSearch(
+    activeCommunityId ?? null, identity?.publicKey ?? null,
   );
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
     identity?.publicKey,
@@ -909,6 +908,8 @@ export default function BuzzChannels() {
           <RoomListToolbar
             filter={filter}
             onFilter={setFilter}
+            searchOpen={searchOpen}
+            onSearchOpenChange={setSearchOpen}
             query={query}
             onQuery={setQuery}
             counts={counts}

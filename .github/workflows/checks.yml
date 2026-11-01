@@ -412,6 +412,8 @@ jobs:
       # every suite again fails here even when the diff is not a workflow.
       - name: Check path filters skip untouched suites
         run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs
+      - name: Test nightly Checks orchestration
+        run: node --test scripts/nightly-checks.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS

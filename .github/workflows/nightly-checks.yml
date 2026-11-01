@@ -1,0 +1,36 @@
+name: Nightly Checks
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7,8 * * *'
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: nightly-checks
+  cancel-in-progress: false
+jobs:
+  nightly:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run every Checks suite on main and classify one rerun
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/nightly-checks.mjs
+      - name: Publish nightly result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-checks-result
+          path: nightly-checks.json
+          if-no-files-found: ignore
+          retention-days: 30

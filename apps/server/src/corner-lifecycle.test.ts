@@ -652,6 +652,30 @@ describe('a person-opened corner in a repository Room', () => {
       phone.execute('createHumanCorner', { roomId: R, title: 'Bad-id', cornerId: 'not-a-uuid' }, H),
     ).rejects.toThrow('corner id must be a UUID');
   });
+  it('a swap stops the old implementer\'s running turn and sends it one release wake', async () => {
+    const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Swap-widget' }, H);
+    await say(cornerId, '@hoots fix the widget');
+    const [working] = await commands(A, cornerId);
+    await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: working!.id, generationId: 'g1' }, A);
+    await daemon.execute('postAgentTurnReceipt', { roomId: cornerId, requestId: working!.turnRequestId,
+      generationId: 'g1', agentId: A, status: 'working' }, A);
+
+    await say(cornerId, '@goosy take this over');
+    const rows = (await db.query<{ action: string; reason: string; turn_request_id: string }>(
+      `SELECT action,reason,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+         AND state='pending' ORDER BY created_at,id`, [cornerId, A])).rows;
+    expect(rows).toEqual(expect.arrayContaining([
+      { action: 'stop', reason: 'implementer_swap_stop', turn_request_id: working!.turnRequestId },
+      expect.objectContaining({ action: 'input', reason: 'implementer_released' }),
+    ]));
+    expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+      [cornerId, A, working!.turnRequestId])).rows).toEqual([{ status: 'cancelled' }]);
+
+    // Tagging the current implementer again is no swap.
+    await say(cornerId, '@goosy keep going');
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+      AND reason='implementer_released'`, [cornerId, B])).rowCount).toBe(0);
+  });
   it('opens on implement with no lane, and the first tagged agent owns it and drives it to checks', async () => {
     const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Fix-widget' }, H);
     expect(await cards(cornerId)).toEqual([

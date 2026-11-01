@@ -99,3 +99,33 @@ it('hands legacy unpublished commits, staged deletions, edits and untracked file
     expect(await readFile(resolve(writer.path, 'file'), 'utf8')).toBe('writer continues');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+it('a shallow seed still shares its pack files with each copy instead of repacking', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'agent-corner-shallow-'));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com',
+    GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
+  const git = async (...args: string[]) => (await exec('git', args, { env })).stdout.trim();
+  try {
+    const seed = resolve(root, 'seed');
+    await git('init', '-b', 'main', seed);
+    for (const round of ['one', 'two']) {
+      await writeFile(resolve(seed, 'file'), round);
+      await git('-C', seed, 'add', '.');
+      await git('-C', seed, 'commit', '-m', round);
+    }
+    const cache = resolve(root, 'cache.git');
+    await git('clone', '--bare', '--depth', '1', `file://${seed}`, cache);
+    expect(await git(`--git-dir=${cache}`, 'rev-parse', '--is-shallow-repository')).toBe('true');
+    const { readdir } = await import('node:fs/promises');
+    const pack = (await readdir(resolve(cache, 'objects/pack'))).find(name => name.endsWith('.pack'))!;
+    const copy = await materializeAgentCornerCheckout({ root, cornerId: 'corner', agentId: 'a', sourceGitDir: cache,
+      remote: cache, branch: 'feature/corner', startRef: 'refs/heads/main' });
+    expect((await stat(resolve(copy.gitCommonDir, 'objects/pack', pack))).ino)
+      .toBe((await stat(resolve(cache, 'objects/pack', pack))).ino);
+    expect(await readFile(resolve(copy.path, 'file'), 'utf8')).toBe('two');
+    expect(await git('-C', copy.path, 'rev-parse', '--is-shallow-repository')).toBe('true');
+    expect(await git(`--git-dir=${copy.gitCommonDir}`, 'remote', 'get-url', 'origin')).toBe(cache);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

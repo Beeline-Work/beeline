@@ -63,6 +63,9 @@ import type {
 /** Maximum number of consecutive agent-authored turns in one Room exchange. */
 export const AGENT_TO_AGENT_HOP_CAP = 3;
 
+/** Wake reason for an implementer the owner swapped out; its helper releases the corner without a model turn. */
+export const IMPLEMENTER_RELEASED_REASON = 'implementer_released';
+
 export type CreateAgentScheduleInput = AgentRoomInput & {
   /** Plain schedule label, one to four words. */
   readonly title?: string;

@@ -461,9 +461,8 @@ export function selectTests({ map, changes, alwaysRun, testFiles }) {
     pick(readers, `reads ${path}`);
     if (!source) {
       if (readers.length) continue;
-      // New code reaches tests only through files that import it, and those
-      // files changed too. Other new or unknown files may be read at runtime.
-      if (status === 'A' && codePattern.test(path)) continue;
+      // New files, code included, may be loaded or read at runtime by paths
+      // the map cannot see, so they run everything.
       if (outsideServerSuite.some((pattern) => pattern.test(path))) continue;
       // On main no test ran or read this file, in process or in a child.
       if (status !== 'A' && known.has(path)) continue;

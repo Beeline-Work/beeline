@@ -56,9 +56,8 @@ test('test files main never ran have no coverage, so they always run', () => {
   assert.match(selection.reasons['apps/server/src/new.test.ts'], /no coverage recorded on main/);
 });
 
-test('type-only edits, new code files and phone files outside the map run only the always-run set', () => {
+test('type-only edits and phone files outside the map run only the always-run set', () => {
   assert.deepEqual(select([modified('apps/server/src/rooms.ts', [])]).files, [guard]);
-  assert.deepEqual(select([{ path: 'apps/server/src/brand-new.ts', status: 'A', names: [], fileLevel: true }]).files, [guard]);
   assert.deepEqual(select([{ path: 'apps/mobile/sources/app.tsx', status: 'M', names: [], fileLevel: true }]).files, [guard]);
 });
 
@@ -104,7 +103,11 @@ test('the full suite runs when a changed file is not in the coverage map', () =>
     assert.equal(selection.mode, 'full', path);
     assert.match(selection.reason, /not in the coverage map/);
   }
-  assert.equal(select([{ path: 'apps/server/src/fixtures/new-data.json', status: 'A', names: [], fileLevel: true }]).mode, 'full');
+  for (const path of ['apps/server/src/fixtures/new-data.json', 'apps/server/src/brand-new.ts', 'apps/server/src/routes/new-route.tsx']) {
+    const selection = select([modified('apps/server/src/rooms.ts', ['createRoom']), { path, status: 'A', names: [], fileLevel: true }]);
+    assert.equal(selection.mode, 'full', path);
+    assert.match(selection.reason, /not in the coverage map/);
+  }
 });
 
 test('the full suite runs when the coverage map is missing, from another version, unrelated, old or far behind', () => {

@@ -1,3 +1,4 @@
+import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
 import { phoneSocketRequests } from './phone-socket.js';
 import { PHONE_SOCKET_MAX_FRAME_BYTES } from '@beeline/api-contract/phone';
@@ -2362,6 +2363,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, accepted ? 200 : 403, accepted ? { left: true } : { error: 'invalid_voice_stop' });
     return;
   }
+  if (method === 'GET' && await serveEmailImage(options.database, url, response)) return;
   const identityId = await phoneIdentity(request, options);
   if (
     method === 'GET' &&

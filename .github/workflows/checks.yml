@@ -412,7 +412,7 @@ jobs:
       # Runs on every pull request, after npm ci, so a filter that opens
       # every suite again fails here even when the diff is not a workflow.
       - name: Check path filters skip untouched suites
-        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs
+        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS

@@ -10,6 +10,8 @@ const runs = api('actions/workflows/checks.yml/runs?event=pull_request&status=co
   .filter((run) => ['success', 'failure'].includes(run.conclusion)).slice(0, count);
 const rows = [], flakes = [], limitations = [];
 for (const run of runs) {
+  // The run endpoint resets run_started_at on rerun; attempt one preserves it.
+  const firstAttempt = run.run_attempt > 1 ? api(`actions/runs/${run.id}/attempts/1`) : run;
   let seconds = 0;
   const attempts = [];
   for (let attempt = 1; attempt <= run.run_attempt; attempt++) {
@@ -20,7 +22,8 @@ for (const run of runs) {
     }
   }
   rows.push({ date: run.created_at, sha: run.head_sha, url: run.html_url, attempts: run.run_attempt,
-    wallMinutes: +( (Date.parse(run.updated_at) - Date.parse(run.run_started_at)) / 60000).toFixed(2),
+    startedAt: firstAttempt.run_started_at, completedAt: run.updated_at,
+    wallMinutes: +( (Date.parse(run.updated_at) - Date.parse(firstAttempt.run_started_at)) / 60000).toFixed(2),
     runnerMinutes: +(seconds / 60).toFixed(2), conclusion: run.conclusion });
   for (let index = 0; index < attempts.length - 1; index++) {
     for (const failed of attempts[index].filter((job) => job.conclusion === 'failure')) {

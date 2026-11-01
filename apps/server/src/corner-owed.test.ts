@@ -438,20 +438,21 @@ describe('corner_owed', () => {
     walk((typeof root === 'string' ? JSON.parse(root) : root)[0].Plan);
     expect(scans).toContainEqual({ relation: 'corner_owed', alias: 'owed_item' });
     // The combined deck enrichment also reads the unread cursor and DM peer
-    // activity. Review activity looks up a dispatch source by message id twice:
-    // once for a running turn, once for a command still waiting to start.
-    // The waiting reason reads the indexed blocker message by its primary key
-    // too; owed facts still come from corner_owed.
+    // activity. Review activity additionally looks up its dispatched source
+    // by message id. The waiting reason reads the indexed blocker message by
+    // its primary key too; owed facts still come from corner_owed.
     const messageScans = scans.filter((scan) => scan.relation === 'messages');
-    const sourceScans = messageScans.filter((scan) => scan.alias === 'source' || scan.alias.startsWith('source_'));
-    expect(sourceScans).toHaveLength(2);
+    // Running, pending, held, and checkout-holder activity each resolve their
+    // dispatched check source by id; these do not recover owed facts.
+    const isDispatchSource = (alias: string) => /^source(?:_\d+)?$/.test(alias);
+    expect(messageScans.filter((scan) => isDispatchSource(scan.alias))).toHaveLength(4);
     expect(messageScans.filter((scan) => scan.alias === 'item')).toHaveLength(1);
     expect(corners!.sql).toContain('JOIN messages item ON item.id=owed.message_id');
     // Each unread-cursor branch checks legacy corner visibility against the
     // indexed call-site cards. These scans do not recover owed facts.
     const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
     expect(callsiteScans).toHaveLength(2);
-    expect(messageScans.filter((scan) => scan.alias !== 'item' &&
-      !scan.alias.startsWith('source') && !scan.alias.startsWith('callsite'))).toHaveLength(3);
+    expect(messageScans.filter((scan) => scan.alias !== 'item' && !isDispatchSource(scan.alias) &&
+      !scan.alias.startsWith('callsite'))).toHaveLength(3);
   });
 });

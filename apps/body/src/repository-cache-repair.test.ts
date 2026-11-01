@@ -9,13 +9,20 @@ import {
   checkRepositoryCaches,
   RepositoryCacheDamagedError,
 } from './repository-cache-repair.js';
-import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { distillTurnFailureReason, TURN_FAILURE_REASON_MAX } from './turn-failure-reason.js';
 
 /**
  * A reboot mid-fetch leaves zero-byte loose objects in the shared bare cache,
  * and every corner on the machine then dies in its first fetch. These run real
  * git against a bare repository standing in for GitHub.
  */
+// Hosted runner names can push the private-cache diagnostic past the receipt
+// budget. Exercise that boundary on every host rather than depending on CI.
+vi.mock('node:os', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:os')>(),
+  hostname: () => 'repository-cache-ci-host-with-a-long-name',
+}));
+
 const execFileAsync = promisify(execFile);
 // Each prepare is several real git processes; four of them run per case.
 vi.setConfig({ testTimeout: 120_000 });
@@ -107,10 +114,10 @@ async function cacheWithLooseMain() {
   const supervisorRoot = await scratchDir('beeline-cache-supervisor-');
   await prepare(supervisorRoot, remote, 'corner-a');
   await pushCommit(seed, 'second.txt');
-  const { gitCommonDir } = await prepare(supervisorRoot, remote, 'corner-b');
+  const { gitCommonDir, path } = await prepare(supervisorRoot, remote, 'corner-b');
   const main = await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/remotes/origin/main']);
   const blob = await git([`--git-dir=${gitCommonDir}`, 'rev-parse', `${main}:second.txt`]);
-  return { remote, seed, supervisorRoot, gitCommonDir, main, blob };
+  return { remote, seed, supervisorRoot, gitCommonDir, main, blob, path };
 }
 
 describe('a repo cache damaged by a crash', () => {
@@ -119,13 +126,13 @@ describe('a repo cache damaged by a crash', () => {
     await emptyLooseObject(gitCommonDir, main);
     await pushCommit(seed, 'third.txt');
 
-    const worktree = await prepare(supervisorRoot, remote, 'corner-c');
+    const worktree = await prepare(supervisorRoot, remote, 'corner-b');
 
     const upstream = await git(['rev-parse', 'main'], seed);
     expect(await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/remotes/origin/main'])).toBe(
       upstream,
     );
-    expect(await git(['rev-parse', 'HEAD'], worktree.path)).toBe(upstream);
+    expect(await git(['rev-parse', 'HEAD'], worktree.path)).toBe(main);
     expect(await exists(gitCommonDir, main)).toBe(true);
     // The same fetch that failed after the crash now exits 0.
     await expect(
@@ -147,12 +154,30 @@ describe('a repo cache damaged by a crash', () => {
     await checkRepositoryCaches(supervisorRoot);
     expect(await exists(gitCommonDir, blob)).toBe(false);
 
-    const worktree = await prepare(supervisorRoot, remote, 'corner-c');
+    const worktree = await prepare(supervisorRoot, remote, 'corner-b');
 
     expect(await exists(gitCommonDir, blob)).toBe(true);
     expect(await git(['cat-file', '-p', 'HEAD:second.txt'], worktree.path)).toBe('second.txt');
     expect(await git(['status', '--porcelain'], worktree.path)).toBe('');
   });
+});
+
+it('a damaged immutable seed never prevents a different agent from starting', async () => {
+  const { remote, supervisorRoot, path: existing } = await cacheWithLooseMain();
+  const seed = cornerRepositoryCacheDir(supervisorRoot, remote);
+  const tree = await git([`--git-dir=${seed}`, 'rev-parse', 'main^{tree}']);
+  const blob = await git([`--git-dir=${seed}`, 'commit-tree', tree, '-m', 'damaged seed-only commit']);
+  await git([`--git-dir=${seed}`, 'update-ref', 'refs/heads/damaged-seed', blob]);
+  await emptyLooseObject(seed, blob);
+  const kernel = await import('./kernel-lock.js');
+  const acquire = vi.spyOn(kernel, 'withKernelLock').mockImplementation(async () => { throw new Error('unexpected checkout lock'); });
+  try {
+    const fresh = await prepare(supervisorRoot, remote, 'corner-c');
+    expect(await git(['show', 'HEAD:README.md'], fresh.path)).toBe('objective');
+    expect(await git(['show', 'HEAD:README.md'], existing)).toBe('objective');
+    expect(acquire).not.toHaveBeenCalled();
+    expect((await stat(loosePath(seed, blob))).size).toBe(0);
+  } finally { acquire.mockRestore(); }
 });
 
 describe('crash-safe repo cache writes', () => {
@@ -185,9 +210,8 @@ describe('crash-safe repo cache writes', () => {
 
 describe('the helper-start repo cache check', () => {
   it('removes empty objects and keeps healthy objects and live worktree refs', async () => {
-    const { supervisorRoot, gitCommonDir, main } = await cacheWithLooseMain();
+    const { supervisorRoot, gitCommonDir, main, path: cornerB } = await cacheWithLooseMain();
     // corner-b has local work: a loose commit only its branch points at.
-    const cornerB = resolve(supervisorRoot, 'beeline', 'corners', 'corner-b');
     await writeFile(resolve(cornerB, 'local.txt'), 'local work\n');
     await git(['add', '.'], cornerB);
     await git(['commit', '-m', 'local work'], cornerB);
@@ -206,26 +230,23 @@ describe('the helper-start repo cache check', () => {
     expect(
       await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/heads/feature/corner-b']),
     ).toBe(local);
-    expect(
-      await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/heads/feature/corner-a']),
-    ).toBeTruthy();
+    await expect(git([`--git-dir=${gitCommonDir}`, 'show-ref', '--verify', 'refs/heads/feature/corner-a'])).rejects.toThrow();
     expect(await git(['status', '--porcelain'], cornerB)).toBe('');
   });
 });
 
 describe('a repo cache the helper cannot repair', () => {
   it('fails corner prepare with one plain line naming the machine and the cache', async () => {
-    const { remote, supervisorRoot, gitCommonDir } = await cacheWithLooseMain();
+    const { remote, supervisorRoot, gitCommonDir, path: cornerA } = await cacheWithLooseMain();
     // corner-a's own branch lost its only copy of a commit. Its worktree is
     // live, so the repair must not delete that branch, and fetch cannot work.
-    const cornerA = resolve(supervisorRoot, 'beeline', 'corners', 'corner-a');
     await writeFile(resolve(cornerA, 'local.txt'), 'local work\n');
     await git(['add', '.'], cornerA);
     await git(['commit', '-m', 'local work'], cornerA);
     const local = await git(['rev-parse', 'HEAD'], cornerA);
     await emptyLooseObject(gitCommonDir, local);
 
-    const failure = await prepare(supervisorRoot, remote, 'corner-c').then(
+    const failure = await prepare(supervisorRoot, remote, 'corner-b').then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -235,8 +256,16 @@ describe('a repo cache the helper cannot repair', () => {
     const line = `The repo cache ${cache} on ${hostname()} is damaged and automatic repair failed. The machine's owner needs to repair it`;
     expect((failure as Error).message).toBe(line);
     expect(failure).not.toHaveProperty('stderr');
-    expect(distillTurnFailureReason(failure).text).toBe(line);
-    expect(await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/heads/feature/corner-a'])).toBe(
+    // The complete diagnostic stays in the journal; turn receipts have a
+    // fixed wire budget even when a runner's hostname makes this line longer.
+    const receipt = distillTurnFailureReason(failure).text;
+    expect(line.length).toBeGreaterThan(TURN_FAILURE_REASON_MAX);
+    expect(receipt.length).toBe(TURN_FAILURE_REASON_MAX);
+    expect(receipt).toContain(cache);
+    expect(receipt).toContain(hostname());
+    expect(receipt.endsWith('…')).toBe(true);
+    expect(line.startsWith(receipt.slice(0, -1))).toBe(true);
+    expect(await git([`--git-dir=${gitCommonDir}`, 'rev-parse', 'refs/heads/feature/corner-b'])).toBe(
       local,
     );
   });

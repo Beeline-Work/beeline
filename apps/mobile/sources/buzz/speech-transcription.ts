@@ -1,3 +1,4 @@
+import type { DictationTiming } from './dictation-timing';
 /**
  * Sends a dictation's recorded pieces to the Beeline server as they close; the
  * server transcribes them with Groq Whisper. The Groq key stays on the server.
@@ -14,12 +15,9 @@ import {
   splitDictationWav,
 } from './wav-adpcm';
 
-// Pieces upload while the user talks, so stop waits only for the last one.
-export const DICTATION_TRANSCRIPTION_TIMEOUT_MS = 5000;
-// A long last piece needs time to upload: 8 KB of ADPCM per second of speech
-// is 64 ms on a 1 Mbit/s uplink. Stop waits this much more per second still out.
-const STOP_WAIT_PER_AUDIO_SECOND_MS = 150;
-const MAXIMUM_STOP_WAIT_MS = 30_000;
+// A fixed wait preserves the on-device fallback when a request is slow.
+// Audio length, queued pieces and retries never extend the deadline.
+export const DICTATION_TRANSCRIPTION_TIMEOUT_MS = 1800;
 // Longer pieces go to Groq as chunks of this length, sent together, so each
 // request stays well inside PIECE_TIMEOUT_MS.
 const CHUNK_SECONDS = 60;
@@ -64,8 +62,10 @@ async function transcribeOne(
   wav: Uint8Array,
   prompt: string,
   language: string,
+  timing?: DictationTiming,
 ): Promise<string | null> {
   const audio = compressDictationWav(wav);
+  timing?.mark('upload_start');
   const response = await monolithSession.fetch(
     `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/transcriptions`,
     {
@@ -79,6 +79,7 @@ async function transcribeOne(
     },
     { timeoutMs: PIECE_TIMEOUT_MS },
   );
+  timing?.mark('upload_response');
   if (response.status === 503) {
     // Only the server's own answer means no Groq key; a proxy 503 is passing.
     const value = (await response.json().catch(() => null)) as { error?: unknown } | null;
@@ -89,6 +90,7 @@ async function transcribeOne(
     return null;
   }
   const value = (await response.json()) as { text?: unknown };
+  if (typeof value.text === 'string') timing?.mark('groq_text_back');
   return typeof value.text === 'string' ? value.text.trim() : null;
 }
 
@@ -132,7 +134,7 @@ export type DictationUpload = {
  * failed piece keeps its place and its audio, later pieces still upload, and
  * stop retries it once.
  */
-export function startDictationUpload(lexicon: readonly string[], locale: string): DictationUpload {
+export function startDictationUpload(lexicon: readonly string[], locale: string, timing?: DictationTiming): DictationUpload {
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   const uris: string[] = [];
   // Each piece's chunk texts, in order; null until Groq answers it.
@@ -144,22 +146,14 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
   let failed = false;
   let closed = false;
   let queue: Promise<void> = Promise.resolve();
-  // Seconds of audio sent but not yet answered; stop waits longer for them.
-  let outSeconds = 0;
-  // Called with the seconds of each piece, or retry, sent after stop.
-  let onOut: ((seconds: number) => void) | null = null;
-
   const texts = (before = slots.length) => slots.slice(0, before).flatMap((slot) => slot ?? []);
   const send = async (wav: Uint8Array, slot = slots.push(null) - 1) => {
     const previous = joinSpeechPieces(texts(slot), lexicon, locale);
     const prompt = dictationPrompt(lexicon, previous);
-    const seconds = dictationWavSeconds(wav) ?? 0;
-    outSeconds += seconds;
-    onOut?.(seconds);
     try {
       const chunks = splitDictationWav(wav, CHUNK_SECONDS);
       const results = await Promise.all(
-        chunks.map((chunk) => transcribeOne(chunk, prompt, language)),
+        chunks.map((chunk) => transcribeOne(chunk, prompt, language, timing)),
       );
       if (results.some((text) => text === null)) {
         failedPieces.set(slot, wav);
@@ -173,8 +167,6 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
         error instanceof Error ? error.message : 'unknown',
       );
       failedPieces.set(slot, wav);
-    } finally {
-      outSeconds -= seconds;
     }
   };
   const step = (work: () => Promise<void>) => {
@@ -228,27 +220,8 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
         await Promise.all([...failedPieces].map(([slot, wav]) => send(wav, slot)));
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const stoppedAt = Date.now();
-      // Audio out at stop, plus every piece and retry sent after it. The wait
-      // only grows, never past MAXIMUM_STOP_WAIT_MS.
-      let waitSeconds = outSeconds;
       const late = new Promise<false>((resolve) => {
-        const arm = () => {
-          const extra = Math.min(
-            waitSeconds * STOP_WAIT_PER_AUDIO_SECOND_MS,
-            MAXIMUM_STOP_WAIT_MS - timeoutMs,
-          );
-          clearTimeout(timer);
-          timer = setTimeout(
-            () => resolve(false),
-            stoppedAt + timeoutMs + Math.max(0, extra) - Date.now(),
-          );
-        };
-        onOut = (seconds) => {
-          waitSeconds += seconds;
-          arm();
-        };
-        arm();
+        timer = setTimeout(() => resolve(false), timeoutMs);
       });
       try {
         const done = await Promise.race([queue.then(() => true as const), late]);
@@ -259,7 +232,6 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
         return joinSpeechPieces(texts(), lexicon, locale) || null;
       } finally {
         clearTimeout(timer);
-        onOut = null;
         closed = true;
         await discardDictationRecordings(uris);
       }

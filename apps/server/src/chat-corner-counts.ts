@@ -153,9 +153,7 @@ function heldCommandSql(command: string): string {
     AND (${command}.startup_wake_after IS NULL OR ${command}.startup_wake_after<=now())`;
 }
 
-/** A running turn, or a command still waiting for one, retains the review role recorded by its dispatch.
- * Waiting commands are classified once. Copying that check into each branch made the chat list
- * look up the same dispatch message three times. */
+/** A running turn, or a command still waiting for one, retains the review role recorded by its dispatch. */
 export function cornerWorkSql(ignoreCommander = false): string {
   const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}]||${cornerReviewerFallbacksSql('c')},NULL))`;
   const checkPassed = (source: string) =>
@@ -168,9 +166,10 @@ export function cornerWorkSql(ignoreCommander = false): string {
         AND dispatched.turn_request_id=t.request_id
         AND (dispatched.reason='corner_review_dispatch'
           OR (dispatched.reason='subscribed_event' AND ${checkPassed('source')}))))`;
-  const reviewerCommand = `COALESCE(command.agent_id=${reviewerAgent}
+  const reviewerCommand = `(command.agent_id=${reviewerAgent}
     OR command.reason='corner_review_dispatch'
-    OR (command.reason='subscribed_event' AND ${checkPassed('source')}), false)`;
+    OR (command.reason='subscribed_event' AND EXISTS(
+      SELECT 1 FROM messages source WHERE source.id=command.source_message_id AND ${checkPassed('source')})))`;
   const helperOffline = `NOT EXISTS (
     SELECT 1 FROM agent_connections connection
     JOIN live_server_instances server ON server.instance_id=connection.instance_id
@@ -181,26 +180,27 @@ export function cornerWorkSql(ignoreCommander = false): string {
             WHERE live.room_id=command.room_id AND live.agent_id=command.agent_id
               AND live.request_id=command.turn_request_id
               AND COALESCE(live.generation_id,'') NOT LIKE 'pending:%')`;
-  const commander = ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : '';
-  const turnCommander = ignoreCommander ? 'AND t.agent_id IS DISTINCT FROM c.created_by' : '';
-  return `LEFT JOIN rooms parent ON parent.id=c.parent_id
-    LEFT JOIN LATERAL (WITH queued AS MATERIALIZED (
-        SELECT command.agent_id, ${reviewerCommand} AS review,
-          (${deliverableCommandSql('command')}) AS deliverable,
-          ${helperOffline} AS offline
-        FROM agent_commands command
-        LEFT JOIN messages source ON source.id=command.source_message_id
-          AND command.reason='subscribed_event'
-        WHERE command.room_id=c.id
+  const waitingWorker = `command.room_id=c.id AND NOT (${reviewerCommand}) AND ${noLiveTurn}
           AND (${deliverableCommandSql('command')} OR ${heldCommandSql('command')})
-          AND ${noLiveTurn}
-          ${commander}
-      ), turns AS MATERIALIZED (
-        SELECT ${reviewerTurn} AS review
-        FROM agent_turns t
-        WHERE t.room_id=c.id AND t.status='working'
-          ${turnCommander}
+          ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}`;
+  return `LEFT JOIN rooms parent ON parent.id=c.parent_id
+    LEFT JOIN LATERAL (WITH activity_rows AS (
+        SELECT ${reviewerTurn} AS review, false AS queued, false AS offline
+        FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+          ${ignoreCommander ? 'AND t.agent_id IS DISTINCT FROM c.created_by' : ''}
           AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
+        UNION ALL
+        SELECT ${reviewerCommand}, true, ${helperOffline}
+        FROM agent_commands command
+        WHERE command.room_id=c.id AND ${deliverableCommandSql('command')}
+          ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}
+          AND ${noLiveTurn}
+        UNION ALL
+        SELECT ${reviewerCommand}, true, false
+        FROM agent_commands command
+        WHERE command.room_id=c.id AND ${heldCommandSql('command')}
+          ${ignoreCommander ? 'AND command.agent_id IS DISTINCT FROM c.created_by' : ''}
+          AND ${noLiveTurn}
       )
       SELECT COALESCE(bool_or(NOT review),false) worker_active,
         COALESCE(bool_or(review),false) reviewer_active,
@@ -212,15 +212,11 @@ export function cornerWorkSql(ignoreCommander = false): string {
           WHERE busy.room_id<>c.id AND busy.status='working'
             AND COALESCE(busy.generation_id,'') NOT LIKE 'pending:%'
             AND EXISTS (
-              SELECT 1 FROM queued waiting
-              WHERE NOT waiting.review AND waiting.agent_id=busy.agent_id)
+              SELECT 1 FROM agent_commands command
+              WHERE ${waitingWorker} AND command.agent_id=busy.agent_id)
           ORDER BY busy.created_at DESC
           LIMIT 1) checkout_holder
-      FROM (
-        SELECT review, false AS queued, false AS offline FROM turns
-        UNION ALL
-        SELECT review, true, CASE WHEN deliverable THEN offline ELSE false END FROM queued
-      ) activity_rows
+      FROM activity_rows
     ) activity ON true`;
 }
 

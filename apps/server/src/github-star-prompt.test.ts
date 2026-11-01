@@ -130,6 +130,10 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // A conversation-only message can leave an unclaimed input behind. Keep
+  // each scenario's queue independent so later tags are not folded into it.
+  await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM github_star_prompts`);
   starResponse = 204;
   starred = false;

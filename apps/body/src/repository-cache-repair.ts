@@ -1,10 +1,9 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { lstat, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { basename, dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { repositoryCacheDamagedFault } from '@beeline/api-contract/daemon';
-import { withKernelLock } from './kernel-lock.js';
 
 const GIT_BUFFER = 4 * 1024 * 1024;
 
@@ -25,11 +24,6 @@ export const CRASH_SAFE_CLONE_ARGS: readonly string[] = CRASH_SAFE_GIT_CONFIG.fl
 
 /** Left by the helper-start check so the next fetch also restores lost history. */
 const REPAIR_PENDING_FILE = 'beeline-repair-pending';
-
-/** The kernel lock materialize already holds while it fetches into a corner cache. */
-async function cornerRepositoryLockKey(gitCommonDir: string): Promise<string> {
-  return `corner-repository:${resolve(await realpath(dirname(gitCommonDir)), basename(gitCommonDir))}`;
-}
 
 /** Git's errors for an object store with empty, corrupt or missing objects. */
 function isRepositoryCacheCorruption(error: unknown): boolean {
@@ -58,7 +52,7 @@ function git(gitDir: string, args: readonly string[], options: { env?: NodeJS.Pr
     const child = execFile(
       'git',
       [`--git-dir=${gitDir}`, ...args],
-      { ...(options.env ? { env: options.env } : {}), maxBuffer: GIT_BUFFER },
+      { ...(options.env ? { env: options.env } : {}), maxBuffer: GIT_BUFFER, timeout: 120_000, killSignal: 'SIGKILL' },
       (error, stdout, stderr) => {
         if (error) fail(Object.assign(error, { stderr }));
         else done(stdout);
@@ -183,6 +177,17 @@ export async function fetchRepositoryCache(input: {
   env?: NodeJS.ProcessEnv;
 }): Promise<void> {
   const { gitDir, label, args } = input;
+  // Check only a repository being used. Walking every archived agent's
+  // private object store before opening intake makes restart time grow with
+  // retained history, and withholds the discovery watchdog acknowledgement.
+  let check = checked.get(gitDir);
+  if (!check) {
+    check = checkRepository(gitDir, label).catch(error => {
+      console.error(`[thin-core] repo cache ${label} check failed:`, error);
+    });
+    checked.set(gitDir, check);
+  }
+  await check;
   const fetch = (extra: readonly string[] = []) =>
     git(gitDir, ['fetch', ...extra, ...args], input.env ? { env: input.env } : {});
   const damaged = (error: unknown): never => {
@@ -216,18 +221,18 @@ export async function fetchRepositoryCache(input: {
 /** Every repo the helper fetches into: corner caches and Room checkouts. */
 async function helperRepositories(
   supervisorRoot: string,
-): Promise<Array<{ gitDir: string; label: string; lock: boolean }>> {
+): Promise<Array<{ gitDir: string; label: string }>> {
   const root = resolve(supervisorRoot, 'beeline');
-  const found: Array<{ gitDir: string; label: string; lock: boolean }> = [];
+  const found: Array<{ gitDir: string; label: string }> = [];
   for (const name of await readdir(resolve(root, 'repositories')).catch(() => [] as string[])) {
     const gitDir = resolve(root, 'repositories', name);
     if (name.endsWith('.git') && existsSync(resolve(gitDir, 'HEAD')))
-      found.push({ gitDir, label: `repositories/${name}`, lock: true });
+      found.push({ gitDir, label: `repositories/${name}` });
   }
   for (const name of await readdir(resolve(root, 'room-checkouts')).catch(() => [] as string[])) {
     const gitDir = resolve(root, 'room-checkouts', name, '.git');
     if (existsSync(resolve(gitDir, 'HEAD')))
-      found.push({ gitDir, label: `room-checkouts/${name}`, lock: false });
+      found.push({ gitDir, label: `room-checkouts/${name}` });
   }
   return found;
 }
@@ -247,15 +252,14 @@ async function checkRepository(gitDir: string, label: string): Promise<void> {
 }
 
 /**
- * Helper start: turn on crash-safe writes for every existing repo, and repair
+ * Explicit inventory: turn on crash-safe writes for every existing repo, and repair
  * any repo a crash left with empty loose objects before a corner uses it.
  * Never fatal; a cache this cannot fix is repaired again by its next fetch.
  */
 export async function checkRepositoryCaches(supervisorRoot: string): Promise<void> {
-  for (const { gitDir, label, lock } of await helperRepositories(supervisorRoot)) {
+  for (const { gitDir, label } of await helperRepositories(supervisorRoot)) {
     try {
-      if (lock) await withKernelLock(await cornerRepositoryLockKey(gitDir), () => checkRepository(gitDir, label));
-      else await checkRepository(gitDir, label);
+      await checkRepository(gitDir, label);
     } catch (error) {
       console.error(`[thin-core] repo cache ${label} check failed:`, error);
     }
@@ -263,13 +267,3 @@ export async function checkRepositoryCaches(supervisorRoot: string): Promise<voi
 }
 
 const checked = new Map<string, Promise<void>>();
-
-/** `checkRepositoryCaches` once per helper process and supervisor root. */
-export function checkRepositoryCachesOnce(supervisorRoot: string): Promise<void> {
-  let check = checked.get(supervisorRoot);
-  if (!check) {
-    check = checkRepositoryCaches(supervisorRoot);
-    checked.set(supervisorRoot, check);
-  }
-  return check;
-}

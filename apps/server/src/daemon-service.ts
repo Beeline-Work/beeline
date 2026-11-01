@@ -463,6 +463,7 @@ export class DaemonService {
     authenticatedAgentId: string,
   ): Promise<Output<Name>> {
     for (let attempt = 0; ; attempt++) {
+      let committed = false;
       try {
     input = { ...input };
     const candidate = input as Record<string, unknown>;
@@ -1008,6 +1009,7 @@ export class DaemonService {
         }
         return result;
       });
+      committed = true;
       for (const task of committedTasks) {
         try {
           await task(this.database);
@@ -2265,10 +2267,11 @@ export class DaemonService {
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
       } catch (error) {
-        // Activity and failed receipts have transactional writes and buffered live events.
+        // These operations have transactional writes and buffered live events.
         // Retry the owning transaction, including authorization, after rollback;
         // a nested transaction cannot recover an aborted PostgreSQL transaction.
         const retryableWrite = name === 'postAgentActivity' ||
+          (name === 'reviseCornerBrief' && !committed) ||
           (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
         if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
           !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
@@ -3865,6 +3868,7 @@ export class DaemonService {
         parent_room_id: string;
         opened_from_corner_id: string | null;
         objective: string;
+        implementer_agent_id: string | null;
         title: string;
         title_generated: boolean;
         kind: 'agent' | 'human';
@@ -3880,7 +3884,7 @@ export class DaemonService {
         last_excerpt: string | null;
       }>(
         `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
-           f.opened_from_corner_id,f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
+           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
            approval.pull_request_number,approval.head_sha approval_head_sha,
            lm.author_id last_author_id,lm.created_at last_created_at,
            lm.presentation last_type,left(lm.text,280) last_excerpt
@@ -3895,6 +3899,7 @@ export class DaemonService {
     const held = holds.length > 0;
     return {
       cornerId,
+      ...(row?.implementer_agent_id ? { implementerAgentId: row.implementer_agent_id } : {}),
       ...(row ? { archived: Boolean(row.archived_at), parentRoomId: row.parent_room_id } : {}),
       ...(row?.opened_from_corner_id ? { openedFromCornerId: row.opened_from_corner_id } : {}),
       objective: row?.objective ?? '',
@@ -8777,9 +8782,9 @@ export class DaemonService {
           [parentCommand.source_message_id, commandRoomId],
         )
       ).rows[0];
-      // A real dispatching message owns the opening. Without one, the parent
-      // Room is the call site. Do not write a duplicate before the source row.
-      const destinations = [{ roomId: source ? commandRoomId : roomId, sourceMessageId: source?.id }];
+      // A real dispatching message anchors the opening beneath it. Without one,
+      // the command room is the call site and the row is appended there.
+      const destinations = [{ roomId: commandRoomId, sourceMessageId: source?.id }];
       for (const destination of destinations) {
         await systemLine(db, {
           roomId: destination.roomId,

@@ -4357,6 +4357,13 @@ describe('migrating a no-code corner onto implement', () => {
 });
 
 describe('Reproduction IDLE-1: corner status says whether its agent runs or waits', () => {
+  it('restores the current implementer so legacy work goes to the assigned agent', async () => {
+    const cornerId = await open('owner/widgets');
+    expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).implementerAgentId).toBe(A);
+    await db.query('UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1', [cornerId, B]);
+    expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).implementerAgentId).toBe(B);
+  });
+
   it('reports an unanswered human decision as waiting after the worker queue drains', async () => {
     const cornerId = await open('owner/widgets');
     await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);

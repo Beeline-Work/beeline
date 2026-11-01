@@ -1,3 +1,4 @@
+import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
@@ -4205,7 +4206,10 @@ export function BuzzChatSurface({
         const activeOutbox = outbox.current();
         if (!activeOutbox) throw new Error('Message outbox is unavailable');
         if (dictationCancelled()) return;
-        if (dictated) dictated.committed = true;
+        if (dictated) {
+          trackDictatedMessage(preparedEvent.id, dictated.timing);
+          dictated.committed = true;
+        }
         await activeOutbox.enqueue(preparedEvent, {
           id: preparedEvent.id,
           text,

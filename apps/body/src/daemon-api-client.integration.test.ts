@@ -47,6 +47,7 @@ import {
 import { activeReleaseId, activateRelease, writeUpdateState } from './self-update.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { ThinDaemonCore } from './thin-core.js';
+import { agentCornerCheckoutPaths } from './agent-corner-checkout.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1828,7 +1829,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           },
           { timeout: 180_000, interval: 500 },
         );
-        const worktree = join(supervisorRoot, 'beeline', 'corners', cornerId);
+        const worktree = agentCornerCheckoutPaths(supervisorRoot, cornerId, AGENT).path;
         let branch = '';
         await vi.waitFor(
           async () => {

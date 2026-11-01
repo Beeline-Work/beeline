@@ -12,6 +12,7 @@ import type { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { cornerHasRepositoryWork } from './prompt-assembly.js';
 import { agentToolsFor } from './read-only-mcp.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
+import { agentCornerCheckoutPaths } from './agent-corner-checkout.js';
 import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 
 /**
@@ -149,7 +150,7 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
     expect(coordinator.activeRoomIds()).toContain(CORNER);
 
     const featureBranch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
-    const worktree = join(staged.runtime.supervisorRoot, 'beeline', 'corners', CORNER);
+    const worktree = agentCornerCheckoutPaths(staged.runtime.supervisorRoot, CORNER, AGENT).path;
     expect(execute).toHaveBeenCalledWith('getRoomGitHubToken', { roomId: ROOM });
     expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
     expect((await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim()).toBe(
@@ -347,7 +348,7 @@ it('Reproduction R1: a corner a DM also lists starts on its feature branch; a pl
 
     // The repository corner: worktree on its feature branch, code-corner session.
     const featureBranch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
-    const worktree = join(staged.runtime.supervisorRoot, 'beeline', 'corners', CORNER);
+    const worktree = agentCornerCheckoutPaths(staged.runtime.supervisorRoot, CORNER, AGENT).path;
     expect(execute).toHaveBeenCalledWith('getRoomRepositoryState', { roomId: ROOM });
     expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: DM });
     expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
@@ -367,7 +368,7 @@ it('Reproduction R1: a corner a DM also lists starts on its feature branch; a pl
     expect(plain.surface).toBe('repo-less-corner');
     expect(plain.repositoryEnv).not.toBe('1');
     expect(plain.systemPrompt).toContain('This is a repo-less corner with no repository checkout');
-    expect(existsSync(join(root, 'beeline', 'corners', PLAIN_CORNER))).toBe(false);
+    expect(existsSync(agentCornerCheckoutPaths(root, PLAIN_CORNER, AGENT).path)).toBe(false);
     expect(log.mock.calls.map((call) => String(call[0]))).toContainEqual(
       expect.stringContaining(`[thin-core] serving repo-less corner ${PLAIN_CORNER}`),
     );

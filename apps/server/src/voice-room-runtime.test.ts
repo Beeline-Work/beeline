@@ -381,10 +381,11 @@ it('waits for an utterance that starts while a report claim is in flight', async
   const firstPlayback = new Promise<void>(resolve => { playbackStarted = resolve; });
   let releaseClaim!: () => void;
   const report = { source_message_id: 'order', id: 'report', text: 'Completed work.', agent_id: 'ruby', human_id: 'human' };
-  service.db.query.mockImplementation(async (sql: string) => {
+  const query = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql: string, parameters?: any[]) => {
     if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: offered ? 1 : 0, rows: offered ? [report] : [] };
     if (sql.startsWith('UPDATE voice_orders')) await new Promise<void>(resolve => { releaseClaim = resolve; });
-    return { rowCount: 1, rows: [] };
+    return query(sql, parameters);
   });
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   let releasePlayback!: () => void;
@@ -397,6 +398,8 @@ it('waits for an utterance that starts while a report claim is in flight', async
     // Synchronize on the held playout itself, not a short polling window
     // that can expire under the full CI shard's event-loop load.
     await firstPlayback;
+    // Membership refresh must keep the caller present while playback is held.
+    await runtime.countHumans();
     expect(speech.synthesize).toHaveBeenCalledOnce();
     releaseClaim();
     await new Promise(resolve => setImmediate(resolve));

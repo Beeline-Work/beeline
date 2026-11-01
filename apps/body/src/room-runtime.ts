@@ -1,7 +1,9 @@
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { collectDependencyStore } from './dependency-generation.js';
+import { warmNodeModulesStoreDir, mobileNodeModulesStoreDir } from './warm-node-modules.js';
+import { execFile, type ExecFileOptions } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -26,6 +28,7 @@ import {
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import { cornerHasRepositoryWork } from './prompt-assembly.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
@@ -41,15 +44,9 @@ import { cornerStarts, isStandingRuntimeFault, retryNotBefore } from './retry-ba
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
-import {
-  mobileNodeModulesStoreDir,
-  seedWarmNodeModules,
-  warmNodeModulesStoreDir,
-} from './warm-node-modules.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
-import { withKernelLock } from './kernel-lock.js';
+import { agentCornerCheckoutPaths, materializeAgentCornerCheckout } from './agent-corner-checkout.js';
 import {
-  checkRepositoryCachesOnce,
   CRASH_SAFE_CLONE_ARGS,
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
@@ -146,159 +143,80 @@ export async function materializeCornerWorktree(input: {
   /** New Workspace layout skips the ABI-unsafe legacy host-wide warm store. */
   workspaceId?: string;
   committer: { name: string; publicKey: string };
+  migrateLegacy?: boolean;
 }): Promise<{ path: string; gitCommonDir: string }> {
+  const boundedGit = (file: string, args: string[], options: ExecFileOptions = {}) => execFileAsync(file, args, { ...options, encoding: 'utf8', timeout: 120_000, killSignal: 'SIGKILL' });
   // Same normalization the Room checkout uses: every real remote is held to
   // the GitHub HTTPS identity, and a `file://` remote stays usable so the
   // shared-branch behaviour can be proved against a real git remote.
   const remote = roomCheckoutRemote(input.remote);
-  const gitCommonDir = cornerRepositoryCacheDir(input.supervisorRoot, remote);
-  const path = resolve(input.supervisorRoot, 'beeline', 'corners', input.cornerId);
-  await mkdir(dirname(gitCommonDir), { recursive: true, mode: 0o700 });
+  const sourceGitDir = cornerRepositoryCacheDir(input.supervisorRoot, remote);
+  const { path, gitCommonDir } = agentCornerCheckoutPaths(input.supervisorRoot, input.cornerId, input.committer.publicKey);
+  await mkdir(dirname(sourceGitDir), { recursive: true, mode: 0o700 });
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  // Hosted agents share this bare repository. Git's individual ref/config
-  // locks do not serialize the multi-command setup across coordinators.
-  const repositoryKey = resolve(await realpath(dirname(gitCommonDir)), basename(gitCommonDir));
-  return withKernelLock(`corner-repository:${repositoryKey}`, async () => {
-    const authEnv = githubGitEnv(input.token);
-    if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
-      await execFileAsync('git', ['clone', '--bare', ...CRASH_SAFE_CLONE_ARGS, remote, gitCommonDir], {
-        env: authEnv,
-        maxBuffer: 4 * 1024 * 1024,
+  // Publish an immutable seed atomically. Racing first starts may clone in
+  // parallel, then use the winner. All future fetches go to private refs;
+  // there is no repository or checkout lock on the corner setup/turn path.
+  if (!existsSync(resolve(sourceGitDir, 'HEAD'))) {
+    const staging = `${sourceGitDir}.creating-${randomUUID()}`;
+    try {
+      await boundedGit('git', ['clone', '--bare', ...CRASH_SAFE_CLONE_ARGS, remote, staging], {
+        env: githubGitEnv(input.token), maxBuffer: 4 * 1024 * 1024,
       });
-    }
-    // A bare clone writes no fetch refspec, so `git fetch origin main` only
-    // moves FETCH_HEAD and leaves origin/main stale. Always (re)set the wildcard
-    // refspec: `--replace-all` keeps repeat prepares from stacking duplicate
-    // values and repairs caches cloned before this fix, including ones whose
-    // existing worktree is left in place below. Explicit per-branch fetches still
-    // override it; the refspec only says where a plain fetch lands remote heads.
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'config',
-        '--replace-all',
-        'remote.origin.fetch',
-        '+refs/heads/*:refs/remotes/origin/*',
-      ],
-      { maxBuffer: 4 * 1024 * 1024 },
-    );
-    const label = repositoryCacheLabel(gitCommonDir);
-    await fetchRepositoryCache({
-      gitDir: gitCommonDir,
-      label,
-      args: [
-        '--prune',
-        'origin',
-        `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
-      ],
-      env: authEnv,
-    });
-    const restored = await fetchRepositoryCache({
-      gitDir: gitCommonDir,
-      label,
-      args: ['origin', `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`],
-      env: authEnv,
-    }).then(
-      () => true,
-      (error) => {
-        if (isRemoteRefMissing(error)) return false;
-        throw error;
-      },
-    );
-    if (!existsSync(resolve(path, '.git'))) {
-      await rm(path, { recursive: true, force: true });
-      await execFileAsync(
-        'git',
-        [
-          `--git-dir=${gitCommonDir}`,
-          'worktree',
-          'add',
-          '-B',
-          input.featureBranch,
-          path,
-          restored
-            ? `refs/remotes/origin/${input.featureBranch}`
-            : `refs/remotes/origin/${input.targetBranch}`,
-        ],
-        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-      );
-      // A worktree cut from a bare clone has no `node_modules`, so this is the
-      // one moment a warm tree can be hardlinked in before anything reads it.
-      // Never fatal: a cold store just means the corner installs as before.
-      const seed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
-        worktreePath: path,
-        storeRoot: warmNodeModulesStoreDir(input.supervisorRoot),
+      await rename(staging, sourceGitDir).catch((error: NodeJS.ErrnoException) => {
+        if (!['EEXIST', 'ENOTEMPTY'].includes(error.code ?? '') || !existsSync(resolve(sourceGitDir, 'HEAD'))) throw error;
       });
-      if (seed.reason !== 'no-lockfile') {
-        console.log(
-          `[thin-core] corner ${input.cornerId} warm node_modules: ${seed.reason}${
-            seed.detail ? ` (${seed.detail})` : ''
-          }`,
-        );
-      }
-      // `apps/mobile` is deliberately outside the root workspaces and has its
-      // own lockfile, so its tree is warmed from a second store. Without it a
-      // fresh corner cannot run the mobile vitest suite at all.
-      const mobilePath = resolve(path, 'apps/mobile');
-      if (existsSync(resolve(mobilePath, 'package-lock.json'))) {
-        const mobileSeed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
-          worktreePath: mobilePath,
-          storeRoot: mobileNodeModulesStoreDir(input.supervisorRoot),
-        });
-        if (mobileSeed.reason !== 'no-lockfile') {
-          console.log(
-            `[thin-core] corner ${input.cornerId} warm mobile node_modules: ${mobileSeed.reason}${
-              mobileSeed.detail ? ` (${mobileSeed.detail})` : ''
-            }`,
-          );
-        }
-      }
-    }
-    await execFileAsync('git', [
-      `--git-dir=${gitCommonDir}`,
-      'config',
-      'extensions.worktreeConfig',
-      'true',
-    ]);
-    // A linked worktree created from a bare canonical clone otherwise inherits
-    // core.bare=true and rejects ordinary `git -C <worktree>` commands.
-    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
-    await execFileAsync('git', [
-      '-C',
-      path,
-      'config',
-      '--worktree',
-      'credential.https://github.com.helper',
-      '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
-    ]);
-    const identity = agentGitIdentity(input.committer);
-    await execFileAsync('git', [
-      '-C',
-      path,
-      'config',
-      '--worktree',
-      'user.name',
-      identity.name,
-    ]);
-    await execFileAsync('git', [
-      '-C',
-      path,
-      'config',
-      '--worktree',
-      'user.email',
-      identity.email,
-    ]);
-    const top = (
-      await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel'])
-    ).stdout.trim();
-    // git reports the physical path. On macOS /var is /private/var, and a
-    // supervisor root reached through a symlink otherwise looks like an escape.
-    if ((await realpath(top)) !== (await realpath(path))) {
-      throw new Error(`corner worktree escaped its isolated root: ${top}`);
-    }
-    return { path, gitCommonDir };
+    } finally { await rm(staging, { recursive: true, force: true }); }
+  }
+  await materializeAgentCornerCheckout({ root: input.supervisorRoot, cornerId: input.cornerId,
+    agentId: input.committer.publicKey, sourceGitDir, remote, branch: input.featureBranch,
+    startRef: `refs/heads/${input.targetBranch}`, targetBranch: input.targetBranch, env: githubGitEnv(input.token),
+    ...(input.migrateLegacy ? { legacyPath: resolve(input.supervisorRoot, 'beeline/corners', input.cornerId) } : {}),
   });
+  // Dependencies are linked only at activation, when sandbox mounts seal them.
+  await boundedGit('git', [
+    `--git-dir=${gitCommonDir}`,
+    'config',
+    'extensions.worktreeConfig',
+    'true',
+  ]);
+  // A linked worktree created from a bare canonical clone otherwise inherits
+  // core.bare=true and rejects ordinary `git -C <worktree>` commands.
+  await boundedGit('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
+  await boundedGit('git', [
+    '-C',
+    path,
+    'config',
+    '--worktree',
+    'credential.https://github.com.helper',
+    '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
+  ]);
+  const identity = agentGitIdentity(input.committer);
+  await boundedGit('git', [
+    '-C',
+    path,
+    'config',
+    '--worktree',
+    'user.name',
+    identity.name,
+  ]);
+  await boundedGit('git', [
+    '-C',
+    path,
+    'config',
+    '--worktree',
+    'user.email',
+    identity.email,
+  ]);
+  const top = (
+    await boundedGit('git', ['-C', path, 'rev-parse', '--show-toplevel'])
+  ).stdout.trim();
+  // git reports the physical path. On macOS /var is /private/var, and a
+  // supervisor root reached through a symlink otherwise looks like an escape.
+  if ((await realpath(top)) !== (await realpath(path))) {
+    throw new Error(`corner worktree escaped its isolated root: ${top}`);
+  }
+  return { path, gitCommonDir };
 }
 
 export async function mapWithConcurrency<T>(
@@ -366,15 +284,17 @@ export interface DiscoveredCornerWorktree {
 export async function discoverCornerWorktree(
   supervisorRoot: string,
   cornerId: string,
+  agentId?: string,
 ): Promise<DiscoveredCornerWorktree | undefined> {
   const cornersRoot = resolve(supervisorRoot, 'beeline', 'corners');
-  const path = resolve(cornersRoot, cornerId);
+  const own = agentId ? agentCornerCheckoutPaths(supervisorRoot, cornerId, agentId).path : undefined;
+  const path = own && existsSync(resolve(own, '.git')) ? own : resolve(cornersRoot, cornerId);
   if (dirname(path) !== cornersRoot || !existsSync(resolve(path, '.git'))) return undefined;
   const [canonicalRoot, canonicalPath] = await Promise.all([
     realpath(cornersRoot),
     realpath(path).catch(() => undefined),
   ]);
-  if (!canonicalPath || relative(canonicalRoot, canonicalPath) !== cornerId) {
+  if (!canonicalPath || relative(canonicalRoot, canonicalPath) !== basename(path)) {
     throw new Error(`refusing corner ${cornerId} whose checkout path is not canonical`);
   }
   const common = await execFileAsync('git', ['-C', path, 'rev-parse', '--git-common-dir']).catch(
@@ -417,6 +337,7 @@ export async function removeCornerWorktreeAndBranches(
   options: { preserveRemoteBranch?: boolean } = {},
 ): Promise<void> {
   if (existsSync(worktree.path) && !await ordinaryDirectory(worktree.path)) throw new Error('refusing noncanonical checkout');
+  if (!existsSync(worktree.path) && !existsSync(worktree.gitCommonDir) && /^agent-corner-[a-f0-9]{64}\.git$/.test(basename(worktree.gitCommonDir))) return;
   const contents = await storageTree(worktree.path).catch(() => undefined);
   if (!contents && existsSync(worktree.path)) throw new Error('checkout inventory unavailable');
   if (contents && [...contents.keys()].some(isSquirePath)) throw new Error('refusing checkout containing Trusty Squire storage');
@@ -425,6 +346,11 @@ export async function removeCornerWorktreeAndBranches(
   const remoteRef = `refs/heads/${worktree.branch}`;
   const worktreeExists = existsSync(worktree.path);
   const localExists = await gitRefExists(worktree.gitCommonDir, localRef);
+  if (!worktreeExists && /^agent-corner-[a-f0-9]{64}\.git$/.test(basename(worktree.gitCommonDir))) {
+    if (localExists) await assertLocalBranchPublished(worktree);
+    await removeStoragePath(worktree.gitCommonDir);
+    return;
+  }
 
   if (worktreeExists) {
     const checkedOut = await execFileAsync(
@@ -435,11 +361,15 @@ export async function removeCornerWorktreeAndBranches(
       (result) => result.stdout.trim(),
       () => undefined,
     );
-    if (!worktree.recovered && checkedOut !== localRef) {
+    if (!worktree.recovered && !/^agent-corner-[a-f0-9]{64}\.git$/.test(basename(worktree.gitCommonDir)) && checkedOut !== localRef) {
       throw new Error(`corner worktree branch mismatch: expected ${localRef}`);
     }
     await assertCornerWorktreePublished(worktree);
     await removeStoragePath(worktree.path);
+    if (/^agent-corner-[a-f0-9]{64}\.git$/.test(basename(worktree.gitCommonDir))) {
+      await removeStoragePath(worktree.gitCommonDir);
+      return; // Private copies never delete another agent's remote branch.
+    }
     await execFileAsync('git', [`--git-dir=${worktree.gitCommonDir}`, 'worktree', 'prune', '--expire=now']);
   } else if (!localExists) {
     // Idempotent retry after a successful close: nothing local remains to
@@ -493,9 +423,14 @@ async function assertCornerWorktreePublished(worktree: CornerWorktree): Promise<
   const originalHead = (
     await execFileAsync('git', ['-C', worktree.path, 'rev-parse', '--verify', 'HEAD'])
   ).stdout.trim();
+  if (await execFileAsync('git', ['-C', worktree.path, 'rev-parse', '--verify', 'refs/stash']).then(() => true, () => false)) throw new Error(`corner ${worktree.cornerId} has unpushed stashed work`);
   if (await status()) throw new Error(`corner ${worktree.cornerId} has unpushed working-tree work`);
 
   await assertPublishedOnOrigin(worktree.gitCommonDir, originalHead, worktree.cornerId, worktree.token);
+  if (/^agent-corner-[a-f0-9]{64}\.git$/.test(basename(worktree.gitCommonDir)) &&
+      (await execFileAsync('git', [`--git-dir=${worktree.gitCommonDir}`, 'rev-list', '--branches', '--not', '--remotes=origin'])).stdout.trim())
+    throw new Error(`corner ${worktree.cornerId} has unpushed commits`);
+
 
   const settledHead = (
     await execFileAsync('git', ['-C', worktree.path, 'rev-parse', '--verify', 'HEAD'])
@@ -593,6 +528,12 @@ export class RoomRuntimeCoordinator {
    */
   private readonly archiveCleanupAbandoned = new Set<string>();
   private preservationFlight?: Promise<void>;
+  private maintenanceFlight?: Promise<void>;
+  private maintenanceRequest?: {
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>;
+    states: readonly StorageRoomState[];
+  };
+  private readonly desiredChannels = new Set<string>();
   private reconciliationProgressListener?: () => void | Promise<void>;
   private reconciliationStage = 'idle';
   private reconciliationStageAt = Date.now();
@@ -769,7 +710,6 @@ export class RoomRuntimeCoordinator {
 
   private async yieldReconciliation(): Promise<void> {
     await new Promise<void>(resolveYield => setImmediate(resolveYield));
-    if (!this.stopped) await this.reconciliationProgressListener?.();
   }
 
   setInteractiveIdleListener(listener: () => void): void {
@@ -914,10 +854,10 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
-    // A reboot can leave empty objects in a shared repo cache; repair them
-    // (and turn on crash-safe writes) before any Room or corner fetches.
-    await checkRepositoryCachesOnce(this.runtime.supervisorRoot);
+    // Repository repair is scoped to the first fetch of each active cache;
+    // archived object stores never delay command intake on helper restart.
     await this.yieldReconciliation();
+    if (!this.stopped) await this.reconciliationProgressListener?.();
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
     // Bind waiting surfaces before any fan-out, cleanup or corner listing.
     // Their intake runs independently while the rest of this sweep continues.
@@ -931,7 +871,8 @@ export class RoomRuntimeCoordinator {
       try {
         if (room.parentRoomId) {
           this.monolithCornerParents.set(room.roomId, room.parentRoomId);
-          await this.startCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
+          this.pendingCornerCommands.add(room.roomId);
+          await this.watchCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
         } else {
           this.surfaceHealth.discover(room.roomId, 'room');
           await this.startRoom(room.roomId);
@@ -1036,14 +977,6 @@ export class RoomRuntimeCoordinator {
     // Readiness belongs to durable command intake, never local retention work.
     await onServing?.();
     if (this.stopped) return 'member';
-    this.noteReconciliationStage('corner-reaping');
-    await this.retryPendingCornerReaps(desired);
-    if (this.stopped) return 'member';
-    this.noteReconciliationStage('archived-corner-storage');
-    await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
-    if (this.stopped) return 'member';
-    await this.reapClosedCornerEmulators(desired);
-    if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -1057,9 +990,6 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
-    this.noteReconciliationStage('room-storage');
-    await this.sweepRoomPrivateStorage(bootstrap.storageRooms ?? []);
-    if (this.stopped) return 'member';
     // Archived corners are discovered for local cleanup through their exact
     // checkout IDs. Their parent mapping serves only a running intake.
     for (const cornerId of this.monolithCornerParents.keys()) {
@@ -1070,7 +1000,46 @@ export class RoomRuntimeCoordinator {
     for (const [roomId, running] of this.running)
       if (existingRooms.has(roomId)) running.body.requestReconciliation();
     if (this.roomRemovalConfirmations.size) this.wakeDiscovery();
+    this.scheduleStorageMaintenance(archivedCorners, desired, bootstrap.storageRooms ?? []);
     return 'member';
+  }
+
+  /** Retention cannot hold discovery or its watchdog acknowledgement hostage.
+   * One sweep runs at a time; discovery coalesces its latest facts for the next
+   * pass and updates the active set immediately, including during a slow reap.
+   * Maintenance yields do not acknowledge a blocked foreground discovery. */
+  private scheduleStorageMaintenance(
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    desired: ReadonlySet<string>,
+    states: readonly StorageRoomState[],
+  ): void {
+    this.desiredChannels.clear();
+    for (const channel of desired) this.desiredChannels.add(channel);
+    this.maintenanceRequest = { archived, states };
+    if (this.maintenanceFlight) return;
+    this.maintenanceFlight = (async () => {
+      await this.yieldReconciliation();
+      while (!this.stopped && this.maintenanceRequest) {
+        const request = this.maintenanceRequest;
+        this.maintenanceRequest = undefined;
+        await this.retryPendingCornerReaps(this.desiredChannels);
+        if (this.stopped) return;
+        await this.sweepArchivedCornerWorktrees(request.archived, this.desiredChannels);
+        if (this.stopped) return;
+        await this.reapClosedCornerEmulators(this.desiredChannels);
+        if (this.stopped) return;
+        await this.sweepRoomPrivateStorage(request.states);
+      }
+    })().catch(error => console.error('[thin-core] storage maintenance deferred:', error))
+      .finally(() => {
+        this.maintenanceFlight = undefined;
+        // A discovery can queue fresh facts between the final loop check and
+        // this promise settling. Do not lose that last coalesced request.
+        if (!this.stopped && this.maintenanceRequest) {
+          const { archived, states } = this.maintenanceRequest;
+          this.scheduleStorageMaintenance(archived, new Set(this.desiredChannels), states);
+        }
+      });
   }
 
   /**
@@ -1431,18 +1400,35 @@ export class RoomRuntimeCoordinator {
       const granted = repositoryBacked
         ? await this.cornerRepositoryToken(corner.parentRoomId)
         : undefined;
-      const worktree = repositoryBacked
-        ? await this.materializeCornerWorktree({
-            cornerId: corner.cornerId,
-            remote: repository.remote!,
-            targetBranch: targetBranch!,
-            featureBranch: featureBranch!,
-            token: granted!.token,
-          })
-        : undefined;
-      if (worktree) await rememberStorageOwner(this.runtime.supervisorRoot, { workspaceId: this.runtime.communityId, roomId: corner.cornerId, kind: 'corners', itemId: corner.cornerId });
-      const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
-      if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
+      let worktree: { path: string; gitCommonDir: string } | undefined;
+      let readCheckout: { path: string; gitCommonDir: string } | undefined;
+      const prepareCheckout = async (writable: boolean, implementerAgentId = restore.implementerAgentId) => {
+        if (!writable) {
+          if (!readCheckout) {
+            const path = await this.materializeRoomCheckout(corner.parentRoomId, repository);
+            const common = (await execFileAsync('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
+            readCheckout = { path, gitCommonDir: common };
+          }
+          return readCheckout;
+        }
+        if (!worktree || !existsSync(resolve(worktree.path, '.git'))) {
+          worktree = await this.materializeCornerWorktree({
+            cornerId: corner.cornerId, remote: repository.remote!, targetBranch: targetBranch!,
+            featureBranch: featureBranch!, token: granted!.token,
+            migrateLegacy: implementerAgentId === this.agent.publicKey,
+          });
+          await rememberStorageOwner(this.runtime.supervisorRoot, { workspaceId: this.runtime.communityId,
+            roomId: corner.cornerId, kind: 'corners', itemId: basename(worktree.path), agentId: this.agent.publicKey, ended: false });
+          const running = this.running.get(corner.cornerId);
+          if (running) running.worktree = { ...worktree, cornerId: corner.cornerId,
+            branch: featureBranch!, parentRoomId: corner.parentRoomId, token: '' };
+        }
+        return worktree;
+      };
+      const repositoryReadOnly = Boolean(restore.brief) && !cornerHasRepositoryWork(restore.brief);
+      const checkout = repositoryBacked ? await prepareCheckout(!repositoryReadOnly) : undefined;
+      const workspacePath = checkout?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
+      if (!checkout) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       await writePrivateFileAtomically(
         resolve(this.roomRoot(corner.cornerId), '.beeline-corner.json'),
         `${JSON.stringify({ cornerId: corner.cornerId, parentRoomId: corner.parentRoomId })}\n`,
@@ -1467,18 +1453,20 @@ export class RoomRuntimeCoordinator {
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
         worktreePath: workspacePath,
-        ...(worktree
+        ...(checkout
           ? {
+              prepareCheckout,
               repository: {
                 featureBranch: featureBranch!,
                 targetBranch: targetBranch!,
-                gitCommonDir: worktree.gitCommonDir,
+                gitCommonDir: checkout.gitCommonDir,
+                readOnly: repositoryReadOnly,
                 githubToken: granted!.token,
               },
             }
           : {}),
         runtime: this.runtime,
-        config: this.roomConfig(corner.cornerId, worktree ? undefined : workspacePath),
+        config: this.roomConfig(corner.cornerId, repositoryBacked ? undefined : workspacePath),
         api: this.options.daemonApi,
         scheduler: this.scheduler,
         signal: controller.signal,
@@ -1494,7 +1482,7 @@ export class RoomRuntimeCoordinator {
                 parentRoomId: corner.parentRoomId,
                 token: '',
               })
-            : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
+            : repositoryBacked ? this.cleanupArchivedCornerLocalState(corner.cornerId).then(() => undefined) : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
         onRestartRequested: () => this.requestLifecycleRestart(),
         canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
           !SessionScheduler.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
@@ -1536,7 +1524,7 @@ export class RoomRuntimeCoordinator {
               },
             }
           : {}),
-        ...(!worktree ? { scratch: { path: workspacePath, cornerId: corner.cornerId } } : {}),
+        ...(!repositoryBacked ? { scratch: { path: workspacePath, cornerId: corner.cornerId } } : {}),
       });
       this.standingCornerStartFaults.delete(corner.cornerId);
       this.reportedCornerStartFailures.delete(corner.cornerId);
@@ -1574,7 +1562,7 @@ export class RoomRuntimeCoordinator {
     const cornerId = corner.cornerId;
     if (this.running.has(cornerId)) return;
     if (this.idleCornerSubscriptions.has(cornerId)) {
-      if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+      if (this.pendingCornerCommands.has(cornerId)) void this.activateWatchedCorner(corner);
       return;
     }
     if (!this.options.daemonApi.liveSubscribe) {
@@ -1603,7 +1591,9 @@ export class RoomRuntimeCoordinator {
       },
     );
     this.idleCornerSubscriptions.set(cornerId, release);
-    if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+    // Migration can copy a large legacy tree. Intake for every other Room and
+    // the local watchdog must remain available while this bounded start runs.
+    if (this.pendingCornerCommands.has(cornerId)) void this.activateWatchedCorner(corner);
   }
 
   private unwatchCorner(cornerId: string): void {
@@ -1780,6 +1770,7 @@ export class RoomRuntimeCoordinator {
     targetBranch: string;
     featureBranch: string;
     token: string;
+    migrateLegacy?: boolean;
   }): Promise<{ path: string; gitCommonDir: string }> {
     const worktree = await materializeCornerWorktree({
       ...input,
@@ -1792,7 +1783,12 @@ export class RoomRuntimeCoordinator {
   }
 
   private getLocalWorktreeIds(): Promise<Set<string>> {
-    return (this.localWorktreeIds ??= localCornerWorktreeIds(this.runtime.supervisorRoot));
+    return (this.localWorktreeIds ??= Promise.all([
+      localCornerWorktreeIds(this.runtime.supervisorRoot), readStorageOwners(this.runtime.supervisorRoot),
+    ]).then(([ids, owners]) => new Set([
+      ...[...ids].filter(id => !/^[a-f0-9]{64}$/.test(id)),
+      ...owners.filter(owner => owner.kind === 'corners' && owner.agentId === this.agent.publicKey).map(owner => owner.roomId),
+    ])));
   }
 
   private archiveCleanupRefusalPath(cornerId: string): string {
@@ -1883,7 +1879,7 @@ export class RoomRuntimeCoordinator {
       if (this.archiveCleanupAbandoned.has(cornerId) || await this.cleanupWasRefused(cornerId)) continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
       try {
-        await this.reapCornerWorktree(worktree);
+        await this.reapIdleCornerWorktree(worktree, desired);
       } catch (error) {
         if (hasUnpublishedWork(error)) {
           // Nothing will ever push this work for an abandoned corner, so
@@ -1970,7 +1966,7 @@ export class RoomRuntimeCoordinator {
       let discovered: DiscoveredCornerWorktree | undefined;
       let candidate: CornerWorktree | undefined;
       try {
-        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, cornerId);
+        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, cornerId, this.agent.publicKey);
         if (!discovered) {
           localIds.delete(cornerId);
           continue;
@@ -2003,8 +1999,11 @@ export class RoomRuntimeCoordinator {
           this.runtime.supervisorRoot,
           repository.remote,
         );
-        if (resolve(discovered.gitCommonDir) !== expectedCommonDir) {
+        if (resolve(discovered.gitCommonDir) !== expectedCommonDir && resolve(discovered.gitCommonDir) !== agentCornerCheckoutPaths(this.runtime.supervisorRoot, cornerId, this.agent.publicKey).gitCommonDir) {
           throw new Error(`archived corner ${corner.cornerId} repository cache does not match`);
+        }
+        if ((await execFileAsync('git', [`--git-dir=${discovered.gitCommonDir}`, 'remote', 'get-url', 'origin'])).stdout.trim() !== roomCheckoutRemote(repository.remote)) {
+          throw new Error(`archived corner ${corner.cornerId} repository remote does not match`);
         }
         if (!restore.featureBranch) {
           throw new Error(`archived corner ${corner.cornerId} has no authoritative feature branch`);
@@ -2017,7 +2016,7 @@ export class RoomRuntimeCoordinator {
           token: '',
           recovered: true,
         };
-        await this.reapCornerWorktree(candidate);
+        await this.reapIdleCornerWorktree(candidate, desired);
         if (!this.archiveCleanupRefused.has(cornerId))
           console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
@@ -2038,14 +2037,50 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private async reapIdleCornerWorktree(worktree: CornerWorktree, desired: ReadonlySet<string>): Promise<void> {
+    const eligible = () => !this.stopped && !desired.has(worktree.cornerId) &&
+      !this.running.has(worktree.cornerId) && !this.startingCorners.has(worktree.cornerId) &&
+      !this.idleCornerSubscriptions.has(worktree.cornerId);
+    if (!eligible()) return;
+    await this.scheduler.withIdleStorage(worktree.cornerId, async () => {
+      if (!eligible()) return;
+      this.storageMaintenanceRooms.add(worktree.cornerId);
+      try { await this.reapCornerWorktree(worktree); }
+      finally { this.storageMaintenanceRooms.delete(worktree.cornerId); }
+    });
+  }
+
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
+    if (/^agent-corner-[a-f0-9]{64}\.git$/.test(basename(worktree.gitCommonDir))) {
+      if (!existsSync(worktree.path) && !existsSync(worktree.gitCommonDir)) return;
+      // A departing member may already have lost server access. Its private
+      // copy needs local publication evidence, never remote branch authority.
+      const owner: StorageOwner = { workspaceId: this.runtime.communityId, roomId: worktree.cornerId,
+        kind: 'corners', itemId: basename(worktree.path), agentId: this.agent.publicKey, ended: true };
+      await rememberStorageOwner(this.runtime.supervisorRoot, owner);
+      if ((await capturePrivateProcessUse())(worktree.path) || await hasMount(worktree.path)) return;
+      const status = (await execFileAsync('git', ['-C', worktree.path, 'status', '--porcelain=v1', '--untracked-files=all'])).stdout.trim();
+      const head = (await execFileAsync('git', ['-C', worktree.path, 'rev-parse', 'HEAD'])).stdout.trim();
+      if (status || !await originContains(worktree.gitCommonDir, head)) {
+        this.pendingCornerReaps.set(worktree.cornerId, { ...worktree, token: '' });
+        throw new Error(`corner ${worktree.cornerId} has unpushed ${status ? 'working-tree work' : 'commits'}`);
+      }
+      await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner);
+      await this.collectDependencyStores();
+      if (!existsSync(worktree.path)) {
+        this.pendingCornerReaps.delete(worktree.cornerId);
+        this.archiveCleanupFaults.delete(worktree.cornerId);
+        (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
+      }
+      return;
+    }
     if (await this.cleanupWasRefused(worktree.cornerId)) return;
     // Refused backlogs often have no declared proof. Do not scan or populate
     // the whole owner store for each entry in that backlog.
     if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, undefined)) {
-      const ownerPath = resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${worktree.cornerId}.json`);
+      const ownerPath = resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${basename(worktree.path)}.json`);
       const owner = await readFile(ownerPath, 'utf8').then(text => JSON.parse(text) as StorageOwner, () => undefined) ??
-        { workspaceId: this.runtime.communityId, roomId: worktree.cornerId, kind: 'corners' as const, itemId: worktree.cornerId };
+        { workspaceId: this.runtime.communityId, roomId: worktree.cornerId, kind: 'corners' as const, itemId: basename(worktree.path), agentId: this.agent.publicKey };
       const endedAt = owner.endedAt ?? Date.now();
       if (!owner.ended || owner.endedAt === undefined)
         await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, endedAt });
@@ -2072,7 +2107,8 @@ export class RoomRuntimeCoordinator {
       ).token;
       if ((await capturePrivateProcessUse())(worktree.path) || await hasMount(worktree.path)) return;
       await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
-      await rm(resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${worktree.cornerId}.json`), { force: true });
+      await this.collectDependencyStores();
+      await rm(resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${basename(worktree.path)}.json`), { force: true });
       this.pendingCornerReaps.delete(worktree.cornerId);
       this.archiveCleanupFaults.delete(worktree.cornerId);
       (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
@@ -2173,7 +2209,7 @@ export class RoomRuntimeCoordinator {
     const archived = new Set(states.filter(state => state.archived).map(state => state.roomId));
     for (const owner of await readStorageOwners(this.runtime.supervisorRoot)) {
       await this.yieldReconciliation();
-      if (!archived.has(owner.roomId)) continue;
+      if (!archived.has(owner.roomId) || owner.agentId && owner.agentId !== this.agent.publicKey) continue;
       const state = states.find(state => state.roomId === owner.roomId)!;
       await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
       if (this.running.has(owner.roomId) || this.startingRooms.has(owner.roomId)) continue;
@@ -2187,10 +2223,19 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private async collectDependencyStores(): Promise<void> {
+    for (const store of new Set([warmNodeModulesStoreDir(this.runtime.supervisorRoot), mobileNodeModulesStoreDir(this.runtime.supervisorRoot), resolve(this.runtime.supervisorRoot, 'beeline/node-modules-mobile')])) {
+      await collectDependencyStore(store);
+    }
+  }
+
   /** Local maintenance consumes only facts delivered by successful discovery.
    * Archive is terminal; uncertainty never synthesizes an archive fact. */
   async reclaimKnownPrivateStorage(): Promise<void> {
-    if (!this.stopped) await this.sweepRoomPrivateStorage(this.knownStorageStates);
+    if (!this.stopped) {
+      await this.sweepRoomPrivateStorage(this.knownStorageStates);
+      await this.collectDependencyStores();
+    }
   }
 
   private notePoll(roomId: string): void {
@@ -2249,6 +2294,7 @@ export class RoomRuntimeCoordinator {
       }
     };
     if (this.membershipDrain) await untilDeadline(this.membershipDrain);
+    if (this.maintenanceFlight) await untilDeadline(this.maintenanceFlight);
     if (this.preservationFlight) await untilDeadline(this.preservationFlight.catch(() => undefined));
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();

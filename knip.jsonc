@@ -116,6 +116,8 @@
       "expo": false,
       "entry": [
         "index.ts",
+        // WEB-OUTBOX-3446 invokes the exported-bundle startup proof by path.
+        "scripts/outbox-startup-bundle-proof.mjs",
         // CONNECT-RING-1 selects the native entry and Metro adapter by path.
         "scripts/connect-ring-proof/{index.tsx,metro.cjs}",
         // The approved GitHub card proof uses temporary native/web entry and resolver overrides.

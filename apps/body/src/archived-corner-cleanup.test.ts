@@ -1,5 +1,5 @@
 import { promisify } from 'node:util';
-import { readlinkSync, readFileSync } from 'node:fs';
+import { readlinkSync, readFileSync, readdirSync } from 'node:fs';
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   const mocked = (...args: any[]) => {
@@ -12,7 +12,13 @@ vi.mock('node:child_process', async (importOriginal) => {
     if (args[0] === '/sbin/mount') args[0] = '/bin/mount';
     if (args[0] === '/usr/sbin/lsof') {
       const callback = args.at(-1);
-      try { callback(null, `p${args[1][2]}\nn${('/private' + readlinkSync(`/proc/${args[1][2]}/cwd`))}\n`, ''); }
+      try {
+        const base = `/proc/${args[1][2]}`;
+        const paths = ['cwd', ...readdirSync(base + '/fd').map(fd => 'fd/' + fd)].flatMap(name => {
+          try { return ['n/private' + readlinkSync(base + '/' + name)]; } catch { return []; }
+        });
+        callback(null, paths.join('\n'), '');
+      }
       catch (error) { callback(error, '', ''); }
       return;
     }
@@ -50,8 +56,8 @@ it.skipIf(process.platform !== 'linux').each(['linux', 'darwin', 'darwin-var'] a
   const unrelated = spawn(process.execPath, ['-e', `/* mentions ${path}/worker.cjs */ setInterval(()=>{},1000)`], { cwd: root, stdio: 'ignore' });
   const worker = resolve(path, 'worker.cjs');
   await writeFile(worker, 'setInterval(()=>{},1000)');
-  const child = spawn(process.execPath, [worker], { cwd: root, stdio: 'ignore' });
-  await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
+  const child = spawn(process.execPath, ['-e', "process.on('message',p=>{require('fs').openSync(p,'r');process.send('ready')});setInterval(()=>{},1000)"], { cwd: root, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  await new Promise<void>((done, fail) => { child.once('message', () => done()); child.once('error', fail); child.send(worker); });
   const exited = new Promise<void>(done => child.once('exit', () => done()));
   await writeFile(resolve(path, '.gitignore'), 'build/\n');
   await mkdir(resolve(path, 'build'));

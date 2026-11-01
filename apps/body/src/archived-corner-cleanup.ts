@@ -9,7 +9,7 @@ import { canonicalStoragePath } from './storage-filesystem.js';
 const exec = promisify(execFile);
 
 // pidfds fence PID reuse. No environment values, arbitrary shell commands or
-// process-group signals. Attribution requires a cwd or an absolute argument
+// process-group signals. Attribution requires an open file, cwd or an absolute argument
 // within an exact closed-corner root. The helper and its ancestors are excluded.
 const STOP = String.raw`
 import os,sys,json,signal,time
@@ -36,10 +36,19 @@ while changed:
  for pid,(parent,_,_,_,_) in rows.items():
   if parent in brokers and pid not in brokers: brokers.add(pid); changed=True
 protected.update(brokers)
+def holds_file(pid):
+ try:
+  base='/proc/'+str(pid)+'/fd'
+  for name in os.listdir(base):
+   try:
+    if inside(os.readlink(base+'/'+name).removesuffix(' (deleted)')): return True
+   except OSError: pass
+ except OSError: pass
+ return False
 selected=set()
 for pid,(_,_,cwd,args,exe) in rows.items():
  if pid in protected or 'trusty-squire' in exe or any('trusty-squire' in a for a in args[:2]): continue
- if inside(cwd) or any(inside(a.partition('=')[2] if a.startswith('--') and '=' in a else a) for a in args): selected.add(pid)
+ if holds_file(pid) or inside(cwd) or any(inside(a.partition('=')[2] if a.startswith('--') and '=' in a else a) for a in args): selected.add(pid)
 # Descendants belong to the attributed process, unless explicitly protected.
 changed=True
 while changed:
@@ -94,16 +103,15 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
       return match ? [{ pid: Number(match[1]), parent: Number(match[2]), uid: Number(match[3]), birth: match[4]!, command: match[5]! }] : [];
     });
   };
-  const cwd = async (pid: number): Promise<string | undefined> => {
+  const files = async (pid: number): Promise<string[]> => {
     try {
-      const { stdout } = await exec('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']);
-      const path = stdout.split('\n').find(line => line.startsWith('n'))?.slice(1);
-      return path === undefined ? undefined : canonicalStoragePath(path);
-    } catch { return undefined; }
+      const { stdout } = await exec('/usr/sbin/lsof', ['-a', '-p', String(pid), '-Fn']);
+      return stdout.split('\n').filter(line => line.startsWith('n/')).map(line => canonicalStoragePath(line.slice(1)));
+    } catch { return []; }
   };
   const inside = (path: string | undefined) => path !== undefined && roots.some(root => path === root || path.startsWith(`${root}/`));
   const attributed = async (pid: number): Promise<boolean> => {
-    if (inside(await cwd(pid))) return true;
+    if ((await files(pid)).some(inside)) return true;
     try {
       const { stdout } = await exec('/usr/bin/python3', ['-c', DARWIN_ARGV, String(pid)]);
       const args = JSON.parse(stdout) as string[];

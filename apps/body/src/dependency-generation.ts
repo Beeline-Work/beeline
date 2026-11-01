@@ -133,13 +133,25 @@ export async function installDependencyNpmGuard(
   root: string,
   npm: string,
   inheritedPath: string,
+  dependencyPaths: string[] = [],
 ): Promise<string> {
   const bin = resolve(root, 'dependency-bin');
   await mkdir(bin, { recursive: true });
   const program = `#!${process.execPath}\nconst {spawnSync}=require('node:child_process');
 const args=process.argv.slice(2);
+const {existsSync,realpathSync}=require('node:fs');
+const {resolve,relative,isAbsolute}=require('node:path');
+const prefixIndex=args.indexOf('--prefix');
+let privateCi=false;
+if(args[0]==='ci' && prefixIndex>=0 && args[prefixIndex+1]) {
+ try {
+  const target=realpathSync(args[prefixIndex+1]);
+  const contains=(a,b)=>{const r=relative(a,b);return r===''||(!r.startsWith('..'+require('node:path').sep)&&r!=='..'&&!isAbsolute(r));};
+  privateCi=!existsSync(resolve(target,'node_modules')) && !${JSON.stringify(dependencyPaths)}.some(p=>contains(target,p)||contains(p,target));
+ } catch {}
+}
 const mutations=new Set(['install','i','ci','add','update','up','upgrade','uninstall','remove','rm','rebuild','dedupe','prune','link']);
-if(args.some(a=>mutations.has(a)) && !args.includes('--package-lock-only')) {
+if(args.some(a=>mutations.has(a)) && !args.includes('--package-lock-only') && !privateCi) {
  console.error('Beeline dependencies are read-only. Use npm install --package-lock-only --ignore-scripts <package> (or edit package.json and package-lock.json). Beeline installs and mounts the new generation automatically at the next turn.');
  process.exit(1);
 }

@@ -1373,7 +1373,7 @@ export class MonolithCornerTurnLoop {
         }));
       }
       if (dependencyPaths.length && this.options.config.agentHomeRoot) {
-        agentEnv.PATH = await installDependencyNpmGuard(this.options.config.agentHomeRoot, npm, agentEnv.PATH ?? process.env.PATH ?? '');
+        agentEnv.PATH = await installDependencyNpmGuard(this.options.config.agentHomeRoot, npm, agentEnv.PATH ?? process.env.PATH ?? '', dependencyPaths);
         agentEnv.BEELINE_READONLY_DEPENDENCIES = '1';
       }
     }

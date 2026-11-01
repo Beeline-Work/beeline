@@ -190,3 +190,29 @@ it('a hung private install never holds the shared dependency store against anoth
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Reproduction REVIEW-DEPS-1: an exact-head tree has no mounted dependencies.
+it('allows npm ci in a fresh private review tree while protecting mounted trees', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'review-guard-'));
+  try {
+    const home = resolve(root, 'home'), review = resolve(root, 'review');
+    await mkdir(review);
+    await writeFile(resolve(review, 'package.json'), '{"name":"review-proof","version":"1.0.0"}');
+    const npm = execFileSync('which', ['npm'], { encoding: 'utf8' }).trim();
+    execFileSync(npm, ['install', '--package-lock-only', '--ignore-scripts'], { cwd: review });
+    const sealed = resolve(root, 'sealed');
+    await mkdir(resolve(sealed, 'packages/nested/node_modules'), { recursive: true });
+    const path = await installDependencyNpmGuard(home, npm, process.env.PATH!, [resolve(sealed, 'packages/nested/node_modules')]);
+    for (const target of [sealed, resolve(sealed, 'packages/nested/node_modules')]) {
+      const refusal = spawnSync('npm', ['ci', '--prefix', target], {
+        env: { ...process.env, PATH: path }, encoding: 'utf8',
+      });
+      expect(refusal.status).toBe(1);
+      expect(refusal.stderr).toContain('Beeline dependencies are read-only');
+    }
+    const result = spawnSync('npm', ['ci', '--prefix', review], {
+      cwd: root, env: { ...process.env, PATH: path }, encoding: 'utf8',
+    });
+    expect(result.status, result.stderr).toBe(0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

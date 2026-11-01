@@ -28,9 +28,10 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, readdirSync, lstatSync, readlinkSync, symlinkSync, cpSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const USAGE = `Usage:
@@ -119,12 +120,58 @@ function defaultGit(args) {
   };
 }
 
+/** Reuse only the installed generation for this exact lockfile and runtime. */
+export function reuseReviewDependencies(source, target) {
+  try {
+    const lock = readFileSync(join(target, 'package-lock.json'));
+    if (!lock.equals(readFileSync(join(source, 'package-lock.json')))) return false;
+    const marker = JSON.parse(readFileSync(join(source, 'node_modules/.beeline-generation'), 'utf8'));
+    const key = createHash('sha256')
+      .update(`v2\0${process.platform}\0${process.arch}\0${process.versions.modules}\0`)
+      .update(lock).digest('hex').slice(0, 32);
+    if (marker.key !== key) return false;
+    const packages = JSON.parse(lock).packages;
+    const trees = new Set();
+    for (const [path, pkg] of Object.entries(packages)) {
+      const parts = path.split('/'), index = parts.indexOf('node_modules');
+      if (index < 0) continue;
+      if (isAbsolute(path) || parts.includes('..')) return false;
+      if (!pkg.optional && !existsSync(join(source, path))) return false;
+      trees.add(parts.slice(0, index + 1).join('/'));
+    }
+    // Keep package directories on their sealed mounts; recreate workspace links
+    // and executable links against the review tree rather than the source head.
+    const place = (from, to, scope = false) => {
+      mkdirSync(to, { recursive: true });
+      for (const name of readdirSync(from)) {
+        const src = join(from, name), dst = join(to, name);
+        if (name === '.beeline-generation') continue;
+        if (lstatSync(src).isSymbolicLink()) {
+          const dest = resolve(dirname(src), readlinkSync(src));
+          const rel = relative(source, dest);
+          symlinkSync(!rel.startsWith('../') && !isAbsolute(rel)
+            ? relative(dirname(dst), join(target, rel)) : dest, dst);
+        } else if (!scope && name.startsWith('@')) place(src, dst, true);
+        else if (!scope && name === '.bin') cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
+        else if (lstatSync(src).isDirectory()) symlinkSync(src, dst, 'dir');
+        else cpSync(src, dst);
+      }
+    };
+    for (const tree of trees) place(join(source, tree), join(target, tree));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function reviewExactHead(argv, deps = {}) {
   const {
     run = defaultRun,
     git = defaultGit,
     makeTemp = () => mkdtempSync(join(tmpdir(), 'beeline-review-')),
     remove = (dir) => rmSync(dir, { recursive: true, force: true }),
+    reuse = reuseReviewDependencies,
+    sourceRoot = process.cwd(),
     log = (line) => process.stdout.write(`${line}\n`),
   } = deps;
 
@@ -163,20 +210,30 @@ export function reviewExactHead(argv, deps = {}) {
     }
     log(`[review] worktree ${worktreeDir}`);
 
-    const install = run('npm', ['ci'], { cwd: worktreeDir });
-    note('npm ci', install.status === 0, install.status === 0 ? '' : `exit ${install.status}`);
-
-    const needsMobile =
-      typechecks.some(isMobilePackage) ||
+    const prepare = (part = '') => {
+      const target = join(worktreeDir, part);
+      if (reuse(join(sourceRoot, part), target)) {
+        note(`dependencies${part ? ' ' + part : ''}`, true, 'reused matching shared generation');
+        return;
+      }
+      // A failed reuse may have placed partial links. This is a new, private
+      // worktree, so remove those aliases before installing into writable space.
+      const lock = JSON.parse(readFileSync(join(target, 'package-lock.json'), 'utf8'));
+      const trees = new Set(['node_modules']);
+      for (const path of Object.keys(lock.packages ?? {})) {
+        const parts = path.split('/'), index = parts.indexOf('node_modules');
+        if (isAbsolute(path) || parts.includes('..')) throw new Error('Unsafe dependency lockfile');
+        if (index >= 0) trees.add(parts.slice(0, index + 1).join('/'));
+      }
+      for (const tree of trees) rmSync(join(target, tree), { recursive: true, force: true });
+      const install = run('npm', ['ci', '--prefix', target], { cwd: worktreeDir });
+      if (install.status !== 0) throw new Error(`Dependencies${part ? ' ' + part : ''}: shared generation unavailable or lockfile differs; writable npm ci failed (exit ${install.status})`);
+      note(`npm ci${part ? ' ' + part : ''}`, true);
+    };
+    prepare();
+    const needsMobile = typechecks.some(isMobilePackage) ||
       targets.some((target) => isMobilePackage(target.split(':')[0]));
-    if (needsMobile) {
-      const mobileInstall = run('npm', ['ci', '--prefix', 'apps/mobile'], { cwd: worktreeDir });
-      note(
-        'npm ci apps/mobile',
-        mobileInstall.status === 0,
-        mobileInstall.status === 0 ? '' : `exit ${mobileInstall.status}`,
-      );
-    }
+    if (needsMobile) prepare('apps/mobile');
 
     const buildArgs = ['run', 'build'];
     for (const pkg of REVIEW_BUILD_PACKAGES) {

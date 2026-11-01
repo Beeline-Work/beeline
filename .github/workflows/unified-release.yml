@@ -372,7 +372,7 @@ jobs:
             shipped=$(printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(String(m.version===process.env.RELEASE_VERSION&&m.sourceCommit===process.env.RELEASE_SHA))})' || echo false)
           fi
           echo "shipped=$shipped" | tee -a "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         if: steps.shipped.outputs.shipped != 'true'
       - run: bash scripts/npm-ci-timed.sh
         if: steps.shipped.outputs.shipped != 'true'
@@ -451,9 +451,8 @@ jobs:
       - uses: ./.github/actions/require-tools
         with:
           tools: git curl tar
-      - name: Reuse or provision the helper Rust toolchain
+      - uses: dtolnay/rust-toolchain@1.95.0
         if: needs.helper_macos.outputs.shipped != 'true'
-        run: bash scripts/ensure-helper-rust.sh
       - run: bash scripts/npm-ci-timed.sh
       - uses: ./.github/actions/buzz-agent-cache
         if: needs.helper_macos.outputs.shipped != 'true'

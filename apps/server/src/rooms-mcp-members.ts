@@ -138,7 +138,7 @@ export async function ensureMcpMember(
     if (!created.rowCount) return undefined;
     await tx.query(
       `INSERT INTO agents(agent_id,owner_id,selected_model) VALUES($1,$2,$3)
-       ON CONFLICT(agent_id) DO NOTHING`,
+       ON CONFLICT(agent_id) DO UPDATE SET selected_model=EXCLUDED.selected_model`,
       [memberId, input.ownerId, modelLabel],
     );
     const fresh = (await tx.query<{ fresh: boolean }>(

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
 import { RoomsMcpEvents } from './rooms-mcp-events.js';
-import { backfillMcpMemberRoomsAndAvatars, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
+import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -960,6 +960,30 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await latestMemberCommand()).toEqual(stopped);
     expect((await db.query('SELECT 1 FROM rooms_mcp_webhook_outbox WHERE member_id=$1', [member])).rowCount).toBe(2);
   });
+  it.each([
+    ['Claude Code', [], 'Claude Code'],
+    ['Codex', [], 'Codex'],
+    ['OpenCode', [], 'OpenCode'],
+    ['Cursor', [], 'Cursor'],
+    ['Cursor', ['https://www.cursor.com/agents/mcp/oauth/callback'], 'Grok Bot'],
+  ])('shows registered %s app identity for existing joined sessions', async (name, redirects, label) => {
+    const { grant, member } = await connected();
+    await db.query('UPDATE rooms_mcp_clients SET name=$2,redirects=$3 WHERE id=$1',
+      [grant.clientId, name, JSON.stringify(redirects)]);
+    // Old registrations kept these placeholders even after their client identity changed.
+    await db.query("UPDATE agents SET selected_model='agent' WHERE agent_id=$1", [member]);
+    await db.query("UPDATE identities SET name='My reviewer' WHERE id=$1", [member]);
+    const roster = await phone.readWorkspaceMembers(WORKSPACE, USER, { q: 'My reviewer' });
+    expect(roster?.agents.find(agent => agent.identity.pubkey === member)?.model).toBe(label);
+    const profile = await phone.readAgent(WORKSPACE, member, USER);
+    expect(profile?.selected?.model).toBe(label);
+    expect(profile?.seededSoul).toContain(`Connected through ${label}.`);
+    expect(profile?.agent.identity.name).toBe('My reviewer');
+    await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: name });
+    expect((await db.query<{ selected_model: string }>('SELECT selected_model FROM agents WHERE agent_id=$1', [member])).rows[0]?.selected_model).toBe(label);
+    expect((await phone.readAgent(WORKSPACE, member, USER))?.agent.identity.name).toBe('My reviewer');
+  });
+
   it('sets this member’s own profile without changing its registered model label', async () => {
     const { client, member } = await connected();
     const updated = await client.callTool({ name: 'set_profile', arguments: { name: 'Firstmate', handle: 'firstmate_set', avatar: '' } });

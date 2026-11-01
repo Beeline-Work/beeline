@@ -66,3 +66,36 @@ try {
   await exited;
   console.log('ARCHIVED-OUTPUT-1 PASS: built reconciliation preserves unknown/open homes; archived home without owner or checkout is deleted and child stopped');
 } finally { homeChild?.kill('SIGKILL'); await rm(homeRoot, { recursive: true, force: true }); }
+
+// Runtime-local repository-free rooms are outside the indexed agent home.
+const { RoomRuntimeCoordinator } = await import('../apps/body/dist/room-runtime.js');
+const { identityFromKey } = await import('../apps/body/dist/runtime.js');
+const localRoot = await mkdtemp(join(tmpdir(), 'beeline-runtime-scratch-'));
+const scratch = join(localRoot, 'rooms/chat-corner/scratch');
+let scratchChild, coordinator;
+try {
+  await mkdir(scratch, { recursive: true });
+  await writeFile(join(scratch, 'work.txt'), 'scratch');
+  scratchChild = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: scratch, stdio: 'ignore' });
+  await new Promise((done, fail) => { scratchChild.once('spawn', done); scratchChild.once('error', fail); });
+  const exited = new Promise(done => scratchChild.once('exit', done));
+  const identity = identityFromKey('11'.repeat(32), 'Proof');
+  let state;
+  coordinator = new RoomRuntimeCoordinator({
+    agent: { name: 'Proof', publicKey: identity.publicKey, secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+    rooms: [], communityId: 'workspace', supervisorRoot: localRoot,
+    transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+  }, join(localRoot, 'agent.json'), { workspaceRoot: localRoot }, {
+    daemonApi: { execute: async () => { if (!state) throw new Error('unknown'); return state; } },
+  });
+  for (state of [undefined, { archived: false }]) {
+    assert.equal(await coordinator.cleanupArchivedCornerLocalState('chat-corner'), false);
+    assert.equal(await exists(join(scratch, 'work.txt')), true);
+    assert.equal(scratchChild.signalCode, null);
+  }
+  state = { archived: true };
+  assert.equal(await coordinator.cleanupArchivedCornerLocalState('chat-corner'), true);
+  await exited;
+  assert.equal(await exists(scratch), false);
+  console.log('ARCHIVED-OUTPUT-1 PASS: built runtime-local cleanup stops child and removes scratch; open/unknown preserved');
+} finally { scratchChild?.kill('SIGKILL'); await coordinator?.shutdown(); await rm(localRoot, { recursive: true, force: true }); }

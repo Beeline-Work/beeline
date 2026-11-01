@@ -1,4 +1,33 @@
-import { execFile } from 'node:child_process';
+import { readlinkSync, readFileSync, readdirSync } from 'node:fs';
+vi.mock('node:child_process', async (importOriginal) => {
+  const { promisify } = await import('node:util');
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const mocked = (...args: any[]) => {
+    if (args[0] === '/usr/bin/python3' && args[1][1].includes('KERN_PROCARGS2')) {
+      const callback = args.at(-1);
+      try { callback(null, JSON.stringify(readFileSync(`/proc/${args[1][2]}/cmdline`, 'utf8').split('\0').filter(Boolean)), ''); }
+      catch (error) { callback(error, '', ''); }
+      return;
+    }
+    if (args[0] === '/sbin/mount') args[0] = '/bin/mount';
+    if (args[0] === '/usr/sbin/lsof') {
+      const callback = args.at(-1);
+      try {
+        const base = `/proc/${args[1][2]}`;
+        const paths = ['cwd', ...readdirSync(base + '/fd').map(fd => 'fd/' + fd)].flatMap(name => {
+          try { return ['n/private' + readlinkSync(base + '/' + name)]; } catch { return []; }
+        });
+        callback(null, paths.join('\n'), '');
+      }
+      catch (error) { callback(error, '', ''); }
+      return;
+    }
+    return (actual.execFile as Function)(...args);
+  };
+  Object.defineProperty(mocked, promisify.custom, { value: (...args: any[]) => !['/usr/sbin/lsof', '/sbin/mount', '/usr/bin/python3'].includes(args[0]) ? (promisify(actual.execFile) as Function)(...args) : new Promise((resolve, reject) => mocked(...args, (error: Error | null, stdout: string, stderr: string) => error ? reject(error) : resolve({ stdout, stderr }))) });
+  return { ...actual, execFile: mocked };
+});
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -9,12 +38,6 @@ import { materializeCornerWorktree, RoomRuntimeCoordinator } from './room-runtim
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { declareCornerProofOutput } from './corner-proof-output.js';
 
-/**
- * An archived corner whose worktree has commits no origin ref contains can
- * never be cleaned up automatically - nothing will push them later. Retrying
- * it on every reconciliation only slows discovery down; it must be reported
- * once and then left alone, with the checkout and its commits kept.
- */
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () =>
@@ -107,7 +130,7 @@ describe('archived corner branch cleanup', () => {
     } finally { await coordinator.shutdown(); }
   });
 
-  it('removes repository-free private state including conversation after authoritative archive', async () => {
+  it.skipIf(process.platform !== 'linux').each(['linux', 'darwin'])('removes repository-free private state and live child after authoritative archive (%s)', async (platform) => {
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-private-retention-'));
     roots.push(supervisorRoot);
     const cornerId = 'chat-corner';
@@ -117,20 +140,31 @@ describe('archived corner branch cleanup', () => {
     await writeFile(resolve(scratch, 'agent-home/codex/sessions/history.json'), 'conversation');
     await writeFile(resolve(scratch, 'agent-private/pending.json'), 'approval');
     await writeFile(resolve(scratch, 'work.txt'), 'scratch');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: scratch, stdio: 'ignore' });
+    await new Promise<void>((done, fail) => { child.once('spawn', done); child.once('error', fail); });
+    const execute = vi.fn().mockResolvedValue({ archived: true });
     const coordinator = new RoomRuntimeCoordinator(
       runtimeAt(supervisorRoot), resolve(supervisorRoot, 'agent.json'),
       { workspaceRoot: supervisorRoot } as never,
-      { daemonApi: { execute: vi.fn().mockResolvedValue({ archived: true }) } as unknown as DaemonApiClient },
+      { daemonApi: { execute } as unknown as DaemonApiClient },
     );
+    vi.stubGlobal('process', new Proxy(process, { get: (target, key) => key === 'platform' ? platform : Reflect.get(target, key) }));
     try {
       const internal = coordinator as unknown as {
         cleanupArchivedCornerLocalState(id: string): Promise<boolean>;
       };
+      for (const state of [undefined, { archived: false }]) {
+        execute.mockImplementationOnce(() => state ? Promise.resolve(state) : Promise.reject(new Error('unknown')));
+        expect(await internal.cleanupArchivedCornerLocalState(cornerId)).toBe(false);
+        expect(child.signalCode).toBe(null);
+        expect(await readFile(resolve(scratch, 'work.txt'), 'utf8')).toBe('scratch');
+      }
       expect(await internal.cleanupArchivedCornerLocalState(cornerId)).toBe(true);
+      await expect.poll(() => child.signalCode !== null || child.exitCode !== null).toBe(true);
       await expect(readFile(resolve(scratch, 'agent-home/codex/sessions/history.json'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(readFile(resolve(scratch, 'agent-private/pending.json'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(readFile(resolve(scratch, 'work.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally { await coordinator.shutdown(); }
+    } finally { vi.unstubAllGlobals(); child.kill('SIGKILL'); await coordinator.shutdown(); }
   });
 
   it('deletes unpublished commits after authoritative archive', async () => {

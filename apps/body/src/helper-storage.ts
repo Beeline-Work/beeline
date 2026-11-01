@@ -335,6 +335,7 @@ export async function reclaimHelperStorage(input: {
   runtimeDir: string;
   readStates(): Promise<readonly StorageRoomState[]>;
   withIdleRoom(roomId: string, task: () => Promise<void>): Promise<boolean>;
+  removeArchived?: (roomId: string) => Promise<StorageReclaimEntry[]>;
   relatedRoots?: (roomId: string) => readonly string[];
   progress?: () => Promise<void>;
   inUse?: (root: string) => Promise<boolean>;
@@ -374,6 +375,10 @@ export async function reclaimHelperStorage(input: {
     if (!await ordinaryDirectory(root)) continue;
     const ownerInUse = async () => (await Promise.all([root, ...(input.relatedRoots?.(room.name) ?? [])].map(observedUse))).some(Boolean);
     await input.withIdleRoom(room.name, async () => {
+      if (state.archived && input.removeArchived) {
+        entries.push(...await input.removeArchived(room.name));
+        return;
+      }
       if (await ownerInUse() || await emulatorLeased(root, input.emulatorLeaseRoot)) return;
       if (!input.dryRun && !await settleClaudeLogin(root, input.operatorHome ?? homedir())) return;
       const tree = await storageTree(root, input.progress);

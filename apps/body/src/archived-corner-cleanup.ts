@@ -143,11 +143,12 @@ async function stopDarwinProcesses(roots: string[]): Promise<number> {
   return stopped;
 }
 
-export async function removeArchivedCornerData(supervisorRoot: string, cornerId: string, checkout: string, options: WholeStorageOptions = {}): Promise<StorageReclaimEntry[]> {
+export async function removeArchivedCornerData(supervisorRoot: string, cornerId: string, checkout: string, options: WholeStorageOptions & { runtimeDir?: string } = {}): Promise<StorageReclaimEntry[]> {
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(cornerId)) throw new Error('invalid archived corner id');
   const base = resolve(supervisorRoot, 'beeline');
   if (resolve(checkout) !== resolve(base, 'corners', basename(checkout))) throw new Error('invalid archived checkout root');
   const roots = [checkout];
+  if (options.runtimeDir) roots.push(resolve(options.runtimeDir, 'rooms', cornerId));
   // The private repository has the same deterministic key as the recorded
   // checkout. Recover it without Git metadata after an interrupted deletion.
   const itemId = basename(checkout);

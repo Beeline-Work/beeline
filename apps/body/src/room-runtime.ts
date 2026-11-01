@@ -1,3 +1,4 @@
+import { removeArchivedCornerData } from './archived-corner-cleanup.js';
 import { collectDependencyStore } from './dependency-generation.js';
 import { warmNodeModulesStoreDir, mobileNodeModulesStoreDir } from './warm-node-modules.js';
 import { execFile, type ExecFileOptions } from 'node:child_process';
@@ -2069,6 +2070,12 @@ export class RoomRuntimeCoordinator {
     const owners = await readStorageOwners(this.runtime.supervisorRoot);
     return reclaimHelperStorage({
       runtimeDir: dirname(this.configPath),
+      removeArchived: roomId => removeArchivedCornerData(this.runtime.supervisorRoot, roomId,
+        resolve(this.runtime.supervisorRoot, 'beeline/corners', roomId), {
+          runtimeDir: dirname(this.configPath),
+          log: entry => console.log(`[body] archived private storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+          progress: () => this.yieldReconciliation(),
+        }),
       readStates: async () => states,
       progress: () => this.yieldReconciliation(),
       relatedRoots: roomId => [resolve(this.runtime.supervisorRoot, 'beeline/corners', roomId),

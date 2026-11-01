@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CommandRefusalError } from './command-refusal.js';
+import { resolveCornerBriefApproval } from './corner-brief.js';
 import { systemLine } from './system-line.js';
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -12,7 +12,9 @@ export async function activeCornerHolds(
   return (
     await db.query<CornerMergeHold>(
       `SELECT id::text,actor_id "actorId",COALESCE(set_by_agent_id,actor_id) "holderId",
-       (SELECT name FROM identities WHERE identities.id=COALESCE(set_by_agent_id,actor_id)) "holderName",standing,set_at::text "setAt"
+       (SELECT name FROM identities WHERE identities.id=COALESCE(set_by_agent_id,actor_id)) "holderName",standing,set_at::text "setAt",
+       source_message_id "sourceMessageId",source_author_id "sourceAuthorId",source_text "sourceText",
+       (SELECT name FROM identities WHERE identities.id=source_author_id) "sourceAuthorName"
      FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL ORDER BY set_at,id`,
       [cornerId],
     )
@@ -21,8 +23,11 @@ export async function activeCornerHolds(
 
 /** Called in the caller's transaction, including corner creation. */
 export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, actorId: string, agentId?: string) {
-  if (agentId && input.releaseHoldId === undefined)
-    throw new CommandRefusalError('Agents cannot set merge holds; close the PR to stop it.', 403);
+  const citation = agentId && input.releaseHoldId === undefined
+    ? (await resolveCornerBriefApproval(db, [], { spec: 'Merge hold',
+        approval: { sourceMessageId: input.sourceMessageId ?? '' } }, [], undefined, undefined, undefined,
+        { agentId })).approvalBasis : undefined;
+  if (citation) actorId = citation.approvedBy;
   await lockCornerLifecycle(db, input.cornerId);
   const actor = (
     await db.query<{ role: CornerMergeHold['standing'] }>(
@@ -62,9 +67,10 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
   }
   const row = (
     await db.query<{ id: string }>(
-      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id) VALUES($1,$2,$3,$4)
-     ON CONFLICT(corner_id,(COALESCE(set_by_agent_id,actor_id))) WHERE released_at IS NULL DO UPDATE SET actor_id=EXCLUDED.actor_id RETURNING id`,
-      [input.cornerId, actorId, actor.role, agentId ?? null],
+      `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id,source_message_id,source_author_id,source_text)
+     VALUES($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT(corner_id,(COALESCE(set_by_agent_id,actor_id))) WHERE released_at IS NULL DO UPDATE SET actor_id=corner_merge_holds.actor_id RETURNING id`,
+      [input.cornerId, actorId, actor.role, agentId ?? null, citation?.sourceMessageId ?? null, citation?.approvedBy ?? null, citation?.snapshot.slice(0, 500) ?? null],
     )
   ).rows[0]!;
   await writeHoldMessage(db, input.cornerId, row.id, agentId ?? actorId);
@@ -80,12 +86,18 @@ async function writeHoldMessage(
   const actor = (
     await db.query<{ name: string; kind: string }>('SELECT name,kind FROM identities WHERE id=$1', [actorId])
   ).rows[0];
+  const citation = (await db.query<{ source_text: string | null; source_name: string | null }>(
+    `SELECT hold.source_text,person.name source_name FROM corner_merge_holds hold
+     LEFT JOIN identities person ON person.id=hold.source_author_id WHERE hold.id=$1`, [holdId],
+  )).rows[0];
   await systemLine(db, {
     id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),
     roomId: cornerId,
     authorId: actorId,
     subject: { kind: actor?.kind === 'agent' ? 'agent' : 'person', id: actorId, name: actor?.name ?? actorId },
     verb: 'set a merge hold',
+    ...(citation?.source_text !== null && citation?.source_text !== undefined
+      ? { consequence: `${citation.source_name}: “${citation.source_text}”` } : {}),
   });
 }
 

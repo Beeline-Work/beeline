@@ -740,7 +740,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "open_corner",
-    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically. Keep the Room's designated reviewer out of implementation unless necessary, then set reviewer to an independent agent handle. A reviewer cannot be the implementer or a commit author.",
+    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically. Keep the Room's designated reviewer out of implementation unless necessary, then set reviewer to an independent agent handle. A reviewer cannot be the implementer or a commit author. hold:true requires sourceMessageId citing a readable person’s request to hold.",
     "inputSchema": {
       "type": "object",
       "required": ["room", "brief", "implementer"],
@@ -809,9 +809,10 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "description": "Required worker handle without @. Opening creates its first assignment; do not send a redundant order."
         },
         "reviewer": {"type": "string", "minLength": 1, "description": "Independent reviewer handle without @; defaults to the Room reviewer."},
+        "sourceMessageId": {"type": "string", "description": "Person’s message requesting the hold; required with hold:true."},
         "hold": {
           "type": "boolean",
-          "description": "Create a merge hold atomically, for the human who ordered this work."
+          "description": "Create a merge hold atomically; sourceMessageId must cite a readable person’s request."
         }
       },
       "additionalProperties": false
@@ -1070,10 +1071,11 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "set_corner_hold",
-    "description": "Read hold IDs from read(facet:status).verdict.holds. Record a person’s merge hold, or release releaseHoldId with existing holder/standing and command-provenance checks. Does not approve or land.",
+    "description": "Read hold IDs from read(facet:status).verdict.holds. Record a person’s merge hold, or release releaseHoldId with existing holder/standing and command-provenance checks. Setting requires sourceMessageId citing a readable person’s request to hold; releasing needs no citation. Does not approve or land.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "sourceMessageId": {"type": "string", "description": "Person’s message requesting the hold; required when setting."},
         "releaseHoldId": {"type": "string", "format": "uuid"},
         "address": {"type": "string", "description": "Explicit target corner address."}
       },

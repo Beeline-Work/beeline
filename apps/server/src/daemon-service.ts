@@ -2123,8 +2123,6 @@ export class DaemonService {
         )) as Output<Name>;
       case 'setCornerHold': {
         const hold = input as Input<'setCornerHold'>;
-        if (hold.releaseHoldId === undefined)
-          throw new CommandRefusalError('Agents cannot set merge holds; close the PR to stop it.', 403);
         await this.access(hold.cornerId, authenticatedAgentId);
         const result = await this.database.transaction(async (db) => {
           await lockCornerLifecycle(db, hold.cornerId);
@@ -2137,8 +2135,8 @@ export class DaemonService {
              WHERE message.id=$1`,
             [command.root_source_message_id],
           )).rows[0];
-          if (!actor) throw new Error('hold requires a human requester');
-          return setCornerHold(db, hold, actor.author_id, authenticatedAgentId);
+          if (!actor && hold.releaseHoldId !== undefined) throw new Error('hold requires a human requester');
+          return setCornerHold(db, hold, actor?.author_id ?? authenticatedAgentId, authenticatedAgentId);
         });
         const reconcile = async () => { await this.github?.reconcileQueuedCorners(hold.cornerId); };
         if (this.afterCommit) this.afterCommit(reconcile);
@@ -8495,7 +8493,6 @@ export class DaemonService {
   }
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
-    if (input.hold === true) throw new CommandRefusalError('Agents cannot set merge holds; close the PR to stop it.', 403);
     // Objectives are normalized paragraphs; names must already be continuous.
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
@@ -8704,8 +8701,7 @@ export class DaemonService {
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       if (input.hold === true) {
-        if (!commissionedBy) throw new Error('hold requires a human requester');
-        await setCornerHold(db, { cornerId }, commissionedBy, agentId);
+        await setCornerHold(db, { cornerId, sourceMessageId: input.sourceMessageId }, commissionedBy ?? agentId, agentId);
       }
       if (input.brief) {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];

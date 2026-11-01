@@ -32,8 +32,8 @@ class ListenClient extends EventEmitter implements LivePgClient {
  * phone writes, the count served beside it, mark-unread putting it back, and
  * the one definition of unread that the cursor and the deck now share.
  *
- * Read marks are reader-scoped live invalidations so another device can
- * reconcile its dot without notifying other Room members.
+ * Read marks are reader-scoped live projections (legacy clients receive
+ * invalidations), so another device reconciles its dot without notifying peers.
  */
 const OWNER = createHash('sha256').update('github:owner').digest('hex');
 const OTHER = createHash('sha256').update('github:recipient').digest('hex');
@@ -291,8 +291,8 @@ describe('the read cursor over the live phone surface', () => {
   });
 
   it('NET-READS-2: publishes each committed read change once to reader devices across server hubs', async () => {
-    // Two sockets for the reader plus another member. Every reader device
-    // receives a reconcile hint; the other member receives none.
+    // Two capable reader sockets, one legacy reader, and another member.
+    // Readers receive projections or a legacy hint; the other member gets none.
     const sockets = await Promise.all(
       [ownerToken, ownerToken, otherToken, ownerToken].map(async (token, index) => {
         const socketOrigin = index === 0 ? origin : peerOrigin;

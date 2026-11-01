@@ -7,7 +7,8 @@ import { beelineThemes } from '../sources/buzz/groknight';
 
 /**
  * The GitHub star card as the chat surface mounts it: the real hook reads the
- * server's `readStarPrompt`, and a tap answers through `answerStarPrompt`.
+ * opening `readStarPrompt`, then accepts pushed eligibility. A tap answers
+ * through `answerStarPrompt`.
  * `?tap=star|later|dismiss` presses that control once the card paints.
  */
 const tap = new URLSearchParams(location.search).get('tap');
@@ -23,11 +24,17 @@ const report = (text: string) => {
 };
 
 function Harness() {
-  // `window.__newMessage()` stands in for a new message arriving in the open chat.
-  const [newest, setNewest] = React.useState(0);
-  (window as typeof window & { __newMessage?: () => void }).__newMessage = () =>
-    setNewest((value) => value + 1);
-  const star = useStarPrompt(`newest-${newest}`, true);
+  const globals = window as typeof window & {
+    __newMessage?: () => void;
+    __starPromptLive?: (event: unknown) => void;
+  };
+  // A later win's server projection arrives in the same Room without a read.
+  globals.__newMessage = () => globals.__starPromptLive?.({ monolithLive: {
+    type: 'message-delta', roomId: 'proof-room', starPrompt: {
+      milestone: 30, repository: 'Beeline-Work/beeline', url: 'https://github.com/Beeline-Work/beeline',
+    },
+  } });
+  const star = useStarPrompt('proof-room', true);
   return (
     <View style={{ backgroundColor: beelineThemes.obsidian.bgBase, padding: 16 }}>
       {star.prompt ? (
@@ -90,8 +97,9 @@ async function run() {
   const next = document.querySelector<HTMLElement>('[data-testid="star-prompt"]');
   const reread = next ? (next.textContent ?? '').replace(/\s+/g, ' ').trim() : 'no card';
   const answers = (window as typeof window & { __answers?: unknown[] }).__answers;
+  const reads = (window as typeof window & { __starPromptReads?: number }).__starPromptReads;
   report(
-    `PASS shown: ${shown} | tapped ${tap} | ${after} | opened: ${opened.join(',') || 'nothing'}${answers ? ` | sent: ${JSON.stringify(answers)}` : ''} | after a new message: ${reread}`,
+    `PASS shown: ${shown} | tapped ${tap} | ${after} | opened: ${opened.join(',') || 'nothing'}${answers ? ` | sent: ${JSON.stringify(answers)}` : ''} | after a new message: ${reread} | prompt reads: ${reads}`,
   );
 }
 

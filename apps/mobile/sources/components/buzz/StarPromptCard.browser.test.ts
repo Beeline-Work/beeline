@@ -12,10 +12,18 @@ function shims(mobile: string, starOutcome: 'starred' | 'open'): Record<string, 
     'react-native-reanimated': `${base['react-native-reanimated']}
       export const FadeOut = entering;
       export const interpolateColor = (_value, _input, output) => output[output.length - 1];`,
+    '@/sync/transport/live-connection': `
+      export const sharedLiveConnection = () => ({
+        register: async (_filters, listener) => {
+          window.__starPromptLive = listener;
+          return () => { if (window.__starPromptLive === listener) delete window.__starPromptLive; };
+        },
+      });`,
     '@/sync/transport/monolith-operation': `
       export const monolithPhoneOperation = async (name, input) => {
         // Due at 3 until answered; after Not now the server has milestone 30 due.
         if (name === 'readStarPrompt') {
+          window.__starPromptReads = (window.__starPromptReads ?? 0) + 1;
           const answers = window.__answers ?? [];
           if (answers.some((a) => a.action !== 'later')) return { prompt: null };
           return { prompt: { milestone: answers.length ? 30 : 3,
@@ -78,6 +86,7 @@ describe.skipIf(!existsSync(CHROME))('GitHub star card in a browser', () => {
     expect(result).toContain('tapped later | card gone');
     expect(result).toContain('after a new message: Star Beeline on GitHub');
     expect(result).toContain('Your agents have answered you 30 times.');
+    expect(result).toContain('prompt reads: 1');
   }, 90_000);
 
   it('stays closed in the same open chat after the close button', async () => {

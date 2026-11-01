@@ -16,40 +16,21 @@ test('preparation, verdicts and the timing-sensitive PostgreSQL budget stay host
   }
 });
 
-test('PR heavy jobs use both hosted and isolated CI-only Linux pools', () => {
-  const pool = ['self-hosted', 'Linux', 'X64', 'beeline-ci'];
-  const shard = jobs['server-suite-shard'];
-  assert.deepEqual(shard.strategy.matrix.include.map(({ shard, runner }) => ({ shard, runner: JSON.parse(runner) })), [
-    { shard: 1, runner: 'ubuntu-latest' },
-    { shard: 2, runner: pool },
-    { shard: 3, runner: 'ubuntu-latest' },
-    { shard: 4, runner: pool },
-  ]);
+test('PR heavy jobs use GitHub-hosted Linux runners', () => {
   for (const name of ['server-suite-shard', 'typecheck', 'mobile-suite']) {
-    const runner = jobs[name]['runs-on'];
-    assert.match(runner, /github.event_name == 'pull_request'/);
-    assert.match(runner, /github.event_name == 'merge_group'/);
-    assert.match(runner, /\|\| '"ubuntu-latest"'/, `${name} dispatch must remain hosted`);
-    assert.ok(!runner.includes('beeline-prod-host'));
-    assert.ok(!runner.includes('beeline-android'));
-  }
-  for (const name of ['typecheck', 'mobile-suite']) {
-    assert.ok(jobs[name]['runs-on'].includes(JSON.stringify(pool)));
+    assert.equal(jobs[name]['runs-on'], 'ubuntu-latest', name);
   }
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
   assert.match(mobile.run, /--maxWorkers=2 --minWorkers=2/);
 });
 
-test('CI-only capacity is confined to the selected Checks jobs, never release jobs', () => {
+test('no workflow job targets the overloaded beeline-ci pool', () => {
   const directory = new URL('../.github/workflows/', import.meta.url);
-  const allowed = new Set(['typecheck', 'mobile-suite', 'server-suite-shard']);
   for (const file of readdirSync(directory).filter((file) => /\.ya?ml$/.test(file))) {
     const workflow = parse(readFileSync(new URL(file, directory), 'utf8'));
     for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
       const routing = JSON.stringify([job['runs-on'], job.strategy?.matrix]);
-      if (!routing.includes('beeline-ci')) continue;
-      assert.equal(file, 'checks.yml', `${file}:${name} uses CI-only capacity`);
-      assert.ok(allowed.has(name), `${name} must not join the shared pool implicitly`);
+      assert.ok(!routing.includes('beeline-ci'), `${file}:${name} uses CI-only capacity`);
     }
   }
 });

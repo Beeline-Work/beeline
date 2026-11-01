@@ -363,7 +363,7 @@ export async function resolveCornerBriefApproval(
   if (humanCitation) {
     const failure = !sourceMessageId ? 'sourceMessageId is required' : !cited ? 'cited message does not exist' :
       cited.deleted_at ? 'cited message is deleted' :
-      cited.kind !== 'human' || cited.hidden_from_roster || cited.presentation !== 'message' || cited.system_event
+      cited.kind !== 'human' || cited.hidden_from_roster || cited.presentation === 'system' || cited.system_event
         ? 'cited author must be a person, not an agent or System' :
       !cited.readable ? 'calling agent cannot read the cited message' : undefined;
     if (failure) throw new CommandRefusalError(`${failure}; cite the person's message that asks for the hold, or close the PR to stop it.`, 403);

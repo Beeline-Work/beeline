@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolveCornerBriefApproval } from './corner-brief.js';
 import { CommandRefusalError } from './command-refusal.js';
-import { systemLine } from './system-line.js';
+import { systemLine, restateSystemLine } from './system-line.js';
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
@@ -73,7 +73,9 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
     await db.query<{ id: string }>(
       `INSERT INTO corner_merge_holds(corner_id,actor_id,standing,set_by_agent_id,source_message_id,source_author_id,source_text)
      VALUES($1,$2,$3,$4,$5,$6,$7)
-     ON CONFLICT(corner_id,(COALESCE(set_by_agent_id,actor_id))) WHERE released_at IS NULL DO UPDATE SET actor_id=corner_merge_holds.actor_id RETURNING id`,
+     ON CONFLICT(corner_id,(COALESCE(set_by_agent_id,actor_id))) WHERE released_at IS NULL DO UPDATE SET actor_id=EXCLUDED.actor_id,
+       source_message_id=EXCLUDED.source_message_id,source_author_id=EXCLUDED.source_author_id,
+       source_text=EXCLUDED.source_text RETURNING id`,
       [input.cornerId, actorId, actor.role, agentId ?? null, citation?.sourceMessageId ?? null, citation?.approvedBy ?? null, citation?.snapshot.slice(0, 500) ?? null],
     )
   ).rows[0]!;
@@ -94,15 +96,18 @@ async function writeHoldMessage(
     `SELECT hold.source_text,person.name source_name FROM corner_merge_holds hold
      LEFT JOIN identities person ON person.id=hold.source_author_id WHERE hold.id=$1`, [holdId],
   )).rows[0];
-  await systemLine(db, {
-    id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),
-    roomId: cornerId,
-    authorId: actorId,
-    subject: { kind: actor?.kind === 'agent' ? 'agent' : 'person', id: actorId, name: actor?.name ?? actorId },
+  const id = createHash('sha256').update(`corner-hold:${holdId}`).digest('hex');
+  const phrase = {
+    subject: { kind: actor?.kind === 'agent' ? 'agent' as const : 'person' as const,
+      id: actorId, name: actor?.name ?? actorId },
     verb: 'set a merge hold',
     ...(citation?.source_text !== null && citation?.source_text !== undefined
       ? { consequence: `${citation.source_name}: “${citation.source_text}”` } : {}),
-  });
+  };
+  await systemLine(db, { id, roomId: cornerId, authorId: actorId, ...phrase });
+  // A repeated set may cite a newer request; keep the existing hold line and
+  // the status list on the same citation without creating another hold.
+  if (citation?.source_text != null) await restateSystemLine(db, id, phrase);
 }
 
 /** Existing active holds need the same source target as newly set holds. */

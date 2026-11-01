@@ -2151,6 +2151,14 @@ it.each(['set', 'open'] as const)('HOLD-CITATION: %s accepts a readable person c
   const line = (await db.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set a merge hold%'`, [cornerId])).rows[0]!;
   expect(line.text).toContain('Captain');
   expect(line.text).toContain('Hold this PR');
+  if (mode === 'set') {
+    const next = randomBytes(32).toString('hex');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Keep this PR held')`, [next, ROOM, HUMAN]);
+    await daemon.execute('setCornerHold', { ...authority(turn), cornerId, sourceMessageId: next }, WORKER);
+    expect(await activeCornerHolds(db, cornerId)).toEqual([expect.objectContaining({ sourceMessageId: next, sourceText: 'Keep this PR held' })]);
+    expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set a merge hold%'`, [cornerId])).rows)
+      .toEqual([expect.objectContaining({ text: expect.stringContaining('Keep this PR held') })]);
+  }
   // Citation is not needed to release the agent's own hold.
   const hold = (await activeCornerHolds(db, cornerId))[0]!;
   const command = mode === 'set' ? turn : order;

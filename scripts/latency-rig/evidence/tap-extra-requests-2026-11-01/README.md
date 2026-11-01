@@ -125,7 +125,7 @@ These are timing observations under the recorded load, not claimed timing
 improvements. The unchanged wrapper starts its existing one automatic retry;
 its final verdict and second report are retained separately below.
 
-Validation: **252 focused mobile tests**, **7 browser proof cases**, **32 server integration tests**, **139 server
+Validation: **277 focused mobile tests**, **7 browser proof cases**, **32 server integration tests**, **139 server
 projection/fanout/Room tests**, **693 shared-package tests** and **73 rig tests**
 pass. Workspace, mobile source (with only the inherited snapshots excluded) and
 scripts typechecks pass. Phone-network, shared-UI and workflow-path checks pass.
@@ -165,3 +165,9 @@ databases were cleaned up; no shared emulator, adb server or helper was stopped.
 
 The application sources match the measured commit. Subsequent changes refresh
 the browser proof fixture, comments and documentation/evidence only.
+
+The initial full mobile CI run passed 5,609 tests and failed only two stale
+subscription-frame assertions in `monolith-rig-transport.test.ts`. Those exact
+expectations now include the negotiated `roomStateProjections` flag. All 25
+transport-adapter tests and 72 shared-connection tests pass locally. This
+follow-up changes test expectations only; the measured application is unchanged.

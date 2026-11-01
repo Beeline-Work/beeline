@@ -181,7 +181,7 @@ describe('monolith Room send path', () => {
     );
     expect(sockets).toHaveLength(1);
     sockets[0]!.onopen?.();
-    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] })]);
     sockets[0]!.onmessage?.({
       data: JSON.stringify({ type: 'subscribed', roomId: ROOM, epoch: 'epoch-1', cursor: 3 }),
     });
@@ -195,7 +195,7 @@ describe('monolith Room send path', () => {
     sockets[1]!.onopen?.();
     expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({
       type: 'subscribe',
-      sidebarPreviews: true,
+      sidebarPreviews: true, roomStateProjections: true,
       roomIds: [ROOM],
       cursors: { [ROOM]: { epoch: 'epoch-1', base: 3, seen: [] } },
     });
@@ -347,7 +347,7 @@ describe('monolith Room send path', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
-    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: [ROOM] })]);
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] })]);
     received[0]!.acknowledgePaint?.();
     expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'trace-paint', id: trace.id }));
 

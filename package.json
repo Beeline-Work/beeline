@@ -81,6 +81,7 @@
     "prove:script-grant": "npx turbo run build --filter=@beeline/body... && node scripts/prove-script-grant.mjs",
     "prove:command-grammar": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-command-grammar.ts",
     "prove:claude-silent-wake": "npm run build -w @beeline/body && node scripts/prove-claude-silent-wake.mjs",
+    "prove:silent-end": "npx turbo run build --filter=@beeline/body... && node scripts/prove-silent-end.mjs",
     "prove:corner-brief-acceptance": "node scripts/prove-corner-brief-acceptance.mjs",
     "prove:tool-description-contract": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-tool-description-contract.mjs",
     "prove:brief-approval-citations": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-brief-approval-citations.mjs",

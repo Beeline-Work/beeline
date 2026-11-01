@@ -35,6 +35,7 @@ function setupTurn(generation: string) {
 
 it.each(['report', 'post'])('Reproduction ARTIFACT-REPORT: %s waits for an in-flight artifact', async (delivery) => {
   setupTurn('upload-success-' + delivery);
+  vi.stubEnv('HOME', scratch);
   let release!: () => void;
   const uploading = new Promise<void>(resolve => { release = resolve; });
   let started!: () => void;
@@ -50,7 +51,7 @@ it.each(['report', 'post'])('Reproduction ARTIFACT-REPORT: %s waits for an in-fl
     if (url.pathname.endsWith('/report') || url.pathname.endsWith('/postCornerMessage')) delivered = [...attachments];
     return Response.json({ delivered: true });
   });
-  const upload = callAgentTool('post_artifact', { path: join(scratch, 'evidence.txt'), mime: 'text/plain', title: 'evidence.txt' }, 'upload');
+  const upload = callAgentTool('post_artifact', { path: '~/evidence.txt', mime: 'text/plain', title: 'evidence.txt' }, 'upload');
   await startedUpload;
   const report = callAgentTool(delivery, { ...(delivery === 'report' ? { status: 'done' } : {}), text: 'done: evidence ready' }, 'report');
   await new Promise(resolve => setTimeout(resolve, 20));

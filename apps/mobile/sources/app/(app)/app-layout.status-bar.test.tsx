@@ -48,6 +48,7 @@ vi.mock('expo-router', async () => {
 
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('@/components/buzz/CornerOpenToast', () => ({ CornerOpenToast: () => null }));
+vi.mock('@/buzz/message-outbox-runtime', () => ({ startMessageOutbox: vi.fn() }));
 
 import RootLayout from './_layout';
 

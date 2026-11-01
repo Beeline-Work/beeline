@@ -5,6 +5,52 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
+test('excluding the fingerprint regression from the mobile suite always has isolated coverage', () => {
+  const mobile = jobs['mobile-suite'];
+  const isolated = jobs['native-fingerprint'];
+  const file = 'sources/config/nativeFingerprint.test.ts';
+  const suiteStep = mobile.steps.find((step) => step.name === 'Run the mobile vitest suite');
+  assert.ok(suiteStep.run.endsWith(` --exclude ${file}`));
+  assert.equal(isolated['runs-on'], 'ubuntu-latest');
+  assert.equal(isolated['timeout-minutes'], 15);
+  assert.equal(mobile['timeout-minutes'], 20);
+  const regression = isolated.steps.find((step) => step.run ===
+    `npx vitest run ${file} --maxWorkers=1 --minWorkers=1`);
+  assert.ok(regression);
+  assert.equal(regression['working-directory'], 'apps/mobile');
+  assert.equal(regression.if, undefined);
+  assert.equal(regression['continue-on-error'], undefined);
+  assert.equal(isolated['continue-on-error'], undefined);
+  assert.ok(isolated.steps.some((step) => step.run === 'npm run fingerprint:check'));
+
+  // Evaluate the workflow conditions over all routing combinations, including
+  // string-valued path-filter outputs, so a future narrowing cannot drop coverage.
+  function selected(job, event, suite, mobileSuite, nativeFingerprint, cancelled) {
+    const expression = job.if
+      .replaceAll('github.event_name', JSON.stringify(event))
+      .replaceAll('inputs.suite', JSON.stringify(suite))
+      .replaceAll('needs.changes.outputs.mobileSuite', JSON.stringify(String(mobileSuite)))
+      .replaceAll('needs.changes.outputs.nativeFingerprint', JSON.stringify(String(nativeFingerprint)))
+      .replaceAll('cancelled()', String(cancelled));
+    return Function(`return (${expression});`)();
+  }
+  for (const event of ['pull_request', 'merge_group', 'workflow_dispatch']) {
+    for (const suite of ['all', 'mobile-suite', 'native-fingerprint', 'typecheck']) {
+      for (const mobileSuite of [false, true]) {
+        for (const nativeFingerprint of [false, true]) {
+          for (const cancelled of [false, true]) {
+            const args = [event, suite, mobileSuite, nativeFingerprint, cancelled];
+            if (selected(mobile, ...args)) {
+              assert.ok(selected(isolated, ...args), JSON.stringify(args));
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.ok(selected(isolated, 'workflow_dispatch', 'native-fingerprint', false, false, false));
+});
+
 test('preparation, verdicts and the timing-sensitive PostgreSQL budget stay hosted', () => {
   const critical = ['changes', 'shared-package-tests', 'server-claim-latency', 'server-suite', 'server-integration', 'body-suite'];
   for (const name of critical) {

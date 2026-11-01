@@ -1240,6 +1240,12 @@ async function releaseCornerImplementer(
   agentId: string,
   sourceId: string,
 ): Promise<void> {
+  // Only a code corner has a copy and branch work to release. Elsewhere a
+  // person tagging another agent is conversation, not a swap.
+  const code = await db.query(
+    `SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+     WHERE corner.id=$1 AND parent.repository_resolution='repository'`, [cornerId]);
+  if (!code.rowCount) return;
   await lockAgentCommandQueue(db, cornerId, agentId);
   const running = (await db.query<CommandRow>(
     `SELECT command.* FROM agent_turns turn

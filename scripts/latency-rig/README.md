@@ -31,6 +31,13 @@ four configured RTT profiles, with the limits of that comparison.
   message and must not be compared with this corrected shaping. The proxy does not
   report header bytes, physical WebSocket frame counts, compressed wire bytes,
   retransmits, or TLS handshake cost.
+- Phone operations on the live socket also produce separate `phone-request`
+  start/reply spans. Read/write classification uses the shared
+  `PHONE_READ_OPERATIONS` contract; the span's GET/POST value is a budget
+  category, not an extra HTTP request. Request IDs become connection-scoped
+  hashes; arguments, results, authentication frames and raw IDs are never
+  logged by this instrumentation. Byte totals still come from the raw WS
+  records once, without counting the logical spans again.
 - `room-marks.mjs` extracts the existing release Room first-frame marker from
   `adb logcat -v epoch`. `join.mjs` correlates device marks, proxy spans, and SQL
   spans for serial actions. The proxy adds an internal trace header to its
@@ -186,14 +193,25 @@ to fill unmeasured routes with static estimates.
 Run `node scripts/latency-rig/check-routes.mjs` and
 `node --test scripts/latency-rig/*.test.mjs` to validate route coverage and the
 deterministic budget evaluator. Device capture runs on squire.
-Nightly timing uses the squire emulator and parent-Room schedule documented below. A full launch report still requires all route and
-interaction marks; the
-nightly subset does not establish that broader budget. Missing required subset
-cases fail closed.
+Nightly timing uses the squire emulator and standing-corner schedule documented
+below. A full launch report still requires all route and interaction marks;
+the nightly subset does not establish that broader budget. Missing required
+subset cases fail closed.
 
 Room request contracts also reject any star-prompt, Workspace, read-mark or
 Room-list request starting before the native draw mark, even when the overall
 request-count budget would allow it.
+
+Those request budgets count HTTP and socket operations together. The report
+retains the HTTP-only counters and adds `maxPrepaintRequestCount` and
+`maxPrepaintRequestDepth` for the combined gate. Socket replies are matched by
+request identity, including concurrent out-of-order replies. A required request
+with no reply stays visible and fails rather than disappearing as zero work.
+Postpaint housekeeping remains outside page/prepaint budgets. The local SQL
+preload restores a per-message scope after a manual WebSocket upgrade, so
+socket operations retain their request trace instead of appearing as unowned
+background SQL. Timing failures and request-contract failures are reported
+separately; a fast reaction with a bad request contract is not called over budget.
 
 ## Room opens with newly arrived messages
 
@@ -280,19 +298,20 @@ The `--nightly` analyzer subset requires the four arrival cases, the existing
 warm Room-open route, and send-text. Cold opens remain outside this nightly
 gate. Every case requires 20 samples in the nightly comparison.
 
-The nightly run is a **Speedy-owned Beeline schedule in the parent Room**
+The nightly run is a **Jellybean-owned Beeline schedule in the standing
+latency-rig corner** `acca09be-d0fb-443d-a32f-31d1a9737023`, beneath Room
 `bb91a1c7-7cad-4fde-aafc-94fccb651ac8`, at 03:00 America/New_York on squire.
-It does not use a GitHub device job, a webhook, or a new token. Create it from
-that Room: the wake tool only schedules its current place,
-and schedules belonging to archived corners do not run. Schedule installation
-and its returned id must be recorded after creating it; a documented prompt
-alone is not an installed schedule.
+Its installed schedule id is `390f36c4-454d-475a-a789-0d3561bcdc92`.
+Room turns lack the corner emulator lease; keep this corner open. Speedy's old
+schedule was deleted when Jellybean took over. The schedule uses no GitHub
+device job, webhook, or new token. A documented prompt alone does not install
+a schedule; retain the creation/update receipt and avoid a second owner/run.
 
 ### Nightly setup and execution
 
-The parent Room owns schedule installation after merge; this corner creates no
-schedule. From the prepared, dependency-installed detached `origin/main`
-checkout on squire, with `LATENCY_RIG_DEVICE` selecting this run's owned emulator,
+Manage the existing schedule from the standing corner. From the prepared,
+dependency-installed detached `origin/main` checkout on squire, with
+`LATENCY_RIG_DEVICE` selecting this run's owned emulator,
 the exact repo-root command is:
 
 ```sh
@@ -312,8 +331,8 @@ contracts, route p95 strictly below 450 ms and tap p95 strictly below 150 ms,
 and no case more than 20% slower than the last passing baseline. A failed/skipped
 first attempt gets exactly one retry. Any final failure exits nonzero, preserves
 the baseline and sets `shouldAlert` in the verdict when comparison succeeds.
-The parent agent must also report setup/command errors that prevent a verdict;
-it posts one alert per failed night and remains silent on pass. The command does
+The scheduled agent must also report setup/command errors that prevent a verdict;
+it posts one final PASS/FAIL result in the corner every night. The command does
 not install a schedule or send messages. Fetch and detach latest `origin/main`
 before invoking it, as described below.
 
@@ -325,6 +344,16 @@ never change a main branch, and never discard unrelated changes. Install root
 and mobile dependencies when the measured head changes. Read the current rig
 scripts before running them. Use the repository's `build-local.sh` signing;
 production signing is unnecessary.
+
+The corner scratch allowance applies to its assigned worktree, not the combined
+size of its private agent home, dependency caches and detached rig checkout.
+The helper must include the [scratch-accounting fix](https://github.com/Beeline-Work/beeline/pull/3209);
+an older loaded helper can still advertise or enforce the wrong usage even
+when the measured checkout contains the fix. Do not invent a separate 5 GiB
+limit for `latency-rig-speedy` or terminate a healthy attempt from that directory's
+`du` total. Check actual filesystem space and the configured session memory cap.
+The [November 1 investigation](evidence/nightly-setup-2026-11-01/README.md)
+records the distinction between a setup interruption and measured latency.
 
 Launch an owned private emulator with `beeline emulator -avd se_api35 -no-window
 -gpu swiftshader_indirect -no-snapshot -memory 2560 -cores 4`. Identify its leased
@@ -400,34 +429,37 @@ and skips preserve it. Malformed data, stale commits and an incomplete PR range
 fail closed. The comparator takes report, baseline and commit-range files; it
 needs no GitHub API.
 
-When `shouldAlert` is true, Speedy posts **one** message containing `text` to the
-parent Room, attaching the report and host-load evidence. It names all PRs in
-the complete first-parent range since the last passing run, excluding that run.
+After every final verdict, Jellybean posts **one** result to the standing
+corner, attaching the report and host-load evidence. A failure includes `text`
+when `shouldAlert` is true. It names all PRs in the complete first-parent range
+since the last passing run, excluding that run.
 With no passing baseline, say that the range is unavailable rather than invent
 PRs. Persist `{night, messageId}` to `last-alert.json` only after the post receipt;
-check that record before any retry so one failed night produces one alert. Passes
-are silent. A skipped setup also gets one rerun and then one failure alert.
+check that record before any retry so one failed night produces one alert.
+A skipped setup also gets one rerun and then one failure alert.
 Stop only the emulator and fixture processes owned by this wake.
 
 ### Schedule prompt
 
-Install the following with `wake(action:create, trigger:schedule,
-cadence:{kind:cron, expression:"0 3 * * *", timeZone:"America/New_York"})` in the
-parent Room, owned by Speedy:
+The existing Jellybean schedule uses
+`cadence:{kind:cron, expression:"0 3 * * *", timeZone:"America/New_York"}`.
+Update it with `wake(action:update, trigger:schedule, scheduleId, prompt)` from
+the standing corner rather than creating a duplicate. Its execution contract is:
 
 > Run the nightly squire emulator latency rig under scripts/latency-rig/README.md
 > Nightly setup and execution. Fetch origin/main into the private detached
 > latency-rig-speedy checkout; read the current scripts, install dependencies
 > if needed, and use an owned Beeline-leased se_api35 emulator (2560 MiB, 4 cores).
-> Choose an unused local port pair if needed. Run local-attempt.sh, then
-> nightly-local.mjs with last-pass.json, new report,
-> full commit range and recorded host load. On any failure/skip rerun exactly
-> once before deciding. Advance the baseline only on pass. If shouldAlert is
-> true and last-alert.json does not name this UTC night, post its text and
-> evidence once to Room bb91a1c7-7cad-4fde-aafc-94fccb651ac8, naming PRs since the
-> last pass; save the post receipt. Report skipped setup too. Never use a GitHub
-> runner, webhook or new token. Preserve all samples and clean up only this
-> wake's emulator/server. On pass, remain silent.
+> Bind-test an unused local port pair. Run nightly-run.sh and monitor it in the
+> same turn until exit, retaining its log and exit status. It compares reports,
+> full commit range and recorded host load, retries a failure/skip exactly once,
+> and advances the baseline only on pass. Publish every final verdict through
+> the approved Insights connection as documented below. Post one PASS/FAIL
+> result with case n/p50/p95 and evidence here in the standing corner, naming
+> PRs since the last pass when available; save the post receipt. Report skipped
+> setup too. Never use a GitHub runner, webhook or new token. Preserve all
+> samples and clean up only this
+> wake's emulator/server. Keep the corner open.
 
 ### Durable history and cumulative drift
 
@@ -557,6 +589,14 @@ counter changes accessibility content each second until the phone's existing
 90-second freshness deadline. The retry window covers that finite lifetime;
 a screen that stays busy still fails with its action and sample in the error.
 Regression coverage: `node --test scripts/latency-rig/dump-ui.test.mjs`.
+After insertion, reaction setup also waits for the exact new message's
+one-reaction chip across at most three fresh hierarchies, with 1.5-second gaps
+only when it is absent. A valid hierarchy may still show the preceding
+sample's two-reaction tail. That old chip, an already completed result, or an
+invisible target never qualifies. This wait ends before clock calibration and
+timer arming; native completion still requires the new two-reaction frame.
+An absent fixture fails with its action, sample and target instead of dropping
+a measurement. Coverage: `nightly-reaction.test.mjs`.
 Composer setup uses the system `mInputShown` value when present. An IME can
 retain `mIsInputViewShown=true` after hiding; that older flag is a fallback only.
 

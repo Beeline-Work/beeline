@@ -1,3 +1,4 @@
+import { checkinEmailHtml, type EmailAgent } from './checkin-email-html.js';
 import { createHash } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
 import { externalFetch } from '@beeline/auth/external-fetch';
@@ -125,11 +126,10 @@ export async function checkinOutputAllowed(db: SqlDatabase, roomId: string, agen
 }
 
 export type CheckinEmail = { to: string; subject: string; text: string; html: string; key: string };
-const escapeHtml = (value: string) => value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
-export function renderCheckinEmail(agentName: string, text: string, url: string) {
+export function renderCheckinEmail(agentName: string, text: string, url: string, agents: EmailAgent[] = [], imageOrigin = 'https://server.usebeeline.app') {
   return { subject: `${agentName} picked up where you left off`,
     text: `${text}\n\nOpen in Beeline: ${url}\n\nThis is a one-time note from your starter agent.`,
-    html: `<!doctype html><html><body style="font:16px/1.6 system-ui,sans-serif;max-width:560px;margin:40px auto;padding:24px;color:#222"><p style="white-space:pre-wrap">${escapeHtml(text)}</p><p><a href="${escapeHtml(url)}">Open in Beeline</a></p><p style="font-size:12px;color:#666">This is a one-time note from your starter agent.</p></body></html>` };
+    html: checkinEmailHtml(agentName,text,url,agents,imageOrigin) };
 }
 async function sendEmail(mail: CheckinEmail): Promise<string> {
   const key = process.env.BEELINE_EMAIL_API_KEY, from = process.env.BEELINE_EMAIL_FROM;
@@ -144,7 +144,8 @@ async function sendEmail(mail: CheckinEmail): Promise<string> {
 export class NextDayCheckin {
   constructor(private readonly db: SqlDatabase, private readonly webOrigin: string,
     private readonly email: (mail: CheckinEmail) => Promise<string> = sendEmail,
-    private readonly now: () => Date = () => new Date()) {}
+    private readonly now: () => Date = () => new Date(),
+    private readonly imageOrigin = 'https://server.usebeeline.app') {}
 
   async runOnce(): Promise<void> {
     if (!enabled()) return;
@@ -204,8 +205,16 @@ export class NextDayCheckin {
           const url = new URL(`/beeline/chat/${row.room_id}`,this.webOrigin);
           url.searchParams.set('communityId',row.workspace_id);
           let status: string;
-          try { status = await this.email({ to:row.email,key:`next-day-${row.identity_id}`,
-            ...renderCheckinEmail(row.name,row.text!,url.href) }); } catch { status='failed_or_uncertain'; }
+          try {
+            const agents = (await this.db.query<EmailAgent>(`SELECT DISTINCT i.id,i.name FROM free_agents f
+              JOIN identities i ON i.id=f.agent_id JOIN memberships m ON m.identity_id=f.agent_id
+              AND m.room_id=$2 AND m.removed_at IS NULL
+              WHERE f.owner_id=$1 AND f.workspace_id=$3 AND f.starter_role IS NOT NULL AND f.removed_at IS NULL
+              AND NOT i.hidden_from_roster ORDER BY i.id`, [row.identity_id,row.room_id,row.workspace_id])).rows;
+            // Lead with the speaker, regardless of roster order or duplicate display names.
+            agents.sort((a,b) => Number(b.id===row.agent_id)-Number(a.id===row.agent_id));
+            status = await this.email({ to:row.email,key:`next-day-${row.identity_id}`,
+            ...renderCheckinEmail(row.name,row.text!,url.href,agents,this.imageOrigin) }); } catch { status='failed_or_uncertain'; }
           await this.db.query(`UPDATE next_day_checkins SET email_status=$2 WHERE identity_id=$1`,[row.identity_id,status]);
         }
       }

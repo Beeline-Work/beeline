@@ -13,7 +13,9 @@
     "test": "vitest run",
     "measure": "node --import tsx src/measure-cli.ts",
     "memory:audit": "node --import tsx src/institutional-memory-audit.ts",
-    "repro:shared-browser": "node --import tsx scripts/shared-browser-repro.ts"
+    "repro:shared-browser": "node --import tsx scripts/shared-browser-repro.ts",
+    "email:art": "node scripts/generate-email-art.mjs",
+    "prove:checkin-email": "node --import tsx scripts/prove-checkin-email.mjs"
   },
   "dependencies": {
     "@beeline/api-contract": "*",

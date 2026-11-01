@@ -7,7 +7,12 @@ import { createWriteStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Transform } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
+import { PHONE_READ_OPERATIONS } from '@beeline/api-contract/phone';
 import { messageSchedule } from './message-shaping.mjs';
+import socketMarks from './socket-marks.cjs';
+
+const { phoneFrame, socketRequestTrace } = socketMarks;
+const readOperations = new Set(PHONE_READ_OPERATIONS);
 
 const backend = new URL(process.env.LATENCY_RIG_BACKEND ?? 'http://127.0.0.1:8080');
 const listenPort = Number(process.env.LATENCY_RIG_PORT ?? 8081);
@@ -108,6 +113,7 @@ server.on('upgrade', (request, socket, head) => {
     const startedMs = Date.now();
     const traceId = randomUUID();
     const pending = [];
+    const requests = new Map();
     let upQueue = Promise.resolve();
     let downQueue = Promise.resolve();
     const scheduleUp = messageSchedule();
@@ -125,27 +131,44 @@ server.on('upgrade', (request, socket, head) => {
       emit({ type: 'ws', traceId, granularity: 'message', direction: 'up', startMs, endMs: Date.now(), bytes: data.length,
         connectionStartMs: startedMs });
     };
-    const enqueueUp = (data, isBinary) => {
-      const startMs = Date.now();
+    const enqueueUp = (data, isBinary, startMs) => {
       const dueAt = scheduleUp(startMs, halfRtt(), bytesDelay(data.length));
       upQueue = upQueue.then(() => relayUp(data, isBinary, startMs, dueAt));
     };
     downstream.on('message', (data, isBinary) => {
-      if (upstream.readyState === WebSocket.OPEN) enqueueUp(data, isBinary);
-      else pending.push([data, isBinary]);
+      const startMs = Date.now();
+      const frame = phoneFrame(data, isBinary);
+      if (frame?.t === 'req') {
+        const duplicate = requests.has(frame.id);
+        const span = { type: 'phone-request', traceId: duplicate ? randomUUID() : socketRequestTrace(traceId, frame.id),
+          connectionTraceId: traceId, operation: `phone.${frame.op}`,
+          method: readOperations.has(frame.op) ? 'GET' : 'POST', startMs, requestBytes: data.length,
+          ...(duplicate ? { invalid: true } : {}) };
+        emit({ ...span, phase: 'start' });
+        if (!duplicate) requests.set(frame.id, span);
+      }
+      if (upstream.readyState === WebSocket.OPEN) enqueueUp(data, isBinary, startMs);
+      else pending.push([data, isBinary, startMs]);
     });
     upstream.on('open', () => {
-      for (const [data, isBinary] of pending) enqueueUp(data, isBinary);
+      for (const [data, isBinary, startMs] of pending) enqueueUp(data, isBinary, startMs);
       pending.length = 0;
       upstream.on('message', (data, isBinary) => {
         const startMs = Date.now();
+        const frame = phoneFrame(data, isBinary);
         const dueAt = scheduleDown(startMs, halfRtt(), bytesDelay(data.length));
         downQueue = downQueue.then(async () => {
           await delay(dueAt - Date.now());
           if (downstream.readyState !== WebSocket.OPEN) return;
           downstream.send(data, { binary: isBinary });
-          emit({ type: 'ws', traceId, granularity: 'message', direction: 'down', startMs, endMs: Date.now(), bytes: data.length,
+          const endMs = Date.now();
+          emit({ type: 'ws', traceId, granularity: 'message', direction: 'down', startMs, endMs, bytes: data.length,
             connectionStartMs: startedMs });
+          if (frame?.t === 'res' && requests.has(frame.id)) {
+            emit({ ...requests.get(frame.id), phase: 'end', endMs, responseBytes: data.length,
+              complete: true, ok: frame.ok });
+            requests.delete(frame.id);
+          }
         });
       });
     });

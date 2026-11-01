@@ -19,6 +19,9 @@ if (!momentsPath || !outPath)
 const moments = (await records(momentsPath)).map(hostClockMoment);
 const proxy = await records(option('--proxy'));
 const sql = await records(option('--sql'));
+const requestKey = (span) => `${span.traceId}:${span.startMs}`;
+const requestEnds = new Map(proxy.filter(span => span.type === 'phone-request' && span.phase === 'end')
+  .map(span => [requestKey(span), span]));
 const samples = moments.map((moment, index) => {
   const uncertainty = moment.clockUncertaintyMs ?? 0;
   if (index && moment.startMs - uncertainty < moments[index - 1].endMs + (moments[index - 1].clockUncertaintyMs ?? 0))
@@ -30,6 +33,12 @@ const samples = moments.map((moment, index) => {
     ...moment,
     http: matchedProxy.filter((span) => span.type === 'http'),
     ws: matchedProxy.filter((span) => span.type === 'ws'),
+    phone: matchedProxy.filter(span => span.type === 'phone-request' && span.phase === 'start').map(span => {
+      const end = requestEnds.get(requestKey(span));
+      // Keep an admitted request with no reply visible to the evaluator, never as zero work.
+      return { ...span, ...end, endMs: end?.endMs ?? moment.endMs + uncertainty + 1,
+        complete: end?.complete === true };
+    }),
     sql: sql.filter((span) => span.type === 'sql' && span.traceId !== null &&
       within(span) && (!traceIds.size || traceIds.has(span.traceId))),
   };

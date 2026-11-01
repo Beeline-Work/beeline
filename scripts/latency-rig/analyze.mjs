@@ -6,6 +6,7 @@ import { validateArrivalCases } from './room-arrivals.mjs';
 import { MAX_CLOCK_UNCERTAINTY_MS } from './device-clock.mjs';
 
 const TIMED_TAPS = Object.freeze(['react-message', 'open-corner', 'switch-tabs', 'open-composer']);
+const OPTIONAL_OPERATIONS = new Set(['readStarPrompt', 'readWorkspaces', 'readWorkspace', 'readChats', 'markRead', 'reportPageLoad']);
 
 export const BUDGET_MS = Object.freeze({ route: 450, tap: 150 });
 
@@ -56,18 +57,23 @@ export function summarizeSample(sample) {
   if (sample.canonicalMs !== undefined && finite(sample.canonicalMs, 'canonicalMs') < startMs)
     throw new Error('canonical settlement precedes action');
   const http = (sample.http ?? []).map((span, i) => validateSpan(span, `http[${i}]`));
+  const phone = (sample.phone ?? []).map((span, i) => validateSpan(span, `phone[${i}]`));
   const ws = (sample.ws ?? []).map((span, i) => validateSpan(span, `ws[${i}]`));
   const sql = (sample.sql ?? []).map((span, i) => validateSpan(span, `sql[${i}]`));
-  for (const [kind, spans] of [['http', http], ['ws', ws], ['sql', sql]])
+  for (const [kind, spans] of [['http', http], ['phone', phone], ['ws', ws], ['sql', sql]])
     for (const [index, span] of spans.entries()) {
       if (span.requestBytes !== undefined) finite(span.requestBytes, `${kind}[${index}].requestBytes`);
       if (span.responseBytes !== undefined) finite(span.responseBytes, `${kind}[${index}].responseBytes`);
       if (span.bytes !== undefined) finite(span.bytes, `${kind}[${index}].bytes`);
       if (span.poolWaitMs !== undefined) finite(span.poolWaitMs, `${kind}[${index}].poolWaitMs`);
     }
-  const prepaint = http.filter((span) => span.startMs >= startMs - clockUncertaintyMs && span.startMs < paintMs + clockUncertaintyMs);
-  const writes = http.filter((span) => span.method && !['GET', 'HEAD', 'OPTIONS'].includes(span.method));
-  const followupReads = http.filter((span) => span.method === 'GET' &&
+  const requests = [...http, ...phone];
+  const prepaint = requests.filter((span) => span.startMs >= startMs - clockUncertaintyMs && span.startMs < paintMs + clockUncertaintyMs);
+  const prepaintHttp = http.filter(span => prepaint.includes(span));
+  const writes = requests.filter((span) => span.method && !['GET', 'HEAD', 'OPTIONS'].includes(span.method));
+  const requiredRequests = new Set([...prepaint,
+    ...(sample.kind === 'tap' && ['send-text', 'react-message'].includes(sample.name) ? writes : [])]);
+  const followupReads = requests.filter((span) => span.method === 'GET' &&
     writes.some((write) => span.startMs >= write.endMs));
   const sqlByOperation = Object.groupBy(sql, (span) => span.operation ?? 'unknown');
   return {
@@ -76,14 +82,20 @@ export function summarizeSample(sample) {
     clockCalibrated, clockUncertaintyMs, timedOut: sample.timedOut === true,
     paintMs: paintMs - startMs,
     canonicalMs: sample.canonicalMs === undefined ? null : finite(sample.canonicalMs, 'canonicalMs') - startMs,
-    prepaintHttpCount: prepaint.length,
+    prepaintHttpCount: prepaintHttp.length,
+    prepaintRequestCount: prepaint.length,
+    prepaintRequestDepth: serialDepth(prepaint),
     prepaintOptionalCount: prepaint.filter(span =>
-      /^\/v1\/phone\/workspaces\/[^/]+(?:\/chats)?$/.test((span.operation ?? '').split('?')[0]) ||
+      /^\/v1\/phone\/workspaces(?:\/[^/]+(?:\/chats)?)?$/.test((span.operation ?? '').split('?')[0]) ||
       /^\/v1\/phone\/rooms\/[^/]+\/read$/.test((span.operation ?? '').split('?')[0]) ||
-      span.operation === '/v1/phone/operations/readStarPrompt' ||
+      OPTIONAL_OPERATIONS.has((span.operation ?? '').replace(/^phone\.|^\/v1\/phone\/operations\//, '').split('?')[0]) ||
       span.operation === '/v1/phone/observations/page-load').length,
-    prepaintHttpDepth: serialDepth(prepaint),
-    prepaintCompletedRoundTrips: prepaint.filter((span) => span.endMs <= paintMs + clockUncertaintyMs).length,
+    prepaintHttpDepth: serialDepth(prepaintHttp),
+    prepaintCompletedRoundTrips: prepaint.filter((span) => span.complete !== false && span.endMs <= paintMs + clockUncertaintyMs).length,
+    unsettledRequestCount: phone.filter(span => requiredRequests.has(span) && (span.complete !== true ||
+      (sample.endMs !== undefined && span.endMs > sample.endMs + clockUncertaintyMs))).length,
+    failedRequestCount: requests.filter(span => requiredRequests.has(span) &&
+      (span.invalid === true || span.ok === false || span.status >= 400)).length,
     writeCount: writes.length, followupReadCount: followupReads.length,
     prepaintWriteCount: prepaint.filter(span => span.method && !['GET', 'HEAD', 'OPTIONS'].includes(span.method)).length,
     httpCount: http.length,
@@ -134,10 +146,13 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       clockCalibrated: items.every((item) => item.clockCalibrated),
       maxClockUncertaintyMs: maxObserved('clockUncertaintyMs'),
       maxPrepaintHttpCount: maxObserved('prepaintHttpCount'),
+      maxPrepaintRequestCount: maxObserved('prepaintRequestCount'),
+      maxPrepaintRequestDepth: maxObserved('prepaintRequestDepth'),
       maxPrepaintOptionalCount: maxObserved('prepaintOptionalCount'),
       maxPrepaintHttpDepth: maxObserved('prepaintHttpDepth'),
       maxPrepaintCompletedRoundTrips: maxObserved('prepaintCompletedRoundTrips'),
       maxWrites: maxObserved('writeCount'), maxFollowupReads: maxObserved('followupReadCount'),
+      maxUnsettledRequests: maxObserved('unsettledRequestCount'), maxFailedRequests: maxObserved('failedRequestCount'),
       maxHttpBytes: Math.max(...items.map((item) => item.httpRequestBytes + item.httpResponseBytes)),
       maxWsFrames: maxObserved('wsFrames'), maxWsMessages: maxObserved('wsMessages'),
       maxWsBytes: maxObserved('wsBytes'),
@@ -145,9 +160,10 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       maxSqlPoolWaitMs: maxObserved('sqlPoolWaitMs'),
       budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], timingPercentile: tapContract ? 'p50' : 'p95', maxRequests, maxDepth,
       timingPass: !items.some((item) => item.timedOut) && (tapContract ? percentile(items.map(item => item.paintMs), .5) : p95) < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
-      requestPass: items.every((item) => item.clockCalibrated) && maxObserved('prepaintHttpCount') <= maxRequests &&
+      requestPass: items.every((item) => item.clockCalibrated) && maxObserved('prepaintRequestCount') <= maxRequests &&
+        maxObserved('unsettledRequestCount') === 0 && maxObserved('failedRequestCount') === 0 &&
         (!['/beeline/chat/[channelId]', 'open-corner'].includes(first.name) || maxObserved('prepaintOptionalCount') === 0) &&
-        maxObserved('prepaintHttpDepth') <= maxDepth &&
+        maxObserved('prepaintRequestDepth') <= maxDepth &&
         (tapContract ? (first.name === 'open-corner' && maxObserved('prepaintWriteCount') === 0) || (first.name !== 'open-corner' && items.every(item => item.writeCount === writesExpected &&
           item.followupReadCount === 0 && item.prepaintCompletedRoundTrips === 0)) : first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&
           item.followupReadCount === 0 && item.prepaintCompletedRoundTrips === 0)),
@@ -190,11 +206,11 @@ export function markdown(report, metadata = {}) {
       '- Push measurement: Activity entry to target text native frame commit; native-response phase absent. FCM delivery, notification shade, and foreground JS in-app notice are unmeasured.', '',
     ] : []),
     ...(metadata.note ? [metadata.note, ''] : []),
-    '| Kind | Screen or action | Variant | n | p50 | p95 | p99 | Budget | Prepaint HTTP max/depth | WS frames/messages | Payload bytes max | SQL max/depth/wait | Result |',
+    '| Kind | Screen or action | Variant | n | p50 | p95 | p99 | Budget | Prepaint requests max/depth (HTTP + socket) | WS frames/messages | Payload bytes max | SQL max/depth/wait | Result |',
     '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|',
   ];
   for (const row of report.rows) lines.push(
-    `| ${row.kind} | ${row.name} | ${row.variant} | ${row.samples} | ${ms(row.p50Ms)} | ${ms(row.p95Ms)} | ${ms(row.p99Ms)} | <${row.budgetMs} ms ${row.timingPercentile ?? 'p95'} | ${row.maxPrepaintHttpCount}/${row.maxPrepaintHttpDepth} (≤${row.maxRequests}/≤${row.maxDepth}) | ${row.maxWsFrames}/${row.maxWsMessages} | ${row.maxHttpBytes + row.maxWsBytes} | ${row.maxSqlStatements}/${row.maxSqlDepth}/${row.maxSqlPoolWaitMs} ms | ${row.timingPass && row.requestPass ? 'PASS' : 'FAIL'} |`,
+    `| ${row.kind} | ${row.name} | ${row.variant} | ${row.samples} | ${ms(row.p50Ms)} | ${ms(row.p95Ms)} | ${ms(row.p99Ms)} | <${row.budgetMs} ms ${row.timingPercentile ?? 'p95'} | ${row.maxPrepaintRequestCount ?? row.maxPrepaintHttpCount}/${row.maxPrepaintRequestDepth ?? row.maxPrepaintHttpDepth} (≤${row.maxRequests}/≤${row.maxDepth}) | ${row.maxWsFrames}/${row.maxWsMessages} | ${row.maxHttpBytes + row.maxWsBytes} | ${row.maxSqlStatements}/${row.maxSqlDepth}/${row.maxSqlPoolWaitMs} ms | ${row.timingPass && row.requestPass ? 'PASS' : 'FAIL'} |`,
   );
   const censored = report.rows.filter((row) => row.timedOutSamples > 0);
   if (censored.length) lines.push('',

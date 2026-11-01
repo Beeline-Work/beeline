@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, writeFileSync, mkdirSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,6 +9,7 @@ import {
   parseReviewArgs,
   reviewExactHead,
   REVIEW_BUILD_PACKAGES,
+  reuseReviewDependencies,
 } from './review-exact-head.mjs';
 
 const SHA = 'a'.repeat(40);
@@ -17,6 +19,8 @@ function fakeDeps(overrides = {}) {
   const makeTemp = () => {
     const dir = mkdtempSync(join(tmpdir(), 'review-exact-head-test-'));
     calls.tempDir = dir;
+    mkdirSync(join(dir, 'apps/mobile'), { recursive: true });
+    for (const part of ['', 'apps/mobile']) writeFileSync(join(dir, part, 'package-lock.json'), '{"packages":{}}');
     return dir;
   };
   const remove = (dir) => {
@@ -90,7 +94,7 @@ test('resolves, checks out, installs, builds exports, runs steps and cleans up',
   assert.equal(result.ok, true);
   assert.deepEqual(calls.git[0], ['rev-parse', '--verify', '--quiet', `${SHA}^{commit}`]);
   assert.deepEqual(calls.git[1], ['worktree', 'add', '--detach', calls.tempDir, SHA]);
-  assert.deepEqual(calls.run[0], ['npm', ['ci']]);
+  assert.deepEqual(calls.run[0], ['npm', ['ci', '--prefix', calls.tempDir]]);
   const buildArgs = ['run', 'build'];
   for (const pkg of REVIEW_BUILD_PACKAGES) buildArgs.push('-w', pkg);
   assert.deepEqual(calls.run[1], ['npm', buildArgs]);
@@ -114,7 +118,9 @@ test('a failing step fails the summary with that step named', () => {
   });
   const result = reviewExactHead([SHA, '--', '@beeline/server:src/integration.test.ts'], deps);
   assert.equal(result.ok, false);
-  assert.equal(result.failed.name, 'npm ci');
+  assert.equal(result.failed.name, 'prepare');
+  assert.match(result.failed.detail, /writable npm ci failed/);
+  assert.equal(calls.run.length, 1);
   assert.deepEqual(calls.git[calls.git.length - 1], ['worktree', 'remove', '--force', calls.tempDir]);
 });
 
@@ -139,8 +145,8 @@ test('runs mobile install, typecheck and tests with --prefix apps/mobile', () =>
   );
   assert.equal(result.ok, true);
   const npm = calls.run.filter(([command]) => command === 'npm');
-  assert.deepEqual(npm[0], ['npm', ['ci']]);
-  assert.deepEqual(npm[1], ['npm', ['ci', '--prefix', 'apps/mobile']]);
+  assert.deepEqual(npm[0], ['npm', ['ci', '--prefix', calls.tempDir]]);
+  assert.deepEqual(npm[1], ['npm', ['ci', '--prefix', join(calls.tempDir, 'apps/mobile')]]);
   assert.deepEqual(
     npm.find(([, args]) => args[0] === 'run' && args.includes('typecheck')),
     ['npm', ['run', 'typecheck', '--prefix', 'apps/mobile']],
@@ -194,4 +200,38 @@ test('--keep leaves the worktree and prints the removal command', () => {
     logs.some((line) => line === `[review] kept; remove with: git worktree remove --force ${calls.tempDir}`),
   );
   rmSync(calls.tempDir, { recursive: true, force: true });
+});
+
+// Reproduction REVIEW-DEPS-1: reuse skips the npm guard entirely.
+test('matching installed generation runs review steps without npm ci; changed lock installs privately', () => {
+  const root = mkdtempSync(join(tmpdir(), 'review-reuse-'));
+  try {
+    const lock = JSON.stringify({ packages: { 'node_modules/proof': { version: '1' } } });
+    writeFileSync(join(root, 'package-lock.json'), lock);
+    mkdirSync(join(root, 'node_modules/proof'), { recursive: true });
+    writeFileSync(join(root, 'node_modules/proof/index.js'), 'module.exports = 42');
+    const key = createHash('sha256').update(`v2\0${process.platform}\0${process.arch}\0${process.versions.modules}\0`).update(lock).digest('hex').slice(0,32);
+    writeFileSync(join(root, 'node_modules/.beeline-generation'), JSON.stringify({ key }));
+    const { calls, deps } = fakeDeps();
+    const original = deps.makeTemp;
+    deps.makeTemp = () => { const dir = original(); writeFileSync(join(dir, 'package-lock.json'), lock); return dir; };
+    const result = reviewExactHead([SHA, '--', '@beeline/body:proof'], { ...deps, sourceRoot: root });
+    assert.equal(result.ok, true);
+    assert.ok(!calls.run.some(([, args]) => args[0] === 'ci'));
+    const target = mkdtempSync(join(tmpdir(), 'review-stale-'));
+    try {
+      writeFileSync(join(target, 'package-lock.json'), lock + ' ');
+      assert.equal(reuseReviewDependencies(root, target), false);
+      writeFileSync(join(target, 'package-lock.json'), lock);
+      assert.equal(reuseReviewDependencies(root, target), true);
+      assert.equal(readFileSync(join(target, 'node_modules/proof/index.js'), 'utf8'), 'module.exports = 42');
+      const stale = mkdtempSync(join(tmpdir(), 'review-marker-'));
+      try {
+        writeFileSync(join(stale, 'package-lock.json'), lock);
+        writeFileSync(join(root, 'node_modules/.beeline-generation'), JSON.stringify({ key: 'stale' }));
+        assert.equal(reuseReviewDependencies(root, stale), false);
+      } finally { rmSync(stale, { recursive: true, force: true }); }
+      assert.equal(statSync(join(target, 'node_modules/proof/index.js')).ino, statSync(join(root, 'node_modules/proof/index.js')).ino);
+    } finally { rmSync(target, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -32,3 +32,11 @@ This covers `.verification`, `.scratch`, Claude worktrees and agent-home rigs. K
 The built-helper proof now registers five extra copies using the real preparation command, resolves requests through the helper, and supplies an installer that throws if any extra copy tries to install privately. Each copy shares the original package inode, denies writes through the sandbox and builds successfully. Fixture payload across the original two consumers plus five extras is 161 bytes before sharing and 23 bytes after sharing (the shared Codex reference is 23 bytes). This excludes per-copy metadata and process memory. It is not a full-helper parity claim.
 
 Remaining fleet work: the shared main comparison checkout; cache/target consolidation; full-helper disk and memory measurements; memory, emulator, index and idle-session reductions; the separately authorized squire cleanup. This PR does not claim the overall fleet parity acceptance bar.
+
+## Exact-head reviews
+
+`npm run review:exact-head -- <sha> -- <package>:<test>` reuses a matching installed generation after comparing the target lockfile bytes and the generation's runtime key. It creates package aliases to the sealed source directories and recreates workspace links against the detached review tree. Package payloads remain shared and protected; workspace builds stay in the review tree.
+
+If the lockfile differs, the generation is stale, or required packages are missing, the helper installs into its fresh private worktree with `npm ci --prefix <path>`. The npm guard allows this only when the explicit target has no root dependencies and does not overlap any sealed dependency path. Existing managed trees remain protected. Installation failure stops preparation with a diagnostic explaining that neither reuse nor private installation succeeded.
+
+Reproduction `REVIEW-DEPS-1`: `node --import tsx scripts/prove-review-dependencies.mjs` exercises the real review helper and npm guard with detached fixture commits, a local npm tarball, workspace builds and tests that load the dependency. The matching lockfile skips installation; a changed lockfile installs privately. This is a stand-in for the production reviewer namespace.

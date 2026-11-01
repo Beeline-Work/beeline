@@ -58,7 +58,6 @@
     "workspace-core-loaded-first"
   ],
   "heldout": [
-    "capabilities-room-skips-corner-app",
     "checkout-names-commit",
     "corners-keeps-reviewer-independent",
     "corners-opens-named-corner",

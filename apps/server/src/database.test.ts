@@ -1641,3 +1641,26 @@ describe('the agent_grants kind vocabulary migration', () => {
     ]);
   });
 });
+
+describe('retired app storage', () => {
+  it('drops old tables in dependency order and stays safe on a repeated migration', async () => {
+    const database = new PgliteDatabase();
+    const prefix = ['corner', 'app'].join('_');
+    const tables = [`${prefix}s`, `${prefix}_bindings`, `${prefix}_installations`];
+    try {
+      await database.query(`CREATE TABLE ${tables[2]} (id integer PRIMARY KEY)`);
+      await database.query(`CREATE TABLE ${tables[1]} (installation_id integer REFERENCES ${tables[2]}(id))`);
+      await database.query(`CREATE TABLE ${tables[0]} (id integer PRIMARY KEY)`);
+      await database.query(`INSERT INTO ${tables[2]} VALUES (1)`);
+      await database.query(`INSERT INTO ${tables[1]} VALUES (1)`);
+      await migrate(database);
+      await migrate(database);
+      const remaining = await database.query<{ tablename: string }>(
+        'SELECT tablename FROM pg_tables WHERE tablename = ANY($1)', [tables],
+      );
+      expect(remaining.rows).toEqual([]);
+    } finally {
+      await database.close();
+    }
+  });
+});

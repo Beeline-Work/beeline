@@ -186,7 +186,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
       facts={squireSpending ? [{ label: 'Uses', value: permission.tool }, { label: 'Can', value: 'Pay with a saved card at checkout' }]
         : [{ label: 'Repository', value: permission.repository ?? 'Missing target' }, { label: 'Branch from', value: targetBranch ?? 'main' }, { label: 'Can', value: 'Push to its own branch · merge still needs you' }]}
       footerNote={footerNote} decisionNote={!pending}
-      footerNoteTestID={pending && permission.repository && !canDecide ? 'corner-approval-audience-wait' : undefined}
+      footerNoteTestID={pending && permission.repository && !canDecide ? 'brief-approval-audience-wait' : undefined}
       footerNoteTone={permission.status === 'failed' || (pending && !permission.repository) ? 'failed' : 'quiet'}
       actions={actions}
     />

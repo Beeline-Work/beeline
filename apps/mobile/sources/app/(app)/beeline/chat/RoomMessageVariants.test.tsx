@@ -450,7 +450,7 @@ describe('Room message variant components', () => {
       />,
     );
     expect(outsider.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
-    expect(outsider.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+    expect(outsider.root.findByProps({ testID: 'brief-approval-audience-wait' })).toBeDefined();
 
     // Squire spending is the spending agent's owner's call alone: neither the
     // requester nor a Workspace owner or admin who is not its owner decides.
@@ -641,7 +641,7 @@ describe('Room message variant components', () => {
       );
     });
     expect(shown.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
-    expect(shown.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+    expect(shown.root.findByProps({ testID: 'brief-approval-audience-wait' })).toBeDefined();
     expect(shown.root.findAllByProps({ testID: 'grant-g-1-always' })).toHaveLength(0);
     const waiting = JSON.stringify(shown.toJSON());
     expect(waiting).toContain('waiting for the requester or a workspace admin');

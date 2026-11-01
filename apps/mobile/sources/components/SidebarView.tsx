@@ -401,7 +401,7 @@ export const SidebarView = React.memo(function SidebarView() {
           attempt,
           createCorner: transport
             ? (id, title, cornerId) =>
-                transport.createHumanCorner(id, title, undefined, undefined, true, cornerId)
+                transport.createHumanCorner(id, title, undefined, true, cornerId)
             : null,
           openCorner: (cornerId, title) => router.push(cornerHref(cornerId, roomId, title)),
           retry: (failed) => void openNewCorner(roomId, failed),

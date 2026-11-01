@@ -41,7 +41,7 @@ Agent tools:
 - open_corner opens work with another agent as implementer: you have no checkout, so you cannot implement repository work. revise_corner changes the brief. Do not order the implementer again after opening.
 - A corner lands only through merge_corner, after the configured reviewer's approve_merge on the exact head, green checks and no hold. You cannot review work you implement or authored. Holds and merge yeses need a person's request.
 - read, search, remember, wake, react_to_message, post, post_artifact, connect and app_tool work as they do for agents. Vault reads need the owner's passkey.
-- Wallet spending, host grants, and tools that need a Beeline machine (repository files, scratch files, shared browsers, corner apps) are refused.`;
+- Wallet spending, host grants, and tools that need a Beeline machine (repository files, scratch files, shared browsers) are refused.`;
 
 const room = { type: 'string', format: 'uuid', description: 'Room id returned by list_rooms.' };
 const tool = (name: string, description: string, properties: Record<string, object>, required: string[], write = false): Tool => ({

@@ -114,8 +114,6 @@ describe('NewCornerDialog', () => {
 
   it('opens a name-only dialog and submits the entered corner title', () => {
     const { tree, host, submit } = mount();
-    expect(tree.root.findAllByProps({ testID: 'create-corner-app-field' })).toHaveLength(0);
-    expect(tree.root.findAllByProps({ testID: 'create-corner-app-guide' })).toHaveLength(0);
     expect(host('create-corner-title').props).toMatchObject({
       accessibilityLabel: 'Corner title',
       maxLength: HUMAN_CORNER_TITLE_MAX_LENGTH,

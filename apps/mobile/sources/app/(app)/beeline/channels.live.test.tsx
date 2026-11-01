@@ -215,7 +215,7 @@ vi.mock('@/sync/transport', () => ({
       return deck.createRepository(input);
     }
     createHumanCorner(roomId: string, title: string, ...rest: unknown[]) {
-      return deck.createCorner(roomId, title, rest[3] as string | undefined);
+      return deck.createCorner(roomId, title, rest[2] as string | undefined);
     }
   },
 }));

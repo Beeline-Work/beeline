@@ -76,7 +76,7 @@ An app has no checkout, so `open_corner` refuses the app itself as implementer o
 | `request_grant`, `run_granted_command` | Host grants are kept out of connected apps |
 | `repository_io`, `list_files`, `read_file`, `read_agent_file`, `search_text`, `git_log`, `git_show`, `git_diff`, `git_status` | Needs a Beeline machine |
 | `scratch_io`, `write_scratch_file`, `fetch_image`, `scratch_status`, `read` facet `attachment` | Needs a Beeline machine |
-| `share_browser`, `end_browser_share`, `publish_corner_app`, `open_corner_app` | Needs a Beeline machine |
+| `share_browser`, `end_browser_share` | Needs a Beeline machine |
 
 A direct call to an excluded tool is refused with its reason. `R-MCP-PARITY` in `rooms-mcp.test.ts` fails when an agent tool is neither exposed nor on this list.
 

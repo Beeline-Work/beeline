@@ -88,7 +88,6 @@ import {
   REPLY_EXCERPT_MAX_LENGTH,
   classifyTurnSilence,
   cornerTextRefusal,
-  readCornerAppDefinition,
   normalizeCornerText,
   shouldCompletePendingFailedCommand,
   type CornerWatchKind,
@@ -594,8 +593,6 @@ export class DaemonService {
       'postStarterVideoPreview',
       'askRoomChoice',
       'openRoomPoll',
-      'putCornerApp',
-      'requestCornerAppOpen',
       'renameCorner',
       'getInstitutionalContext',
       'saveInstitutionalMemory',
@@ -1920,16 +1917,6 @@ export class DaemonService {
       case 'postCornerPlan':
         return (await this.cornerPlan(
           input as Input<'postCornerPlan'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'putCornerApp':
-        return (await this.putCornerApp(
-          input as Input<'putCornerApp'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'requestCornerAppOpen':
-        return (await this.requestCornerAppOpen(
-          input as Input<'requestCornerAppOpen'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'renameCorner':
@@ -6525,72 +6512,6 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async putCornerApp(input: Input<'putCornerApp'>, agentId: string) {
-    await this.access(input.cornerId, agentId);
-    const definition = readCornerAppDefinition(input.definition);
-    if (!definition) throw new Error('corner app definition is invalid');
-    const saved = (
-      await this.database.query<{ revision: number; updated_at: Date }>(
-        `INSERT INTO corner_apps(corner_id,slug,author_agent_id,definition)
-         VALUES($1,$2,$3,$4::jsonb)
-         ON CONFLICT(corner_id,slug) DO UPDATE SET
-           author_agent_id=EXCLUDED.author_agent_id,
-           definition=EXCLUDED.definition,
-           revision=corner_apps.revision+1,
-           updated_at=now()
-         RETURNING revision,updated_at`,
-        [input.cornerId, definition.slug, agentId, JSON.stringify(definition)],
-      )
-    ).rows[0]!;
-    this.live.publish({
-      type: 'invalidate',
-      roomId: input.cornerId,
-      reason: 'corner-app',
-      agentId,
-    });
-    return {
-      id: id(),
-      createdAt: seconds(saved.updated_at),
-      slug: definition.slug,
-      revision: saved.revision,
-    };
-  }
-  private async requestCornerAppOpen(input: Input<'requestCornerAppOpen'>, agentId: string) {
-    await this.access(input.cornerId, agentId);
-    const app = (
-      await this.database.query<{ title: string; revision: number }>(
-        `SELECT definition->>'title' title,revision FROM corner_apps
-         WHERE corner_id=$1 AND slug=$2`,
-        [input.cornerId, input.slug],
-      )
-    ).rows[0];
-    if (!app) throw new Error('corner app not found');
-    const agent = await this.identity(agentId);
-    const messageId = id();
-    await systemLine(this.database, {
-      id: messageId,
-      roomId: input.cornerId,
-      subject: { kind: 'agent', id: agentId, name: agent.name },
-      verb: 'opened an app',
-      object: app.title,
-      presentation: 'card',
-      requestId: input.requestId,
-      cardType: 'corner-app',
-      card: { slug: input.slug, title: app.title, revision: app.revision },
-    });
-    this.live.publish({
-      type: 'invalidate',
-      roomId: input.cornerId,
-      reason: 'corner-app',
-      agentId,
-    });
-    return {
-      id: messageId,
-      createdAt: Math.floor(Date.now() / 1000),
-      slug: input.slug,
-      revision: app.revision,
-    };
-  }
   /** Closed-corner evidence follows the same audience checks as message reads.
    * Keep approval-message scope separate from attachment reuse. */
   private async briefAttachmentRooms(
@@ -9484,8 +9405,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postConnectionUsage: true,
   postCornerRemoteState: true,
   postCornerPlan: true,
-  putCornerApp: true,
-  requestCornerAppOpen: true,
   renameCorner: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,

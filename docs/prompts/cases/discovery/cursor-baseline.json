@@ -1751,24 +1751,6 @@
         },
         {
           "type": "call",
-          "id": 15,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:corner_app"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "capability unavailable on this surface"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
-        },
-        {
-          "type": "call",
           "id": 16,
           "name": "read",
           "args": {
@@ -2401,24 +2383,6 @@
             ]
           },
           "succeeded": true
-        },
-        {
-          "type": "call",
-          "id": 15,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:corner_app"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "capability unavailable on this surface"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
         },
         {
           "type": "call",
@@ -3695,25 +3659,6 @@
             ]
           },
           "succeeded": true
-        },
-        {
-          "type": "call",
-          "id": 9,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:corner_app",
-            "query": "voice"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "capability unavailable on this surface"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
         },
         {
           "type": "call",
@@ -10687,24 +10632,6 @@
             ]
           },
           "succeeded": true
-        },
-        {
-          "type": "call",
-          "id": 7,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:corner_app"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "capability unavailable on this surface"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
         },
         {
           "type": "call",

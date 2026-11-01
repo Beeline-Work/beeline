@@ -2,7 +2,6 @@ export * from './daemon-operations.js';
 export * from './vault-save.js';
 export * from './reply-context.js';
 export * from './artifacts.js';
-export * from './corner-apps.js';
 export * from './upload-object.js';
 export * from './agent-access.js';
 export * from './system-events.js';

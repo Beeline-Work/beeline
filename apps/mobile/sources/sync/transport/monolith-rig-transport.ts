@@ -466,7 +466,6 @@ export class MonolithRigTransport {
   createHumanCorner(
     roomId: string,
     title: string,
-    appInstallationId?: string,
     sourceMessageId?: string,
     titleGenerated?: boolean,
     cornerId?: string,
@@ -478,7 +477,6 @@ export class MonolithRigTransport {
       {
         roomId,
         title,
-        appInstallationId,
         sourceMessageId,
         titleGenerated,
         cornerId,

@@ -655,21 +655,6 @@ describe('monolith Room send path', () => {
     );
   });
 
-  it('passes an optional installed Corner App binding when creating a corner', async () => {
-    controls.fetch.mockResolvedValueOnce(
-      new Response(JSON.stringify({ id: 'app-corner-id' }), { status: 200 }),
-    );
-    const transport = new MonolithRigTransport(identity);
-    const appInstallationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-
-    await transport.createHumanCorner(ROOM, 'Release board', appInstallationId);
-    expect(controls.request).toHaveBeenCalledWith(
-      "createHumanCorner",
-      { roomId: ROOM, title: 'Release board', appInstallationId },
-      { timeoutMs: 15_000 },
-    );
-  });
-
   it('names the message a swiped corner was opened from', async () => {
     controls.fetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ id: 'forward-corner-id' }), { status: 200 }),
@@ -681,7 +666,6 @@ describe('monolith Room send path', () => {
     await transport.createHumanCorner(
       ROOM,
       'quiet amber corner',
-      undefined,
       sourceMessageId,
       true,
       cornerId,

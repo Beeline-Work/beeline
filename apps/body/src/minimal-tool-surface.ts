@@ -34,7 +34,6 @@ export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
     "link_wait": "wait_link_spend_request"
   },
   "browser_share": {"start": "share_browser", "end": "end_browser_share"},
-  "corner_app": {"publish": "publish_corner_app", "open": "open_corner_app"},
   "avatar": {"read": "get_avatar", "set": "set_avatar"}
 };
 export const REPOSITORY_ROUTES: Record<string, string> = {
@@ -385,95 +384,6 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
         "type": "object",
         "required": ["sessionId"],
         "properties": {"sessionId": {"type": "string"}},
-        "additionalProperties": false
-      }
-    }
-  },
-  "corner_app": {
-    "publish": {
-      "name": "publish",
-      "description": "Create or replace one native Corner App shared with every member of this corner. The app is declarative: headings, text, fields, notices, and prompt actions only. Its command becomes a dynamic /slash-command without a client release.",
-      "inputSchema": {
-        "type": "object",
-        "required": ["slug", "title", "command", "blocks"],
-        "properties": {
-          "slug": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-          "title": {"type": "string", "minLength": 1, "maxLength": 80},
-          "description": {"type": "string", "minLength": 1, "maxLength": 240},
-          "command": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-          "blocks": {
-            "type": "array",
-            "maxItems": 40,
-            "items": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "required": ["type", "text"],
-                  "properties": {"type": {"const": "heading"}, "text": {"type": "string", "minLength": 1, "maxLength": 120}},
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "required": ["type", "text"],
-                  "properties": {"type": {"const": "text"}, "text": {"type": "string", "minLength": 1, "maxLength": 4000}},
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "required": ["type", "items"],
-                  "properties": {
-                    "type": {"const": "fields"},
-                    "items": {
-                      "type": "array",
-                      "minItems": 1,
-                      "maxItems": 24,
-                      "items": {
-                        "type": "object",
-                        "required": ["label", "value"],
-                        "properties": {
-                          "label": {"type": "string", "minLength": 1, "maxLength": 80},
-                          "value": {"type": "string", "minLength": 1, "maxLength": 500}
-                        },
-                        "additionalProperties": false
-                      }
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "required": ["type", "text"],
-                  "properties": {
-                    "type": {"const": "notice"},
-                    "text": {"type": "string", "minLength": 1, "maxLength": 1000},
-                    "tone": {"type": "string", "enum": ["neutral", "warning"]}
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "required": ["type", "label", "prompt"],
-                  "properties": {
-                    "type": {"const": "action"},
-                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "prompt": {"type": "string", "minLength": 1, "maxLength": 2000}
-                  },
-                  "additionalProperties": false
-                }
-              ]
-            }
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    "open": {
-      "name": "open",
-      "description": "Ask everyone reading this corner to open one persisted Corner App. This posts an app row they can enter; it never executes app content.",
-      "inputSchema": {
-        "type": "object",
-        "required": ["slug"],
-        "properties": {"slug": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"}},
         "additionalProperties": false
       }
     }
@@ -1422,12 +1332,12 @@ export const SILENT_TOOL: ToolDefinition = {
   "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
 };
 /**
- * The Beeline apps app_tool serves in a place. Corner apps work only in a
- * corner. Onboarding joins only while the server marks the Room eligible.
+ * The Beeline apps app_tool serves in a place.
+ * Onboarding joins only while the server marks the Room eligible.
  */
-export function placeBeelineApps(cornerTurn: boolean, onboarding = false): string[] {
+export function placeBeelineApps(_cornerTurn: boolean, onboarding = false): string[] {
   return Object.keys(CAPABILITY_ROUTES)
-    .filter(capability => (capability !== 'onboarding' || onboarding) && (capability !== 'corner_app' || cornerTurn))
+    .filter(capability => (capability !== 'onboarding' || onboarding))
     .map(capability => `beeline:${capability}`);
 }
 /** app_tool names only the Beeline apps that work in this place, so discovery never offers one that refuses. */

@@ -262,7 +262,6 @@ import {
 } from '@/buzz/chat-attachment';
 import {
   availableSlashVerbs,
-  availableCornerAppCommands,
   availableAgentMentionCommands,
   fastModeCommandState,
   FAST_MODE_COMMAND,
@@ -460,7 +459,6 @@ import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/R
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import { CreatePollSheet, type PollDraft } from '@/components/buzz/CreatePollSheet';
-import { CornerAppRow } from '@/components/buzz/CornerAppScreen';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
@@ -2288,14 +2286,6 @@ export function BuzzChatSurface({
     return `${artifacts}:${thumbs}`;
   }, [roomSurface?.messages]);
   const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
-  useFocusEffect(useCallback(() => {
-    const humanUi = roomSurface?.boundApp?.manifest.humanUi;
-    if (!isFocused() || !isCorner || !humanUi) return;
-    router.replace({
-      pathname: '/beeline/corner-app/[slug]',
-      params: { slug: roomSurface.boundApp!.manifest.slug, roomId: decodedId },
-    } as Href);
-  }, [decodedId, isCorner, isFocused, roomSurface?.boundApp]));
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
   // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain
@@ -2327,10 +2317,6 @@ export function BuzzChatSurface({
     agentCommandsByScope[mentionAgentCommandScope] !== undefined &&
     (agentCommandsByScope[mentionAgentCommandScope]?.length ?? 0) === 0,
   );
-  const cornerAppCommands = useMemo(() => {
-    if (currentSlashQuery === null) return [];
-    return availableCornerAppCommands(roomSurface?.cornerApps ?? [], currentSlashQuery);
-  }, [currentSlashQuery, roomSurface?.cornerApps]);
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
       const message = combinedMessages[index];
@@ -2958,7 +2944,7 @@ export function BuzzChatSurface({
     dismissedSlashText !== inputText,
   );
   const paletteItemCount =
-    mentionAgentCommands.length + cornerAppCommands.length + slashVerbs.length;
+    mentionAgentCommands.length + slashVerbs.length;
   useEffect(() => {
     setHighlightedSlashVerbIndex(0);
   }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
@@ -4961,7 +4947,7 @@ export function BuzzChatSurface({
       await openRandomNamedCorner({
         attempt: current,
         createCorner: (roomId, title, cornerId) =>
-          transport.createHumanCorner(roomId, title, undefined, undefined, true, cornerId),
+          transport.createHumanCorner(roomId, title, undefined, true, cornerId),
         // Inside a corner the new corner is a sibling under the parent Room.
         roomId: parentChannelId ?? decodedId,
         openCorner: (cornerId, title) => {
@@ -5033,7 +5019,7 @@ export function BuzzChatSurface({
         ),
         sourceMessageId: target.relayId ?? target.id,
         createCorner: (roomId, title, sourceMessageId, cornerId) =>
-          transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true, cornerId),
+          transport.createHumanCorner(roomId, title, sourceMessageId, true, cornerId),
         // Inside a corner the new corner is a sibling under the parent Room.
         roomId: parentChannelId ?? decodedId,
         openCorner: (cornerId, title) => {
@@ -5612,18 +5598,6 @@ export function BuzzChatSurface({
     ],
   );
 
-  const openCornerApp = useCallback(
-    (slug: string) => {
-      clearSlashComposer();
-      void Haptics.selectionAsync();
-      router.push({
-        pathname: '/beeline/corner-app/[slug]',
-        params: { slug, roomId: decodedId },
-      } as Href);
-    },
-    [clearSlashComposer, decodedId],
-  );
-
   /** Select whatever the highlight points at across commands-then-verbs. */
   const selectHighlightedPaletteItem = useCallback(() => {
     const commandIndex = highlightedSlashVerbIndex - mentionAgentCommands.length;
@@ -5633,14 +5607,8 @@ export function BuzzChatSurface({
         selectAgentCommand(command.name);
         return;
       }
-    } else if (commandIndex < cornerAppCommands.length) {
-      const app = cornerAppCommands[commandIndex];
-      if (app) {
-        openCornerApp(app.slug);
-        return;
-      }
     } else {
-      const verb = slashVerbs[commandIndex - cornerAppCommands.length];
+      const verb = slashVerbs[commandIndex];
       if (verb) {
         runSlashVerb(verb.id);
         return;
@@ -5655,9 +5623,7 @@ export function BuzzChatSurface({
     highlightedSlashVerbIndex,
     selectAgentCommand,
     inputText,
-    cornerAppCommands,
     mentionAgentCommands,
-    openCornerApp,
     runSlashVerb,
     slashVerbs,
   ]);
@@ -5978,14 +5944,6 @@ export function BuzzChatSurface({
           />
         );
       }
-      if (item.cornerApp) {
-        return (
-          <CornerAppRow
-            title={item.cornerApp.title}
-            onOpen={() => openCornerApp(item.cornerApp!.slug)}
-          />
-        );
-      }
       if (item.corner) {
         return null;
       }
@@ -6139,7 +6097,6 @@ export function BuzzChatSurface({
       decodedId,
       handleAcceptConnectorOffer,
       continueConnectorOffer,
-      openCornerApp,
       openWorkbench,
       choiceActionId,
       openCorner,
@@ -6843,11 +6800,9 @@ export function BuzzChatSurface({
                             onDismiss={dismissSlashMenu}
                             onSelect={runSlashVerb}
                             commands={mentionAgentCommands}
-                            apps={cornerAppCommands}
                             agentName={mentionAgentName}
                             agentLacksCommands={mentionAgentLacksCommands}
                             onSelectCommand={selectAgentCommand}
-                            onSelectApp={openCornerApp}
                           />
                         );
                       })()}

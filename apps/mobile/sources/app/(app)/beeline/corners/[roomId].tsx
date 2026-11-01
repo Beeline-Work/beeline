@@ -148,7 +148,6 @@ export default function BuzzCorners() {
             roomId,
             title,
             undefined,
-            undefined,
             true,
             cornerId,
           ),

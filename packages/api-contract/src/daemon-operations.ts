@@ -15,7 +15,6 @@ import type {
 import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js';
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
-import type { CornerAppDefinition } from './corner-apps.js';
 import type { ReportAgentSignInInput } from './agent-sign-in.js';
 import type { WorkflowRoleBinding, WorkflowReceiptInput, WorkflowRunReadResult } from './workflow-contracts.js';
 import type {
@@ -573,8 +572,6 @@ export type DaemonOperationMap = {
   >;
   postCornerRemoteState: Operation<PostCornerRemoteStateInput, WriteResult>;
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
-  putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
-  requestCornerAppOpen: Operation<RequestCornerAppOpenInput, CornerAppWriteResult>;
   /** Retitles a corner and optionally updates its goal. A human-opened corner may receive its first brief in the same write. */
   renameCorner: Operation<
     TurnOutputAuthority & CornerInput & {
@@ -1442,19 +1439,6 @@ export type PostCornerPlanInput = CornerInput & {
     readonly step: string;
     readonly status: 'pending' | 'in_progress' | 'completed';
   }[];
-};
-export type PutCornerAppInput = TurnOutputAuthority &
-  CornerInput & {
-    readonly definition: CornerAppDefinition;
-  };
-export type RequestCornerAppOpenInput = TurnOutputAuthority &
-  CornerInput & {
-    readonly slug: string;
-    readonly requestId: string;
-  };
-export type CornerAppWriteResult = WriteResult & {
-  readonly slug: string;
-  readonly revision: number;
 };
 export type PostTargetBranchProposalInput = RoomInput & {
   readonly purpose?: string;

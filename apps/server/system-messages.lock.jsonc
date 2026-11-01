@@ -1,3 +1,4 @@
+// Retired app-opening producer and its wrapper occurrence removed; approved by lunchboxfortwo, brief revision 1, message c24ca338b827384dceae12642bed7fbb26a64f05bd5e087cdb614cab3241c2a6. Remaining System wording is unchanged.
 // Wording fingerprints follow the words of a message. A helper that only returns those words is not a separate message. Approved by lunchboxfortwo, message 62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702. Displayed wording is unchanged.
 // Welcome choice card, restored game and welcome-video workflow approved by lunchboxfortwo, brief revision 1, message 70415acb30aea25b94498928664981f5a6d3873b9e3288df648a1e6012618af3. Onboarding producers, choice metadata and workflow role-selection dependencies only; existing workflow wording unchanged.
 // Wording-neutral lifecycle cleanup approved by lunchboxfortwo, message 304303be9b7e4a533bec01c78824f102a8486127a021656274eb6d2dfd890f9b, corner brief revision 5. Additional applyEvent and backfillRun wrappers approved in message 134f90601fa010dd765527b857a5f4292a4d7f6d3f379aa1ffca84cb4b44db52. Transition.take and its dead rereview wrappers only otherwise; no System wording change.
@@ -4454,7 +4455,7 @@
     "kind": "wrapper",
     "template": "this.postRoomMessage(input as Input<'postRoomMessage'>, authenticatedAgentId, true)",
     "literals": [],
-    "occurrences": 17
+    "occurrences": 16
   },
   {
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:51ced7ea2ac63a48",
@@ -5232,29 +5233,6 @@
       "randomUUID()"
     ],
     "occurrences": 2
-  },
-  {
-    "id": "src/daemon-service.ts:DaemonService.requestCornerAppOpen:systemLine:864fe6d918384ef2",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "systemLine",
-    "template": "systemLine(this.database, {\n    id: messageId,\n    roomId: input.cornerId,\n    subject: { kind: 'agent', id: agentId, name: agent.name },\n    verb: 'opened an app',\n    object: app.title,\n    presentation: 'card',\n    requestId: input.requestId,\n    cardType: 'corner-app',\n    card: { slug: input.slug, title: app.title, revision: app.revision },\n})",
-    "literals": [
-      "\"opened an app\"",
-      "'title'",
-      ".name",
-      ".revision",
-      ".rows",
-      ".slice",
-      ".slice()",
-      ".slug",
-      ".title",
-      "FirstLiteralToken:0",
-      "FirstLiteralToken:8",
-      "[\"Agent \",\"\"]",
-      "binary:??",
-      "end:expression"
-    ],
-    "occurrences": 1
   },
   {
     "id": "src/daemon-service.ts:DaemonService.resumeRegistrySignIn:systemLine:1fa86ddedcb08d63",

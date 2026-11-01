@@ -572,7 +572,7 @@ describe('Corner list live path', () => {
     });
     expect(list.createCalls).toHaveLength(1);
     // The phone names the corner, so a retry can ask for the same one.
-    expect(list.createCalls[0]![5]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(list.createCalls[0]![4]).toMatch(/^[0-9a-f-]{36}$/);
     await act(async () => release());
     await vi.waitFor(() => expect(header().props.busy).toBe(false));
     expect(router.push).toHaveBeenCalledOnce();
@@ -616,7 +616,7 @@ describe('Corner list live path', () => {
     await act(async () => renderer.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());
     expect(list.createCalls).toHaveLength(2);
     expect(list.createCalls[1]![1]).toBe(list.createCalls[0]![1]);
-    expect(list.createCalls[1]![5]).toBe(list.createCalls[0]![5]);
+    expect(list.createCalls[1]![4]).toBe(list.createCalls[0]![4]);
     expect(router.push).toHaveBeenCalledOnce();
     expect(renderer.root.findAllByProps({ testID: 'corner-open-failed' })).toHaveLength(0);
   });

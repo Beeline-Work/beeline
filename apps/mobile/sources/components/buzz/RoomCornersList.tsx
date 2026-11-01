@@ -169,14 +169,6 @@ export function RoomCornersList({
   const more = archived.status === 'ready' ? archived.more : undefined;
 
   const openCorner = (item: CornerListItem) => {
-    const humanUi = item.app?.manifest.humanUi;
-    if (humanUi) {
-      router.push({
-        pathname: '/beeline/corner-app/[slug]',
-        params: { slug: item.app!.manifest.slug, roomId: item.corner.id },
-      });
-      return;
-    }
     router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name, 'corners'));
   };
 

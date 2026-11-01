@@ -186,7 +186,6 @@ function skipsArchiveActions(item: ChatDisplayMessage): boolean {
     item.walletInsufficient != null ||
     item.walletDelegation != null ||
     item.targetBranchProposal != null ||
-    item.cornerApp != null ||
     item.corner != null ||
     item.githubEvent != null ||
     item.daemonFact != null

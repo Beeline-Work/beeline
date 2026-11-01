@@ -7,7 +7,6 @@ import { NoMatchingConversationsEmpty } from '../sources/components/buzz/NoMatch
 import { PinnedConversationsEmpty } from '../sources/components/buzz/PinnedConversationsEmpty';
 import { RoomRosterSheet } from '../sources/components/buzz/RoomRosterSheet';
 import { CommunityInviteEntry } from '../sources/components/buzz/CommunityInviteEntry';
-import { CornerAppScreen } from '../sources/components/buzz/CornerAppScreen';
 import { ChevronGlyph } from '../sources/components/buzz/ChevronGlyph';
 
 let showAll = 0;
@@ -32,8 +31,6 @@ function Proof() {
       membershipActionPubkey={null} membershipError={null} workingByPubkey={{}}
       parentChannelId={null} userPubkey="viewer" onAddMembers={() => {}} onClose={() => {}} onRemove={() => {}} />
     <CommunityInviteEntry community={{ name: 'Example' } as any} creatingInvite={false} onInvitePeople={() => {}} />
-    <CornerAppScreen app={{ title: 'Example', command: 'example', authorName: 'Example', revision: 1,
-      blocks: [{ type: 'action', label: 'Run action', prompt: 'run' }] } as any} onBack={() => {}} onAction={() => {}} />
   </View>;
 }
 createRoot(document.getElementById('root')!).render(<Proof />);
@@ -63,7 +60,6 @@ async function main() {
   if (showAll !== 3) throw Error('Show all callbacks changed');
   position('room-roster-more');
   position('invite-people-action', '＋', true);
-  position('corner-app-action-Run action');
   document.getElementById('result')!.textContent = 'PASS BUTTON ICON ORDER ' + JSON.stringify(measurements);
 }
 main().catch(error => { document.getElementById('result')!.textContent = 'FAIL ' + error.message; });

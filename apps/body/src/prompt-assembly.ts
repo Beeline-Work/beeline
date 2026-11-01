@@ -788,7 +788,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       const place = corner ? 'corner' : surface === 'dm' ? 'DM' : 'Room';
       return [
         `Works here (${task.commandReason === 'schedule' ? `schedule run in this ${place}` : place}): app_tool apps ${placeBeelineApps(corner, onboarding).join(', ')}.`,
-        !corner && 'Corner only: beeline:corner_app and repository writes.',
+        !corner && 'Corner only: repository writes.',
       ].filter(Boolean).join(' ');
     },
   },

@@ -18,7 +18,6 @@ import {
 
 import { CommunityRail } from '../sources/components/buzz/CommunityRail';
 import { TurnProgressLine } from '../sources/components/buzz/TurnProgressLine';
-import { CornerAppScreen, CornerAppRow } from '../sources/components/buzz/CornerAppScreen';
 import { RepoPicker } from '../sources/components/buzz/RepoPicker';
 import { ArtifactViewerScreen } from '../sources/components/buzz/ArtifactViewer';
 import { DesktopArtifactPane } from '../sources/components/buzz/DesktopArtifactPane';
@@ -328,26 +327,6 @@ function Proof() {
       />
     ),
     turn: <TurnProgressLine label="Thinking" onStop={none} testID="audit-turn" />,
-    corner: (
-      <>
-        <CornerAppRow title="Review this corner" onOpen={none} />
-        <View style={{ height: 400 }}>
-          <CornerAppScreen
-            app={
-              {
-                title: 'Review',
-                command: 'review',
-                authorName: 'Ruby',
-                revision: 1,
-                blocks: [{ type: 'action', label: 'Review this corner', prompt: 'Review' }],
-              } as any
-            }
-            onBack={none}
-            onAction={none}
-          />
-        </View>
-      </>
-    ),
     repo: (
       <RepoPicker
         testIDPrefix="audit-repo"

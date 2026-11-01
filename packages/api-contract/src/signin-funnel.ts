@@ -32,7 +32,6 @@ export const FUNNEL_SCREENS = [
   'beeline/channels',
   'beeline/chat/[channelId]',
   'beeline/community',
-  'beeline/corner-app/[slug]',
   'beeline/corners/[roomId]',
   'beeline/create-workspace',
   'beeline/github-callback',

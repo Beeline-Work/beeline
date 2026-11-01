@@ -1750,24 +1750,6 @@
         },
         {
           "type": "call",
-          "id": 10,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:corner_app"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "capability unavailable on this surface"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
-        },
-        {
-          "type": "call",
           "id": 11,
           "name": "app_tool",
           "args": {
@@ -2960,24 +2942,6 @@
         },
         {
           "type": "call",
-          "id": 13,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:corner_app"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "capability unavailable on this surface"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
-        },
-        {
-          "type": "call",
           "id": 14,
           "name": "read",
           "args": {
@@ -3018,7 +2982,7 @@
           "succeeded": true
         }
       ],
-      "text": "You're the owner of this Room. A hold from Fixture Member, a member, does not bind you.\n\nI checked before treating that as a blank check. The gate says this Room is not held. There is no corner and no pull request, so there is no change waiting behind a hold.\n\nRoutes:\n\n- Corners: none.\n- Gate: not held, no pull request, merge not allowed.\n- History and memory: only your message.\n- Brief and pull request: denied. This place is a Room, not a corner.\n- The extra activity row in the message list: not found when opened.\n- Corner app: unavailable on this surface.\n\nName the corner if the hold is somewhere else. You outrank a member who set it, and I will release that hold.",
+      "text": "You're the owner of this Room. A hold from Fixture Member, a member, does not bind you.\n\nI checked before treating that as a blank check. The gate says this Room is not held. There is no corner and no pull request, so there is no change waiting behind a hold.\n\nRoutes:\n\n- Corners: none.\n- Gate: not held, no pull request, merge not allowed.\n- History and memory: only your message.\n- Brief and pull request: denied. This place is a Room, not a corner.\n- The extra activity row in the message list: not found when opened.\n\nName the corner if the hold is somewhere else. You outrank a member who set it, and I will release that hold.",
       "execution": "local-service",
       "bindings": {
         "fixture-room": "003b8121-d8cb-4bef-a792-e3a5bd597e34"

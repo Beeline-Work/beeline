@@ -797,7 +797,6 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_brief_revisions`);
-  await db.query(`DELETE FROM corner_apps`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
@@ -882,62 +881,6 @@ it('a workflow wake for a run in the turn’s own Room still carries the run ins
   console.log(
     `Demonstrated workflow-corner-objective: a same-Room workflow wake (run ${runId}) still reads as: ${JSON.stringify(wake?.source.body)}`,
   );
-});
-
-it('persists one declarative app per corner and projects agent open requests', async () => {
-  await send('@hoots build the release board', C);
-  const [command] = await commands(A, C);
-  await claim(command!);
-  const definition = {
-    version: 1 as const,
-    slug: 'release-board',
-    title: 'Release board',
-    description: 'Current release facts.',
-    command: 'release-board',
-    blocks: [
-      { type: 'fields' as const, items: [{ label: 'State', value: 'Ready' }] },
-      { type: 'action' as const, label: 'Refresh', prompt: 'Refresh this release board.' },
-    ],
-  };
-  await expect(
-    daemon.execute(
-      'putCornerApp',
-      {
-        cornerId: C,
-        requestId: command!.turnRequestId,
-        generationId: 'g1',
-        definition,
-      },
-      A,
-    ),
-  ).resolves.toEqual(expect.objectContaining({ slug: 'release-board', revision: 1 }));
-
-  expect((await phone.readRoom(C, H))?.cornerApps).toEqual([
-    expect.objectContaining({
-      ...definition,
-      authorId: A,
-      authorName: 'Hoots',
-      authorHandle: 'hoots',
-      revision: 1,
-    }),
-  ]);
-
-  await daemon.execute(
-    'requestCornerAppOpen',
-    {
-      cornerId: C,
-      requestId: command!.turnRequestId,
-      generationId: 'g1',
-      slug: definition.slug,
-    },
-    A,
-  );
-  expect((await phone.readRoom(C, H))?.messages).toContainEqual(
-    expect.objectContaining({
-      cornerApp: { slug: 'release-board', title: 'Release board', revision: 1 },
-    }),
-  );
-  await result(command!, 'The app is ready.');
 });
 
 it('lets the corner agent retitle its corner during its turn', async () => {

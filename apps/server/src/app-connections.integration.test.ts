@@ -551,8 +551,8 @@ describe('connect_app', () => {
   it('Reproduction first-party-connect-card: built-in apps are ready without grants or cards', async () => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([]).client);
-    for (const service of ['beeline:corner_app', 'beeline:workflow', 'beeline:browser_share',
-      'beeline corner app', 'beelinecornerapp', 'corner_app']) {
+    for (const service of ['beeline:workflow', 'beeline:browser_share',
+      'beeline workflow', 'beelineworkflow']) {
       expect(await daemon.execute('connect', { ...turn, service, reason: 'Use built-in app',
         squireAvailable: true }, HELPER)).toMatchObject({ status: 'ready', next: expect.stringContaining('app_tool') });
     }
@@ -974,22 +974,22 @@ describe('connect_app', () => {
 
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text)
-       VALUES('corner-app-source',$1,$2,'Check access to X posts')`, [CORNER, OWNER],
+       VALUES('corner-service-source',$1,$2,'Check access to X posts')`, [CORNER, OWNER],
     );
     await database.query(
       `INSERT INTO agent_commands(
          id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
          root_command_id,root_source_message_id,agent_depth,state,generation_id,lease_expires_at
-       ) VALUES('corner-app-command',$1,$2,'corner-app-source','corner-app-request',
-         'input','human_tag','corner-app-command','corner-app-source',0,
-         'claimed','corner-app-generation',now()+interval '10 minutes')`,
+       ) VALUES('corner-service-command',$1,$2,'corner-service-source','corner-service-request',
+         'input','human_tag','corner-service-command','corner-service-source',0,
+         'claimed','corner-service-generation',now()+interval '10 minutes')`,
       [CORNER, HELPER],
     );
     const provider = fakeComposio('x');
     provider.supportsOAuth.mockResolvedValue(true);
     const daemon = daemonWith(fakeRegistry([]).client, provider);
-    const cornerTurn = { roomId: CORNER, requestId: 'corner-app-request',
-      generationId: 'corner-app-generation' };
+    const cornerTurn = { roomId: CORNER, requestId: 'corner-service-request',
+      generationId: 'corner-service-generation' };
     const before = await daemon.execute('readAgentWorkbench', { roomId: CORNER }, HELPER);
     expect(before.apps).toEqual([]);
     const started = await daemon.execute('connectApp', { ...cornerTurn, app: 'X',

@@ -1,12 +1,13 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Approved by lunchboxfortwo: owner messages 005973c2 (state rules) and fa0d393f (lock), corner brief revision 4.
 // Queued work stays working: lunchboxfortwo message 1d183c7884173194edd919705a769c759205506422a1a6704a933775823d640c.
+// A pending check stays review: lunchboxfortwo message f33288d32e5c70141c1e670672a60128bdd6eeb4e8bd70189120b1283131f480.
 {
   "entries": [
     {
       "file": "packages/api-contract/src/corner-state.ts",
       "declaration": "deriveCornerState",
-      "sha256": "93b35682c13e873753e040ef9bb173f72f642ff3cf7ccf0f53e384fa0c981d60"
+      "sha256": "9d0f36bf6a87b1fc606e03e0ebd0022a122fda41bd993619a48075a3dc4081d6"
     },
     {
       "file": "packages/api-contract/src/corner-state.ts",

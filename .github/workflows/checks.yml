@@ -1099,7 +1099,7 @@ jobs:
       - name: Test store upload identity, rerun store checks and Apple processing verification
         run: node --test scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs
+        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs
       # Release state lives in the systems that own it and the published
       # GitHub Release record; artifacts and caches carry build outputs only.
       - name: Refuse release state in artifacts and caches

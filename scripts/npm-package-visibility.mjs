@@ -97,16 +97,25 @@ export async function waitForNpmPackageVisibility({
   throw new Error(`${packageName}@${version} was not visible after ${timeoutMs}ms (${attempts} attempts) on ${PUBLIC_NPM_REGISTRY}; verify npm publication succeeded before retrying the release`);
 }
 
+export async function checkNpmPackageVisibility(options, { warn = false, log = console.log } = {}) {
+  try {
+    const result = await waitForNpmPackageVisibility(options);
+    log(`${options.packageName}@${options.version} is visible on public npm after ${result.attempts} attempt(s)`);
+    return 0;
+  } catch (error) {
+    if (!warn) throw error;
+    log(`::warning::${error.message.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`);
+    return 0;
+  }
+}
+
 async function main() {
   const [packageName, version] = process.argv.slice(2);
   if (!packageName || !version) {
     throw new Error('usage: npm-package-visibility <package> <version>');
   }
 
-  const result = await waitForNpmPackageVisibility({ packageName, version });
-  console.log(
-    `${packageName}@${version} is visible on public npm after ${result.attempts} attempt(s)`,
-  );
+  process.exitCode = await checkNpmPackageVisibility({ packageName, version }, { warn: process.argv.includes('--warn') });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

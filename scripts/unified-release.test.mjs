@@ -1771,7 +1771,7 @@ test('all helper builds pin compatible Rust before cache restore and keep locked
   }
   const builder = readFileSync(new URL('./build-beeline-bundle.mjs', import.meta.url), 'utf8');
   assert.match(builder, /'--locked'/);
-  const smoke = workflow.jobs.helper.steps.find((step) => step.name === 'Smoke the exact helper package');
+  const smoke = workflow.jobs.helper.steps.find((step) => step.name === 'Check helper npm visibility');
   assert.equal(smoke['timeout-minutes'], 6);
   assert.ok(smoke['timeout-minutes'] * 60_000 > NPM_VISIBILITY_TIMEOUT_MS);
 });
@@ -2014,4 +2014,24 @@ test('public JSON release outputs survive punctuation masking across plan, OTA a
     } } }, { previous });
     assert.deepEqual(otaState.storeRuntime.previouslyLive, observations.previouslyLive);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('npm-delayed-visibility: exact tarball smoke gates publish and listing is advisory', () => {
+  const steps = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8')).jobs.helper.steps;
+  const pack = steps.find(step => step.id === 'helper_package');
+  const publish = steps.find(step => step.name === 'Publish the exact helper CLI package');
+  const visibility = steps.find(step => step.name === 'Check helper npm visibility');
+  assert.ok(pack && steps.indexOf(pack) < steps.indexOf(publish));
+  assert.ok(steps.indexOf(publish) < steps.indexOf(visibility));
+  assert.ok(pack.run.indexOf('npm version') < pack.run.indexOf('npm pack'));
+  assert.ok(pack.run.indexOf('npm pack') < pack.run.indexOf('node scripts/smoke-helper-package.mjs'));
+  assert.match(pack.run, /smoke-helper-package.mjs "\$tarball" "\$\{RELEASE_VERSION#v\}"/);
+  assert.equal(pack['timeout-minutes'], 5);
+  assert.equal(pack['continue-on-error'], undefined);
+  assert.match(publish.env.HELPER_TARBALL, /steps.helper_package.outputs.tarball/);
+  assert.match(publish.run, /npm publish --no-provenance "\$HELPER_TARBALL"/);
+  assert.equal(publish['continue-on-error'], undefined);
+  assert.match(visibility.run, /--warn$/);
+  assert.equal(visibility['continue-on-error'], true);
 });

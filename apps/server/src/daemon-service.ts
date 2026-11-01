@@ -1588,7 +1588,7 @@ export class DaemonService {
             'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
             'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
             'corner_background_tool', 'corner_brief_revision'].includes(command.reason))
-            throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
+            throw new CommandRefusalError('no_reply_needed requires a nonhuman wake. Call post({text: <your reply>}), then end the turn.', 400);
           if (!(await this.database.query(`SELECT 1 FROM agent_pending_attachments
             WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 LIMIT 1`,
             [command.room_id, authenticatedAgentId, command.turn_request_id, command.generation_id])).rowCount) {
@@ -1656,6 +1656,15 @@ export class DaemonService {
         return await this.database.transaction(async (db) => {
           const origin = await authorizeCommandOutput(db, completion.roomId, authenticatedAgentId,
             completion.requestId, completion.generationId, true);
+          // Older helpers may detach the terminal MCP call before its result
+          // arrives. Its result cannot add work to a turn already ended silently.
+          // Preserve every other background job and every later generation.
+          if (/^(?:mcp__beeline[-_]agent__)?no_reply_needed$/.test(completion.title) &&
+              (await db.query(`SELECT 1 FROM agent_turns
+                WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4
+                  AND completion_kind='no-reply'`,
+              [completion.roomId, authenticatedAgentId, completion.requestId, completion.generationId])).rowCount)
+            return this.writeResult();
           const commandId = createHash('sha256').update(JSON.stringify([
             'background-tool', origin.id, completion.generationId, completion.toolCallId,
           ])).digest('hex');

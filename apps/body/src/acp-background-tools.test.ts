@@ -187,3 +187,49 @@ it('BG-TERMINAL: terminal guards preserve originating background completion wake
   expect(sibling).toHaveBeenCalledOnce();
   expect(client.hasBackgroundTools).toBe(false);
 });
+
+
+it.each(['no_reply_needed', 'mcp__beeline-agent__no_reply_needed'])(
+  'SILENT-END-1: holds an end_turn until background %s settles without a continuation', async title => {
+    const { client, wire, update } = harness();
+    vi.mocked(wire.request).mockImplementation(async () => {
+      wire.handleMessage({ method: 'session/update', params: { sessionId: 'session', update: {
+        sessionUpdate: 'tool_call', toolCallId: 'silent', title, status: 'in_progress',
+      } } });
+      return { stopReason: 'end_turn' };
+    });
+    const complete = vi.fn();
+    let settled = false;
+    const prompt = client.sessionPrompt('session', 'nothing to say', 5000, undefined, undefined, undefined, complete)
+      .then(result => { settled = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    update('session', 'silent', 'completed');
+    await prompt;
+    update('session', 'silent', 'failed');
+    expect(complete).not.toHaveBeenCalled();
+    expect(client.hasBackgroundTools).toBe(false);
+  },
+);
+
+it.each(['failed', 'exit', 'timeout'])('SILENT-END-1: pending silence handles %s without creating a background wake', async outcome => {
+  const { client, wire, update } = harness();
+  vi.mocked(wire.request).mockImplementation(async () => {
+    wire.handleMessage({ method: 'session/update', params: { sessionId: 'session', update: {
+      sessionUpdate: 'tool_call', toolCallId: 'silent', title: 'no_reply_needed', status: 'in_progress',
+    } } });
+    return { stopReason: 'end_turn' };
+  });
+  const complete = vi.fn();
+  const prompt = client.sessionPrompt('session', 'quiet', 50, undefined, undefined, undefined, complete);
+  // Attach the rejection assertion before an asynchronous failure is delivered.
+  const checked = outcome === 'failed' ? expect(prompt).resolves.toMatchObject({ stopReason: 'end_turn' })
+    : expect(prompt).rejects.toThrow(outcome === 'exit' ? 'runtime_exited' : 'turn_backstop');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  if (outcome === 'failed') update('session', 'silent', 'failed');
+  if (outcome === 'exit') client.emit('exit', { code: 1, signal: null });
+  await checked;
+  update('session', 'silent', 'completed');
+  expect(complete).not.toHaveBeenCalled();
+  expect(client.hasBackgroundTools).toBe(false);
+});

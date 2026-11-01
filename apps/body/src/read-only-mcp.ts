@@ -3570,7 +3570,7 @@ async function executeAgentOperation(
     case 'no_reply_needed': {
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
-      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake');
+      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
       await daemonExecute('markAgentTurnSilent', {});
       // The helper drains in-flight activity and drafts before its terminal receipt.
       // Completing here revokes authority while those writes are still running.

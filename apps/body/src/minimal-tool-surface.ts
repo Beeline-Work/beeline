@@ -1330,7 +1330,7 @@ export const RUNNER_TOOL: ToolDefinition = {
 };
 export const SILENT_TOOL: ToolDefinition = {
   "name": "no_reply_needed",
-  "description": "On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, end the turn immediately and silently. No further tools or final text are accepted. This tool posts nothing and reports nothing. Human-triggered turns cannot use it.",
+  "description": "On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, end the turn immediately and silently. No further tools or final text are accepted. This tool posts nothing and reports nothing. Works alone, in parallel or in the background. Human-triggered turns cannot use it: call post({text: <your reply>}), then end the turn.",
   "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
 };
 /**

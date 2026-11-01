@@ -1450,10 +1450,19 @@ export class AcpClient extends EventEmitter {
       } catch { /* The prompt timer still bounds a missing context. */ }
     }
     const hardTimer = freeAgent ? setTimeout(() => stop('free-agent-time-limit'), Math.max(0, startedAt + maxTurnMs - Date.now())) : undefined;
+    const isSilentCall = (call: ToolCallEntry) =>
+      /^(?:mcp__beeline[-_]agent__)?no_reply_needed$/.test(call.title ?? '');
+    const silentCallPending = () => toolCallEntries(updates).some(call =>
+      isSilentCall(call) && !call.resultReceived && !['completed', 'failed'].includes(call.status ?? ''));
+    let toolsSettled: (() => void) | undefined;
     const checkTerminalContext = () => {
       if (!contextPath || terminalReason) return;
       try {
         const context = JSON.parse(readFileSync(contextPath, 'utf8'));
+        // Keep the originating authority until the MCP result has reached the
+        // harness. Cancelling earlier turns a successful silence into a failed
+        // background call, whose completion would otherwise wake another turn.
+        if (context.terminalReason === 'no-reply' && silentCallPending()) return;
         if (context.terminalReason) stop(context.terminalReason);
       } catch { /* A context rewrite can briefly be empty. */ }
     };
@@ -1470,9 +1479,10 @@ export class AcpClient extends EventEmitter {
     const asyncToolCallIds = new Set<string>();
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId || terminalReason) return;
+      updates.push(u);
+      if (!silentCallPending()) toolsSettled?.();
       checkTerminalContext();
       if (terminalReason) return;
-      updates.push(u);
       const task = asyncTaskCall(u.update);
       if (task?.id) {
         asyncTasks.set(task.id, { ...asyncTasks.get(task.id), ...task });
@@ -1522,6 +1532,26 @@ export class AcpClient extends EventEmitter {
         promptPayloadNote(text),
       )])) as { stopReason?: string };
 
+      // Some harnesses return end_turn before background MCP calls finish.
+      // Silence is part of this turn, never a detached job or a new trigger.
+      if (!terminalReason && silentCallPending()) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let runtimeExited: (() => void) | undefined;
+        try {
+          await Promise.race([terminal, new Promise<void>((resolve, reject) => {
+            toolsSettled = resolve;
+            runtimeExited = () => reject(new AcpRuntimeExitedError('runtime exited awaiting no_reply_needed result'));
+            this.once('exit', runtimeExited);
+            timer = setTimeout(() => reject(new AcpTurnBackstopError(
+              timeoutMs, 'no_reply_needed result',
+            )), timeoutMs);
+          })]);
+        } finally {
+          if (timer) clearTimeout(timer);
+          if (runtimeExited) this.off('exit', runtimeExited);
+          toolsSettled = undefined;
+        }
+      }
       checkTerminalContext();
       const agentText = terminalReason === 'free-agent-time-limit'
         ? agentMessageRuns(updates, this.agentLabel).join('\n\n')
@@ -1557,7 +1587,7 @@ export class AcpClient extends EventEmitter {
       this.off('session/update', onUpdate);
       if (onBackgroundToolCompletion) {
         for (const call of [...toolCallEntries(updates), ...asyncTasks.values()]) {
-          if (call.id && !asyncToolCallIds.has(call.id) && !call.id.startsWith('anonymous-') &&
+          if (!isSilentCall(call) && call.id && !asyncToolCallIds.has(call.id) && !call.id.startsWith('anonymous-') &&
               !['completed', 'failed'].includes(call.status ?? '') && !call.resultReceived) {
             const key = `${sessionId}\0${call.id}`;
             // Progress during another turn must retain the job's original order.

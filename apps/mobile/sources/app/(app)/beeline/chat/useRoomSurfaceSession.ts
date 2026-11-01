@@ -38,7 +38,7 @@ import {
 import { offerRoomTurns, roomTurns, stampRoomMessageRows, useRoomTurnRecords, writeRoomMessage, writeRoomTurn } from '@/buzz/room-message-records';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
-import { observeVisibleRoomRows, waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import { observeVisibleRoomRows, waitForRoomDraw, requireOpeningRoomResponse, openingRoomResponseReady, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import { messageBoundaryIds } from '@/buzz/room-new-message-boundary';
 import { liveDraftRowId } from '@/buzz/draft-settle';
 import {
@@ -61,7 +61,7 @@ import {
 } from '@/buzz/agent-presence';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
-import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
+import { hasPrefetchedRoomOpen, takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
 /** A socket that never answers must not hold the open's one Room read. */
 const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
@@ -418,6 +418,19 @@ export function useRoomSurfaceSession({
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
   const reconciledViewRef = useRef<RoomView | null>(openingCache?.view ?? null);
   const sessionStartedRef = useRef(false);
+  const openingDrawRef = useRef<number | undefined>(undefined);
+  const drawingChannelRef = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!isFocused || drawingChannelRef.current === channelId) return;
+    drawingChannelRef.current = channelId;
+    // Direct corner navigation has no tap prefetch. A cached row can paint
+    // before setup finishes, but cannot release optional reads ahead of the
+    // single fresh opening response. Prefetched warm Rooms own their barrier.
+    if (!hasPrefetchedRoomOpen(channelId)) {
+      requireOpeningRoomResponse();
+      openingDrawRef.current = roomDrawGeneration();
+    }
+  }, [channelId, isFocused]);
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
@@ -598,6 +611,13 @@ export function useRoomSurfaceSession({
     setFirstUnreadMessageId(null);
     liveDraftDrainStore.setActive(true);
 
+    let openingDraw = openingDrawRef.current;
+    openingDrawRef.current = undefined;
+    const releaseOpeningResponse = (view?: RoomView) => {
+      if (openingDraw === undefined) return;
+      openingRoomResponseReady(view?.messages.at(-1)?.id, openingDraw);
+      openingDraw = undefined;
+    };
     let cancelled = false;
     let stopOutbox: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -616,6 +636,8 @@ export function useRoomSurfaceSession({
     // replaying these in order on top of the read keeps what the socket said.
     let readStamp = 0;
     let messageDeltasDuringRead: RoomViewMessage[] | undefined;
+    let commandsDuringRead: RoomView['pendingAgentCommands'];
+    let cursorDuringRead: RoomView['viewer']['readCursor'];
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
@@ -875,6 +897,24 @@ export function useRoomSurfaceSession({
               }
               return;
             }
+            if (live.type === 'read-state' || live.type === 'room-commands') {
+              if (live.roomId !== channelId) return;
+              if (messageDeltasDuringRead) {
+                if (live.type === 'read-state') cursorDuringRead = live.readCursor;
+                else commandsDuringRead = live.commands;
+              }
+              const current = reconciledViewRef.current;
+              if (live.type === 'read-state' && live.readCursor.messageId)
+                readCursorRef.current?.acknowledge(live.readCursor.messageId);
+              if (!current) return;
+              const next = live.type === 'read-state'
+                ? { ...current, viewer: { ...current.viewer, readCursor: live.readCursor } }
+                : { ...current, pendingAgentCommands: live.commands };
+              reconciledViewRef.current = next;
+              setRoomSurface(next);
+              scheduleCacheWrite();
+              return;
+            }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
               if (live.roomId !== channelId) return;
               const deltaMessage = live.type === 'message-delta'
@@ -913,6 +953,8 @@ export function useRoomSurfaceSession({
                 // replayed with this row, so a second GET adds no information.
                 return;
               }
+              if (live.type === 'message-delta' && live.message.author.pubkey === readCursorViewerRef.current)
+                readCursorRef.current?.acknowledge(live.message.id);
               const next =
                 live.type === 'message-delta'
                   ? reconcileRoomMessageDelta(current, deltaMessage!)
@@ -1231,6 +1273,8 @@ export function useRoomSurfaceSession({
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
             messageDeltasDuringRead = [];
+            commandsDuringRead = undefined;
+            cursorDuringRead = undefined;
             try {
               const prefetched = openingPrefetch;
               openingPrefetch = null;
@@ -1265,7 +1309,10 @@ export function useRoomSurfaceSession({
             applyView(
               replayedMessages.reduce(
                 reconcileRoomMessageDelta,
-                view,
+                { ...view,
+                  ...(commandsDuringRead ? { pendingAgentCommands: commandsDuringRead } : {}),
+                  ...(cursorDuringRead ? { viewer: { ...view.viewer, readCursor: cursorDuringRead } } : {}),
+                },
               ),
               identity.publicKey,
               relayUrl,
@@ -1275,6 +1322,7 @@ export function useRoomSurfaceSession({
             // Keep painting cache publishes through identity/outbox setup until
             // the opening read is actually applied (cleanup also unsubscribes).
             stopOpeningResponse();
+            releaseOpeningResponse(view);
             if (openReadBeforeWatch && !watchStarted) {
               watchStarted = true;
               readRacedAhead = true;
@@ -1309,6 +1357,7 @@ export function useRoomSurfaceSession({
           },
           onError: (error) => {
             if (cancelled) return;
+            releaseOpeningResponse();
             setPresenceResolved(false);
             const terminal =
               error instanceof RoomViewHttpError &&

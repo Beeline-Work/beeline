@@ -453,3 +453,15 @@ describe('anchored corner card read boundaries (R1)', () => {
     expect(newestVisibleMessageId(fine, [fine[0]!])).toBe('b');
   });
 });
+
+it('Send: an optimistic row never emits markRead while its send is still pending', async () => {
+  vi.useFakeTimers();
+  try {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    const pending = row('uncommitted', { isUser: true, isPendingSend: true } as Partial<ChatDisplayMessage>);
+    advancer.observe([pending], [pending]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(publish).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});

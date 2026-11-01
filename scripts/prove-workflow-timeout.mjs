@@ -1,14 +1,26 @@
-/** Isolated built-service replay of production workflow failures wf-1 and wf-2. */
+/** Built-service workflow refusal and recovery proof. --base-member asserts the original Sentry captures. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { migrate } from '../apps/server/dist/database.js';
-import { PgliteDatabase, describedWorkflow } from '../apps/server/src/test-support.js';
-import { TokenAuth } from '../apps/server/dist/auth.js';
-import { PhoneService } from '../apps/server/dist/phone-service.js';
-import { DaemonService } from '../apps/server/dist/daemon-service.js';
-import { LiveHub } from '../apps/server/dist/live.js';
-import { createBeelineServer } from '../apps/server/dist/server.js';
-import { createAgentCommand } from '../apps/server/dist/agent-command.js';
+import { createServer } from 'node:http';
+const envelopes = [];
+const collector = createServer(async (request, response) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  envelopes.push(Buffer.concat(chunks).toString());
+  response.end('{}');
+});
+await new Promise(resolve => collector.listen(0, '127.0.0.1', resolve));
+process.env.SENTRY_DSN = `http://public@127.0.0.1:${collector.address().port}/1`;
+// Set the collector DSN before loading modules that initialize Sentry.
+const { migrate } = await import('../apps/server/dist/database.js');
+const { PgliteDatabase, describedWorkflow } = await import('../apps/server/src/test-support.js');
+const { TokenAuth } = await import('../apps/server/dist/auth.js');
+const { PhoneService } = await import('../apps/server/dist/phone-service.js');
+const { DaemonService } = await import('../apps/server/dist/daemon-service.js');
+const { LiveHub } = await import('../apps/server/dist/live.js');
+const { createAgentCommand } = await import('../apps/server/dist/agent-command.js');
+const { createBeelineServer } = await import('../apps/server/dist/server.js');
+const { flushServerErrors } = await import('../apps/server/dist/sentry.js');
 const HUMAN = createHash('sha256').update('github:proof-owner').digest('hex');
 const WRITER = 'b'.repeat(64);
 const REVIEWER = 'c'.repeat(64);
@@ -192,6 +204,46 @@ async function main() {
     writerToken,
   );
   const runId = run.runId;
+  // SENTRY-WORKFLOW-MEMBER: the real authenticated command path, with isolated data.
+  const baseMember = process.argv.includes('--base-member');
+  const outsider = 'f'.repeat(64);
+  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Outsider')`, [outsider]);
+  for (const targetAgentId of [HUMAN, outsider]) {
+    const response = await fetch(`${origin}/v1/daemon/operations/assignWorkflowRole`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${writerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...payload, runId, role: 'maker', targetAgentId }),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: `${targetAgentId} is not a current agent member of this Room` });
+  }
+  // Keep the already-classified role mismatch on the same command boundary.
+  const mismatch = await fetch(`${origin}/v1/daemon/operations/assignWorkflowRole`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${writerToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...payload, runId, role: 'owner', targetAgentId: REVIEWER }),
+  });
+  assert.equal(mismatch.status, 503);
+  assert.deepEqual(await mismatch.json(), { error: 'this run is currently at the maker role, not owner' });
+  // An unexpected failure in this same operation must still reach Sentry.
+  const execute = daemon.execute.bind(daemon);
+  daemon.execute = async (operation, input, ...rest) => {
+    if (operation === 'assignWorkflowRole') throw new Error('Workflow membership proof control fault');
+    return execute(operation, input, ...rest);
+  };
+  const control = await fetch(`${origin}/v1/daemon/operations/assignWorkflowRole`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${writerToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...payload, runId, role: 'maker', targetAgentId: REVIEWER }),
+  });
+  assert.equal(control.status, 503);
+  daemon.execute = execute;
+  await flushServerErrors();
+  const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))).filter(item => item.exception);
+  const controls = events.filter(event => event.exception.values.some(value => value.value === 'Workflow membership proof control fault'));
+  assert.equal(controls.length, 1, 'unexpected command fault still reaches Sentry');
+  assert.equal(events.length - controls.length, baseMember ? 2 : 0);
+  console.log(`Reproduction SENTRY-WORKFLOW-MEMBER: human/nonmember HTTP 503; refusal captures=${events.length - controls.length}; unexpected captures=${controls.length}; role mismatch HTTP 503`);
   const refusal = async (label, operation, args, token, pattern) => {
     await assert.rejects(call(label, operation, args, token), pattern);
   };
@@ -303,4 +355,4 @@ main()
     console.error(error);
     process.exitCode = 1;
   })
-  .finally(() => process.exit(process.exitCode ?? 0));
+  .finally(() => { collector.closeAllConnections(); collector.close(); process.exit(process.exitCode ?? 0); });

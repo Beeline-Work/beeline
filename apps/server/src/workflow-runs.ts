@@ -2209,7 +2209,7 @@ export async function assignWorkflowRole(
       [command.room_id, targetAgentId],
     );
     if (!member.rowCount) {
-      throw new Error(`${targetAgentId} is not a current agent member of this Room`);
+      throw new ExpectedRefusalError(`${targetAgentId} is not a current agent member of this Room`);
     }
     const caller = await mentionsFor(db, [command.agent_id]);
     await moveRole(db, scope, {

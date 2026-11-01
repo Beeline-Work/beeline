@@ -1,0 +1,157 @@
+Failing-first request-count excerpts (local tests before each fix).
+Full logs remain in the worktree-private proof state.
+
+--- red-reaction-corner.log ---
+ FAIL  sources/components/buzz/StarPromptCard.test.tsx > a reaction win uses its pushed eligibility instead of a follow-up prompt read
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st spy call:
+
+    Array [
+      "readStarPrompt",
+      Object {},
+    ]
+
+
+Number of calls: 1
+
+ ❯ sources/components/buzz/StarPromptCard.test.tsx:62:25
+     60|   await act(async () => renderer!.update(<Probe winKey="0:1" />));
+     61|   for (let index = 0; index < 4; index++) await act(async () => frame(…
+     62|   expect(operation).not.toHaveBeenCalled();
+       |                         ^
+     63| });
+     64|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+--- red-reaction-corner.log ---
+ FAIL  sources/sync/transport/live-connection.test.ts > phone socket request/reply > corner open sends only its covering Room request before paint
+AssertionError: expected [ 'readRoom', …(2) ] to deeply equal [ 'readRoom' ]
+
+- Expected
++ Received
+
+  [
+    "readRoom",
++   "listRoomWorkflowRuns",
++   "readHistory",
+  ]
+
+ ❯ sources/sync/transport/live-connection.test.ts:1868:39
+    1866|     const frames = () => sockets[0]!.sent.map(v => JSON.parse(v)).filt…
+    1867|     try {
+    1868|       expect(frames().map(v => v.op)).toEqual(['readRoom']);
+       |                                       ^
+    1869|     } finally {
+    1870|       connection.dispose();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+
+--- red-send.log ---
+ FAIL  sources/buzz/chat-list-store.test.ts > Send: pushed read and command state update other devices without follow-up reads
+TypeError: consumer.visible is not a function
+ ❯ sources/buzz/chat-list-store.ts:158:99
+    156|   }
+    157|   private requestRead(): void {
+    158|     if (AppState.currentState !== 'background' && [...this.consumers].…
+       |                                                                                                   ^
+    159|       this.scheduler.signal();
+    160|     else this.missed = true;
+ ❯ ChatListStore.requestRead sources/buzz/chat-list-store.ts:158:71
+ ❯ ChatListStore.onFrame sources/buzz/chat-list-store.ts:213:10
+ ❯ Object.listener sources/buzz/chat-list-store.ts:175:81
+ ❯ emit sources/buzz/chat-list-store.test.ts:140:44
+ ❯ sources/buzz/chat-list-store.test.ts:750:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > Send: pushed queued commands paint without a follow-up Room read
+AssertionError: expected undefined to deeply equal [ { requestId: 'sent', …(2) } ]
+
+- Expected:
+[
+  {
+    "agentPubkey": "agent-a",
+
+--- red-send.log ---
+ FAIL  sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > Send: pushed queued commands paint without a follow-up Room read
+AssertionError: expected undefined to deeply equal [ { requestId: 'sent', …(2) } ]
+
+- Expected:
+[
+  {
+    "agentPubkey": "agent-a",
+    "createdAt": 1,
+    "requestId": "sent",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts:1475:55
+    1473|     expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    1474|     expect(controls.schedulers[0]!.forceCalls).toBe(0);
+    1475|     expect(current.roomSurface?.pendingAgentCommands).toEqual(commands…
+       |                                                       ^
+    1476|     await act(async () => renderer.unmount());
+    1477|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+--- red-send-mark.log ---
+ FAIL  sources/buzz/read-cursor-advance.test.ts > Send: an optimistic row never emits markRead while its send is still pending
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st spy call:
+
+    Array [
+      "uncommitted",
+    ]
+
+
+Number of calls: 1
+
+ ❯ sources/buzz/read-cursor-advance.test.ts:465:25
+    463|     advancer.observe([pending], [pending]);
+    464|     await vi.advanceTimersByTimeAsync(1000);
+    465|     expect(publish).not.toHaveBeenCalled();
+       |                         ^
+    466|   } finally { vi.useRealTimers(); }
+    467| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+--- red-corner-stale-cache.log ---
+ FAIL  sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > Corner: a direct open keeps optional requests behind the fresh response, past stale cache paint
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st spy call:
+
+    Array [
+      undefined,
+    ]
+
+
+Number of calls: 1
+
+ ❯ sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts:1474:22
+    1472|     finishRoomDraw('old-row', 'room-a');
+    1473|     await act(async () => { await new Promise(resolve => setTimeout(re…
+    1474|     expect(sent).not.toHaveBeenCalled();
+       |                      ^
+    1475|     const fresh = { ...roomView('room-a'), messages: [{ id: 'fresh-row…
+    1476|       author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯

@@ -232,6 +232,8 @@ export type ChatDisplayMessage = {
   id: string;
   text: string;
   isUser: boolean;
+  /** Local outbox/optimistic row, not yet a committed read boundary. */
+  isPendingSend?: boolean;
   timestamp: number;
   /** High-resolution causal ordering; `timestamp` remains the display clock. */
   orderAtMs?: number;

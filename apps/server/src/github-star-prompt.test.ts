@@ -282,3 +282,13 @@ it('counts only replies to a person, never cards', async () => {
     (await db.query<{ replies: number }>(`SELECT replies FROM github_star_prompts`)).rows,
   ).toEqual([{ replies: 1 }]);
 });
+
+it('a reaction stays successful when optional prompt eligibility cannot be read', async () => {
+  const messageId = await turn('reaction enrichment failure');
+  const eligibility = vi.spyOn(phone, 'liveStarPrompt').mockRejectedValueOnce(new Error('eligibility unavailable'));
+  try {
+    const result = await phone.execute('reactToMessage', { roomId: R, messageId, emoji: '👍' }, H);
+    expect(result).toMatchObject({ id: messageId, reactions: [expect.objectContaining({ emoji: '👍', reacted: true })] });
+    expect(result).not.toHaveProperty('prompt');
+  } finally { eligibility.mockRestore(); }
+});

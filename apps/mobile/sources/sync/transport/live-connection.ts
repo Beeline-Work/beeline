@@ -219,7 +219,7 @@ export class LiveConnection {
       if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
       return this.startRequest(op, args, options) as Promise<PhoneOperationMap[Name]['output']>;
     };
-    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad'].includes(op);
+    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad', 'listRoomWorkflowRuns', 'readHistory'].includes(op);
     const draw = (options.afterRoomDraw ?? optional) ? waitForRoomDraw(options.signal) : undefined;
     return draw ? draw.then(start) : start();
   }
@@ -715,6 +715,7 @@ export class LiveConnection {
         JSON.stringify({
           type: 'subscribe',
           sidebarPreviews: true,
+          roomStateProjections: true,
           roomIds: batch,
           ...(Object.keys(cursors).length ? { cursors } : {}),
         }),

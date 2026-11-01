@@ -12,7 +12,7 @@ import type {
   WritePermissionDecision,
 } from '@beeline/buzz-client';
 import type { SidebarPreview, PushLevel } from '@beeline/api-contract/phone';
-import type { AgentMessageWriteResult, ChatListCorner, ChatListItem, CornerListItem, MessageBookmarkView, NeedsYouItemView, RoomRepositoryResult, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import type { AgentMessageWriteResult, ChatListCorner, ChatListItem, CornerListItem, MessageBookmarkView, NeedsYouItemView, RoomRepositoryResult, RoomView, StarPrompt, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -51,6 +51,8 @@ export type LiveWireEvent = (
       bookmark: MessageBookmarkView | null }
   | { type: 'workspace-changed'; roomId: ''; workspace: { id: string; name: string; avatar?: string } }
   | { type: 'person-changed'; roomId: ''; person: RoomViewIdentity; pushLevel?: PushLevel }
+  | { type: 'read-state'; roomId: string; readCursor: NonNullable<RoomView['viewer']['readCursor']> }
+  | { type: 'room-commands'; roomId: string; commands: NonNullable<RoomView['pendingAgentCommands']> }
   | { type: 'needs-you-delta'; roomId: ''; workspaceId: string;
       sourceRoomId: string; count: number; items: readonly NeedsYouItemView[] }
   | { type: 'corner-status'; roomId: string; cornerCount: number;
@@ -66,6 +68,7 @@ export type LiveWireEvent = (
       version?: number;
       deckPreview?: ChatListItem['latestMessage'] | null;
       workflowRuns?: readonly WorkflowRunSummaryView[];
+      starPrompt?: StarPrompt | null;
       trace?: LiveWireTrace;
       reconcilesDelivery?: string;
     }

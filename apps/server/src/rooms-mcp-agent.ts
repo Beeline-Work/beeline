@@ -141,7 +141,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('stop', 'Stop the running turn of an agent you ordered, or one working in a corner you opened.', {
     address: address(), agent: { type: 'string', maxLength: 120 },
   }, ['address']),
-  tool('report', 'Report the outcome of an order to whoever ordered you. address is the place the order came from (list_mentions names it). Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
+  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. address is the place the order came from (list_mentions names it). Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
     address: address(), status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
     text: { type: 'string', minLength: 1, maxLength: 16000 }, ask: { type: 'string', maxLength: 140 },
   }, ['address', 'status', 'text']),
@@ -174,7 +174,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('dispatch_release', 'Dispatch a production Beeline release only on an explicit owner or admin command.', {
     address: address(), inputs: { type: 'object', additionalProperties: { type: 'string', maxLength: 256 } },
   }, ['address']),
-  tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed.', {
+  tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed. replyTo does not wake anyone; start with the asker\'s exact @handle.', {
     address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 },
   }, ['address', 'text']),
   tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact. Code work goes in a corner with another agent as implementer: use feature/corner- plus the first 12 hex characters of its id with hyphens removed; push existing commits there in the same repository with your own GitHub access, or post the patch in that corner, not the Room, with base commit and test commands for the implementer to apply and push with the Beeline GitHub App; your owner\'s connection approval covers sharing the patch.', {

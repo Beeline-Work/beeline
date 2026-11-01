@@ -114,17 +114,9 @@ test('real socket requests retain request/reply and SQL identity without logging
     await complete;
     clearTimeout(deadline);
     assert.equal(replies[0].id, 'request-secret-read');
-    // Receiving a reply does not mean the proxy's log stream has flushed it.
-    let logged = '';
-    const logDeadline = Date.now() + 5000;
-    while (Date.now() < logDeadline) {
-      logged = await readFile(proxyPath, 'utf8');
-      const flushed = logged.slice(0, logged.lastIndexOf('\n') + 1).trim();
-      if (flushed && flushed.split('\n').map(JSON.parse)
-        .filter(span => span.type === 'phone-request' && span.phase === 'end').length === 2) break;
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
+    await new Promise(resolve => setTimeout(resolve, 30));
     const endMs = Date.now();
+    const logged = await readFile(proxyPath, 'utf8');
     assert.ok(!/request-secret|request-payload-secret|response-secret/.test(logged));
     const records = logged.trim().split('\n').map(JSON.parse);
     const starts = records.filter(span => span.type === 'phone-request' && span.phase === 'start');

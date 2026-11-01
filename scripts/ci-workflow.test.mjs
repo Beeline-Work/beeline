@@ -107,9 +107,10 @@ test('four runners retain all eight bounded integration batches and fail closed'
   }
 });
 
-test('every Linux workspace consumer waits for the shared preparation job', () => {
+test('every hosted Linux workspace consumer waits for the shared preparation job', () => {
   for (const [name, job] of Object.entries(jobs)) {
-    if (name === 'shared-package-tests') continue;
+    // Other operating systems and dispatch-only host lanes populate separate caches.
+    if (name === 'shared-package-tests' || job['runs-on'] !== 'ubuntu-latest') continue;
     if (!job.steps?.some((step) => step.uses === './.github/actions/ci-workspace')) continue;
     const needs = Array.isArray(job.needs) ? job.needs : [job.needs];
     assert.ok(needs.includes('shared-package-tests'), `${name} races cache preparation`);

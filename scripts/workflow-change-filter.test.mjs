@@ -347,3 +347,30 @@ test('merge groups execute both consolidated server shard steps', () => {
     assert.equal(enabled, true, step.name);
   }
 });
+
+test('dependency installs use shared workspace setup, with bounded exceptions', () => {
+  const jobs = workflow('checks.yml').jobs;
+  const exemptions = {
+    'server-test-selection': 'Installs only TypeScript in a temporary prefix; no workspace build is needed.',
+  };
+  for (const [name, job] of Object.entries(jobs)) {
+    const steps = job.steps ?? [];
+    const installs = steps.some((step) => /\bnpm\s+(?:ci|install)\b/.test(step.run ?? ''));
+    if (installs && !exemptions[name]) assert.ok(steps.some((step) => step.uses === './.github/actions/ci-workspace'), name);
+  }
+  for (const name of ['mac-helper-acceptance', 'production-corpus-replay-on-demand', 'frame-budget-on-demand', 'state-upgrade-on-demand']) {
+    assert.ok(jobs[name].steps.some((step) => step.uses === './.github/actions/ci-workspace'), name);
+  }
+});
+
+test('full history is limited to ancestry consumers', () => {
+  const reasons = {
+    changes: 'Merge-group paths-filter compares base and head histories.',
+    'server-test-selection': 'Chooses a coverage artifact by ancestry and commit distance.',
+  };
+  for (const [name, job] of Object.entries(workflow('checks.yml').jobs)) {
+    for (const step of job.steps ?? []) {
+      if (String(step.with?.['fetch-depth']) === '0') assert.ok(reasons[name], `${name} needs a documented history reason`);
+    }
+  }
+});

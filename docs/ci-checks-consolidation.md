@@ -57,7 +57,7 @@ The ordinary hosted counts are **not identical**: the compared revisions differ 
 
 ## Cache choice
 
-Use Actions caches rather than a new build-artifact producer job. Dependencies are keyed by OS, Node major, lockfiles and manifests; mobile patches also invalidate the mobile cache. Compiled outputs and Turbo build records are keyed by exact workflow SHA, with no fallback to another commit. The existing shared-package gate populates these caches once before hosted Linux consumers restore them. macOS and on-demand production-host lanes keep their existing setup.
+Use Actions caches rather than a new build-artifact producer job. Dependencies are keyed by OS, Node major, lockfiles and manifests; mobile patches also invalidate the mobile cache. Compiled outputs and Turbo build records are keyed by exact workflow SHA, with no fallback to another commit. The existing shared-package gate populates these caches once before hosted Linux consumers restore them. macOS and on-demand production-host lanes now use the same action, retaining Rust setup on macOS and isolated mobile dependencies on the mobile lanes. They populate their own caches without waiting for the hosted Linux preparation job.
 
 Local compression measurements on squire, with two zstd threads, produced a roughly 200 MiB root dependency archive in 8.66 seconds and decoded it in 0.91 seconds; the roughly 651 MiB mobile archive took 20.10 seconds to pack and 2.44 seconds to decode. These figures exclude upload/download and filesystem extraction. Hosted cache transfer time and end-to-end results must be measured from the new PR run before claiming a speedup.
 
@@ -78,3 +78,5 @@ Completed hosted mixed-run measurements and test summaries are recorded above. T
 **Scope 4: done as decided.** README PARITY, APP LINK ASSOCIATIONS and ACTIONLINT remain separate as Ruby directed. There is no REPO LINT job or branch-protection change. All required aggregate check names are preserved; only the runners under SERVER SUITE and SERVER INTEGRATION are consolidated. No check-name approval is requested.
 
 The removed matrix contexts are SERVER SUITE SHARD 5–8 and SERVER INTEGRATION SHARD 1–8. SERVER SUITE SHARD 1–4, SERVER SUITE, SERVER INTEGRATION and SERVER CLAIM LATENCY remain. No release workflow changes are included.
+
+The [November 1 PR CI baseline](ci-baseline.md) records the current setup migration, API timing sample and same-commit flaky-test evidence.

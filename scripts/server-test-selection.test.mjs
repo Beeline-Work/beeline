@@ -315,3 +315,13 @@ test('replaying fifty past PRs selects every test file that really failed on the
   assert.deepEqual(misses, []);
   assert.ok(replay.prs.filter((pr) => pr.failed.includes(guard)).length >= 7, 'the seven System guard failures stay in the replay');
 });
+
+test('every edited server test survives a missing or stale coverage entry', () => {
+  for (const path of ['apps/server/src/a.test.ts', 'apps/server/src/unknown.test.ts']) {
+    for (const status of ['A', 'M', 'R']) {
+      const current = [...new Set([...testFiles, path])];
+      const selection = select([{ path, status, names: [], fileLevel: false }], [], current);
+      assert.ok(selection.mode === 'full' || selection.files.includes(path), `${status} ${path}`);
+    }
+  }
+});

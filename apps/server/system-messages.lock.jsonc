@@ -48,6 +48,7 @@
 // Free agent start-limit notice ("could not start") approved by lunchboxfortwo in brief revision 1 (message 3f079b490bc6649c3741482c3e59fb5f64b595f5e629a6a171adb6db2909c0cf): tell the person in their room; #stopStarts producer and its wake wrapper only.
 // Unfinished app sign-in cleanup fails the pending chat card; required by the owner-approved brief revision 2 (lunchboxfortwo, message b1dd35c16c366217c06cc07a43f4cd52bfe9abc9530d91be2eef3286ec8df564). Existing wording only, this cleanupUnfinishedAppSignIns wrapper only.
 // Agent stop line approved by lunchboxfortwo, DM message feeafd10: "@commander stopped @worker's running turn", with " · N queued orders dropped" when orders were dropped; agent stop tool producers only.
+// Schedule expiry line removed as approved by lunchboxfortwo, message 373fd798de3116473c05ed553d8fbf7a6a328dfb1c6c998782af1955c436699c (brief revision 3): schedules post only when they run. Removed the expired-limit systemLine and the runOnce advance() wrapper snapshot that existed only because that line was reachable.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:dc3f4b2749d2d2bc",
@@ -618,23 +619,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-schedules.ts:AgentScheduleLoop.advance:systemLine:89ae7afeb8be95d6",
-    "file": "apps/server/src/agent-schedules.ts",
-    "kind": "systemLine",
-    "template": "systemLine(database, {\n    roomId: current.room_id,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: current.workflow_slug ? `The ${current.workflow_slug} schedule` : 'The schedule',\n    },\n    verb: 'expired',\n    consequence: `reached its limit of ${current.max_runs} runs`,\n})",
-    "literals": [
-      "\"The schedule\"",
-      "\"expired\"",
-      ".max_runs",
-      ".workflow_slug",
-      "[\"The \",\" schedule\"]",
-      "[\"reached its limit of \",\" runs\"]",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/agent-schedules.ts:AgentScheduleLoop.runOnce:message-write:4f747d5e53abf7de",
     "file": "apps/server/src/agent-schedules.ts",
     "kind": "message-write",
@@ -710,17 +694,6 @@
       "FirstLiteralToken:0"
     ],
     "occurrences": 1
-  },
-  {
-    "id": "src/agent-schedules.ts:AgentScheduleLoop.runOnce:wrapper:5e0980afdfb39d52",
-    "file": "apps/server/src/agent-schedules.ts",
-    "kind": "wrapper",
-    "template": "this.advance(database, current, now, false)",
-    "literals": [
-      ".rows",
-      "FirstLiteralToken:0"
-    ],
-    "occurrences": 2
   },
   {
     "id": "src/agent-sign-in.ts:beginAgentSignInCards:wrapper:5c9969fccaa47ecd",

@@ -35,6 +35,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import {
   cornerTextRefusal,
   normalizeCornerText,
@@ -1697,18 +1698,40 @@ export async function postArtifact(
  *  such as a game template or a build page is source, so it travels inert. */
 const BRIEF_FILE_INERT_MIMES = new Set(['text/html', 'image/svg+xml', 'application/vnd.beeline.game+html']);
 
-/** Absolute or `~/` paths written in brief or order text. */
-const NAMED_PATH = /(?:^|[\s(<[])(?:"((?:~\/|\/)[^"\n]+)"|'((?:~\/|\/)[^'\n]+)'|`((?:~\/|\/)[^`\n]+)`|((?:~\/|\/)[^\s`'"()<>\]]+))/g;
+/** File citations, including Markdown links, file URLs and key=value text. */
+const NAMED_PATH = /(?:^|[\s(<[=:])(?:"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`|(file:\/\/[^\s`'"()<>\]]+|[^\s`'"()<>\]=:]+))/g;
 
 /** Recognize private paths even when missing or unreadable, so delivery fails
  *  explicitly rather than handing the worker an inaccessible filename. */
-export function namedPrivateFiles(roots: string[], text: string): { named: string; resolved: string }[] {
+export function namedPrivateFiles(roots: string[], text: string, includeRelative = false): { named: string; resolved: string }[] {
   const home = process.env.HOME?.trim();
   const found: { named: string; resolved: string }[] = [];
   for (const match of text.matchAll(NAMED_PATH)) {
     const quoted = match[1] ?? match[2] ?? match[3];
     const named = quoted ?? match[4]!.replace(/[.,;:!?*]+$/, '');
-    const absolute = named.startsWith('~/') ? (home ? join(home, named.slice(2)) : '') : named;
+    let path = named;
+    if (path.startsWith('file://')) {
+      try { path = fileURLToPath(path); } catch { continue; }
+    }
+    if (!isAbsolute(path) && !path.startsWith('~/')) {
+      // Source citations travel with the repository. Generated proof files do
+      // not: only existing relative files inside this session are candidates.
+      if (!includeRelative || !/^(?:\.{1,2}\/)?[\w@ .-]+(?:\/[\w@ .-]+)*\.[a-zA-Z0-9]{1,12}$/.test(path)) continue;
+      let resolved: string;
+      try { resolved = resolveAttachPath(roots, path); } catch { continue; }
+      const checkout = roots[0];
+      if (checkout && gitBinary && withinRoot(realpathSync(checkout), resolved)) {
+        try {
+          execFileSync(gitBinary, ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
+            '--literal-pathspecs', '-C', checkout, 'ls-files', '--error-unmatch', '--', relative(realpathSync(checkout), resolved)],
+          { stdio: 'ignore', timeout: 1000, env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' } });
+          continue;
+        } catch { /* Untracked files (or unavailable index evidence) need attachments. */ }
+      }
+      if (!found.some(file => file.resolved === resolved)) found.push({ named, resolved });
+      continue;
+    }
+    const absolute = path.startsWith('~/') ? (home ? join(home, path.slice(2)) : '') : path;
     if (!absolute) continue;
     let resolved = resolve(absolute);
     const inRoots = roots.some((root) => withinRoot(resolve(root), resolved));
@@ -1716,7 +1739,7 @@ export function namedPrivateFiles(roots: string[], text: string): { named: strin
       resolved = resolveAttachPath(roots, absolute);
     } catch {
       // A named path in our roots still needs a refusal if it cannot be read.
-      if (!inRoots && !/^(?:~\/|\/(?:tmp|var\/tmp|home|Users)\/)/.test(named)) continue;
+      if (!inRoots && !/^(?:~\/|\/(?:tmp|var\/tmp|home|Users|root|private\/var)\/)/.test(path)) continue;
     }
     if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
   }
@@ -2974,11 +2997,11 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       later.status === 'fulfilled' && uploads[laterIndex]!.name === uploads[index]!.name);
     if (!replaced) throw result.reason;
   }
-  return executeAgentTool(name, args, toolCallId);
+  return executeAgentTool(name, args, toolCallId, uploads.filter((_, index) => results[index]?.status === 'fulfilled').map(upload => upload.name));
 }
 
 /** Execute only the advertised vocabulary; internal operations retain server authority. */
-async function executeAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+async function executeAgentTool(name: string, args: JsonObject, toolCallId: string, attachmentNames: string[] = []): Promise<string> {
   if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
     throw new Error('turn has ended; further tool calls are refused');
   if (name === 'read' && args.cursor !== undefined &&
@@ -2986,7 +3009,8 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
     throw new Error('read: pass the returned next object unchanged as cursor');
   validateToolInput(advertisedAgentTool(name), args);
   if (name === 'order' || name === 'report' || name === 'post') {
-    const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''));
+    const named = namedPrivateFiles(attachRootsFromEnv(), String(args.text ?? ''), true)
+      .filter(file => basename(file.named) !== file.named || !attachmentNames.includes(file.named));
     if (named.length) throw new Error(
       `the ${name} names ${named.map(file => file.named).join(', ')}, which recipients cannot open; ` +
       'upload the file with post_artifact and name its attachment instead, or attach it to the target corner brief with revise_corner',

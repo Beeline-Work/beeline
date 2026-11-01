@@ -1,6 +1,10 @@
 // FILE-HANDOFF: isolated built-service proof; no production messages or media.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { callAgentTool } from '../apps/body/dist/read-only-mcp.js';
 import { PgliteDatabase, MemoryObjectStorage } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
@@ -12,6 +16,8 @@ import { createBeelineServer } from '../apps/server/dist/server.js';
 import { flushDueCommanderWakes } from '../apps/server/dist/commander-wakes.js';
 
 for (const delivery of ['report', 'postRoomMessage', 'postCornerMessage']) {
+  const scratch = mkdtempSync(join(tmpdir(), 'handoff-files-proof-'));
+  const savedEnv = { ...process.env };
   const db = new PgliteDatabase(), storage = new MemoryObjectStorage();
   const human = 'a'.repeat(64), commander = 'b'.repeat(64), worker = 'c'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111';
@@ -64,13 +70,32 @@ for (const delivery of ['report', 'postRoomMessage', 'postCornerMessage']) {
         brief: { spec: 'Prepare file', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } });
       const turn = (await call('getAgentCommands', { roomId: opened.cornerId }, worker)).commands[0];
       await claim(turn);
-      const uploaded = await objects.uploadArtifact(worker, Buffer.from(name), 'text/plain', name);
-      await call('postAgentAttachment', { ...authority(turn), attachment: {
-        url: uploaded.url, name, mimeType: 'text/plain', size: Buffer.byteLength(name),
-      } }, worker);
+      if (delivery !== 'report') {
+        const uploaded = await objects.uploadArtifact(worker, Buffer.from(name), 'text/plain', name);
+        await call('postAgentAttachment', { ...authority(turn), attachment: {
+          url: uploaded.url, name, mimeType: 'text/plain', size: Buffer.byteLength(name),
+        } }, worker);
+      }
       turns.push({ turn, name });
     }
-    for (const { turn, name } of turns) await call('report', { ...authority(turn), status: 'done', text: `done: ${name} attached` }, worker);
+    for (const { turn, name } of turns) {
+      if (delivery !== 'report') {
+        await call('report', { ...authority(turn), status: 'done', text: `done: ${name} attached` }, worker);
+        continue;
+      }
+      writeFileSync(join(scratch, name), name);
+      const context = join(scratch, 'turn.json');
+      writeFileSync(context, JSON.stringify(authority(turn)));
+      Object.assign(process.env, { BEELINE_TURN_CONTEXT_FILE: context, BEELINE_DAEMON_BASE_URL: origin,
+        BEELINE_DAEMON_TOKEN: tokens.get(worker), BEELINE_DAEMON_ROOM_ID: turn.roomId,
+        BEELINE_DAEMON_CORNER_ID: turn.roomId, BEELINE_ATTACH_ROOT: scratch, BEELINE_ATTACH_SCRATCH_ROOT: scratch });
+      await assert.rejects(callAgentTool('report', { status: 'done', text: `done: read ./${name}` }, 'unattached'), /post_artifact/);
+      await callAgentTool('post_artifact', { path: name, mime: 'text/plain' }, 'proof-upload');
+      await callAgentTool('report', { status: 'done', text: `done: ${name} attached` }, 'proof-report');
+    }
+    // The remaining reads use the receiving agent's token, never its worker's filesystem.
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+    Object.assign(process.env, savedEnv);
     await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
     await flushDueCommanderWakes(db);
     const batched = (await call('getAgentCommands', { roomId: dm })).commands.find(turn => turn.reason === 'report');
@@ -102,7 +127,11 @@ for (const delivery of ['report', 'postRoomMessage', 'postCornerMessage']) {
       assert.equal(await response.text(), file.name);
     }
     console.log(`Reproduction files-2 / FILE-HANDOFF PASS (${delivery}): commander reopens private reports; person sees both file cards and opens both original files through built HTTP service.`);
+    if (delivery === 'report') console.log('Reproduction handoff-files-unreachable PASS: built worker tool refuses relative proof paths; upload then report delivers original bytes readable by a different agent.');
   } finally {
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+    Object.assign(process.env, savedEnv);
+    rmSync(scratch, { recursive: true, force: true });
     if (server) {
       server.closeAllConnections();
       await new Promise(resolve => server.close(resolve));

@@ -8,9 +8,11 @@ import type {
   ChatListView,
   RoomViewAgentTurn,
   RoomViewMessage,
+  RoomView,
 } from '@beeline/buzz-client';
 
 export type ChatListDelta =
+  | { readonly type: 'read-state'; readonly roomId: string; readonly readCursor: NonNullable<RoomView['viewer']['readCursor']> }
   | SidebarPreview
   | { readonly type: 'message-delta'; readonly roomId: string; readonly message: RoomViewMessage;
       readonly deckPreview?: ChatListItem['latestMessage'] | null }
@@ -131,6 +133,11 @@ export function applyChatListDelta(
   const index = view.chats.findIndex((item) => item.room.id === delta.roomId);
   if (index < 0) return view;
   const item = view.chats[index]!;
+  if (delta.type === 'read-state') {
+    const chats = [...view.chats];
+    chats[index] = { ...item, unread: delta.readCursor.firstUnreadMessageId !== null };
+    return { ...view, chats };
+  }
   if (delta.type === 'sidebar-preview') {
     if (delta.preview.deleted && 'deckPreview' in delta && item.latestMessage?.id === delta.preview.id) {
       const { latestMessage: _old, ...rest } = item;
@@ -187,7 +194,7 @@ export function applyChatListDelta(
 
 /** Older live frames without a preview or terminal state need one covering read. */
 export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta): boolean {
-  if (delta.type === 'corner-status') return false;
+  if (delta.type === 'corner-status' || delta.type === 'read-state') return false;
   if (delta.type === 'sidebar-preview') {
     return delta.preview.deleted === true && !('deckPreview' in delta) && view.chats.some((item) =>
       item.room.id === delta.roomId && item.latestMessage?.id === delta.preview.id);

@@ -37,7 +37,7 @@ function appendOptimisticMessages(
   const incomingIds = new Set(incoming.map((message) => message.id));
   return [
     ...current.filter((message) => !incomingIds.has(message.id)),
-    ...incoming.map((message) => ({ ...message, isNew: true })),
+    ...incoming.map((message) => ({ ...message, isNew: true, isPendingSend: true })),
   ];
 }
 

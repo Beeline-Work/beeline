@@ -4875,6 +4875,32 @@ export class PhoneService {
     }
   }
 
+  /** Narrow, authorized projections for committed read/queue changes. */
+  async liveReadState(roomId: string, viewerId: string) {
+    if (!(await this.canReadRooms([roomId], viewerId)).has(roomId)) return null;
+    const row = (await this.database.query<{
+      read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
+    }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`,
+      [roomId, viewerId])).rows[0];
+    return row?.read_cursor ?? null;
+  }
+
+  async liveRoomCommands(roomId: string, viewerId: string) {
+    if (!(await this.canReadRooms([roomId], viewerId)).has(roomId)) return null;
+    const rows = await this.database.query<{
+      agent_id: string; turn_request_id: string; created_at: Date;
+    }>(`SELECT DISTINCT ON(command.agent_id)
+        command.agent_id,command.turn_request_id,command.created_at
+      FROM agent_commands command
+      JOIN messages source ON source.id=command.source_message_id AND source.room_id=command.room_id
+      JOIN identities author ON author.id=source.author_id AND author.kind='human'
+      WHERE command.room_id=$1 AND command.state='pending' AND command.action='input'
+        AND command.reason IN ('human_tag','direct_message')
+      ORDER BY command.agent_id,command.created_at ASC,command.id ASC
+      LIMIT ${ROOM_VIEW_AGENT_LIMIT}`, [roomId]);
+    return this.projectPendingAgentCommands(rows.rows);
+  }
+
   async markRead(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
     const result = (await this.database.query<{ eligible: boolean; changed: boolean }>(
       `WITH eligible AS (
@@ -5263,7 +5289,11 @@ export class PhoneService {
     });
   }
 
-  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<RoomViewMessage | null> {
+  async liveStarPrompt(viewerId: string) {
+    return readStarPrompt(this.database, viewerId, this.github);
+  }
+
+  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<Output<'reactToMessage'>> {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
@@ -5302,7 +5332,9 @@ export class PhoneService {
     const delta = await this.readLiveDelta(input.roomId, viewerId, {
       type: 'message', messageId: input.messageId,
     });
-    return delta?.type === 'message-delta' ? delta.message : null;
+    if (delta?.type !== 'message-delta') return null;
+    const prompt = await this.liveStarPrompt(viewerId).catch(() => undefined);
+    return { ...delta.message, ...prompt };
   }
 
   private async deleteRoomMessage(

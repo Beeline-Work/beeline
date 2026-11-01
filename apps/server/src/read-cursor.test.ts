@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { migrate } from './database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
@@ -32,8 +32,8 @@ class ListenClient extends EventEmitter implements LivePgClient {
  * phone writes, the count served beside it, mark-unread putting it back, and
  * the one definition of unread that the cursor and the deck now share.
  *
- * Read marks are reader-scoped live invalidations so another device can
- * reconcile its dot without notifying other Room members.
+ * Read marks are reader-scoped live projections (legacy clients receive
+ * invalidations), so another device reconciles its dot without notifying peers.
  */
 const OWNER = createHash('sha256').update('github:owner').digest('hex');
 const OTHER = createHash('sha256').update('github:recipient').digest('hex');
@@ -258,11 +258,43 @@ describe('the read cursor over the live phone surface', () => {
     expect((await cursor(otherToken))?.unreadCount).toBe(4);
   });
 
+  it('Send projects read and queued-command state to a second device without covering reads', async () => {
+    const socket = new WebSocket(`${peerOrigin.replace('http', 'ws')}/v1/phone/live`, [`bearer.${ownerToken}`]);
+    await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const frames: Array<{ type?: string; reason?: string; commands?: unknown[] }> = [];
+    socket.on('message', raw => frames.push(JSON.parse(String(raw))));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM, roomStateProjections: true }));
+    try {
+      for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'subscribed'); i++) await settle();
+      frames.length = 0;
+      const roomReads = vi.spyOn(phone, 'readRoom');
+      const listReads = vi.spyOn(phone, 'readChats');
+      const response = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+        roomId: ROOM, messageId: 'e'.repeat(64), text: '@bee help with this please',
+      });
+      expect(response.status).toBe(200);
+      for (let i = 0; i < 100 && !frames.some(frame => frame.type === 'room-commands'); i++) await settle();
+      expect(frames).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'message-delta' }),
+        expect.objectContaining({ type: 'read-state', readCursor: expect.objectContaining({
+          messageId: 'e'.repeat(64), unreadCount: 0,
+        }) }),
+        expect.objectContaining({ type: 'room-commands', commands: [expect.objectContaining({
+          requestId: 'e'.repeat(64), agentPubkey: AGENT,
+        })] }),
+      ]));
+      expect(frames.filter(frame => frame.type === 'invalidate' &&
+        ['postgres:agent_commands', 'postgres:room_read_marks'].includes(frame.reason ?? ''))).toEqual([]);
+      expect(roomReads).not.toHaveBeenCalled();
+      expect(listReads).not.toHaveBeenCalled();
+    } finally { socket.close(); vi.restoreAllMocks(); }
+  });
+
   it('NET-READS-2: publishes each committed read change once to reader devices across server hubs', async () => {
-    // Two sockets for the reader plus another member. Every reader device
-    // receives a reconcile hint; the other member receives none.
+    // Two capable reader sockets, one legacy reader, and another member.
+    // Readers receive projections or a legacy hint; the other member gets none.
     const sockets = await Promise.all(
-      [ownerToken, ownerToken, otherToken].map(async (token, index) => {
+      [ownerToken, ownerToken, otherToken, ownerToken].map(async (token, index) => {
         const socketOrigin = index === 0 ? origin : peerOrigin;
         const socket = new WebSocket(`${socketOrigin.replace('http', 'ws')}/v1/phone/live`, [
           `bearer.${token}`,
@@ -276,7 +308,8 @@ describe('the read cursor over the live phone surface', () => {
           const value = JSON.parse(raw.toString()) as { type?: string };
           if (value.type !== 'subscribed') frames.push(value);
         });
-        socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM }));
+        socket.send(JSON.stringify({ type: 'subscribe', roomId: ROOM,
+          ...(index < 3 ? { roomStateProjections: true } : {}) }));
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('subscribe timeout')), 3000);
           socket.on('message', function onMessage(raw) {
@@ -304,10 +337,13 @@ describe('the read cursor over the live phone surface', () => {
         await settle();
         for (const entry of sockets.slice(0, 2)) {
           expect(entry.frames).toEqual([expect.objectContaining({
-            type: 'invalidate', reason: 'postgres:room_read_marks',
+            type: 'read-state', readCursor: expect.objectContaining({ unreadCount }),
           })]);
         }
         expect(sockets[2]!.frames).toEqual([]);
+        expect(sockets[3]!.frames).toEqual([expect.objectContaining({
+          type: 'invalidate', reason: 'postgres:room_read_marks',
+        })]);
         for (const base of [origin, peerOrigin]) {
           const response = await fetch(`${base}/v1/phone/rooms/${ROOM}`, {
             headers: { authorization: `Bearer ${ownerToken}` },
@@ -322,7 +358,7 @@ describe('the read cursor over the live phone surface', () => {
       for (const entry of sockets) entry.frames.length = 0;
       await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
       await settle();
-      expect(sockets.map((entry) => entry.frames)).toEqual([[], [], []]);
+      expect(sockets.map((entry) => entry.frames)).toEqual([[], [], [], []]);
     } finally {
       for (const entry of sockets) entry.socket.close();
     }

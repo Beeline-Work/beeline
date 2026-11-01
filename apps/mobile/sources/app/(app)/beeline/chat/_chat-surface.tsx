@@ -2269,23 +2269,7 @@ export function BuzzChatSurface({
   // false there and only there for a direct message, since a DM can never be
   // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
-  // Only a win can make the GitHub star card due (the server counts the
-  // milestone): an agent reply carrying files, or the viewer's own 👍. The
-  // card is asked for once per visit and again only after such a win.
-  const starPromptKey = useMemo(() => {
-    const messages = roomSurface?.messages ?? [];
-    const artifacts = messages.filter(
-      (message) =>
-        message.author.kind === 'agent' &&
-        message.presentation === 'message' &&
-        (message.attachments?.length ?? 0) > 0,
-    ).length;
-    const thumbs = messages.filter((message) =>
-      message.reactions?.some((reaction) => reaction.emoji === '👍' && reaction.reacted),
-    ).length;
-    return `${artifacts}:${thumbs}`;
-  }, [roomSurface?.messages]);
-  const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
+  const starPrompt = useStarPrompt(decodedId, Boolean(roomSurface) && !isReadOnlyDirectMessage);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
   // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain
@@ -3800,7 +3784,10 @@ export function BuzzChatSurface({
           messageId,
           emoji,
         });
-        if (canonical) applyRoomMessageResult(canonical);
+        if (canonical) {
+          applyRoomMessageResult(canonical);
+          if (canonical.prompt !== undefined) starPrompt.accept({ prompt: canonical.prompt });
+        }
         setOptimisticReactions((current) => {
           const updated = { ...current };
           delete updated[messageId];
@@ -3817,7 +3804,7 @@ export function BuzzChatSurface({
         reactingRef.current.delete(messageId);
       }
     },
-    [applyRoomMessageResult, decodedId],
+    [applyRoomMessageResult, decodedId, starPrompt.accept],
   );
 
   const messageIsBookmarked = useCallback(

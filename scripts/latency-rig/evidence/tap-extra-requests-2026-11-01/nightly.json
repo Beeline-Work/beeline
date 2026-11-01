@@ -1,0 +1,2907 @@
+{
+  "pass": false,
+  "failures": [
+    "tap/open-corner/warm: budget exceeded (645 ms; budget <150 ms)",
+    "tap/send-text/warm: budget exceeded (224 ms; budget <150 ms)",
+    "tap/switch-tabs/warm: budget exceeded (178 ms; budget <150 ms)"
+  ],
+  "drift": {
+    "rows": [
+      {
+        "key": "route//beeline/chat/[channelId]/push-unseen-1",
+        "p95Ms": 306,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "route//beeline/chat/[channelId]/push-unseen-5",
+        "p95Ms": 349,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "route//beeline/chat/[channelId]/room-list-unseen-1",
+        "p95Ms": 287,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "route//beeline/chat/[channelId]/room-list-unseen-5",
+        "p95Ms": 305,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "route//beeline/chat/[channelId]/warm",
+        "p95Ms": 366,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "tap/open-composer/warm",
+        "p95Ms": 90,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "tap/open-corner/warm",
+        "p95Ms": 645,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "tap/react-message/warm",
+        "p95Ms": 92,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "tap/send-text/warm",
+        "p95Ms": 224,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      },
+      {
+        "key": "tap/switch-tabs/warm",
+        "p95Ms": 178,
+        "firstP95Ms": null,
+        "medianP95Ms": null,
+        "passingNights": 0
+      }
+    ],
+    "failures": []
+  },
+  "night": "2026-11-01",
+  "head": "42661b436f1fb8ab1775125460f9754e7c648a35",
+  "prs": [],
+  "needsRerun": false,
+  "shouldAlert": true,
+  "hostLoad": [
+    {
+      "atMs": 1793568781663,
+      "load": [
+        12.58,
+        7.76,
+        6.45
+      ],
+      "freeMemory": 104071532544,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568791663,
+      "load": [
+        11.87,
+        7.77,
+        6.47
+      ],
+      "freeMemory": 102929219584,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568801663,
+      "load": [
+        10.88,
+        7.69,
+        6.45
+      ],
+      "freeMemory": 103652388864,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568811668,
+      "load": [
+        9.59,
+        7.52,
+        6.41
+      ],
+      "freeMemory": 103497326592,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568821673,
+      "load": [
+        8.66,
+        7.39,
+        6.38
+      ],
+      "freeMemory": 106421501952,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568831673,
+      "load": [
+        8.25,
+        7.34,
+        6.38
+      ],
+      "freeMemory": 103087222784,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568841673,
+      "load": [
+        7.29,
+        7.16,
+        6.33
+      ],
+      "freeMemory": 103045640192,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568852535,
+      "load": [
+        6.85,
+        7.08,
+        6.31
+      ],
+      "freeMemory": 102696128512,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568864003,
+      "load": [
+        5.85,
+        6.84,
+        6.24
+      ],
+      "freeMemory": 102991527936,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568875889,
+      "load": [
+        5.18,
+        6.67,
+        6.19
+      ],
+      "freeMemory": 103096524800,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568887796,
+      "load": [
+        4.92,
+        6.56,
+        6.16
+      ],
+      "freeMemory": 103108243456,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568899747,
+      "load": [
+        5.97,
+        6.7,
+        6.22
+      ],
+      "freeMemory": 102578151424,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568911679,
+      "load": [
+        5.88,
+        6.66,
+        6.21
+      ],
+      "freeMemory": 101396361216,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568923611,
+      "load": [
+        4.94,
+        6.41,
+        6.13
+      ],
+      "freeMemory": 100613365760,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568935628,
+      "load": [
+        4.79,
+        6.33,
+        6.11
+      ],
+      "freeMemory": 99932028928,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568947604,
+      "load": [
+        4.28,
+        6.17,
+        6.06
+      ],
+      "freeMemory": 106163974144,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568957605,
+      "load": [
+        4.01,
+        6.05,
+        6.02
+      ],
+      "freeMemory": 105851662336,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568967605,
+      "load": [
+        4.31,
+        6.05,
+        6.02
+      ],
+      "freeMemory": 107202248704,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568978297,
+      "load": [
+        4.17,
+        5.97,
+        5.99
+      ],
+      "freeMemory": 106645598208,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793568990302,
+      "load": [
+        3.69,
+        5.77,
+        5.93
+      ],
+      "freeMemory": 106915233792,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569002041,
+      "load": [
+        3.28,
+        5.61,
+        5.88
+      ],
+      "freeMemory": 106917613568,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569014116,
+      "load": [
+        2.77,
+        5.39,
+        5.8
+      ],
+      "freeMemory": 106963103744,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569026087,
+      "load": [
+        2.58,
+        5.26,
+        5.75
+      ],
+      "freeMemory": 106850304000,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569037855,
+      "load": [
+        2.49,
+        5.15,
+        5.71
+      ],
+      "freeMemory": 106696364032,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569050224,
+      "load": [
+        4.73,
+        5.51,
+        5.82
+      ],
+      "freeMemory": 106729144320,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569062154,
+      "load": [
+        4.31,
+        5.39,
+        5.78
+      ],
+      "freeMemory": 106233532416,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569074349,
+      "load": [
+        5.88,
+        5.69,
+        5.87
+      ],
+      "freeMemory": 104194088960,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569084350,
+      "load": [
+        5.29,
+        5.57,
+        5.83
+      ],
+      "freeMemory": 106258083840,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569094350,
+      "load": [
+        5.47,
+        5.6,
+        5.84
+      ],
+      "freeMemory": 106208698368,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569105184,
+      "load": [
+        5.08,
+        5.52,
+        5.8
+      ],
+      "freeMemory": 105029505024,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569116928,
+      "load": [
+        4.93,
+        5.47,
+        5.79
+      ],
+      "freeMemory": 105657905152,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569128526,
+      "load": [
+        4.43,
+        5.33,
+        5.73
+      ],
+      "freeMemory": 105535680512,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569140580,
+      "load": [
+        4.3,
+        5.27,
+        5.71
+      ],
+      "freeMemory": 105599287296,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569152107,
+      "load": [
+        4.9,
+        5.36,
+        5.74
+      ],
+      "freeMemory": 105753739264,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569163724,
+      "load": [
+        4.84,
+        5.33,
+        5.72
+      ],
+      "freeMemory": 105606656000,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569175337,
+      "load": [
+        4.33,
+        5.2,
+        5.67
+      ],
+      "freeMemory": 106314924032,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569187467,
+      "load": [
+        4.21,
+        5.14,
+        5.65
+      ],
+      "freeMemory": 103650066432,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569199230,
+      "load": [
+        5.17,
+        5.33,
+        5.7
+      ],
+      "freeMemory": 105999863808,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569209231,
+      "load": [
+        4.76,
+        5.24,
+        5.67
+      ],
+      "freeMemory": 105843605504,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569219231,
+      "load": [
+        6.54,
+        5.59,
+        5.78
+      ],
+      "freeMemory": 104953516032,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569230117,
+      "load": [
+        6.8,
+        5.69,
+        5.81
+      ],
+      "freeMemory": 105602637824,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569240117,
+      "load": [
+        6.59,
+        5.68,
+        5.8
+      ],
+      "freeMemory": 105801940992,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569250118,
+      "load": [
+        6.95,
+        5.79,
+        5.84
+      ],
+      "freeMemory": 105169842176,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569260255,
+      "load": [
+        6.73,
+        5.78,
+        5.83
+      ],
+      "freeMemory": 103258779648,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569272422,
+      "load": [
+        6.45,
+        5.75,
+        5.83
+      ],
+      "freeMemory": 102386941952,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569282422,
+      "load": [
+        6.3,
+        5.74,
+        5.82
+      ],
+      "freeMemory": 102792638464,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569292422,
+      "load": [
+        6.52,
+        5.8,
+        5.84
+      ],
+      "freeMemory": 100217335808,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569303523,
+      "load": [
+        6.43,
+        5.81,
+        5.84
+      ],
+      "freeMemory": 101460930560,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569313524,
+      "load": [
+        6.13,
+        5.77,
+        5.83
+      ],
+      "freeMemory": 100887191552,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569323524,
+      "load": [
+        6.18,
+        5.79,
+        5.83
+      ],
+      "freeMemory": 102217486336,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569334347,
+      "load": [
+        7.49,
+        6.11,
+        5.94
+      ],
+      "freeMemory": 104104357888,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569345975,
+      "load": [
+        6.88,
+        6.02,
+        5.91
+      ],
+      "freeMemory": 104096284672,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569357669,
+      "load": [
+        6.45,
+        5.96,
+        5.89
+      ],
+      "freeMemory": 106291367936,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569369309,
+      "load": [
+        6.44,
+        5.97,
+        5.9
+      ],
+      "freeMemory": 105593110528,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569381254,
+      "load": [
+        5.6,
+        5.81,
+        5.84
+      ],
+      "freeMemory": 106375036928,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569391254,
+      "load": [
+        5.8,
+        5.85,
+        5.86
+      ],
+      "freeMemory": 102295113728,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569401253,
+      "load": [
+        7.45,
+        6.19,
+        5.96
+      ],
+      "freeMemory": 101528797184,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569412403,
+      "load": [
+        7.31,
+        6.2,
+        5.97
+      ],
+      "freeMemory": 102086471680,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569424638,
+      "load": [
+        6.86,
+        6.15,
+        5.96
+      ],
+      "freeMemory": 103437799424,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569434640,
+      "load": [
+        6.34,
+        6.07,
+        5.93
+      ],
+      "freeMemory": 103774371840,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569446812,
+      "load": [
+        5.91,
+        5.98,
+        5.91
+      ],
+      "freeMemory": 103591473152,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569456812,
+      "load": [
+        7.04,
+        6.22,
+        5.98
+      ],
+      "freeMemory": 103077957632,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569466812,
+      "load": [
+        7.74,
+        6.4,
+        6.05
+      ],
+      "freeMemory": 106074927104,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569476813,
+      "load": [
+        8.66,
+        6.65,
+        6.13
+      ],
+      "freeMemory": 105602768896,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569486813,
+      "load": [
+        9.73,
+        6.96,
+        6.24
+      ],
+      "freeMemory": 105495130112,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569496814,
+      "load": [
+        13.68,
+        7.9,
+        6.55
+      ],
+      "freeMemory": 104275935232,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569506813,
+      "load": [
+        15.12,
+        8.39,
+        6.73
+      ],
+      "freeMemory": 104204967936,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569517293,
+      "load": [
+        15.93,
+        8.79,
+        6.88
+      ],
+      "freeMemory": 105253969920,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569527294,
+      "load": [
+        16.23,
+        9.1,
+        7
+      ],
+      "freeMemory": 106268921856,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569537294,
+      "load": [
+        15.5,
+        9.19,
+        7.05
+      ],
+      "freeMemory": 105105821696,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569547294,
+      "load": [
+        14.91,
+        9.28,
+        7.1
+      ],
+      "freeMemory": 105367887872,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569557295,
+      "load": [
+        12.86,
+        9.02,
+        7.04
+      ],
+      "freeMemory": 105383432192,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569567467,
+      "load": [
+        11.48,
+        8.86,
+        7.01
+      ],
+      "freeMemory": 105002590208,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569580194,
+      "load": [
+        11.44,
+        8.95,
+        7.07
+      ],
+      "freeMemory": 104254373888,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569601006,
+      "load": [
+        11.39,
+        9.07,
+        7.15
+      ],
+      "freeMemory": 104526749696,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569611007,
+      "load": [
+        10.3,
+        8.92,
+        7.12
+      ],
+      "freeMemory": 103997992960,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569621010,
+      "load": [
+        10.79,
+        9.06,
+        7.18
+      ],
+      "freeMemory": 102832599040,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569631015,
+      "load": [
+        10.03,
+        8.96,
+        7.17
+      ],
+      "freeMemory": 103814803456,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569647102,
+      "load": [
+        8.54,
+        8.68,
+        7.11
+      ],
+      "freeMemory": 103440130048,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569657104,
+      "load": [
+        7.61,
+        8.48,
+        7.06
+      ],
+      "freeMemory": 102488559616,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569667108,
+      "load": [
+        7.05,
+        8.33,
+        7.03
+      ],
+      "freeMemory": 103593099264,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569677113,
+      "load": [
+        6.43,
+        8.15,
+        6.98
+      ],
+      "freeMemory": 102764699648,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569687115,
+      "load": [
+        5.75,
+        7.95,
+        6.93
+      ],
+      "freeMemory": 103176187904,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569697116,
+      "load": [
+        6.49,
+        8.05,
+        6.97
+      ],
+      "freeMemory": 103004082176,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569707117,
+      "load": [
+        6.42,
+        7.98,
+        6.96
+      ],
+      "freeMemory": 104824786944,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569717736,
+      "load": [
+        5.74,
+        7.78,
+        6.91
+      ],
+      "freeMemory": 105292353536,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569729587,
+      "load": [
+        5.22,
+        7.56,
+        6.85
+      ],
+      "freeMemory": 105008119808,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569741478,
+      "load": [
+        4.71,
+        7.38,
+        6.8
+      ],
+      "freeMemory": 104438124544,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569753170,
+      "load": [
+        4.68,
+        7.28,
+        6.77
+      ],
+      "freeMemory": 103982116864,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569764962,
+      "load": [
+        4.21,
+        7.06,
+        6.71
+      ],
+      "freeMemory": 104472109056,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569775800,
+      "load": [
+        3.88,
+        6.89,
+        6.65
+      ],
+      "freeMemory": 104660688896,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569787751,
+      "load": [
+        3.6,
+        6.73,
+        6.6
+      ],
+      "freeMemory": 104162168832,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569798750,
+      "load": [
+        3.02,
+        6.45,
+        6.51
+      ],
+      "freeMemory": 104250159104,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569810674,
+      "load": [
+        2.7,
+        6.27,
+        6.45
+      ],
+      "freeMemory": 104145547264,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569821698,
+      "load": [
+        3.05,
+        6.23,
+        6.44
+      ],
+      "freeMemory": 104129605632,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569832772,
+      "load": [
+        4.74,
+        6.47,
+        6.51
+      ],
+      "freeMemory": 104231211008,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569843813,
+      "load": [
+        3.84,
+        6.18,
+        6.42
+      ],
+      "freeMemory": 104163622912,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569854805,
+      "load": [
+        5.33,
+        6.44,
+        6.5
+      ],
+      "freeMemory": 104236601344,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569865775,
+      "load": [
+        4.9,
+        6.31,
+        6.46
+      ],
+      "freeMemory": 104211570688,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569877836,
+      "load": [
+        4.38,
+        6.15,
+        6.4
+      ],
+      "freeMemory": 104277360640,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569887836,
+      "load": [
+        4.31,
+        6.08,
+        6.38
+      ],
+      "freeMemory": 104344240128,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569897837,
+      "load": [
+        3.81,
+        5.91,
+        6.32
+      ],
+      "freeMemory": 104599216128,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569907838,
+      "load": [
+        3.67,
+        5.81,
+        6.28
+      ],
+      "freeMemory": 104522272768,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569919789,
+      "load": [
+        3.41,
+        5.66,
+        6.22
+      ],
+      "freeMemory": 104526737408,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569929788,
+      "load": [
+        3.1,
+        5.52,
+        6.17
+      ],
+      "freeMemory": 104535212032,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569939789,
+      "load": [
+        3,
+        5.42,
+        6.13
+      ],
+      "freeMemory": 104543064064,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569949790,
+      "load": [
+        2.93,
+        5.32,
+        6.09
+      ],
+      "freeMemory": 104546893824,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569959790,
+      "load": [
+        2.63,
+        5.18,
+        6.04
+      ],
+      "freeMemory": 104515858432,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569969791,
+      "load": [
+        2.38,
+        5.04,
+        5.98
+      ],
+      "freeMemory": 104586989568,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569979792,
+      "load": [
+        2.24,
+        4.93,
+        5.94
+      ],
+      "freeMemory": 104540999680,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793569991093,
+      "load": [
+        2.36,
+        4.86,
+        5.9
+      ],
+      "freeMemory": 104481312768,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570001093,
+      "load": [
+        4.18,
+        5.16,
+        5.99
+      ],
+      "freeMemory": 104489861120,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570011094,
+      "load": [
+        4.06,
+        5.11,
+        5.96
+      ],
+      "freeMemory": 104507670528,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570021093,
+      "load": [
+        3.51,
+        4.96,
+        5.91
+      ],
+      "freeMemory": 104438218752,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570031094,
+      "load": [
+        3.2,
+        4.84,
+        5.86
+      ],
+      "freeMemory": 104301084672,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570041094,
+      "load": [
+        3.02,
+        4.75,
+        5.82
+      ],
+      "freeMemory": 104325406720,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570051095,
+      "load": [
+        2.7,
+        4.62,
+        5.76
+      ],
+      "freeMemory": 105067585536,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570061096,
+      "load": [
+        2.36,
+        4.49,
+        5.71
+      ],
+      "freeMemory": 104643194880,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570072095,
+      "load": [
+        2.37,
+        4.42,
+        5.67
+      ],
+      "freeMemory": 104592535552,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570082148,
+      "load": [
+        2.24,
+        4.32,
+        5.63
+      ],
+      "freeMemory": 104516595712,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570092150,
+      "load": [
+        4.05,
+        4.63,
+        5.71
+      ],
+      "freeMemory": 104549904384,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570102149,
+      "load": [
+        6.84,
+        5.19,
+        5.88
+      ],
+      "freeMemory": 104655314944,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570114185,
+      "load": [
+        5.62,
+        5,
+        5.81
+      ],
+      "freeMemory": 104504156160,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570124185,
+      "load": [
+        4.84,
+        4.85,
+        5.75
+      ],
+      "freeMemory": 104644759552,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570134185,
+      "load": [
+        4.41,
+        4.76,
+        5.71
+      ],
+      "freeMemory": 104612274176,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570144186,
+      "load": [
+        5.34,
+        4.93,
+        5.76
+      ],
+      "freeMemory": 104595533824,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570154187,
+      "load": [
+        4.75,
+        4.82,
+        5.71
+      ],
+      "freeMemory": 104552001536,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570166059,
+      "load": [
+        4.56,
+        4.78,
+        5.69
+      ],
+      "freeMemory": 104519188480,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570176059,
+      "load": [
+        5.76,
+        5.02,
+        5.75
+      ],
+      "freeMemory": 104593768448,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570186059,
+      "load": [
+        5.32,
+        4.95,
+        5.72
+      ],
+      "freeMemory": 104618115072,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570196060,
+      "load": [
+        4.5,
+        4.79,
+        5.66
+      ],
+      "freeMemory": 104661491712,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570206060,
+      "load": [
+        4.18,
+        4.71,
+        5.63
+      ],
+      "freeMemory": 104559804416,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570216061,
+      "load": [
+        3.75,
+        4.6,
+        5.58
+      ],
+      "freeMemory": 104597213184,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570226134,
+      "load": [
+        4.99,
+        4.83,
+        5.65
+      ],
+      "freeMemory": 104510595072,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570236134,
+      "load": [
+        4.45,
+        4.72,
+        5.6
+      ],
+      "freeMemory": 104689684480,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570248130,
+      "load": [
+        4.06,
+        4.63,
+        5.56
+      ],
+      "freeMemory": 104745390080,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570258666,
+      "load": [
+        3.75,
+        4.54,
+        5.53
+      ],
+      "freeMemory": 104700026880,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570271035,
+      "load": [
+        5.94,
+        4.99,
+        5.66
+      ],
+      "freeMemory": 104761024512,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570281035,
+      "load": [
+        5.4,
+        4.91,
+        5.62
+      ],
+      "freeMemory": 104740659200,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570291035,
+      "load": [
+        5.04,
+        4.84,
+        5.59
+      ],
+      "freeMemory": 104605552640,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570301038,
+      "load": [
+        4.42,
+        4.72,
+        5.54
+      ],
+      "freeMemory": 104823017472,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570311039,
+      "load": [
+        3.97,
+        4.61,
+        5.5
+      ],
+      "freeMemory": 104852348928,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570322784,
+      "load": [
+        4.98,
+        4.82,
+        5.56
+      ],
+      "freeMemory": 104721715200,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570333296,
+      "load": [
+        4.43,
+        4.71,
+        5.51
+      ],
+      "freeMemory": 105400082432,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570345360,
+      "load": [
+        5.31,
+        4.89,
+        5.56
+      ],
+      "freeMemory": 104670216192,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570355361,
+      "load": [
+        4.58,
+        4.74,
+        5.5
+      ],
+      "freeMemory": 104584720384,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570367124,
+      "load": [
+        4.33,
+        4.68,
+        5.48
+      ],
+      "freeMemory": 103043035136,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570377216,
+      "load": [
+        4.52,
+        4.71,
+        5.48
+      ],
+      "freeMemory": 104758939648,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570389261,
+      "load": [
+        3.66,
+        4.51,
+        5.4
+      ],
+      "freeMemory": 104627339264,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570399262,
+      "load": [
+        3.26,
+        4.4,
+        5.35
+      ],
+      "freeMemory": 104971337728,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570410934,
+      "load": [
+        2.99,
+        4.3,
+        5.31
+      ],
+      "freeMemory": 104824434688,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570421515,
+      "load": [
+        2.92,
+        4.24,
+        5.28
+      ],
+      "freeMemory": 104812482560,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570433524,
+      "load": [
+        4.06,
+        4.43,
+        5.33
+      ],
+      "freeMemory": 105063694336,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570443524,
+      "load": [
+        4.18,
+        4.45,
+        5.33
+      ],
+      "freeMemory": 105424322560,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570455214,
+      "load": [
+        5.17,
+        4.68,
+        5.39
+      ],
+      "freeMemory": 105437802496,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570465973,
+      "load": [
+        4.83,
+        4.63,
+        5.36
+      ],
+      "freeMemory": 105447485440,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570478452,
+      "load": [
+        5.1,
+        4.69,
+        5.38
+      ],
+      "freeMemory": 105117364224,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570488453,
+      "load": [
+        4.61,
+        4.6,
+        5.34
+      ],
+      "freeMemory": 105387282432,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570498455,
+      "load": [
+        3.98,
+        4.46,
+        5.29
+      ],
+      "freeMemory": 104707485696,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570508464,
+      "load": [
+        3.53,
+        4.35,
+        5.24
+      ],
+      "freeMemory": 104687525888,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570518464,
+      "load": [
+        4.08,
+        4.44,
+        5.26
+      ],
+      "freeMemory": 104673570816,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570528500,
+      "load": [
+        5.86,
+        4.79,
+        5.36
+      ],
+      "freeMemory": 104375869440,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570538500,
+      "load": [
+        5.19,
+        4.68,
+        5.32
+      ],
+      "freeMemory": 104406523904,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570548501,
+      "load": [
+        4.86,
+        4.62,
+        5.3
+      ],
+      "freeMemory": 103575584768,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570558502,
+      "load": [
+        4.49,
+        4.55,
+        5.27
+      ],
+      "freeMemory": 102483218432,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570568502,
+      "load": [
+        4.19,
+        4.49,
+        5.24
+      ],
+      "freeMemory": 102508515328,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570578503,
+      "load": [
+        4.09,
+        4.45,
+        5.22
+      ],
+      "freeMemory": 102237741056,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570588504,
+      "load": [
+        3.84,
+        4.39,
+        5.19
+      ],
+      "freeMemory": 101742485504,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570598505,
+      "load": [
+        3.97,
+        4.39,
+        5.18
+      ],
+      "freeMemory": 103134076928,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570608506,
+      "load": [
+        3.98,
+        4.38,
+        5.17
+      ],
+      "freeMemory": 104462917632,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570618507,
+      "load": [
+        3.91,
+        4.35,
+        5.15
+      ],
+      "freeMemory": 103327956992,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570628508,
+      "load": [
+        3.84,
+        4.32,
+        5.13
+      ],
+      "freeMemory": 103572246528,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570638509,
+      "load": [
+        3.33,
+        4.2,
+        5.08
+      ],
+      "freeMemory": 107205697536,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570648508,
+      "load": [
+        4.14,
+        4.34,
+        5.12
+      ],
+      "freeMemory": 106269511680,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570658508,
+      "load": [
+        3.73,
+        4.25,
+        5.08
+      ],
+      "freeMemory": 106878676992,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570668509,
+      "load": [
+        3.45,
+        4.17,
+        5.05
+      ],
+      "freeMemory": 106419363840,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570678510,
+      "load": [
+        3.83,
+        4.23,
+        5.06
+      ],
+      "freeMemory": 107100102656,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570688511,
+      "load": [
+        3.55,
+        4.16,
+        5.02
+      ],
+      "freeMemory": 107185729536,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    },
+    {
+      "atMs": 1793570695502,
+      "load": [
+        3.68,
+        4.17,
+        5.02
+      ],
+      "freeMemory": 107008552960,
+      "totalMemory": 134888636416,
+      "cpus": 20
+    }
+  ],
+  "firstAttempt": {
+    "pass": false,
+    "failures": [
+      "tap/open-corner/warm: budget exceeded (732 ms; budget <150 ms)",
+      "tap/send-text/warm: budget exceeded (173 ms; budget <150 ms)",
+      "tap/switch-tabs/warm: budget exceeded (185 ms; budget <150 ms)"
+    ],
+    "drift": {
+      "rows": [
+        {
+          "key": "route//beeline/chat/[channelId]/push-unseen-1",
+          "p95Ms": 322,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/push-unseen-5",
+          "p95Ms": 271,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/room-list-unseen-1",
+          "p95Ms": 285,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/room-list-unseen-5",
+          "p95Ms": 292,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "route//beeline/chat/[channelId]/warm",
+          "p95Ms": 314,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/open-composer/warm",
+          "p95Ms": 64,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/open-corner/warm",
+          "p95Ms": 732,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/react-message/warm",
+          "p95Ms": 111,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/send-text/warm",
+          "p95Ms": 173,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        },
+        {
+          "key": "tap/switch-tabs/warm",
+          "p95Ms": 185,
+          "firstP95Ms": null,
+          "medianP95Ms": null,
+          "passingNights": 0
+        }
+      ],
+      "failures": []
+    }
+  },
+  "text": "Nightly squire emulator rig 2026-11-01: failed or skipped\ntap/open-corner/warm: budget exceeded (645 ms; budget <150 ms)\ntap/send-text/warm: budget exceeded (224 ms; budget <150 ms)\ntap/switch-tabs/warm: budget exceeded (178 ms; budget <150 ms)\nroute//beeline/chat/[channelId]/push-unseen-1: drift p95=306 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\nroute//beeline/chat/[channelId]/push-unseen-5: drift p95=349 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\nroute//beeline/chat/[channelId]/room-list-unseen-1: drift p95=287 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\nroute//beeline/chat/[channelId]/room-list-unseen-5: drift p95=305 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\nroute//beeline/chat/[channelId]/warm: drift p95=366 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\ntap/open-composer/warm: drift p95=90 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\ntap/open-corner/warm: drift p95=645 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\ntap/react-message/warm: drift p95=92 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\ntap/send-text/warm: drift p95=224 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\ntap/switch-tabs/warm: drift p95=178 ms; first=unavailable ms; recent median=unavailable ms (0/7 prior passing nights)\nPush measurement: Push Activity entry to target text native frame commit; native-response phase absent. Unmeasured: FCM delivery, notification shade, and foreground JS in-app notice.\nNo passing baseline yet; PR regression range unavailable\nMeasured main: 42661b436f1fb8ab1775125460f9754e7c648a35\nHost load recorded: 179 observation(s); see attached report",
+  "measuredReport": {
+    "pushMeasurement": {
+      "measured": "Push Activity entry to target text native frame commit",
+      "nativeResponsePhase": "absent",
+      "excluded": "FCM delivery, notification shade, and foreground JS in-app notice"
+    },
+    "rows": [
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-1",
+        "samples": 20,
+        "p50Ms": 262,
+        "p95Ms": 306,
+        "p99Ms": 425,
+        "worstMs": 425,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 2,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 434,
+        "maxWsBytes": 209691,
+        "maxSqlStatements": 637,
+        "maxSqlDepth": 628,
+        "maxSqlPoolWaitMs": 18,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-5",
+        "samples": 20,
+        "p50Ms": 282,
+        "p95Ms": 349,
+        "p99Ms": 435,
+        "worstMs": 435,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 7,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 435,
+        "maxWsBytes": 144790,
+        "maxSqlStatements": 632,
+        "maxSqlDepth": 625,
+        "maxSqlPoolWaitMs": 13,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-1",
+        "samples": 20,
+        "p50Ms": 259,
+        "p95Ms": 287,
+        "p99Ms": 299,
+        "worstMs": 299,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 6,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 16,
+        "maxWsBytes": 80536,
+        "maxSqlStatements": 14,
+        "maxSqlDepth": 10,
+        "maxSqlPoolWaitMs": 14,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-5",
+        "samples": 20,
+        "p50Ms": 252,
+        "p95Ms": 305,
+        "p99Ms": 336,
+        "worstMs": 336,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 9.5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 16,
+        "maxWsBytes": 81629,
+        "maxSqlStatements": 14,
+        "maxSqlDepth": 9,
+        "maxSqlPoolWaitMs": 11,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 306,
+        "p95Ms": 366,
+        "p99Ms": 369,
+        "worstMs": 369,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 5.5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 13,
+        "maxWsBytes": 61382,
+        "maxSqlStatements": 14,
+        "maxSqlDepth": 9,
+        "maxSqlPoolWaitMs": 5,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 0,
+        "maxDepth": 0,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "open-composer",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 59,
+        "p95Ms": 90,
+        "p99Ms": 111,
+        "worstMs": 111,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 0,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 0,
+        "maxWsBytes": 0,
+        "maxSqlStatements": 0,
+        "maxSqlDepth": 0,
+        "maxSqlPoolWaitMs": 0,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 0,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "open-corner",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 542,
+        "p95Ms": 645,
+        "p99Ms": 661,
+        "worstMs": 661,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 9,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 1,
+        "maxPrepaintRequestDepth": 1,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 1,
+        "maxWrites": 1,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 15,
+        "maxWsBytes": 42070,
+        "maxSqlStatements": 13,
+        "maxSqlDepth": 11,
+        "maxSqlPoolWaitMs": 8,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "react-message",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 80,
+        "p95Ms": 92,
+        "p99Ms": 94,
+        "worstMs": 94,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 7,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 1,
+        "maxPrepaintRequestDepth": 1,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 1,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 5,
+        "maxWsBytes": 2506,
+        "maxSqlStatements": 8,
+        "maxSqlDepth": 8,
+        "maxSqlPoolWaitMs": 1,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "send-text",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 168,
+        "p95Ms": 224,
+        "p99Ms": 235,
+        "worstMs": 235,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 8,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 1,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 15,
+        "maxWsBytes": 4441,
+        "maxSqlStatements": 17,
+        "maxSqlDepth": 17,
+        "maxSqlPoolWaitMs": 1,
+        "budgetMs": 150,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "switch-tabs",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 161,
+        "p95Ms": 178,
+        "p99Ms": 188,
+        "worstMs": 188,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 6.5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 0,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 0,
+        "maxWsBytes": 0,
+        "maxSqlStatements": 0,
+        "maxSqlDepth": 0,
+        "maxSqlPoolWaitMs": 0,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 0,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": true
+      }
+    ],
+    "missingArrivalCases": [],
+    "missingRoutes": [],
+    "missingRouteVariants": [],
+    "missingInteractions": [],
+    "undersampledCases": [],
+    "clockCalibrated": true,
+    "maxClockUncertaintyMs": 9.5,
+    "complete": true,
+    "timingPass": false,
+    "requestPass": true,
+    "commit": "42661b436f1fb8ab1775125460f9754e7c648a35"
+  },
+  "runId": "night-2026-11-01-3Vzf9X",
+  "attempt": 2,
+  "final": true,
+  "recordedAt": "2026-11-01T22:04:57.117Z",
+  "report": {
+    "pushMeasurement": {
+      "measured": "Push Activity entry to target text native frame commit",
+      "nativeResponsePhase": "absent",
+      "excluded": "FCM delivery, notification shade, and foreground JS in-app notice"
+    },
+    "rows": [
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-1",
+        "samples": 20,
+        "p50Ms": 262,
+        "p95Ms": 306,
+        "p99Ms": 425,
+        "worstMs": 425,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 2,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 434,
+        "maxWsBytes": 209691,
+        "maxSqlStatements": 637,
+        "maxSqlDepth": 628,
+        "maxSqlPoolWaitMs": 18,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-5",
+        "samples": 20,
+        "p50Ms": 282,
+        "p95Ms": 349,
+        "p99Ms": 435,
+        "worstMs": 435,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 7,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 435,
+        "maxWsBytes": 144790,
+        "maxSqlStatements": 632,
+        "maxSqlDepth": 625,
+        "maxSqlPoolWaitMs": 13,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-1",
+        "samples": 20,
+        "p50Ms": 259,
+        "p95Ms": 287,
+        "p99Ms": 299,
+        "worstMs": 299,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 6,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 16,
+        "maxWsBytes": 80536,
+        "maxSqlStatements": 14,
+        "maxSqlDepth": 10,
+        "maxSqlPoolWaitMs": 14,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-5",
+        "samples": 20,
+        "p50Ms": 252,
+        "p95Ms": 305,
+        "p99Ms": 336,
+        "worstMs": 336,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 9.5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 16,
+        "maxWsBytes": 81629,
+        "maxSqlStatements": 14,
+        "maxSqlDepth": 9,
+        "maxSqlPoolWaitMs": 11,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 306,
+        "p95Ms": 366,
+        "p99Ms": 369,
+        "worstMs": 369,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 5.5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 2,
+        "maxFollowupReads": 1,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 13,
+        "maxWsBytes": 61382,
+        "maxSqlStatements": 14,
+        "maxSqlDepth": 9,
+        "maxSqlPoolWaitMs": 5,
+        "budgetMs": 450,
+        "timingPercentile": "p95",
+        "maxRequests": 0,
+        "maxDepth": 0,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "open-composer",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 59,
+        "p95Ms": 90,
+        "p99Ms": 111,
+        "worstMs": 111,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 0,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 0,
+        "maxWsBytes": 0,
+        "maxSqlStatements": 0,
+        "maxSqlDepth": 0,
+        "maxSqlPoolWaitMs": 0,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 0,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "open-corner",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 542,
+        "p95Ms": 645,
+        "p99Ms": 661,
+        "worstMs": 661,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 9,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 1,
+        "maxPrepaintRequestDepth": 1,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 1,
+        "maxWrites": 1,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 15,
+        "maxWsBytes": 42070,
+        "maxSqlStatements": 13,
+        "maxSqlDepth": 11,
+        "maxSqlPoolWaitMs": 8,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "react-message",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 80,
+        "p95Ms": 92,
+        "p99Ms": 94,
+        "worstMs": 94,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 7,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 1,
+        "maxPrepaintRequestDepth": 1,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 1,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 5,
+        "maxWsBytes": 2506,
+        "maxSqlStatements": 8,
+        "maxSqlDepth": 8,
+        "maxSqlPoolWaitMs": 1,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "send-text",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 168,
+        "p95Ms": 224,
+        "p99Ms": 235,
+        "worstMs": 235,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 8,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 1,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 15,
+        "maxWsBytes": 4441,
+        "maxSqlStatements": 17,
+        "maxSqlDepth": 17,
+        "maxSqlPoolWaitMs": 1,
+        "budgetMs": 150,
+        "timingPercentile": "p95",
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": true
+      },
+      {
+        "kind": "tap",
+        "name": "switch-tabs",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 161,
+        "p95Ms": 178,
+        "p99Ms": 188,
+        "worstMs": 188,
+        "timedOutSamples": 0,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 6.5,
+        "maxPrepaintHttpCount": 0,
+        "maxPrepaintRequestCount": 0,
+        "maxPrepaintRequestDepth": 0,
+        "maxPrepaintOptionalCount": 0,
+        "maxPrepaintHttpDepth": 0,
+        "maxPrepaintCompletedRoundTrips": 0,
+        "maxWrites": 0,
+        "maxFollowupReads": 0,
+        "maxUnsettledRequests": 0,
+        "maxFailedRequests": 0,
+        "maxHttpBytes": 0,
+        "maxWsFrames": 0,
+        "maxWsMessages": 0,
+        "maxWsBytes": 0,
+        "maxSqlStatements": 0,
+        "maxSqlDepth": 0,
+        "maxSqlPoolWaitMs": 0,
+        "budgetMs": 150,
+        "timingPercentile": "p50",
+        "maxRequests": 0,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": true
+      }
+    ],
+    "missingArrivalCases": [],
+    "missingRoutes": [],
+    "missingRouteVariants": [],
+    "missingInteractions": [],
+    "undersampledCases": [],
+    "clockCalibrated": true,
+    "maxClockUncertaintyMs": 9.5,
+    "complete": true,
+    "timingPass": false,
+    "requestPass": true,
+    "commit": "42661b436f1fb8ab1775125460f9754e7c648a35"
+  }
+}

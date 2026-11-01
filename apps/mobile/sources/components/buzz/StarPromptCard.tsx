@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { StarPrompt, StarPromptAction } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { TranscriptCard } from './TranscriptCard';
 
@@ -15,18 +16,14 @@ function starPromptBody(milestone: number): string {
 /** Starred or closed in this app session: the server never shows the card again. */
 let stoppedThisSession = false;
 
-/**
- * The server decides when the card is due (`apps/server/src/github-star-prompt.ts`);
- * this asks once when a Room opens and again only when `winKey` changes (a
- * win: an artifact reply or the viewer's 👍), never per message. After Not
- * now a later win asks again, so the next milestone can show in this chat.
- */
-export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
+/** Eligibility is server-owned: one opening read, then mutation/live projections. */
+export function useStarPrompt(roomId: string | undefined, enabled: boolean) {
   const [prompt, setPrompt] = useState<StarPrompt | null>(null);
   const [busy, setBusy] = useState<StarPromptAction | null>(null);
   // An answer outdates every read started before it; later reads still ask,
   // so the next milestone shows in the same open chat after Not now.
   const answers = useRef(0);
+  const answeredMilestone = useRef(0);
   useEffect(() => {
     if (!enabled || stoppedThisSession) return;
     let current = true;
@@ -52,7 +49,24 @@ export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
       current = false;
       if (frame !== undefined) cancelAnimationFrame(frame);
     };
-  }, [enabled, winKey]);
+  }, [enabled, roomId]);
+  const accept = useCallback((view: { prompt: StarPrompt | null }) => {
+    answers.current += 1;
+    if (!stoppedThisSession && (!view.prompt || view.prompt.milestone > answeredMilestone.current))
+      setPrompt(view.prompt);
+  }, []);
+  useEffect(() => {
+    if (!enabled || !roomId || stoppedThisSession) return;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void sharedLiveConnection().register([{ '#h': [roomId] }], event => {
+      if (!('monolithLive' in event)) return;
+      const live = event.monolithLive;
+      if (live.type === 'message-delta' && live.roomId === roomId && 'starPrompt' in live)
+        accept({ prompt: live.starPrompt ?? null });
+    }).then(release => { if (cancelled) release(); else stop = release; }).catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [accept, enabled, roomId]);
   const answer = useCallback(
     async (action: StarPromptAction) => {
       if (!prompt || busy) return;
@@ -63,6 +77,7 @@ export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
           milestone: prompt.milestone,
         });
         answers.current += 1;
+        answeredMilestone.current = Math.max(answeredMilestone.current, prompt.milestone);
         if (action !== 'later') stoppedThisSession = true;
         setPrompt(null);
         if (result.outcome === 'open' && result.url)
@@ -75,7 +90,7 @@ export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
     },
     [busy, prompt],
   );
-  return { prompt, busy, answer };
+  return { prompt, busy, answer, accept };
 }
 
 export const StarPromptCard = memo(function StarPromptCard({

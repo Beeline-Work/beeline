@@ -1,0 +1,59 @@
+{
+  "runId": "night-2026-11-01-3Vzf9X",
+  "codeCommit": "42661b436f1fb8ab1775125460f9754e7c648a35",
+  "entryPoint": "bash scripts/latency-rig/nightly-run.sh",
+  "host": "squire",
+  "emulator": {
+    "name": "tap_extra_api35",
+    "serial": "emulator-5586",
+    "configurationSource": "se_api35",
+    "api": 35,
+    "abi": "x86_64",
+    "memoryMiB": 2560,
+    "guestCores": 4,
+    "gpu": "swiftshader_indirect",
+    "snapshots": false,
+    "privateAdbPort": 21882
+  },
+  "serverPort": 22880,
+  "proxyPort": 22881,
+  "network": {
+    "rttMs": 100,
+    "jitterMs": 0,
+    "mbps": 10
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "complete": true,
+      "requestPass": true,
+      "timingPass": false,
+      "samples": 200,
+      "clockCalibrated": true,
+      "maxClockUncertaintyMs": 19,
+      "hostLoad": {
+        "observations": 178,
+        "cpus": 20,
+        "meanOneMinute": 5.24,
+        "minOneMinute": 1.27,
+        "maxOneMinute": 14.31
+      }
+    },
+    {
+      "attempt": 2,
+      "complete": true,
+      "requestPass": true,
+      "timingPass": false,
+      "samples": 200,
+      "clockCalibrated": true,
+      "maxClockUncertaintyMs": 9.5,
+      "hostLoad": {
+        "observations": 179,
+        "cpus": 20,
+        "meanOneMinute": 5.58,
+        "minOneMinute": 2.24,
+        "maxOneMinute": 16.23
+      }
+    }
+  ]
+}

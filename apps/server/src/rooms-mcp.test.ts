@@ -894,11 +894,36 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const { client } = await connected();
     const setup = data(await client.callTool({ name: 'list_rooms', arguments: {} })).setup;
     const send = (await client.listTools()).tools.find(tool => tool.name === 'send_message')!;
-    expect(send.description).toContain("asking agent's exact @handle to wake it");
+    expect(send.description).toContain("asker's exact @handle to wake them");
     for (const text of [client.getInstructions(), setup, MCP_TAG_INSTRUCTION]) {
       expect(text).toContain(MCP_STARTER_ROUTINE);
       expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
     }
+  });
+  it('R-WAKING-REPORTING: serves asker tags and order reporting rules to connected apps', async () => {
+    const { client } = await connected();
+    const instructions = client.getInstructions();
+    for (const rule of [
+      'Waking and reporting:',
+      "start with the asker's exact @handle",
+      'replyTo does not wake anyone',
+      'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you (your commander) with the result.',
+      'Answer orders listed under wakes in list_mentions with report at the order address, not a plain message.',
+      'done:, blocked:, failed:, needs-decision:',
+      'A plain post or send_message without a tag wakes nobody',
+      'Tag an agent only when it must act on your reply',
+      'Do not tag people just to mention them',
+    ]) expect(instructions).toContain(rule);
+    const tools = (await client.listTools()).tools;
+    for (const name of ['send_message', 'post']) {
+      expect(tools.find(tool => tool.name === name)?.description)
+        .toContain("replyTo does not wake anyone; start with the asker's exact @handle");
+    }
+    const report = tools.find(tool => tool.name === 'report')?.description;
+    expect(report).toContain('Answer an order');
+    expect(report).toContain('address is the place the order came from');
+    expect(report).toContain('done:, blocked:, failed:, needs-decision:');
+    expect(report).toContain('Answer chat requests with a tagged message instead');
   });
   it('hands finished local code to a corner implementer in every connected-app surface', async () => {
     const { client } = await connected();

@@ -1,9 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const NPM_VISIBILITY_TIMEOUT_MS = 15 * 60_000;
+export const NPM_VISIBILITY_TIMEOUT_MS = 5 * 60_000;
 export const NPM_VIEW_TIMEOUT_MS = 20_000;
-const MAX_BACKOFF_MS = 60_000;
 const PUBLIC_NPM_REGISTRY = 'https://registry.npmjs.org';
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -42,6 +41,7 @@ export function lookupPublicNpmPackage({ packageName, version, timeoutMs }) {
     {
       encoding: 'utf8',
       timeout: timeoutMs,
+      killSignal: 'SIGKILL',
       maxBuffer: 1024 * 1024,
       env: { ...process.env, NPM_CONFIG_JSON: 'false', NPM_CONFIG_UPDATE_NOTIFIER: 'false' },
     },
@@ -53,15 +53,17 @@ export async function waitForNpmPackageVisibility({
   version,
   timeoutMs = npmVisibilityTimeoutMs(),
   commandTimeoutMs = NPM_VIEW_TIMEOUT_MS,
-  initialBackoffMs = 5_000,
+  retryIntervalMs = 10_000,
   lookup = lookupPublicNpmPackage,
   now = Date.now,
   sleep = delay,
+  log = console.log,
 }) {
   const startedAt = now();
   const deadline = startedAt + timeoutMs;
   let attempts = 0;
-  let backoffMs = initialBackoffMs;
+
+  log(`Waiting up to ${timeoutMs}ms for ${packageName}@${version} on ${PUBLIC_NPM_REGISTRY}`);
 
   while (now() < deadline) {
     const remainingMs = deadline - now();
@@ -86,13 +88,13 @@ export async function waitForNpmPackageVisibility({
       throw new Error(`npm view failed: ${resultDetail(result)}`);
     }
 
-    const waitMs = Math.min(backoffMs, deadline - now());
+    const waitMs = Math.min(retryIntervalMs, deadline - now());
     if (waitMs <= 0) break;
+    log(`${packageName}@${version}: npm returned E404 (attempt ${attempts}, ${now() - startedAt}ms elapsed); retrying in ${waitMs}ms`);
     await sleep(waitMs);
-    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
   }
 
-  throw new Error(`${packageName}@${version} was not visible after ${timeoutMs}ms`);
+  throw new Error(`${packageName}@${version} was not visible after ${timeoutMs}ms (${attempts} attempts) on ${PUBLIC_NPM_REGISTRY}; verify npm publication succeeded before retrying the release`);
 }
 
 async function main() {

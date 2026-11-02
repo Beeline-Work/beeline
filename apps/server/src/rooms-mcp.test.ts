@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
-import { RoomsMcpEvents } from './rooms-mcp-events.js';
+import { MCP_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
 import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -429,7 +429,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     )).toEqual([]);
     expect(JSON.parse((await queued(report!.id))[0]!.body).data).toMatchObject({
       kind: 'report', reason: 'report', text: 'done: the report reached the commander',
-      next: 'Handle it, then call no_reply_needed with this address if nothing needs posting.',
+      next: MCP_WAKE_HINT,
     });
     expect(await deliverMcpMemberWebhooks(db, transport)).toBe(2);
     expect(received).toHaveLength(3);
@@ -2108,6 +2108,26 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(read).toEqual(loaded);
       const described = await ok(client, 'app_tool', { address: ROOM, app: 'beeline:workflow', tool: 'describe', args: { slug: 'mcp-procedure' } });
       expect(described).toEqual(loaded);
+    });
+    // Reproduction (R-MCP-ACK-ONE): no_reply_needed(address) marked every non-order wake at the address handled,
+    // including wakes the app had not seen, and could not clear a wake whose claim had expired.
+    it('R-MCP-ACK-ONE: no_reply_needed with commandId marks only that wake handled', async () => {
+      const { client, member } = await connected();
+      const wake = (text: string) => createAgentCommand(db, { roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'report',
+        privatePayload: { kind: 'report', authorId: AGENT, fromRoomId: ROOM, text } });
+      const first = (await wake('done: first'))!, second = (await wake('done: second'))!;
+      const order = (await createAgentCommand(db, { roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'order',
+        privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Do the thing' } }))!;
+      expect((await call(client, 'no_reply_needed', { address: ROOM, commandId: order.id })).text).toContain('answer it with report');
+      expect(await ok(client, 'no_reply_needed', { address: ROOM, commandId: first.id })).toEqual({ cleared: 1 });
+      const ids = () => ok(client, 'list_mentions', {}).then(page => (page.wakes as { id: string }[]).map(item => item.id));
+      expect(await ids()).toEqual(expect.arrayContaining([second.id, order.id]));
+      expect(await ids()).not.toContain(first.id);
+      // A wake whose claim expired is still listed, so it can be cleared.
+      await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()-interval '1 minute' WHERE id=$1`, [second.id]);
+      expect(await ids()).toContain(second.id);
+      expect(await ok(client, 'no_reply_needed', { address: ROOM })).toEqual({ cleared: 1 });
+      expect(await ids()).toEqual([order.id]);
     });
     it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
       const surface = await import('../../body/src/minimal-tool-surface.js');

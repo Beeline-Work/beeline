@@ -1334,7 +1334,7 @@ export class DaemonService {
           input as Input<'getPermissionAuthority'>,
         )) as Output<Name>;
       case 'getMissionAuthority':
-        return (await this.missionAuthority(input as Input<'getMissionAuthority'>)) as Output<Name>;
+        return (await this.missionAuthority()) as Output<Name>;
       case 'listWorkSchedules':
       case 'listAgentToolSchedules':
         return (await this.schedules(
@@ -3752,19 +3752,9 @@ export class DaemonService {
         }
       : { status: 'unavailable' as const };
   }
-  private async missionAuthority(input: Input<'getMissionAuthority'>) {
-    const row = (
-      await this.database.query<{
-        status: 'authorized' | 'denied' | 'unavailable';
-        generation: string;
-      }>(
-        `SELECT status,generation FROM mission_authority WHERE mission_id=$1 AND room_id=$2 AND principal_id=$3 AND exercise=$4`,
-        [input.missionId, input.roomId, input.principalId, input.exercise],
-      )
-    ).rows[0];
-    return row
-      ? { status: row.status, generation: Number(row.generation) }
-      : { status: 'unavailable' as const };
+  private async missionAuthority() {
+    // Nothing has ever written mission authority; this is the answer an absent row gave.
+    return { status: 'unavailable' as const };
   }
   private async schedules(input: Input<'listAgentToolSchedules'>, agentId: string) {
     const roomId = (input as { roomId?: string }).roomId;
@@ -6148,10 +6138,8 @@ export class DaemonService {
       [input.workspaceId, agentId],
     );
     if (!member.rowCount) throw new Error('daemon workspace access denied');
-    await this.database.query(
-      `UPDATE agents SET schedule_ids=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
-      [agentId, JSON.stringify(input.scheduleIds)],
-    );
+    // Old helpers still post their schedule index; nothing has read it since
+    // schedules moved to the server, so it is acknowledged without storing.
     return this.writeResult();
   }
   private async postMandate(input: Input<'postAgentToolMandate'>, agentId: string) {

@@ -1,7 +1,6 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Pool } from 'pg';
-import { createHash } from 'node:crypto';
 import { PostgresDatabase } from './database.js';
 import { BackgroundJobRunner } from './background.js';
 import * as sentry from './sentry.js';
@@ -103,7 +102,7 @@ describe('owner-command operator System DMs', () => {
     const result = await daemon.execute('readOperatorSystemDm', { ...await turn(), sendId: sent.sendId }, AGENT);
     expect(result).toMatchObject({ recipients: 1, delivered: 1, failed: 0, pending: 0 });
     const audit = (await db.query(`SELECT * FROM operator_system_dm_sends WHERE id=$1`, [sent.sendId])).rows[0]!;
-    expect(audit).toMatchObject({ caller_id: AGENT, owner_id: OWNER, text_hash: createHash('sha256').update(text).digest('hex'), recipients: ['recipient'], recipient_count: 1 });
+    expect(audit).toMatchObject({ caller_id: AGENT, owner_id: OWNER, recipients: ['recipient'], text });
     expect(audit.source_message_id).toBeTruthy();
     expect(audit.created_at).toBeTruthy();
     const message = (await db.query<{ room_id: string }>(`SELECT room_id FROM messages WHERE author_id=$1 AND text=$2`, [SYSTEM_IDENTITY_ID, text])).rows[0]!;

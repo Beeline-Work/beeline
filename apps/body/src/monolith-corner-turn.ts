@@ -1,3 +1,4 @@
+import { agentBehavior } from './agent-command.js';
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
 import { tryWithKernelLock } from './kernel-lock.js';
 import { extraDependencyRoots, dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
@@ -793,7 +794,7 @@ export class MonolithCornerTurnLoop {
    * do not spend the old refresh token before this Room's next activation.
    */
   private async writeBackClaudeLogin(): Promise<void> {
-    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
     await writeBackRoomClaudeLogin({
       root: this.options.config.agentHomeRoot,
       operatorHome: this.options.config.operatorHome,
@@ -861,7 +862,7 @@ export class MonolithCornerTurnLoop {
    */
   private watchClaudeLogin(): void {
     this.stopClaudeLoginWatch();
-    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
     this.claudeLoginWatch = watchRoomClaudeLogin({
       root: this.options.config.agentHomeRoot,
       operatorHome: this.options.config.operatorHome,
@@ -978,7 +979,7 @@ export class MonolithCornerTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
-          writeBackNewerClaudeLogin: this.options.config.agentKind === 'claude',
+          writeBackNewerClaudeLogin: agentBehavior(this.options.config.agentKind).sharedLoginWriteBack === true,
         });
       }
       return this.sessionId;
@@ -1166,7 +1167,7 @@ export class MonolithCornerTurnLoop {
       : isolatedCategories.includes('package-cache')
         ? workspaceCacheEnv(workspaceAssetPaths(privateAssetRoot), this.options.worktreePath, privateAssetRoot)
         : {};
-    if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
+    if (assets && agentBehavior(this.options.config.agentKind).codexCacheBindings && homeOverlay.CODEX_HOME)
       await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
     if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
     // A build output belongs to this corner, even when its package downloads
@@ -1311,7 +1312,7 @@ export class MonolithCornerTurnLoop {
               agentRuntimeDir: runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
               privateHomeRoot: this.options.config.agentHomeRoot,
               ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
-              ...(this.options.config.agentKind === 'codex' && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
+              ...(agentBehavior(this.options.config.agentKind).codexCacheBindings && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
               ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
               privateAssetRoot,
               isolatedCategories,

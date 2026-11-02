@@ -51,7 +51,6 @@ import {
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
 import {
-  DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
   resolvePerRoomLiveSessions,
   resolveSessionIdleMs,
@@ -632,9 +631,6 @@ export class RoomRuntimeCoordinator {
     this.scheduler = new SessionScheduler({
       ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
       perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
-      workspaceFloor: Number(
-        process.env.BEELINE_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
-      ),
       activeRoomCount: () => this.activeRoomCount(),
       idleMs: resolveSessionIdleMs(process.env),
       maxWarmSessions: resolveMaxWarmSessions(process.env),

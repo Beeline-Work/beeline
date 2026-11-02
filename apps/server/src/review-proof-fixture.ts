@@ -1,6 +1,11 @@
 import type { SqlDatabase } from './database.js';
 import { ensureFirstRoom } from './first-room.js';
-import { joinRooms } from './membership-join.js';
+import {
+  ensureWorkspaceOwnerMembership,
+  moveRoomMembershipsToWorkspace,
+  ensureReviewProofMembership,
+  joinRooms,
+} from './membership-join.js';
 
 /**
  * The release proof's corner fixture.
@@ -43,12 +48,7 @@ export async function ensureReviewWorkspace(
     REVIEW_WORKSPACE_ID,
     REVIEW_WORKSPACE_NAME,
   ]);
-  const joined = await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     VALUES($1,NULL,$2,'owner')
-     ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL DO NOTHING`,
-    [REVIEW_WORKSPACE_ID, reviewerId],
-  );
+  const joined = await ensureWorkspaceOwnerMembership(database, [REVIEW_WORKSPACE_ID, reviewerId]);
   // A reviewer restored after account deletion rejoins the Rooms still there.
   if (joined.rowCount)
     await joinRooms(database, {
@@ -67,10 +67,7 @@ export async function ensureReviewWorkspace(
     `UPDATE rooms SET workspace_id=$2 WHERE id=ANY($1::uuid[]) AND workspace_id<>$2`,
     [fixtureIds, REVIEW_WORKSPACE_ID],
   );
-  await database.query(
-    `UPDATE memberships SET workspace_id=$2 WHERE room_id=$1 AND workspace_id<>$2`,
-    [REVIEW_PROOF_ROOM_ID, REVIEW_WORKSPACE_ID],
-  );
+  await moveRoomMembershipsToWorkspace(database, [REVIEW_PROOF_ROOM_ID, REVIEW_WORKSPACE_ID]);
   await ensureReviewProofFixture(database, reviewerId, REVIEW_WORKSPACE_ID);
 }
 
@@ -86,12 +83,7 @@ export async function ensureReviewProofFixture(
     [REVIEW_PROOF_ROOM_ID, workspaceId, reviewerId, REVIEW_PROOF_ROOM_NAME],
   );
   // Memberships follow the Room's own workspace_id.
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1
-     ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
-    [REVIEW_PROOF_ROOM_ID, reviewerId],
-  );
+  await ensureReviewProofMembership(database, [REVIEW_PROOF_ROOM_ID, reviewerId]);
   await database.query(
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,about,visibility,repository_resolution)
      SELECT $1,workspace_id,id,$3,$4,$5,'invite-only','none' FROM rooms WHERE id=$2

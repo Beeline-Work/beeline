@@ -1,3 +1,4 @@
+import * as backgroundWork from './background-work.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ConnectionPresence, recordAgentEvidence, claimAgentConnection } from './connection-presence.js';
@@ -60,7 +61,7 @@ describe('delivery-driven presence', () => {
     await vi.advanceTimersByTimeAsync(100);
   }
   it('starts no repeating command, commander wake, or corner attention sweep', async()=>{
-    const interval=vi.spyOn(globalThis,'setInterval');
+    const interval=vi.spyOn(backgroundWork,'startConnectionWork');
     await presence.start();
     expect(interval.mock.calls.map(call=>call[1])).toEqual([30000]);
     interval.mockRestore();

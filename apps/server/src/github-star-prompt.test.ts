@@ -186,8 +186,8 @@ it('shows immediately when the milestone reply itself carries an artifact', asyn
 it('opens the repository instead when GitHub refuses the star', async () => {
   starResponse = 403;
   await db.query(
-    `INSERT INTO github_star_prompts(identity_id,replies,reached_milestone)
-     VALUES($1,3,3)`,
+    `INSERT INTO github_star_prompts(identity_id,replies)
+     VALUES($1,3)`,
     [H],
   );
   expect((await read()).prompt?.milestone).toBe(3);
@@ -200,8 +200,8 @@ it('opens the repository instead when GitHub refuses the star', async () => {
 
 it('waits for the next milestone after Not now and stops for good after close', async () => {
   await db.query(
-    `INSERT INTO github_star_prompts(identity_id,replies,reached_milestone)
-     VALUES($1,29,3)`,
+    `INSERT INTO github_star_prompts(identity_id,replies)
+     VALUES($1,29)`,
     [H],
   );
   expect((await read()).prompt?.milestone).toBe(3);
@@ -213,15 +213,15 @@ it('waits for the next milestone after Not now and stops for good after close', 
 
   expect(await answer('dismiss', 30)).toEqual({ outcome: 'dismissed' });
   await db.query(
-    `UPDATE github_star_prompts SET replies=299,reached_milestone=300`,
+    `UPDATE github_star_prompts SET replies=299`,
   );
   expect(await read()).toEqual({ prompt: null });
 });
 
 it('stays hidden mid-conversation and after a failed turn, and persists one star check per milestone', async () => {
   await db.query(
-    `INSERT INTO github_star_prompts(identity_id,replies,reached_milestone)
-     VALUES($1,3,3)`,
+    `INSERT INTO github_star_prompts(identity_id,replies)
+     VALUES($1,3)`,
     [H],
   );
   expect((await read()).prompt?.milestone).toBe(3);
@@ -296,8 +296,8 @@ it('a reaction stays successful when optional prompt eligibility cannot be read'
 });
 
 it('shows on the 300th reply once, and does not count failed receipts or duplicate replies', async () => {
-  await db.query(`INSERT INTO github_star_prompts(identity_id,replies,reached_milestone,answered_milestone)
-    VALUES($1,299,30,30)`, [H]);
+  await db.query(`INSERT INTO github_star_prompts(identity_id,replies,answered_milestone)
+    VALUES($1,299,30)`, [H]);
   await phone.execute('sendRoomMessage', { roomId: R, text: '@hoots failing' }, H);
   const command = (await daemon.execute('getAgentCommands', { roomId: R }, A)).commands.at(-1) as AgentCommand;
   await daemon.execute('claimAgentCommand', { roomId: R, commandId: command.id, generationId: 'failed' }, A);

@@ -1,3 +1,9 @@
+import {
+  joinMcpPublicRooms,
+  restoreMcpWorkspaceMemberships,
+  removeIdentityMemberships,
+} from './membership-join.js';
+import { notifyMcpWebhook } from './postgres-live.js';
 import { mentionRouting } from './owed-mentions.js';
 import { queueMcpMentionEvents, deliverMcpEvents, mcpWakeNext } from './rooms-mcp-events.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,7 +12,6 @@ import { isIP } from 'node:net';
 import { Agent, request as httpsRequest } from 'node:https';
 import { MCP_STARTER_ROUTINE, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import { fetchMcpLogo, mcpMemberAvatar, mcpClientName } from './rooms-mcp-logos.js';
 import { normalizeAvatar } from './durable-avatar.js';
 import { openSecrets, sealSecrets } from './free-agents.js';
@@ -17,18 +22,6 @@ import { routeAgentResult, type CommandRow } from './agent-command.js';
 function mcpMemberIdentityId(clientId: string, ownerId: string): string {
   return createHash('sha256').update(`rooms-mcp-member:v1:${clientId}:${ownerId}`).digest('hex');
 }
-
-/**
- * Joins public top-level Rooms in the Room's own Workspace. A fresh member (a
- * first connection, or a reconnect after Disconnect) rejoins every public
- * Room; an existing member keeps the Rooms a person removed it from.
- */
-const JOIN_PUBLIC_ROOMS = `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-  SELECT room.workspace_id,room.id,$1,'member' FROM rooms room
-  WHERE room.workspace_id=ANY($2::uuid[]) AND room.parent_id IS NULL
-    AND room.direct_participants IS NULL AND room.archived_at IS NULL AND room.visibility='public'
-  ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-  DO UPDATE SET removed_at=NULL WHERE memberships.removed_at IS NOT NULL AND $3::boolean`;
 
 /** A refusal the calling client can act on; its message is returned as is. */
 export class McpToolError extends Error {}
@@ -167,15 +160,9 @@ export async function ensureMcpMember(
       [input.clientId, input.ownerId, memberId, modelLabel, selection],
     )).rows[0]?.fresh ?? false;
     if (workspaces.length) {
-      await tx.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT workspace_id,NULL,$1,'member' FROM unnest($2::uuid[]) workspace_id
-         ON CONFLICT(workspace_id,identity_id) WHERE room_id IS NULL
-         DO UPDATE SET removed_at=NULL`,
-        [memberId, workspaces],
-      );
-      await tx.query(JOIN_PUBLIC_ROOMS, [memberId, workspaces, fresh]);
-      if (!fresh && addedWorkspaces.length) await tx.query(JOIN_PUBLIC_ROOMS, [memberId, addedWorkspaces, true]);
+      await restoreMcpWorkspaceMemberships(tx, [memberId, workspaces]);
+      await joinMcpPublicRooms(tx, [memberId, workspaces, fresh]);
+      if (!fresh && addedWorkspaces.length) await joinMcpPublicRooms(tx, [memberId, addedWorkspaces, true]);
     }
     if (avatar) await defaultMcpMemberAvatar(tx, memberId, avatar);
     return memberId;
@@ -297,8 +284,7 @@ export async function recordMcpMemberWebhook(
     [id, memberId, roomId, messageId, text.slice(0, 16_000)],
   );
   // Delivered on commit: a listener sends it at once, with no polling.
-  await db.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId })]);
+  await notifyMcpWebhook(db, roomId);
   return { callId: id, memberId, roomId, messageId };
 }
 
@@ -449,7 +435,7 @@ export async function backfillMcpMemberRoomsAndAvatars(db: SqlDatabase): Promise
      JOIN identities identity ON identity.id=member.member_id`,
   );
   for (const member of members.rows) {
-    if (member.workspaces.length) await db.query(JOIN_PUBLIC_ROOMS, [member.member_id, member.workspaces, false]);
+    if (member.workspaces.length) await joinMcpPublicRooms(db, [member.member_id, member.workspaces, false]);
     await db.transaction(async tx => {
       // Serialize with set_profile, whose identity update precedes its avatar write.
       const current = (await tx.query<{ avatar: string | null }>(
@@ -480,10 +466,7 @@ export async function retireMcpMember(
   const member = await mcpMemberId(db, clientId, ownerId);
   if (!member) return;
   await db.transaction(async (tx) => {
-    await tx.query(
-      `UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND removed_at IS NULL`,
-      [member],
-    );
+    await removeIdentityMemberships(tx, [member]);
     await tx.query(`UPDATE identities SET hidden_from_roster=true,updated_at=now() WHERE id=$1`, [
       member,
     ]);

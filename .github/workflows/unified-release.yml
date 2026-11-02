@@ -104,7 +104,9 @@ jobs:
       release_version: ${{ steps.identity.outputs.version }}
       release_id: ${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.release_sha }}
       trigger_epoch: ${{ steps.clock.outputs.trigger_epoch }}
-      release_state: ${{ steps.plan.outputs.release_state }}
+      has_previous: ${{ steps.plan.outputs.has_previous }}
+      previous_version: ${{ steps.plan.outputs.previous_version }}
+      previous_sha: ${{ steps.plan.outputs.previous_sha }}
       ota_memory: ${{ steps.plan.outputs.ota_memory }}
       previous_record: ${{ steps.plan.outputs.previous_record }}
       no_op: ${{ steps.plan.outputs.no_op }}
@@ -123,6 +125,12 @@ jobs:
       ios_shipped: ${{ steps.store_shipped.outputs.ios_shipped }}
       ios_build_number: ${{ steps.store_shipped.outputs.ios_build_number }}
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
+      has_runtime_pin: ${{ steps.plan.outputs.has_runtime_pin }}
+      previous_runtime_android: ${{ steps.plan.outputs.previous_runtime_android }}
+      previous_runtime_ios: ${{ steps.plan.outputs.previous_runtime_ios }}
+      next_runtime_android: ${{ steps.plan.outputs.next_runtime_android }}
+      next_runtime_ios: ${{ steps.plan.outputs.next_runtime_ios }}
+      plan_selection: ${{ steps.plan.outputs.plan_selection }}
       desktop_version: ${{ steps.plan.outputs.desktop_version }}
     steps:
       - uses: actions/checkout@v4
@@ -1060,13 +1068,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Read durable facts from their authority rather than transporting a large
+      # encoded blob that GitHub can discard as a secret-mask false positive.
+      - name: Read the published baseline for release finalization
+        if: needs.initialize.outputs.has_previous == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-record.mjs previous --output "$RUNNER_TEMP/previous/release.json"
       - name: Record each component job's result and classify the attempt
         id: result
         env:
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           NEEDS: ${{ toJSON(needs) }}
-          RELEASE_STATE: ${{ needs.initialize.outputs.release_state }}
-          PREVIOUS_RECORD: ${{ needs.initialize.outputs.previous_record }}
           NO_OP: ${{ needs.initialize.outputs.no_op }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}

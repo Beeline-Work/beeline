@@ -1,3 +1,4 @@
+import { restoreRoomMembership, ensureRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
 import { deleteCornerBranchBestEffort } from './corner-branch-cleanup.js';
@@ -259,7 +260,6 @@ import { activeWorkflowRunIds, humanRoomAdmin, scheduleWorkflowName } from './wo
 import { isCornerReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
-  STAR_PROMPT_MILESTONES,
   starPromptReplySql,
 } from './github-star-prompt.js';
 
@@ -4607,11 +4607,11 @@ export class DaemonService {
              RETURNING 1
            ), recovered AS (
              UPDATE messages failure SET
-               text=COALESCE($15::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||$13::text,
+               text=COALESCE($14::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||$12::text,
                system_event=jsonb_set(
                  jsonb_set(failure.system_event,'{subject,name}',
-                   to_jsonb(COALESCE($15::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
-                 '{verb}',to_jsonb($14::text)
+                   to_jsonb(COALESCE($14::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
+                 '{verb}',to_jsonb($13::text)
                ),
                card=jsonb_set(failure.card,'{state}',to_jsonb('recovered'::text))
              FROM settled,identities agent
@@ -4633,7 +4633,7 @@ export class DaemonService {
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
-                 writable.agent_depth,attachment_payload.attachments,$12::jsonb,
+                 writable.agent_depth,attachment_payload.attachments,$11::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
              ON CONFLICT(id) DO NOTHING
@@ -4650,7 +4650,6 @@ export class DaemonService {
            ), star_count AS (
              ${starPromptReplySql(
                `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
-               '$11::int[]',
              )}
            ), cleared AS (
              DELETE FROM live_outputs output USING completed
@@ -4710,7 +4709,6 @@ export class DaemonService {
           input.replyToMessageId ?? null,
           rootMessageId,
           input.generationId,
-          STAR_PROMPT_MILESTONES,
           steps,
           systemMessage("daemon-service.retry-suffix"),
           systemMessage("daemon-service.answered-after-a-retry"),
@@ -6212,11 +6210,7 @@ export class DaemonService {
         [roomId, request.workspace_id, request.author_id, JSON.stringify(participants)],
       );
       for (const participant of participants)
-        await this.database.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
-         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL`,
-          [request.workspace_id, roomId, participant],
-        );
+        await restoreRoomMembership(this.database, [request.workspace_id, roomId, participant]);
       await systemLine(this.database, {
         roomId,
         subject: { kind: 'agent', id: agentId, name: systemMessage("daemon-service.your-agent") },
@@ -8941,10 +8935,7 @@ export class DaemonService {
       [room.workspace_id, agentId],
     );
     if (!workspaceMember.rowCount) throw new Error('daemon workspace access denied');
-    await this.database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
-      [room.workspace_id, input.roomId, agentId],
-    );
+    await ensureRoomMembership(this.database, [room.workspace_id, input.roomId, agentId]);
     return this.writeResult();
   }
   private async identity(agentId: string) {

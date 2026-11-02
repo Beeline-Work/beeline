@@ -868,6 +868,26 @@ export class GitHubAppClient {
     if (ready?.pullRequest?.isDraft !== false) throw new Error('PR is still a draft');
   }
 
+  /** Bounded, paginated file names for event-triggered prompt replay. No patches or PR text. */
+  async readPullRequestFiles(accessToken: string, fullName: string, number: number) {
+    const files: Array<{ filename: string; previousFilename?: string }> = [];
+    // GitHub caps this endpoint at 3,000 files. At the cap callers replay conservatively.
+    for (let page = 1; page <= 30; page++) {
+      const response = await this.request(
+        `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${number}/files?per_page=100&page=${page}`,
+        { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
+      );
+      const rows = await jsonArray(response, 'GitHub pull request files');
+      for (const row of rows) {
+        if (typeof row.filename !== 'string') throw new Error('GitHub file has no filename');
+        files.push({ filename: row.filename,
+          ...(typeof row.previous_filename === 'string' ? { previousFilename: row.previous_filename } : {}) });
+      }
+      if (rows.length < 100) return { files, complete: true };
+    }
+    return { files, complete: false };
+  }
+
   /** A PR's changed files, reviews, inline review comments and conversation comments. */
   async readPullRequestDiscussion(accessToken: string, fullName: string, number: number) {
     const list = async (path: string) => {

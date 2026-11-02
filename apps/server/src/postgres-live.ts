@@ -1,7 +1,9 @@
 import { Client } from 'pg';
 import { cornerOwnerSql } from './corner-worker.js';
+import type { UsageRefreshOutcome } from '@beeline/api-contract/daemon';
+import type { AgentSignInStep } from './agent-sign-in.js';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
-import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
+import { USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
@@ -19,6 +21,60 @@ const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
   'corner_owed', 'corner_follows', 'corner_merge_holds',
 ]);
 const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
+
+/** Publish only committed state; callers pass their current transaction. */
+type PublishedNotification = LiveNotificationPayload
+  | (AgentSignInStep & Pick<LiveNotificationPayload, 'table' | 'operation' | 'roomId'>)
+  | (LiveNotificationPayload & { outcome: UsageRefreshOutcome });
+
+async function notifyLive(
+  database: Pick<SqlDatabase, 'query'>,
+  payload: PublishedNotification,
+): Promise<void> {
+  await database.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL, JSON.stringify(payload)]);
+}
+
+export function notifyAgentCommand(database: Pick<SqlDatabase, 'query'>, roomId: string, agentId: string) {
+  return notifyLive(database, { table: 'agent_commands', operation: 'UPDATE', roomId, agentId });
+}
+export function notifyMcpWebhook(database: Pick<SqlDatabase, 'query'>, roomId: string) {
+  return notifyLive(database, { table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId });
+}
+export function notifySentryWake(database: Pick<SqlDatabase, 'query'>) {
+  return notifyLive(database, { table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' });
+}
+export function notifyConnectorDiscovery(database: Pick<SqlDatabase, 'query'>, ownerId: string) {
+  return notifyLive(database, { table: 'connector_discovery_cache', operation: 'UPDATE', roomId: '', ownerId });
+}
+export function notifyAgentSignIn(database: Pick<SqlDatabase, 'query'>, event: AgentSignInStep) {
+  return notifyLive(database, { table: AGENT_SIGN_IN_TABLE, operation: 'UPDATE', roomId: '', ...event });
+}
+export function publishUsageRefreshResult(database: Pick<SqlDatabase, 'query'>, agentId: string,
+  outcome: UsageRefreshOutcome, requestId?: string) {
+  return notifyLive(database, { table: USAGE_REFRESH_RESULT_TABLE, operation: 'UPDATE', roomId: '', agentId,
+    outcome, ...(requestId ? { requestId } : {}) });
+}
+export function notifyUsageRefreshRequest(database: Pick<SqlDatabase, 'query'>, agentId: string, requestId: string) {
+  return notifyLive(database, { table: USAGE_REFRESH_TABLE, operation: 'UPDATE', roomId: '', agentId, requestId });
+}
+export function notifyAgentConnection(database: Pick<SqlDatabase, 'query'>, agentId: string, epoch: number) {
+  return notifyLive(database, { table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch });
+}
+export function notifyAgentConfigRoom(database: Pick<SqlDatabase, 'query'>, roomId: string, agentId: string) {
+  return notifyLive(database, { table: 'agent_config', operation: 'UPDATE', roomId, agentId });
+}
+
+/** SQL expressions keep notification and its source write in the same statement. */
+export function notifyCornerStateSql(room: 'NEW.room_id' | 'corner'): string {
+  return `pg_notify('${POSTGRES_LIVE_CHANNEL}',json_build_object('table','corner_state','operation','UPDATE','roomId',${room})::text)`;
+}
+export function notifyDeadlineNoticesSql(): string {
+  return 'count(pg_notify($5,payload::text))';
+}
+export function notifyMcpWakesSql(channel: string): string {
+  return `count(pg_notify(${channel}, jsonb_build_object(
+        'table','${MCP_WEBHOOK_TABLE}','operation','INSERT','roomId',room_id::text)::text))`;
+}
 
 /** Agent-directed Connect / pending_ops wake. Never a catalog or availability. */
 export async function notifyConnectorAssignment(
@@ -717,7 +773,7 @@ export class PostgresLiveListener {
         (payload.table === 'agent_turns' && payload.operation === 'UPDATE'))
       this.pushWake?.();
     if (pushOnly) return;
-    if (payload.table === 'agent_usage_refresh' && payload.agentId) {
+    if (payload.table === USAGE_REFRESH_TABLE && payload.agentId) {
       this.live.publish({
         type: 'usage-refresh', roomId: '', agentId: payload.agentId,
         ...(payload.requestId ? { requestId: payload.requestId } : {}),

@@ -1,3 +1,4 @@
+import { startConnectionWork } from './background-work.js';
 import type { VoiceBudget } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -79,14 +80,13 @@ export class VoiceAudioMeter {
   private flushing?: Promise<void>;
   private closed = false;
   private paused = false;
-  private readonly timer: ReturnType<typeof setInterval>;
+  private readonly stopCheckpoint: () => void;
   constructor(private readonly store: VoiceBudgetStore, private readonly call: string,
     private readonly owner: string, private readonly workspace: string, initial: VoiceBudget,
     private readonly receipt: (budget: VoiceBudget | null) => void,
     private readonly log: (message: string) => void, private readonly now = Date.now) {
     this.budget = initial;
-    this.timer = setInterval(() => { void this.flush().catch(() => {}); }, 250);
-    this.timer.unref();
+    this.stopCheckpoint = startConnectionWork(() => { void this.flush().catch(() => {}); }, 250);
   }
 
   /** Returns the permitted PCM duration; zero means drop this frame, never queue
@@ -146,7 +146,7 @@ export class VoiceAudioMeter {
   }
 
   async close() {
-    this.closed = true; clearInterval(this.timer);
+    this.closed = true; this.stopCheckpoint();
     if (this.flushing) await this.flushing.catch(() => {});
     // A normal leave must retain the last batch just like an active meter.
     // A successor lease makes record return null and ends this retry lane.

@@ -1,6 +1,7 @@
 // The session finder: every live coding-agent session on this machine, and which one a joined member is in now.
 // Ported from Reason Network (src/daemon/sessions.rs, src/claude.rs), Copyright 2026 Reason Machines, Inc.,
 // MIT OR Apache-2.0. See ./NOTICE and ./UPSTREAM.json for the copied commit.
+import { sessionAgentBehavior } from '../agent-command.js';
 import type { AgentId } from './agents.js';
 import { scanClaude, type ClaudeSession } from './claude.js';
 import { scanCodex, type CodexSession } from './codex.js';
@@ -40,7 +41,7 @@ export function liveSessions(sources: Sources): LiveSession[] {
   for (const h of sources.hooks()) {
     if (found.some(s => s.agent === h.agent && s.sessionId === h.sessionId)) continue;
     found.push({ agent: h.agent, sessionId: h.sessionId, cwd: h.cwd, pid: h.pid, state: h.state,
-      ...(h.agent === 'codex' && h.transcript ? { rollout: h.transcript } : {}) });
+      ...(sessionAgentBehavior(h.agent).delivery === 'queue' && h.transcript ? { rollout: h.transcript } : {}) });
   }
   return found;
 }

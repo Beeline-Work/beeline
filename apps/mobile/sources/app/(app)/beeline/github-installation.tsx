@@ -2,7 +2,6 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
@@ -20,7 +19,7 @@ function InstallationReturn({ path }: { path: string }) {
 }
 
 /** Keep progress and recoverable errors in Beeline after GitHub's consent page. */
-function EnhancedGitHubInstallation() {
+export default function GitHubInstallation() {
   const desktopPageLayout = useDesktopPageLayout();
   useLatencyRouteFrame('/beeline/github-installation');
   const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
@@ -64,29 +63,3 @@ const styles = StyleSheet.create(theme => ({
   page: { flex: 1, justifyContent: 'center', padding: theme.buzz.space.lg, gap: theme.buzz.space.md, backgroundColor: theme.buzz.bgTerminal },
   copy: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
 }));
-
-function LegacyGitHubInstallation() {
-  useLatencyRouteFrame('/beeline/github-installation');
-  const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
-  const [returnPath, setReturnPath] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const path = await githubInstallationReturnPath().catch(() => null);
-      if (path) await completeGitHubInstallationRoute(installed).catch(() => undefined);
-      if (alive) setReturnPath(path && installed === '0' && connectionError ? `${path}${path.includes('?') ? '&' : '?'}githubConnectionError=${encodeURIComponent(connectionError)}` : path ?? '/beeline/channels');
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [installed, connectionError]);
-
-  return returnPath ? <InstallationReturn path={returnPath} /> : null;
-}
-
-export default function GitHubInstallationFallback() {
-  const enabled = useRepositoryOnboarding();
-  if (enabled === null) return <View />;
-  return enabled ? <EnhancedGitHubInstallation /> : <LegacyGitHubInstallation />;
-}

@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
 import { DEFAULT_ACCESS_POLICY, LEGACY_ACCESS_POLICY, type AgentAccessPolicy } from './access-policy.js';
-import { resolveAgentCommand, type AgentCommand, type AgentKind } from './agent-command.js';
+import { agentBehavior, resolveAgentCommand, type AgentCommand, type AgentKind } from './agent-command.js';
 import { activeAdapterCommand } from './adapter-store.js';
 import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
 import type { SandboxPolicy } from './bwrap-sandbox.js';
@@ -111,9 +111,9 @@ export function runtimeAgentCommand(
   runtime: AgentRuntimeRecord,
   env: NodeJS.ProcessEnv = process.env,
 ): AgentCommand {
-  if (runtime.agentKind === 'cursor') {
+  if (agentBehavior(runtime.agentKind).resolveCommandOnStart) {
     try {
-      return resolveAgentCommand({ kind: 'cursor', env });
+      return resolveAgentCommand({ kind: runtime.agentKind, env });
     } catch {
       // cursor-agent missing on this host: keep the stored spawn so start still
       // fails with the same binary-not-found path it already had.

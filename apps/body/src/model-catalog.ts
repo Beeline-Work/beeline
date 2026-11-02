@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import type { AgentModelConfigOption } from './model-types.js';
 import { AcpClient } from './acp.js';
-import type { AgentCommand } from './agent-command.js';
+import { agentBehavior, type AgentCommand } from './agent-command.js';
 import {
   applyAgentModelSelectionWithUpdatedCatalog,
   agentArgsWithModelSelection,
@@ -45,10 +45,10 @@ export function modelCatalogProbeEnvironment(
   agentEnv: Record<string, string>,
   scratchCwd: string,
 ): Record<string, string> {
-  if (agent.kind !== 'goose' || !agentEnv.GOOSE_PROVIDER) return agentEnv;
+  if (!agentBehavior(agent.kind).probeProviderRootEnv || !agentEnv.GOOSE_PROVIDER) return agentEnv;
   return {
     ...agentEnv,
-    GOOSE_PATH_ROOT: resolve(scratchCwd, 'goose'),
+    [agentBehavior(agent.kind).probeProviderRootEnv!]: resolve(scratchCwd, 'goose'),
   };
 }
 
@@ -65,11 +65,11 @@ export function filterAgentModelCatalog(
   agentEnv: Record<string, string>,
 ): AgentModelConfigOption[] {
   const allowed = filterAllowedModelConfigOptions(raw).filter(
-    (axis) => axis.id !== 'fast-mode' || agent.kind === 'codex',
+    (axis) => axis.id !== 'fast-mode' || agentBehavior(agent.kind).fastMode,
   );
   // OpenCode only advertises enabled models and keeps provider credentials in
   // its own auth store; the env-only Pi filter would erase every provider/model.
-  return agent.kind === 'goose' || agent.kind === 'opencode'
+  return agentBehavior(agent.kind).modelCatalogOwnsCredentials
     ? allowed
     : filterModelOptionsByCredentials(allowed, agentEnv);
 }

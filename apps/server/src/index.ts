@@ -457,7 +457,7 @@ async function main() {
     },
   });
   let reconciledMergeability = false;
-  const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
+  const reconciliationMs = 60_000;
   const work = new BackgroundWork();
   const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
   let nextDayCheckinRunning = false;

@@ -46,6 +46,7 @@ import {
   routeSystemCommand,
 } from './agent-command.js';
 import { roomAgentHealth } from './agent-health.js';
+import { dispatchPromptReplay } from './prompt-replay.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 import { releaseArchivedCornerHolds } from './corner-holds.js';
 
@@ -1598,6 +1599,16 @@ export class GitHubOperations {
       // even though this handler has no branch of its own for that action.
       if (event === 'installation' || event === 'installation_repositories') {
         this.invalidateInstallationRoomTokens(install.id);
+      }
+      if (event === 'pull_request' && ['opened', 'synchronize', 'reopened'].includes(String(body.action))) {
+        const pr = record(body.pull_request);
+        const number = integer(pr?.number);
+        const repository = repositoryName(body);
+        const head = text(record(pr?.head)?.sha);
+        if (repository && number && head) {
+          const changed = await dispatchPromptReplay(this.database, this.app, { installationId: install.id, repository, number, head });
+          if (changed) this.onRoomChanged?.(changed);
+        }
       }
       if (deliveryId) {
         const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);

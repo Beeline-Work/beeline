@@ -10,7 +10,7 @@ import {
   questionLeavesAtSql,
   viewerMemberSql,
 } from './needs-you.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+import { notifyDeadlineNoticesSql, POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 /** Clock-only changes to the Needs-you tray and corner rows share one database-clock sweep. */
 const TAKEOVER_LOOKBACK_MS = 10 * 60_000;
@@ -72,7 +72,7 @@ export class DeadlineExpiry {
          'roomId',owed.corner_id,'cornerParentId',room.parent_id)
        FROM corner_owed owed JOIN rooms room ON room.id=owed.corner_id
        WHERE owed.expires_at>$1 AND owed.expires_at<=$2 AND room.parent_id IS NOT NULL
-       ) SELECT count(pg_notify($5,payload::text)) FROM notices`,
+       ) SELECT ${notifyDeadlineNoticesSql()} FROM notices`,
       [window[0], window[1], since, through, POSTGRES_LIVE_CHANNEL],
     );
     this.#sweptThrough = through;

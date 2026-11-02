@@ -27,7 +27,6 @@ import { agentUsageColumns, projectAgentUsage, requestUsageRefresh, type AgentUs
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
 import { companyPopularity, companySearchResults, projectWorkbenchCompanies } from './workbench-companies.js';
-import { notifyAgentConfigChange } from './postgres-live.js';
 import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './free-agent-warning.js';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
@@ -158,9 +157,10 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
+  notifyAgentConfigRoom,
+  notifyAgentConfigChange,
   notifyConnectorAssignment,
   notifyConnectorHelper,
-  POSTGRES_LIVE_CHANNEL,
 } from './postgres-live.js';
 import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
@@ -187,6 +187,23 @@ import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
 import type { FreeAgentService } from './free-agents.js';
 import {
+  ensureInvitedWorkspaceMembership,
+  restorePairedWorkspaceMembership,
+  writeIdentityRoomsEventSubscriptions,
+  createWorkspaceOwnerMembership,
+  removeWorkspaceMemberships,
+  joinRoomCreator,
+  unsubscribeRoomReviewer,
+  subscribeRoomReviewer,
+  removeRoomMembership,
+  restoreWorkspaceMembershipRole,
+  ensureWorkspaceMembershipRole,
+  createDirectMessageMembership,
+  redeemWorkspaceMembership,
+  removeIdentityMemberships,
+  transferWorkspaceOwnership,
+  transferRoomOwnership,
+  writeSurfacePushState,
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
   syncTopLevelSharedRoomRoles,
@@ -3662,11 +3679,7 @@ export class PhoneService {
           `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
           [hash(code), agentId],
         );
-      const workspaceMembership = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
-         VALUES ($1,NULL,$2,'member',$3) ON CONFLICT DO NOTHING`,
-        [pairing.workspace_id, agentId, pairing.created_by],
-      );
+      const workspaceMembership = await ensureInvitedWorkspaceMembership(database, [pairing.workspace_id, agentId, pairing.created_by]);
       const rooms = await joinRooms(database, {
         workspaceId: pairing.workspace_id,
         identityId: agentId,
@@ -3919,15 +3932,7 @@ export class PhoneService {
         `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
         [hash(input.code), input.agentPubkey],
       );
-      const workspaceMembership = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
-         VALUES ($1,NULL,$2,'member',$3)
-         ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
-         DO UPDATE SET role='member',removed_at=NULL,joined_at=now(),invited_by=EXCLUDED.invited_by
-           WHERE memberships.removed_at IS NOT NULL
-         RETURNING id`,
-        [pairing.workspace_id, input.agentPubkey, pairing.created_by],
-      );
+      const workspaceMembership = await restorePairedWorkspaceMembership(database, [pairing.workspace_id, input.agentPubkey, pairing.created_by]);
       // A deferring CLI joins Rooms itself through `finishAgentConnectPairing`
       // once its rename decision settles — a system line is a fact written
       // once, never rewritten by a later rename, so it must not be written
@@ -3946,11 +3951,7 @@ export class PhoneService {
           isServerEventKind,
         );
         if (subscriptions.length && joined.roomIds.length) {
-          await database.query(
-            `UPDATE memberships SET event_subscriptions=$3::jsonb
-             WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
-            [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)],
-          );
+          await writeIdentityRoomsEventSubscriptions(database, [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)]);
         }
       }
       const machineId = input.machineId || input.agentPubkey;
@@ -4074,11 +4075,7 @@ export class PhoneService {
       // --subscribe joined` is what a greeter is set up with.
       const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isServerEventKind);
       if (subscriptions.length && joined.roomIds.length) {
-        await database.query(
-          `UPDATE memberships SET event_subscriptions=$3::jsonb
-           WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
-          [pairing.claimed_by, joined.roomIds, JSON.stringify(subscriptions)],
-        );
+        await writeIdentityRoomsEventSubscriptions(database, [pairing.claimed_by, joined.roomIds, JSON.stringify(subscriptions)]);
       }
       return { status: 'finished' };
     });
@@ -6419,10 +6416,7 @@ export class PhoneService {
         );
         if (!owned.rowCount) throw new Error('workspaceId is invalid');
       } else {
-        await db.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
-          [id, viewerId],
-        );
+        await createWorkspaceOwnerMembership(db, [id, viewerId]);
       }
       const generalId = await ensureFirstRoom(db, id, viewerId);
       await seedWelcomeVideoWorkflow(db, id, generalId);
@@ -6491,10 +6485,7 @@ export class PhoneService {
         );
         if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole owner');
       }
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-        [input.workspaceId, viewerId],
-      );
+      await removeWorkspaceMemberships(database, [input.workspaceId, viewerId]);
       await database.query(
         `DELETE FROM agent_pairing_codes WHERE workspace_id=$1 AND created_by=$2 AND claimed_by IS NULL`,
         [input.workspaceId, viewerId],
@@ -6563,8 +6554,8 @@ export class PhoneService {
              AND owner.removed_at IS NULL AND owner.role='owner'
          ) RETURNING workspace.id,workspace.name
        ), notices AS (
-         INSERT INTO workspace_deletion_notices(identity_id,workspace_id,workspace_name)
-         SELECT members.identity_id,deleted.id,deleted.name FROM deleted JOIN members ON true
+         INSERT INTO workspace_deletion_notices(identity_id,workspace_id)
+         SELECT members.identity_id,deleted.id FROM deleted JOIN members ON true
          WHERE members.identity_id<>$2 AND members.kind='human' RETURNING identity_id
        ), audit AS (
          INSERT INTO workspace_deletions(workspace_id,workspace_name,deleted_by)
@@ -6628,12 +6619,7 @@ export class PhoneService {
           repository?.installation_id ?? null,
         ],
       );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT $1,$2,$3,role FROM memberships
-         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`,
-        [input.workspaceId, id, viewerId],
-      );
+      await joinRoomCreator(db, [input.workspaceId, id, viewerId]);
       if (repository) await db.query(
         `INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2)
          ON CONFLICT DO NOTHING`, [viewerId, input.workspaceId],
@@ -6802,29 +6788,9 @@ export class PhoneService {
       );
       if (reviewerAgentId !== undefined && reviewerAgentId !== current?.reviewer_agent_id) {
         if (current?.reviewer_agent_id)
-          await database.query(
-            `UPDATE memberships member
-             SET event_subscriptions=member.event_subscriptions-'check-passed'
-             FROM rooms room
-             WHERE member.room_id=room.id AND member.identity_id=$2
-               AND member.removed_at IS NULL
-               AND room.id=$1 AND room.parent_id IS NULL`,
-            [input.roomId, current.reviewer_agent_id],
-          );
+          await unsubscribeRoomReviewer(database, [input.roomId, current.reviewer_agent_id]);
         if (reviewerAgentId)
-          await database.query(
-            `UPDATE memberships member
-             SET event_subscriptions=CASE
-               WHEN member.event_subscriptions @> '["check-passed"]'::jsonb
-                 THEN member.event_subscriptions
-               ELSE member.event_subscriptions||'["check-passed"]'::jsonb
-             END
-             FROM rooms room
-             WHERE member.room_id=room.id AND member.identity_id=$2
-               AND member.removed_at IS NULL
-               AND room.id=$1 AND room.parent_id IS NULL`,
-            [input.roomId, reviewerAgentId],
-          );
+          await subscribeRoomReviewer(database, [input.roomId, reviewerAgentId]);
         if (current?.reviewer_agent_id) await database.query(
           `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions-'check-passed'
            FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
@@ -6904,10 +6870,7 @@ export class PhoneService {
           return;
         }
       }
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-        [roomId, viewerId],
-      );
+      await removeRoomMembership(database, [roomId, viewerId]);
       await systemLine(database, {
         roomId,
         subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
@@ -6986,10 +6949,7 @@ export class PhoneService {
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
     await this.database.transaction(async (database) => {
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-        [input.roomId, input.memberId],
-      );
+      await removeRoomMembership(database, [input.roomId, input.memberId]);
       await systemLine(database, {
         roomId: input.roomId,
         subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
@@ -7057,11 +7017,7 @@ export class PhoneService {
         ]);
       }
       if (target) {
-        await database.query(
-          `UPDATE memberships SET role=$3,removed_at=NULL,invited_by=CASE WHEN removed_at IS NOT NULL THEN $4 ELSE invited_by END
-           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
-          [input.workspaceId, input.memberId, input.role, viewerId],
-        );
+        await restoreWorkspaceMembershipRole(database, [input.workspaceId, input.memberId, input.role, viewerId]);
         await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
         if (target.removed_at)
           await joinRooms(database, {
@@ -7073,11 +7029,7 @@ export class PhoneService {
           });
         return { joined: target.removed_at !== null };
       }
-      const inserted = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
-         VALUES($1,NULL,$2,$3,$4) ON CONFLICT DO NOTHING`,
-        [input.workspaceId, input.memberId, input.role, viewerId],
-      );
+      const inserted = await ensureWorkspaceMembershipRole(database, [input.workspaceId, input.memberId, input.role, viewerId]);
       if (inserted.rowCount)
         await joinRooms(database, {
           workspaceId: input.workspaceId,
@@ -7122,10 +7074,7 @@ export class PhoneService {
       if (target.role === 'owner') {
         throw new Error('workspace manager cannot remove an owner');
       }
-      await database.query(
-        `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-        [input.workspaceId, input.memberId],
-      );
+      await removeWorkspaceMemberships(database, [input.workspaceId, input.memberId]);
       await database.query(
         `DELETE FROM agent_pairing_codes WHERE workspace_id=$1 AND created_by=$2 AND claimed_by IS NULL`,
         [input.workspaceId, input.memberId],
@@ -7168,10 +7117,7 @@ export class PhoneService {
       );
       if (!inserted.rowCount) return false;
       for (const member of participants)
-        await db.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-          [input.workspaceId, id, member],
-        );
+        await createDirectMessageMembership(db, [input.workspaceId, id, member]);
       return true;
     });
     return { id, created };
@@ -7273,13 +7219,7 @@ export class PhoneService {
       ).rows[0];
       if (!identity) throw new Error('identity not found');
       await reassignCollidingAgentHandles(database, viewerId, identity.handle, workspaceIds);
-      const joined = await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by) VALUES($1,NULL,$2,'member',$3)
-         ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
-         DO UPDATE SET role='member',removed_at=NULL,invited_by=EXCLUDED.invited_by
-           WHERE memberships.removed_at IS NOT NULL`,
-        [row.workspace_id, viewerId, row.created_by],
-      );
+      const joined = await redeemWorkspaceMembership(database, [row.workspace_id, viewerId, row.created_by]);
       await joinRooms(database, {
         workspaceId: row.workspace_id,
         identityId: viewerId,
@@ -7447,15 +7387,7 @@ export class PhoneService {
       // machine's live listener, since the agents table carries no Room for a
       // row trigger to name.
       for (const room of rooms.rows) {
-        await database.query(`SELECT pg_notify($1, $2)`, [
-          POSTGRES_LIVE_CHANNEL,
-          JSON.stringify({
-            table: 'agent_config',
-            operation: 'UPDATE',
-            roomId: room.room_id,
-            agentId: input.agentId,
-          }),
-        ]);
+        await notifyAgentConfigRoom(database, room.room_id, input.agentId);
       }
       // Selected model and effort remain queryable on agents.
     });
@@ -7500,15 +7432,7 @@ export class PhoneService {
         [input.agentId, input.workspaceId],
       );
       for (const room of rooms.rows) {
-        await database.query(`SELECT pg_notify($1, $2)`, [
-          POSTGRES_LIVE_CHANNEL,
-          JSON.stringify({
-            table: 'agent_config',
-            operation: 'UPDATE',
-            roomId: room.room_id,
-            agentId: input.agentId,
-          }),
-        ]);
+        await notifyAgentConfigRoom(database, room.room_id, input.agentId);
       }
     });
   }
@@ -8190,11 +8114,7 @@ export class PhoneService {
       );
       if (ran.rowCount) throw new Error('agent already ran; use removeAgent instead');
       await revokeDaemonCredentials(database, agentId);
-      await database.query(
-        `UPDATE memberships SET removed_at=now()
-       WHERE identity_id=$1 AND removed_at IS NULL`,
-        [agentId],
-      );
+      await removeIdentityMemberships(database, [agentId]);
     });
   }
 
@@ -8374,48 +8294,8 @@ export class PhoneService {
 
       // Ownership the account held alone passes to the longest-serving
       // remaining human (admin first), so the shared surfaces stay manageable.
-      await database.query(
-        `WITH lone AS (
-           SELECT m.workspace_id FROM memberships m
-           WHERE m.room_id IS NULL AND m.role='owner' AND m.removed_at IS NULL
-             AND m.identity_id=ANY($1)
-             AND NOT EXISTS (SELECT 1 FROM memberships o
-                             WHERE o.workspace_id=m.workspace_id AND o.room_id IS NULL
-                               AND o.role='owner' AND o.removed_at IS NULL
-                               AND o.identity_id <> ALL($1))
-         ), heir AS (
-           SELECT DISTINCT ON (l.workspace_id) l.workspace_id,h.identity_id
-           FROM lone l
-           JOIN memberships h ON h.workspace_id=l.workspace_id AND h.room_id IS NULL
-             AND h.role IN ('admin','member') AND h.removed_at IS NULL
-             AND h.identity_id <> ALL($1)
-           JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
-           ORDER BY l.workspace_id,h.role,h.joined_at,h.identity_id
-         )
-         UPDATE memberships m SET role='owner' FROM heir
-         WHERE m.workspace_id=heir.workspace_id AND m.identity_id=heir.identity_id`,
-        [gone],
-      );
-      await database.query(
-        `WITH lone AS (
-           SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-           WHERE m.room_id IS NOT NULL AND r.parent_id IS NULL AND r.archived_at IS NULL
-             AND m.role='owner' AND m.removed_at IS NULL AND m.identity_id=ANY($1)
-             AND NOT EXISTS (SELECT 1 FROM memberships o
-                             WHERE o.room_id=m.room_id AND o.role='owner'
-                               AND o.removed_at IS NULL AND o.identity_id <> ALL($1))
-         ), heir AS (
-           SELECT DISTINCT ON (l.room_id) l.room_id,h.identity_id
-           FROM lone l
-           JOIN memberships h ON h.room_id=l.room_id AND h.role IN ('admin','member')
-             AND h.removed_at IS NULL AND h.identity_id <> ALL($1)
-           JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
-           ORDER BY l.room_id,h.role,h.joined_at,h.identity_id
-         )
-         UPDATE memberships m SET role='owner' FROM heir
-         WHERE m.room_id=heir.room_id AND m.identity_id=heir.identity_id`,
-        [gone],
-      );
+      await transferWorkspaceOwnership(database, [gone]);
+      await transferRoomOwnership(database, [gone]);
 
       // Authored content survives as the shared record, anonymised to the one
       // hidden tombstone author. Nothing strips the tags those people were
@@ -8650,25 +8530,7 @@ export class PhoneService {
     )
       throw new Error('invalid push state');
     return this.database.transaction(async (database) => {
-      const updated = await database.query<{ push_muted: boolean }>(
-        `WITH surface AS (
-           SELECT room.id,room.parent_id,member.push_muted FROM rooms room
-           JOIN memberships member ON member.room_id=room.id
-             AND member.identity_id=$2 AND member.removed_at IS NULL
-           JOIN identities person ON person.id=$2 AND person.kind='human' WHERE room.id=$1
-         ), room_update AS (
-           UPDATE memberships member SET push_muted=COALESCE($3,member.push_muted) FROM surface
-           WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
-           RETURNING member.push_muted
-         ), corner_update AS (
-           INSERT INTO corner_person_state(corner_id,identity_id,push_muted)
-           SELECT id,$2,$3 FROM surface WHERE parent_id IS NOT NULL AND $3 IS NOT NULL
-           ON CONFLICT(corner_id,identity_id) DO UPDATE SET push_muted=EXCLUDED.push_muted
-           RETURNING push_muted
-         ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update
-           UNION ALL SELECT push_muted FROM surface WHERE parent_id IS NOT NULL AND $3 IS NULL`,
-        [input.roomId, viewerId, input.muted ?? null],
-      );
+      const updated = await writeSurfacePushState<{ push_muted: boolean }>(database, [input.roomId, viewerId, input.muted ?? null]);
       if (!updated.rows[0]) throw new Error('room not found');
       if (input.viewing === true)
         await database.query(

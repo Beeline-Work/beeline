@@ -14,6 +14,7 @@
  * RAW advertised catalog every time something is about to be set — so even a
  * caller that forgot to filter first still cannot reach `mode`.
  */
+import { agentBehavior } from './agent-command.js';
 import { isAllowedAgentModelConfigCategory, type AgentModelConfigOption } from './model-types.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
@@ -31,8 +32,8 @@ type AgentLaunchCommand = {
 };
 
 export function isGrokAgentCommand(agent: AgentLaunchCommand): boolean {
-  if (agent.kind === 'grok') return true;
-  if (agent.kind && agent.kind !== 'custom') return false;
+  if (agentBehavior(agent.kind).modelLaunch === 'native-args') return true;
+  if (agent.kind && agentBehavior(agent.kind).modelLaunch !== 'command') return false;
   return /^grok(?:\.[a-z0-9]+)?$/i.test(basename(agent.command));
 }
 

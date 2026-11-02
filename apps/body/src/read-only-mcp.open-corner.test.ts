@@ -108,7 +108,11 @@ async function daemonDoor(
                     reviewerWake: { status: 'waiting', detail: 'checks pending' },
                   }
                 : operation === 'getRoomConversation'
-                  ? { items: conversationItems }
+                  ? { items: conversationItems.filter(item => {
+                      const cursor = String(item.cursor);
+                      return (!body.after || cursor.localeCompare(String(body.after), 'en', { numeric: true }) > 0)
+                        && (!body.before || cursor.localeCompare(String(body.before), 'en', { numeric: true }) < 0);
+                    }).slice(...(body.window === 'recent' ? [-Number(body.limit)] : [0, Number(body.limit)])) }
                   : operation === 'createCorner'
                     ? { cornerId: CORNER }
                     : { ok: true };
@@ -593,6 +597,50 @@ describe('private command tools', () => {
     expect(page.limits.items).toBe(5);
     expect(page.next).toEqual(from === 'newest' ? { before: items[4]!.cursor } : { after: items[4]!.cursor });
     expect(door.calls.find(call => call.operation === 'getRoomConversation')).toMatchObject({ limit: 6 });
+  });
+
+  it.each(['oldest', 'newest'] as const)('R1 skips empty activity pages from %s', async from => {
+    const row = (index: number, body = '') => ({ id: `message-${index}`, cursor: `${100 + index},${'a'.repeat(64)}`, authorId: 'agent', createdAt: index, type: 'activity', body, attachments: [] });
+    const empty = Array.from({ length: 18 }, (_, i) => row(i + 1));
+    const real = row(from === 'newest' ? 0 : 20, 'real message');
+    const door = await daemonDoor(undefined, from === 'newest' ? [real, ...empty] : [...empty, real]);
+    const result = await callTool(door.origin, { facet: 'messages', address: CORNER, from }, { name: 'read' });
+    expect(JSON.parse(result.result!.content[0]!.text).items.map((item: { body: string }) => item.body)).toEqual(['real message']);
+  });
+
+  it.each(['before', 'after'] as const)('accepts a time-only %s cursor', async direction => {
+    const rows = [122, 123, 124].map(time => ({ id: `message-${time}`, cursor: `${time},${'a'.repeat(64)}`, authorId: 'agent', createdAt: time, type: 'message', body: `at ${time}`, attachments: [] }));
+    const door = await daemonDoor(undefined, rows);
+    const result = await callTool(door.origin, { facet: 'messages', address: CORNER, cursor: { [direction]: '123' } }, { name: 'read' });
+    expect(result.result?.isError).not.toBe(true);
+    expect(JSON.parse(result.result!.content[0]!.text).items.map((item: { body: string }) => item.body)).toEqual([direction === 'before' ? 'at 122' : 'at 124']);
+    expect(door.calls.find(call => call.operation === 'getRoomConversation')).toMatchObject({ [direction]: `123,${(direction === 'before' ? '0' : 'f').repeat(64)}` });
+  });
+
+  it.each(['oldest', 'newest'] as const)('R1 bounds empty scans and resumes past skipped rows from %s', async from => {
+    const rows = Array.from({ length: 150 }, (_, i) => ({ id: `message-${i}`, cursor: `${1000 + i},${'a'.repeat(64)}`, authorId: 'agent', createdAt: i, type: 'activity', body: '', attachments: [] }));
+    const real = { ...rows[0]!, id: 'real', body: 'real message', cursor: `${from === 'newest' ? 999 : 1150},${'a'.repeat(64)}` };
+    const door = await daemonDoor(undefined, from === 'newest' ? [real, ...rows] : [...rows, real]);
+    const first = await callTool(door.origin, { facet: 'messages', address: CORNER, from }, { name: 'read' });
+    const page = JSON.parse(first.result!.content[0]!.text);
+    expect(page.items).toEqual([]);
+    expect(page.next).toEqual(from === 'newest' ? { before: rows[6]!.cursor } : { after: rows[143]!.cursor });
+    expect(door.calls.filter(call => call.operation === 'getRoomConversation')).toHaveLength(16);
+    const second = await callTool(door.origin, { facet: 'messages', address: CORNER, cursor: page.next }, { name: 'read' });
+    expect(JSON.parse(second.result!.content[0]!.text).items.map((item: { id: string }) => item.id)).toEqual(['real']);
+  });
+
+  it('R1 retains activity carrying attachments or card content', async () => {
+    const base = { authorId: 'agent', createdAt: 1, type: 'activity', body: '', attachments: [] };
+    const rows = [
+      { ...base, id: 'attachment', cursor: `100,${'a'.repeat(64)}`, attachments: [{ url: 'https://example.test/file' }] },
+      { ...base, id: 'card', cursor: `101,${'a'.repeat(64)}`, systemEvent: { kind: 'example', text: 'card content' } },
+    ];
+    const door = await daemonDoor(undefined, rows);
+    const result = await callTool(door.origin, { facet: 'messages', address: CORNER }, { name: 'read' });
+    expect(JSON.parse(result.result!.content[0]!.text).items).toMatchObject([
+      { id: 'attachment', attachmentCount: 1 }, { id: 'card', body: JSON.stringify(rows[1]!.systemEvent) },
+    ]);
   });
 
   it('passes a transcript cursor straight to the target corner read', async () => {

@@ -18,17 +18,16 @@ const BLOCKING_ITEM = `COALESCE((item.text ~ '^(needs-decision|blocked):[[:space
   OR item.card_type IN ('grant-request','permission','connector-offer',
     'agent-sign-in','app-sign-in','squire-approval')),false)`;
 /** Historical automatic escalations remain readable but never request action. */
-const RETIRED_AUTOMATIC_ATTENTION = [
-  CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE,
-].map(type => `'${type}'`).join(',');
+function retiredAutomaticAttentionSql(): string {
+  // Resolve imported card names when SQL is built, after cyclic command imports initialize.
+  return [CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE]
+    .map(type => `'${type}'`).join(',');
+}
 /** Card types owed until resolved, read whatever their age. */
-const NEVER_EXPIRES = [
-  CHOICE_CARD_TYPE,
-  'grant-request',
-  CORNER_AGENT_UNREACHABLE_CARD_TYPE,
-]
-  .map((type) => `'${type}'`)
-  .join(',');
+function neverExpiresSql(): string {
+  return [CHOICE_CARD_TYPE, 'grant-request', CORNER_AGENT_UNREACHABLE_CARD_TYPE]
+    .map((type) => `'${type}'`).join(',');
+}
 
 /** `uuid::text` spells a uuid this way, so a card id matching it compares as the original text did. */
 const CANONICAL_UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
@@ -53,7 +52,7 @@ export function addressedToPersonSql(
   personKindExpr: string,
   includeCommissioned = true,
 ): string {
-  return `((COALESCE(${m}.card_type,'') NOT IN (${RETIRED_AUTOMATIC_ATTENTION})) AND (
+  return `((COALESCE(${m}.card_type,'') NOT IN (${retiredAutomaticAttentionSql()})) AND (
     EXISTS (
       SELECT 1 FROM messages addressed
       WHERE addressed.id = ${m}.reply_to_message_id
@@ -129,7 +128,7 @@ export function addressedToPersonSql(
  * each person's latest post once instead of once per item, and skips items
  * that can no longer be owed.
  */
-function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent?: string): string {
+function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent?: string, historical = false): string {
   const answered = bulk
     ? `(answered.at IS NULL OR answered.at<=item.created_at)`
     : `NOT EXISTS (
@@ -141,27 +140,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
   // The computed owed-corner CASE below cannot use messages.room_id's index.
   // Bound a one-corner refresh before evaluating it, including both kinds of
   // cross-Room item. Keep the final rules authoritative about attribution.
-  const candidates = parent ? `WITH candidate_items AS MATERIALIZED (
-      SELECT item.id FROM rooms child JOIN messages item ON item.room_id=child.id
-        WHERE child.parent_id=${parent}
-      UNION
-      SELECT item.id FROM rooms child JOIN messages item ON item.card->>'sourceRoomId'=child.id::text
-        WHERE child.parent_id=${parent}
-      UNION
-      SELECT item.id FROM rooms child JOIN agent_commands report ON
-        (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
-          THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=child.id
-        JOIN messages item ON item.request_id=report.id WHERE child.parent_id=${parent}
-    ) ` : corner ? `WITH candidate_items AS MATERIALIZED (
-      SELECT id FROM messages WHERE room_id=${corner}
-      UNION
-      SELECT id FROM messages WHERE card->>'sourceRoomId'=${corner}::text
-      UNION
-      SELECT item.id FROM agent_commands report
-      JOIN messages item ON item.request_id=report.id
-      WHERE (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
-        THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=${corner}
-    ) ` : '';
+  const candidates = corner || parent ? `WITH ${cornerMessageCandidatesSql(corner, parent)} ` : '';
   return `${candidates}SELECT owed_corner.id,person.id,item.id,item.created_at,
       CASE
         WHEN ${BLOCKING_ITEM} THEN CASE
@@ -202,14 +181,14 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
         : ''
     }
     WHERE item.deleted_at IS NULL AND (${where})
-      AND (item.card->>'reportToId' IS NULL OR item.card->>'waitingAnswered' IS DISTINCT FROM 'true')
+      ${historical ? '' : `AND (item.card->>'reportToId' IS NULL OR item.card->>'waitingAnswered' IS DISTINCT FROM 'true')`}
       AND (item.room_id=owed_corner.id OR EXISTS (
         SELECT 1 FROM memberships source_member WHERE source_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=item.room_id)
           AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
       ${
         bulk
           ? `AND (${BLOCKING_ITEM} OR item.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
-        OR (item.card_type IN (${NEVER_EXPIRES})
+        OR (item.card_type IN (${neverExpiresSql()})
           AND (item.card_type<>'${CHOICE_CARD_TYPE}'
             OR COALESCE(item.card->>'status','open')='open')))`
           : ''
@@ -239,8 +218,66 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
           THEN item.card->>'mode'='question' AND COALESCE(item.card->>'status','open')='open'
             AND ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
         ELSE ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
-          AND ${answered}
+          AND ${historical ? 'true' : answered}
       END`;
+}
+
+/** First answer per historical answerable item; later replies do not restart idle. */
+export function cornerOwedAnswerTimesSql(corner: string): string {
+  return `SELECT min(answer.created_at) ended_at
+    FROM (${cornerOwedRowsSql(`owed_corner.id=${corner}`, false, corner, undefined, true)})
+      owed(corner_id,person_id,message_id,created_at,expires_at,answerable,blocking)
+    JOIN messages item ON item.id=owed.message_id
+    JOIN messages answer ON answer.author_id=owed.person_id
+      AND answer.room_id IN (owed.corner_id,item.room_id)
+      AND answer.presentation='message' AND answer.deleted_at IS NULL
+      AND answer.created_at>owed.created_at
+    WHERE owed.answerable
+    GROUP BY owed.message_id,owed.person_id`;
+}
+
+/** The same answer predicate clears a live report and dates its historical resolution. */
+function reportAnswerSql(report: string, answer: string, order = false): string {
+  if (order) return `${answer}.room_id=${report}.corner_id
+    AND ${answer}.private_payload->>'kind'='order'
+    AND ${answer}.private_payload->>'authorId'=${report}.commander_id`;
+  return `${answer}.presentation='message' AND ${answer}.system_event IS NULL AND ${answer}.deleted_at IS NULL
+    AND ${answer}.room_id IN (${report}.corner_id,${report}.return_room_id)
+    AND ${answer}.created_at>${report}.created_at
+    AND (${answer}.author_id=${report}.commander_id OR EXISTS (
+      SELECT 1 FROM room_access member JOIN identities author ON author.id=member.identity_id
+      WHERE member.room_id=${report}.corner_id AND member.removed_at IS NULL
+        AND author.id=${answer}.author_id AND author.kind='human'))`;
+}
+
+/** Answered worker reports, read from the command/message log, date their resolution. */
+export function cornerReportAnswerTimesSql(corner: string): string {
+  return `WITH report_corner AS MATERIALIZED (
+      SELECT c.id,${cornerImplementerSql('f', 'c')} worker_id FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
+      WHERE c.id=${corner}
+    ), reports AS (
+    SELECT scope.id corner_id,report.room_id return_room_id,report.created_at,report.agent_id commander_id
+    FROM report_corner scope JOIN agent_commands report
+      ON report.private_payload->>'fromRoomId'=scope.id::text AND report.private_payload->>'kind'='report'
+    WHERE report.private_payload->>'authorId'=scope.worker_id
+      AND report.private_payload->>'text' ~ '^(needs-decision|blocked):'
+      AND report.private_payload->>'waitingAnswered'='true'
+    UNION ALL
+    SELECT scope.id,item.room_id,item.created_at,item.card->>'reportToId'
+    FROM report_corner scope JOIN messages item ON item.author_id=scope.worker_id
+    WHERE item.card->>'reportToId' IS NOT NULL
+      AND ${humanReportCornerSql('item')}=scope.id::text
+      AND item.presentation='message' AND item.system_event IS NULL AND item.deleted_at IS NULL
+      AND item.text ~ '^(needs-decision|blocked):'
+      AND item.card->>'waitingAnswered'='true'
+  ) SELECT resolution.ended_at FROM reports report
+    CROSS JOIN LATERAL (SELECT min(answered.at) ended_at FROM (
+      SELECT answer.created_at at FROM messages answer WHERE ${reportAnswerSql('report', 'answer')}
+      UNION ALL
+      SELECT answer.created_at FROM agent_commands answer WHERE ${reportAnswerSql('report', 'answer', true)}
+        -- Orders can clear a wait within the same transaction/timestamp.
+        AND answer.created_at>=report.created_at
+    ) answered) resolution`;
 }
 
 /** Refresh report-derived attention after edits or membership changes in its return Room. */
@@ -259,6 +296,31 @@ function refreshReportedCornersSql(room: string, person: string): string {
 }
 
 const CORNER_OWED_INSERT = `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable,blocking)`;
+
+/** Bound historical message probes to one corner or its parent Room. */
+function cornerMessageCandidatesSql(corner?: string, parent?: string): string {
+  return parent ? `candidate_items AS MATERIALIZED (
+      SELECT item.id FROM rooms child JOIN messages item ON item.room_id=child.id
+        WHERE child.parent_id=${parent}
+      UNION
+      SELECT item.id FROM rooms child JOIN messages item ON item.card->>'sourceRoomId'=child.id::text
+        WHERE child.parent_id=${parent}
+      UNION
+      SELECT item.id FROM rooms child JOIN agent_commands report ON
+        (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+          THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=child.id
+        JOIN messages item ON item.request_id=report.id WHERE child.parent_id=${parent}
+    )` : corner ? `candidate_items AS MATERIALIZED (
+      SELECT id FROM messages WHERE room_id=${corner}
+      UNION
+      SELECT id FROM messages WHERE card->>'sourceRoomId'=${corner}::text
+      UNION
+      SELECT item.id FROM agent_commands report
+      JOIN messages item ON item.request_id=report.id
+      WHERE (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+        THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=${corner}
+    )` : '';
+}
 
 /**
  * `corner_owed` holds every open owed item per person, so readers look owed
@@ -620,7 +682,7 @@ CREATE TRIGGER corner_owed_permission_update AFTER UPDATE OF status ON permissio
 -- Existing projection rows from the former automatic escalation policy must
 -- not keep a person waiting after release. History itself stays readable.
 DELETE FROM corner_owed owed USING messages item
-WHERE item.id=owed.message_id AND item.card_type IN (${RETIRED_AUTOMATIC_ATTENTION});
+WHERE item.id=owed.message_id AND item.card_type IN (${retiredAutomaticAttentionSql()});
 `;
 }
 

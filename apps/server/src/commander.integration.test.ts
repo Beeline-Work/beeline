@@ -605,7 +605,7 @@ it('allows one new unreachable notice after worker recovery and the automatic re
     (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
     SELECT 'next-failed-wake',room_id,agent_id,source_message_id,'next-failed-wake',action,reason,root_command_id,root_source_message_id,agent_depth
     FROM agent_commands WHERE id=$1 RETURNING *`, [pending.id])).rows[0]!;
-  await db.query(`UPDATE automatic_report_wakes SET next_at=now()-interval '1 second' WHERE corner_id=$1`,[opened.cornerId]);
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{automaticNotBefore}',to_jsonb(extract(epoch FROM now()-interval '4 minutes')*1000)) WHERE reason='report' AND private_payload->>'originCornerId'=$1::text`,[opened.cornerId]);
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(2);

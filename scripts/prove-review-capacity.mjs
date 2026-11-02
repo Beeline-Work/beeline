@@ -176,10 +176,9 @@ try {
   }
   // The production alerts were queued at opening, then delivered during CI.
   await db.query(`UPDATE corner_facts SET lifecycle='{}' WHERE corner_id=$1`,[corner]);
-  await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL,last_state=NULL WHERE corner_id=$1`,[corner]);
   await refreshCornerAttention(db,corner);
   const idleCommands=(await call('getAgentCommands',{roomId:corner},commander)).body.commands;
-  assert.ok(idleCommands.some(c=>c.source.body.includes('is idle')),JSON.stringify((await db.query('SELECT last_state,episode,reported_episode FROM corner_attention_spans WHERE corner_id=$1',[corner])).rows));
+  assert.ok(idleCommands.some(c=>c.source.body.includes('is idle')),JSON.stringify(idleCommands));
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[corner,JSON.stringify({checks:'pending',pr:{number:1,headSha:head}})]);
   assert.deepEqual((await call('getAgentCommands',{roomId:corner},commander)).body.commands,[]);
   console.log('idle-1 demonstrated: built HTTP drops the opening alert while checks are running.');
@@ -261,7 +260,7 @@ try {
   );
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [parent]);
   await db.query(`UPDATE agent_commands SET state='complete'`);
-  await db.query(`DELETE FROM automatic_report_wakes`);
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{automaticNotBefore}',to_jsonb(extract(epoch FROM now()-interval '4 minutes')*1000)) WHERE reason='report'`);
   const capacityOrder = await createAgentCommand(db, {
     roomId: corner,
     agentId: worker,

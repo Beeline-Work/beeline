@@ -84,7 +84,9 @@ function newerThanMarkSql(alias: string): string {
  * mark in the same pass — a surface that wants the number never costs a second
  * trip to get it.
  */
-export const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
+export function viewerReadCursorSql(): string {
+  // Built on call: the corner idle reads import this module inside a cycle.
+  return `jsonb_build_object(
   'messageId',(SELECT message_id FROM room_read_marks WHERE room_id=room.id AND identity_id=$2),
   'firstUnreadMessageId',(
     SELECT message.id FROM messages message
@@ -102,3 +104,4 @@ export const VIEWER_READ_CURSOR_SQL = `jsonb_build_object(
       LIMIT ${UNREAD_COUNT_CAP}
     ) capped
   ))`;
+}

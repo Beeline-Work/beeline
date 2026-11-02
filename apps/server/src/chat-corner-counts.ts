@@ -93,6 +93,13 @@ export function cornerScheduledWaitSql(corner: string): string {
       AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))`;
 }
 
+/** Intrinsic execution history; the opening commander is never corner work. */
+export function cornerLastTurnEndSql(corner: string): string {
+  return `(SELECT max(turn.ended_at) FROM agent_turns turn WHERE turn.room_id=${corner}.id
+    AND turn.agent_id IS DISTINCT FROM ${corner}.created_by
+    AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%')`;
+}
+
 /** Shared corner facts for `FROM rooms c`; `member` checks the viewer's membership. */
 export function cornerFactsSql(viewerExpr: string): {
   columns: string;
@@ -102,7 +109,7 @@ export function cornerFactsSql(viewerExpr: string): {
   return {
     columns: `f.locked,f.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
       activity.worker_active,activity.reviewer_active,
-      span.last_turn_ended_at,
+      ${cornerLastTurnEndSql('c')} last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,
@@ -112,7 +119,6 @@ export function cornerFactsSql(viewerExpr: string): {
       owed.owed_viewer,owed.attention`,
     joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
     ${cornerWorkSql()}
-    LEFT JOIN corner_attention_spans span ON span.corner_id=c.id
     ${cornerBlockerSql()}
     LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
       AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}

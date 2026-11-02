@@ -3,6 +3,7 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerKindSql } from './corner-opening.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
+import { currentIdleReportSql } from './corner-idle.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerRunStateSql } from './corner-run.js';
@@ -192,6 +193,9 @@ export type PrivateCommandPayload = {
   openKey?: string;
   ask?: string;
   objective?: string;
+  automatic?: boolean;
+  automaticNotBefore?: number;
+  idleSince?: string;
   text: string;
   authorId: string;
   fromRoomId: string;
@@ -237,7 +241,7 @@ export type CommandRow = {
  * Ninety seconds is the normal command lease/claim window; a live turn keeps
  * its ordinary queue even when the person sends several follow-ups.
  */
-function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text', claimFence = false, scopeSql = 'true', digestSnapshot = false, checkOnly = false): string {
+function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text', claimFence = false, scopeSql = 'true', digestSnapshot = false, checkOnly = false, idleFence = true): string {
   const recovery = `recovery_scope AS MATERIALIZED (
     SELECT command.* FROM agent_commands command
     ${claimFence ? 'CROSS JOIN claim_fence' : ''}
@@ -289,6 +293,15 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     JOIN messages source ON source.id=command.source_message_id
     WHERE command.action='input' AND command.reason IN ('human_tag','direct_message')
       AND command.private_payload IS NULL AND source.deleted_at IS NOT NULL
+  ), idle_reports AS MATERIALIZED (
+    -- Only idle alerts pay for the idle recomputation below.
+    SELECT command.id,command.private_payload FROM recovery_scope command
+    WHERE command.reason='report' AND command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}'
+      AND command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it, set a hold, or close it.'
+  ), stale_idle_reports AS MATERIALIZED (
+    -- Delivery recomputes the idle episode. A claim relies on the attention
+    -- refresh, which cancels a superseded alert when its corner changes.
+    SELECT command.id FROM idle_reports command WHERE ${idleFence ? `NOT ${currentIdleReportSql('command')}` : 'false'}
   ), stale_wakes AS MATERIALIZED (
     SELECT id FROM deleted_human_sources
     UNION
@@ -303,13 +316,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
       EXISTS (SELECT 1 FROM rooms origin
         WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
           AND origin.parent_id IS NOT NULL AND origin.archived_at IS NOT NULL)
-      OR (command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}'
-        AND command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it, set a hold, or close it.'
-        AND EXISTS (SELECT 1 FROM corner_attention_spans span
-          WHERE span.corner_id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
-            AND (span.last_state IS DISTINCT FROM 'idle' OR EXISTS (
-              SELECT 1 FROM corner_facts fact WHERE fact.corner_id=span.corner_id
-                AND (fact.lifecycle->>'checks'='pending' OR fact.lifecycle->'checksSummary'->>'status'='pending')))))
+      OR command.id IN (SELECT id FROM stale_idle_reports)
       OR (command.private_payload->>'text' LIKE 'failed:%'
         AND EXISTS (SELECT 1 FROM rooms origin WHERE origin.parent_id IS NOT NULL AND origin.id::text=
           COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId'))
@@ -659,6 +666,8 @@ export async function createAgentCommand(
     avatarJob?: boolean;
     /** A line appended to a lifecycle wake's text, fixed at dispatch. */
     wakeNote?: string;
+    /** Durable minimum delivery time, independent of recipient batching. */
+    wakeAfter?: number;
   },
 ): Promise<CommandRow | undefined> {
     db = new CornerAccessDatabase(db);
@@ -772,9 +781,9 @@ export async function createAgentCommand(
        INSERT INTO agent_commands
         (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,wake_after,created_offline,startup_wake_after)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
-          CASE WHEN $14::boolean THEN COALESCE((SELECT min(wake_after) FROM agent_commands
+          GREATEST(to_timestamp($${17 + wake.params.length}::double precision/1000),CASE WHEN $14::boolean THEN COALESCE((SELECT min(wake_after) FROM agent_commands
             WHERE room_id=$2 AND agent_id=$3 AND state='pending' AND wake_after>now()),
-            now()+$15::integer*interval '1 minute') END,
+            now()+$15::integer*interval '1 minute') END),
           (SELECT connection.released_at IS NOT NULL OR NOT EXISTS(
             SELECT 1 FROM live_server_instances server WHERE server.instance_id=connection.instance_id
               AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')
@@ -810,6 +819,7 @@ export async function createAgentCommand(
       minutes,
       member.rows[0]!.human_input || ![undefined, 'input', 'resume'].includes(input.action),
       ...wake.params,
+      input.wakeAfter && input.wakeAfter > Date.now() ? input.wakeAfter : null,
     ],
   );
   const command = result.rows[0] ?? (await db.query<CommandRow>(
@@ -1501,7 +1511,7 @@ export async function claimAgentCommand(
              SELECT command.* FROM agent_commands command CROSS JOIN claim_fence
              WHERE command.id=$1 AND command.room_id=$2 AND command.agent_id=$3
                AND command.coalesced_context IS NOT NULL AND NOT $5::boolean
-           ), ${commandRecoveryCtes('$2', '$3', '$1', true)}, eligible AS MATERIALIZED (
+           ), ${commandRecoveryCtes('$2', '$3', '$1', true, 'true', false, false, false)}, eligible AS MATERIALIZED (
              SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
              WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
                (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))

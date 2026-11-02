@@ -2644,6 +2644,12 @@ export class GitHubOperations {
           const reportFailure = firstFailure || followup || partialRepair;
           const storedSummary = {
             ...summary,
+            // Repeated reads of an unchanged status do not start new idle work.
+            statusChangedAt: current.pr?.headSha === checkHeadSha && priorReport?.status === summary.status
+              && !newAttempt && JSON.stringify((priorReport.checks ?? []).map(check => [check.name,check.status]).sort()) ===
+                JSON.stringify(summary.checks.map(check => [check.name,check.status]).sort())
+              ? (priorReport as typeof priorReport & { statusChangedAt?: number })?.statusChangedAt ?? priorReport.fetchStartedAt ?? priorReport.updatedAt
+              : summary.fetchStartedAt,
             attempt,
             reportedHeadSha: checkHeadSha,
             reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,

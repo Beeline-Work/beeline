@@ -1,6 +1,6 @@
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
-import { routeCodecs } from './route-codecs.js';
-const codecs=routeCodecs('daemon.readCommandActivation');
+import { helperRouteCodecs } from './helper-route-codecs.js';
+const codecs=helperRouteCodecs('daemon.readCommandActivation');
 const fields={agentId:true,workspaceId:true,roomId:true,commandId:true,generationId:true,source:true} as const satisfies Record<keyof CommandActivationInput,true>;
 const sourceFields={connectionId:true,epoch:true} as const;
 /** One private setup route only, exported solely to the two existing owned

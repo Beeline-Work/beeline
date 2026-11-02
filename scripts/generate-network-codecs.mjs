@@ -176,3 +176,36 @@ if (process.argv.includes('--check')) {
   if (readFileSync(ownerTarget, 'utf8') !== ownerOutput) throw new Error('Owner input codecs are stale; regenerate network codecs');
 } else writeFileSync(ownerTarget, ownerOutput);
 console.log(`${ownerRoutes.length} owner inputs; ${inputNodes.length} projected schema nodes`);
+
+// Derive the helper consumer projection from its closed literal adapter calls.
+// Preserve the complete input/result graphs; never copy a hand-written schema.
+const helperRoutes = new Set();
+for (const name of ['helper-codecs', 'helper-activation-codecs', 'helper-turn-codecs']) {
+  const source = ts.createSourceFile(`${name}.ts`, readFileSync(path.join(root,
+    `packages/net/src/${name}.ts`), 'utf8'), ts.ScriptTarget.Latest, true);
+  function visit(node) {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'helperRouteCodecs') {
+      const id = node.arguments[0];
+      if (node.arguments.length !== 1 || !ts.isStringLiteral(id) || !id.text.startsWith('daemon.') ||
+          !operations[id.text] || operations[id.text].input === 'file-bytes') throw new Error('Helper route must be a closed daemon literal');
+      helperRoutes.add(id.text);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+inputNodes.length = 0; inputIds.clear();
+const helperOperations = Object.fromEntries([...helperRoutes].sort().map(id => [id, {
+  input: selectInput(operations[id].input), output: selectInput(operations[id].output),
+}]));
+const helperOutput = '// Generated from helper consumer adapters by scripts/generate-network-codecs.mjs.\n' +
+  'import type { WireShape } from \'./wire-codec.js\';\n' +
+  'const shape = (value: WireShape): WireShape => value;\n' +
+  'export const helperShapes: readonly WireShape[] = [\n' + inputNodes.map(node =>
+    '  shape(' + JSON.stringify(node).replaceAll('"__proto__":', '["__proto__"]:') + ')').join(',\n') + '\n];\n' +
+  'export const helperOperations = ' + JSON.stringify(helperOperations, null, 2) + ' as const;\n';
+const helperTarget = path.join(root, 'packages/net/src/generated-helper-shapes.ts');
+if (process.argv.includes('--check')) {
+  if (readFileSync(helperTarget, 'utf8') !== helperOutput) throw new Error('Helper codecs are stale; regenerate network codecs');
+} else writeFileSync(helperTarget, helperOutput);
+console.log(`${helperRoutes.size} helper routes; ${inputNodes.length} projected schema nodes`);

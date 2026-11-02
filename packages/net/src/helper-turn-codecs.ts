@@ -1,6 +1,6 @@
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { Codec } from './wire-codec.js';
-import { routeCodecs } from './route-codecs.js';
+import { helperRouteCodecs } from './helper-route-codecs.js';
 
 function closed<T extends object>(codec: Codec<T>, fields: Readonly<Record<keyof T, true>>): Codec<T> {
   return Object.freeze({ parse(value: unknown): T {
@@ -9,7 +9,7 @@ function closed<T extends object>(codec: Codec<T>, fields: Readonly<Record<keyof
     return parsed;
   } });
 }
-const claim = routeCodecs('daemon.claimAgentCommand');
+const claim = helperRouteCodecs('daemon.claimAgentCommand');
 const claimResult: typeof claim.result = Object.freeze({ parse(value: unknown) {
   const parsed = claim.result.parse(value);
   const credential = (parsed as { modelCredential?: unknown }).modelCredential;
@@ -23,8 +23,8 @@ const claimResult: typeof claim.result = Object.freeze({ parse(value: unknown) {
   }
   return parsed;
 } });
-const receipt = routeCodecs('daemon.postAgentTurnReceipt');
-const acknowledge = routeCodecs('daemon.acknowledgeAgentCommand');
+const receipt = helperRouteCodecs('daemon.postAgentTurnReceipt');
+const acknowledge = helperRouteCodecs('daemon.acknowledgeAgentCommand');
 const claimFields = { roomId: true, commandId: true, generationId: true } as const satisfies Record<keyof DaemonOperationMap['claimAgentCommand']['input'], true>;
 const receiptFields = {
   agentId: true, roomId: true, requestId: true, generationId: true, status: true,

@@ -1,5 +1,5 @@
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { routeCodecs } from './route-codecs.js';
+import { helperRouteCodecs } from './helper-route-codecs.js';
 import type { Codec } from './wire-codec.js';
 function closedParams<T extends object>(codec:Codec<T>,fields:Readonly<Record<keyof T,true>>):Codec<T>{
   return Object.freeze({parse(value:unknown):T{
@@ -10,7 +10,7 @@ function closedParams<T extends object>(codec:Codec<T>,fields:Readonly<Record<ke
     return parsed;
   }});
 }
-const publish=routeCodecs('daemon.publishAgentUsageAccount'),attach=routeCodecs('daemon.attachAgentUsageAccount'),post=routeCodecs('daemon.postAgentUsage');
+const publish=helperRouteCodecs('daemon.publishAgentUsageAccount'),attach=helperRouteCodecs('daemon.attachAgentUsageAccount'),post=helperRouteCodecs('daemon.postAgentUsage');
 const publishFields={agentId:true,usage:true,revision:true,ownerId:true,source:true} as const satisfies Record<keyof DaemonOperationMap['publishAgentUsageAccount']['input'],true>;
 const attachFields={agentId:true,account:true,revision:true,source:true} as const satisfies Record<keyof DaemonOperationMap['attachAgentUsageAccount']['input'],true>;
 const postFields={agentId:true,usage:true,usageSource:true} as const satisfies Record<keyof DaemonOperationMap['postAgentUsage']['input'],true>;

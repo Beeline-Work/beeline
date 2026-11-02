@@ -59,3 +59,18 @@ export function cornerWaitingReportSql(corner: string): string {
     AND latest.text ~ '^(needs-decision|blocked):'
     AND latest.answered IS DISTINCT FROM 'true'`;
 }
+
+/**
+ * The same wait as a database function, for gates on the claim path. Postgres
+ * does not inline a plpgsql body, so the claim query plans one call instead of
+ * the whole derivation. The migration rebuilds it from this builder.
+ */
+export function cornerWaitingFunctionSql(): string {
+  return `CREATE OR REPLACE FUNCTION corner_has_explicit_wait(waiting_corner_id uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $corner_wait$
+BEGIN
+  RETURN EXISTS (SELECT 1 FROM rooms waiting_corner
+    CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting
+    WHERE waiting_corner.id=waiting_corner_id);
+END $corner_wait$;`;
+}

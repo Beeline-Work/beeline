@@ -66,6 +66,7 @@ import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
+import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
@@ -3584,6 +3585,7 @@ export async function migrate(
      WHERE card->>'reportToId' IS NOT NULL`,
   ));
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
+  await ddlScript('corner explicit wait function', cornerWaitingFunctionSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);

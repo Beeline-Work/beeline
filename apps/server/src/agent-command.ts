@@ -535,9 +535,8 @@ export async function refuseVerdictedReviewerWake(
 /** Automatic work cannot answer a worker's explicit waiting report.
  * A green review wake still goes out: that report is often the pending gate. */
 function waitingReportSql(command: string): string {
-  return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
-    SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=${command}.room_id
-  ) OR ${command}.private_payload->>'kind' IN ('order','report')
+  return `(${command}.action NOT IN ('input','resume') OR NOT corner_has_explicit_wait(${command}.room_id)
+    OR ${command}.private_payload->>'kind' IN ('order','report')
     OR ${command}.reason='corner_review_dispatch'
     OR (${command}.reason='corner_check' AND EXISTS (
       SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id

@@ -233,6 +233,8 @@
         // Browser bundling and the temporary Metro main select these proof entries by path.
         "scripts/disclosure-rows-{browser,native}-proof.tsx",
         "scripts/transcript-dividers-{browser,native}-proof.tsx",
+        // The Android swipe regression runbook loads this temporary native app entry.
+        "scripts/message-swipe-native-proof.tsx",
         "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",

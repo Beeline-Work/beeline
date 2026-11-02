@@ -51,7 +51,7 @@ function shims(mobile: string, theme: 'obsidian' | 'bone'): Record<string, strin
     const builder = new Proxy({}, { get: () => () => builder });
     export const FadeOut = builder; export const FadeIn = builder; export const Layout = builder;
     export const FadeOutDown = builder; export const FadeInUp = builder; export const FadeOutUp = builder;
-    export const LinearTransition = builder; export const withSpring = identity;
+    export const LinearTransition = builder;
     export const interpolateColor = (v, i, o) => o[o.length - 1];`,
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);

@@ -27,8 +27,18 @@ export function classify(attempts) {
     runnerMinutes: jobs.reduce((n, j) => n + Math.max(0, (Date.parse(j.completed_at) - Date.parse(j.started_at)) / 60000 || 0), 0) };
 }
 
-export async function runNightly({ api, pause, save, now = () => new Date(), manual = false }) {
-  if (!manual && !easternSlot(now())) return;
+export async function runNightly({ api, pause, save, now = () => new Date(), manual = false, schedule }) {
+  if (!manual) {
+    const started = now();
+    const hour = { '7 7 * * *': 7, '7 8 * * *': 8 }[schedule];
+    if (hour === undefined) throw new Error(`Unknown Nightly Checks schedule: ${schedule}`);
+    const intended = new Date(started);
+    intended.setUTCHours(hour, 7, 0, 0);
+    // Select by the trigger, not the start hour: a delayed twin must never
+    // dispatch a second Checks run or raise a false late-start alarm.
+    if (!easternSlot(intended)) return;
+    if (!easternSlot(started)) throw new Error(`Nightly Checks missed the 03:00 America/New_York slot: schedule ${schedule} started at ${started.toISOString()}`);
+  }
   const releases = await api('GET', 'actions/workflows/unified-release.yml/runs?branch=main&per_page=100');
   if (releases.workflow_runs.some(r => r.status !== 'completed')) {
     const result = { schemaVersion: 1, skipped: true, reason: 'A unified-release run on main is active', releases: releases.workflow_runs.filter(r => r.status !== 'completed').map(r => r.html_url) };
@@ -89,7 +99,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     writeFileSync('nightly-checks.json', JSON.stringify(result, null, 2) + '\n');
   };
   try {
-    const result = await runNightly({ api, pause: () => new Promise(r => setTimeout(r, 30000)), save, manual: process.env.EVENT_NAME === 'workflow_dispatch' });
+    const result = await runNightly({ api, pause: () => new Promise(r => setTimeout(r, 30000)), save, manual: process.env.EVENT_NAME === 'workflow_dispatch', schedule: process.env.SCHEDULE });
     if (result && process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.skipped ? `${result.reason}\n` : `## Nightly Checks\nCommit: ${result.sha}\n\nFailures: ${result.failures.length}; flaky jobs: ${result.flakyJobs.length}\n\nWall clock: ${result.wallClockMinutes.toFixed(2)} minutes; runner time: ${result.runnerMinutes.toFixed(2)} minutes\n\n${result.attempts.map(a => `[Attempt ${a.attempt}](${a.url})`).join(' · ')}\n\n${[...result.failures, ...result.flakyJobs].map(j => `- ${j.name}: ${j.attempts.map(a => `[${a.conclusion}](${a.html_url || a.url})`).join(' → ')}`).join('\n')}\n`);
     if (result?.failures?.length) process.exitCode = 1;
   } catch (error) {

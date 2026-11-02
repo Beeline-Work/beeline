@@ -1,3 +1,4 @@
+import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
@@ -4194,6 +4195,7 @@ export class PhoneService {
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
+        await prepareMentionReplyInput(this.database, viewerId, input as Input<'sendRoomReply'>);
         const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
         await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
@@ -5256,10 +5258,10 @@ export class PhoneService {
       if (!inserted.rowCount) {
         const retry = await database.query(
           `SELECT 1 FROM messages
-         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
-           AND attachments=$5::jsonb
+         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND (text=$4 OR $8::boolean)
+           AND (attachments=$5::jsonb OR $8::boolean)
            AND reply_to_message_id=$6 AND root_message_id=$7`,
-          values,
+          [...values, isMentionReplyInput(input)],
         );
         if (!retry.rowCount) throw new Error('messageId is invalid');
         return {

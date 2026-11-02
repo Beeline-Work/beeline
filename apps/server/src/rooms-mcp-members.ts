@@ -1,3 +1,4 @@
+import { mentionRouting } from './owed-mentions.js';
 import { queueMcpMentionEvents, deliverMcpEvents } from './rooms-mcp-events.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
@@ -301,6 +302,10 @@ export async function recordMcpMemberWebhook(
   return { callId: id, memberId, roomId, messageId };
 }
 
+function routingInstruction(row: {member_id: string; room_id: string; message_id: string}): string {
+  return `Room ID ${row.room_id}; message ID ${row.message_id}; member ID ${row.member_id}; answer in this Room with replyTo ${row.message_id}.`;
+}
+
 /**
  * Best-effort delivery. Each pending delivery is claimed atomically immediately
  * before its own HTTP request, never as a batch, so a slow batch cannot outlive
@@ -370,11 +375,11 @@ export async function deliverMcpMemberWebhooks(
       const response = await transport(row.callback_url, {
         headers: { 'content-type': 'application/json',
           ...(row.callback_secret ? { authorization: `Bearer ${openSecrets<string>(webhookKey(), row.callback_secret)}` } : {}) },
-        body: JSON.stringify({ memberId: row.member_id, roomId: row.room_id, messageId: row.message_id,
+        body: JSON.stringify({ ...mentionRouting(row.member_id, row.room_id, row.message_id),
           author: row.author_id ? { id: row.author_id, handle: row.author_handle, name: row.author_name } : null,
           text: row.body, cursor: row.cursor, instruction: row.author_kind === 'agent' && row.author_handle
-            ? `${MCP_TAG_INSTRUCTION} Start your reply with @${row.author_handle} to wake the asking agent.`
-            : MCP_TAG_INSTRUCTION }),
+            ? `${routingInstruction(row)} ${MCP_TAG_INSTRUCTION} Start your reply with @${row.author_handle} to wake the asking agent.`
+            : `${routingInstruction(row)} ${MCP_TAG_INSTRUCTION}` }),
       });
       accepted = response.ok;
     } catch { accepted = false; }

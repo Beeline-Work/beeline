@@ -759,6 +759,12 @@ export async function createAgentCommand(
           (SELECT paused_until FROM agent_startup_backoff WHERE agent_id=$3 AND paused_until>now() AND NOT $16::boolean))
         ON CONFLICT DO NOTHING
         RETURNING *
+     ), owed AS (
+       INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id)
+       SELECT agent_id,room_id,source_message_id FROM inserted
+       WHERE source_message_id IS NOT NULL AND private_payload IS NULL AND NOT avatar_job
+         AND reason IN ('human_tag','direct_message','agent_tag')
+       ON CONFLICT(member_id,message_id) DO NOTHING
      ),
      ${wake.cte}
      SELECT inserted.* FROM inserted

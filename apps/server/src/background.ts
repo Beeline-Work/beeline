@@ -1,3 +1,4 @@
+import { retryOwedMentions } from './owed-mentions.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
 import { deliverMcpMemberWebhooks, retryMcpMemberRoutes } from './rooms-mcp-members.js';
@@ -964,6 +965,7 @@ export class MediaExpiryLoop {
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await cleanupUnfinishedAppSignIns(database, true);
+  await retryOwedMentions(database);
   // Outgoing MCP member webhooks leave the wake transaction here.
   try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
   try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }

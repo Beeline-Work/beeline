@@ -1,3 +1,4 @@
+import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
 import { phoneSocketRequests } from './phone-socket.js';
@@ -2810,6 +2811,14 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     });
     return;
   }
+  // Error footers need fresh private context even when schema validation never
+  // dispatched an operation. This authenticated read adds no operation log entry.
+  if (method === 'GET' && url.pathname === '/v1/daemon/owed-mentions') {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) { await refuseDaemon(request, response, options); return; }
+    json(response, 200, { owedMentions: await owedMentions(options.database, agentId) });
+    return;
+  }
   match = url.pathname.match(/^\/v1\/daemon\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const agentId = await daemonIdentity(request, options);
@@ -2834,7 +2843,15 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
           ? input.cornerId
           : undefined;
     void options.connectionPresence?.evidence(evidenceRoom, agentId);
-    json(response, 200, await options.daemon.execute(name as never, input as never, agentId));
+    const result = await options.daemon.execute(name as never, input as never, agentId);
+    let context: { _beelineOwedMentions?: Awaited<ReturnType<typeof owedMentions>> } = {};
+    // Only model tool responses need this private context. It must never turn a
+    // committed operation into a failure, and never adds a daemon operation.
+    if (request.headers['x-beeline-tool-result'] === '1') {
+      try { context = { _beelineOwedMentions: await owedMentions(options.database, agentId) }; }
+      catch { /* Keep the original tool result when its optional context is unavailable. */ }
+    }
+    json(response, 200, context._beelineOwedMentions ? { _beelineToolResult: result, ...context } : result);
     return;
   }
   json(response, 404, { error: 'not_found' });

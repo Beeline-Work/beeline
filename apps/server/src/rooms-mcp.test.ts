@@ -258,7 +258,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(bearerCalls).toBe(1);
       expect(received).toHaveLength(2);
       expect(received[1]).toMatchObject({ name: 'mention', cursor: null,
-        data: { roomId: ROOM, messageId: sent.messageId, author: { id: USER }, text: '@' + handle + ' reply here' } });
+        data: { roomId: ROOM, messageId: sent.messageId, memberId: member, replyRule: `answer in this Room with replyTo ${sent.messageId}`, idempotencyKey: `mention:${member}:${sent.messageId}`, author: { id: USER }, text: '@' + handle + ' reply here' } });
       expect(await deliverMcpMemberWebhooks(db, deliveryTransport)).toBe(0);
       const reply = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'Event received.', replyTo: sent.messageId } });
       expect(reply.isError).not.toBe(true);
@@ -2046,7 +2046,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }, 60_000);
     it('still wakes the tagged agent when the provenance read fails', async () => {
       const { client } = await connected();
-      await db.query('ALTER TABLE rooms_mcp_mentions RENAME TO rooms_mcp_mentions_off');
+      const transaction = db.transaction.bind(db);
+      const fault = vi.spyOn(db, 'transaction').mockImplementation(work => transaction(async tx => {
+        const query = tx.query.bind(tx);
+        tx.query = ((sql: string, values?: unknown[]) => {
+          if (sql.includes('SELECT to_jsonb(command) command FROM rooms_mcp_mentions')) throw new Error('proof: provenance read failed');
+          return query(sql, values);
+        }) as typeof tx.query;
+        return work(tx);
+      }));
       try {
         const sent = data(await client.callTool({ name: 'send_message', arguments: { room: BIG, text: '@demo-agent wake without provenance' } }));
         expect(sent.woken).toEqual(['demo-agent']);
@@ -2055,7 +2063,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         expect(command.agent_depth).toBe(1);
         expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [sent.messageId])).rowCount).toBe(0);
       } finally {
-        await db.query('ALTER TABLE rooms_mcp_mentions_off RENAME TO rooms_mcp_mentions');
+        fault.mockRestore();
       }
     }, 60_000);
   });

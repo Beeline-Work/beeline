@@ -997,7 +997,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
     expect(page).toContain('Starter instructions');
     expect(page).toContain('id="copy-routine" type="button">Copy</button>');
-    expect(page).toContain(MCP_STARTER_ROUTINE.replaceAll("'", '&#39;'));
+    for (const line of MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()))
+      expect(page).toContain(`<li>${line.replaceAll("'", '&#39;')}</li>`);
     expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
     expect(page).toContain('Read public Rooms in selected Workspaces'); expect(page).toContain('It joins their public Rooms'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
@@ -1022,6 +1023,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
     expect((await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'Firstmate', handle: 'firstmate' });
+  });
+  it('renders starter instructions as escaped ordered items with plain newline-separated copy text', async () => {
+    const { consentHtml } = await authorize();
+    const escape = (line: string) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const items = MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim());
+    const list = consentHtml.match(/<ol id="starter-routine" class="routine-text">([\s\S]*?)<\/ol>/);
+    expect(list).not.toBeNull();
+    expect(list![1]).toBe(items.map(line => `<li>${escape(line)}</li>`).join('\n'));
+    expect(list![1].match(/<li>/g)).toHaveLength(items.length);
   });
   it('repeats the saved starter wake rule in server, setup and webhook instructions', async () => {
     const { client } = await connected();

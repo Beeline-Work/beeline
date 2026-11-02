@@ -1,3 +1,4 @@
+import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -1957,9 +1958,9 @@ export function BuzzChatSurface({
   // "add" section was always empty and the only visible path led to the
   // pairing command (captain report C74). The transcript paints the shared
   // `/workspace/:id` entry, so Members, profile receipts and settings reach
-  // every byline at once. It reads the roster on entry so every agent byline
-  // can name its model, and again whenever the roster sheet or member picker
-  // opens; the last roster stays visible until the fresh response lands.
+  // every byline at once. A closed picker observes the canonical held answer;
+  // only opening the roster sheet or member picker reads its missing/fresh
+  // candidates. Room entry alone never reads data for a future picker.
   useEffect(() => {
     workspaceRosterScopeRef.current = null;
     setWorkspaceRoster(null);
@@ -4056,6 +4057,14 @@ export function BuzzChatSurface({
         isCorner ||
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
+      // Prepare immutable final message bytes inside this existing gesture,
+      // before the paint yield. Upload-dependent legacy sends keep their path.
+      const routerPrepared = activePendingAttachments.length === 0 && !viewer?.screenshotBase64
+        ? prepareRouterMessageGesture({ roomId: decodedId, principal: userPubkey, text,
+            attachments: viewer?.artifact ? [viewer.artifact] : [],
+            mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
+            ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
+          }) : undefined;
       setReceivedSteer(null);
       setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
@@ -4091,6 +4100,7 @@ export function BuzzChatSurface({
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       try {
+        if (routerPrepared) await routerPrepared.persisted;
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
         // construct the monolith transport on demand rather than
@@ -4105,6 +4115,7 @@ export function BuzzChatSurface({
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
+          if (routerPrepared) void routerPrepared.cancelBeforeSend().catch(() => undefined);
           setPendingAck(null);
           if (provisionalId) removeOptimistic(preparedEvent?.id ?? provisionalId);
           if (desktopExperience) setDesktopDeliveryState(null);
@@ -4136,7 +4147,7 @@ export function BuzzChatSurface({
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
-        preparedEvent = preparedReply?.reference
+        preparedEvent = routerPrepared?.event ?? (preparedReply?.reference
           ? await sendTransport.composeReplyMessage(
               text,
               preparedReply.reference,
@@ -4152,7 +4163,7 @@ export function BuzzChatSurface({
                     ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
                   }
                 : undefined,
-            );
+            ));
         if (addressesAgent) {
           setPendingAck((current) =>
             current ? { ...current, requestId: preparedEvent!.id } : current,

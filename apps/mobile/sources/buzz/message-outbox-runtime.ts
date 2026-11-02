@@ -1,3 +1,4 @@
+import { activateCommandOwner, suspendCommandOwner, type CommandSocketBridge } from './command-owner';
 import { markDictatedMessageAccepted } from './dictation-timing';
 import { observeMessageOutbox } from './message-outbox-observer';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -18,10 +19,16 @@ export function startMessageOutbox(): Promise<void> {
     if (!identity || generation !== clientResetGeneration()) { starting = undefined; return; }
     const transport = new MonolithRigTransport(identity);
     const connection = sharedLiveConnection();
+    const commandConnection = connection as unknown as Partial<CommandSocketBridge> & {
+      subscribeCommandCapabilities?(listener: () => void): () => void;
+    };
+    const commands = activateCommandOwner(getBuzzRuntimeConfig().monolithUrl, identity.publicKey, commandConnection);
     configureMessageOutboxDelivery({
-      send: async event => {
+      send: async (event, cause) => {
         try {
-          const result = await transport.publishPreparedMessage(event);
+          const result = commands.find(event.id)
+            ? await commands.deliver(event.id, cause)
+            : await transport.publishPreparedMessage(event);
           markDictatedMessageAccepted(event.id);
           return result;
         }
@@ -30,28 +37,34 @@ export function startMessageOutbox(): Promise<void> {
           throw error;
         }
       },
+      reconcile: async ids => { for (const id of ids) await commands.committedMessage(id); },
       rejection: error => error instanceof MonolithPhoneOperationError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)
         ? error.code : undefined,
     });
     const owner = getMessageOutbox(getBuzzRuntimeConfig().monolithUrl, identity);
     active = owner;
     const unwatch = observeMessageOutbox(owner);
+    const uncommands = commands.subscribe(record => {
+      if (record.state === 'committed') void owner.remove(record.id);
+    });
+    const uncapabilities = commandConnection.subscribeCommandCapabilities?.(() => { void commands.negotiated(); });
     // Named integration hook for the shared connection's connected state.
     const onOutboxConnected = () => { void owner.connectionChanged(true); };
     const unconnected = connection.subscribeConnected(onOutboxConnected);
     const undisconnected = connection.subscribeDisconnected(() => { void owner.connectionChanged(false); });
     let unhold: (() => void) | undefined;
-    stop = () => { unwatch(); unconnected(); undisconnected(); unhold?.(); };
+    stop = () => { unwatch(); unconnected(); undisconnected(); uncommands(); uncapabilities?.(); commands.suspend(); unhold?.(); };
     // Hold the app's connection even when no Room is mounted.
     unhold = await connection.register([], () => undefined);
     if (generation !== clientResetGeneration()) { unhold(); return; }
     await owner.restore();
     void owner.connectionChanged(connection.diagnostics().state === 1);
+    void commands.negotiated();
   })();
 }
 
 subscribeClientReset(() => {
   stop?.(); stop = undefined; starting = undefined; active = undefined;
-  resetMessageOutboxes(); observeMessageOutbox();
+  suspendCommandOwner(); resetMessageOutboxes(); observeMessageOutbox();
   void startMessageOutbox();
 });

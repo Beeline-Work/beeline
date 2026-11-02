@@ -6,6 +6,18 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// These fixtures exercise the negotiated legacy compatibility path. The actual
+// router owner/negotiation path has independent integration coverage.
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerFamilyMode: () => 'legacy',
+  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
+    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+}));
+
 const platform = vi.hoisted(() => ({ OS: 'android' }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const auth = vi.hoisted(() => ({

@@ -50,6 +50,17 @@ export function inspectSource(file, text) {
       hits.push({ kind: 'rust-network', line: text.slice(0, match.index).split('\n').length });
   }
   if (/\.[cm]?[jt]sx?$/.test(file)) {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const commandOwners = ['apps/mobile/sources/buzz/command-owner.ts', 'apps/mobile/sources/sync/transport/live-connection.ts'];
+    function commandAccess(node) {
+      const member = ts.isPropertyAccessExpression(node) ? node.name.text
+        : ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)
+          ? node.argumentExpression.text : undefined;
+      if (member === 'requestCommand' && !commandOwners.includes(file))
+        errors.push(`${file}: durable command executor belongs to the persisted intent owner`);
+      ts.forEachChild(node, commandAccess);
+    }
+    commandAccess(source);
     for (const entry of imports(file, text)) {
       if (entry.dynamic && !entry.specifier) hits.push({ kind: 'computed-import', line: 1 });
       const target = entry.specifier?.startsWith('.')
@@ -61,8 +72,10 @@ export function inspectSource(file, text) {
         // A public barrel must never export private runtime factories, even indirectly.
         if (PUBLIC_ENTRIES.includes(file) && target?.includes('/private/'))
           errors.push(`${file}: public API exposes private owner machinery`);
+      } else if (target === '@beeline/net/owner' && ['apps/mobile/sources/buzz/router-owner.ts', 'apps/mobile/sources/buzz/command-owner.ts'].includes(file)) {
+        // Exact trusted navigation and persisted-intent owners; no feature imports.
       } else if (target?.startsWith('@beeline/net/') && target !== '@beeline/net/phone-inputs' || target?.startsWith('packages/net/')) {
-        // No production owner has migrated yet. Add exact owners with their M2/M3
+        // Add exact production owners only with their M2/M3
         // proofs rather than authorizing a directory of feature callers.
         errors.push(`${file}: private router import ${entry.specifier}`);
       }

@@ -123,6 +123,7 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
       for (const listener of identityListeners) listener();
     },
     foreground: () => {
+      for (const listener of appStateListeners) listener('background');
       for (const listener of appStateListeners) listener('active');
     },
     networkChanged: () => {
@@ -213,8 +214,9 @@ describe('LiveConnection', () => {
     await vi.waitFor(() => expect(netInfo.addEventListener).toHaveBeenCalledOnce());
     const listener = netInfo.addEventListener.mock.calls[0]![0] as () => void;
     listener();
-    await vi.waitFor(() => expect(sockets).toHaveLength(2));
-    expect(sockets[0]!.closed).toBe(true);
+    await Promise.resolve();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.closed).toBe(false);
     connection.dispose();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
@@ -243,7 +245,87 @@ describe('LiveConnection', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('R1 stand-in: foreground replaces a silent open socket without waiting', async () => {
+  it('negotiates on the sole socket and holds pushes until the local owner is ready', async () => {
+    let ready!: () => void;
+    const router = { negotiated: vi.fn((_next: unknown) => new Promise<void>(resolve => { ready = resolve; })),
+      disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    await connection.register([], () => {});
+    sockets[0]!.open();
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ type: 'router-negotiate', protocol: 1,
+      families: ['room-list', 'needs-you-count', 'room-head'] });
+    sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
+    const frame = { kind: 'push-commit', batchId: 'batch' };
+    sockets[0]!.emit(frame);
+    expect(router.receive).not.toHaveBeenCalled();
+    expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ generation: 1, families: ['room-list'] });
+    ready(); await Promise.resolve();
+    expect(router.receive).toHaveBeenCalledExactlyOnceWith(frame);
+    connection.dispose();
+  });
+
+  it('selects legacy once from an old-server acknowledgement without a fallback timer', async () => {
+    vi.useFakeTimers();
+    const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    await connection.register([], () => {});
+    sockets[0]!.open();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(router.negotiated).not.toHaveBeenCalled();
+    sockets[0]!.emit({ type: 'sync-ok' });
+    sockets[0]!.emit({ type: 'sync-ok' });
+    expect(router.negotiated).toHaveBeenCalledTimes(1);
+    expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ families: [] });
+    expect(vi.getTimerCount()).toBe(0);
+    connection.dispose();
+  });
+
+  it('parks an open-close flap after one replacement until explicit Retry', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    await connection.register([], () => {});
+    sockets[0]!.open(); sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[1]!.open(); sockets[1]!.drop();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(sockets).toHaveLength(2);
+    connection.reconnectNow(); await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(3);
+    connection.dispose();
+  });
+
+  it('requires negotiated command support and preserves durable identity independently of request ids', async () => {
+    const router = { negotiated: vi.fn(async () => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    await connection.register([], () => {}); sockets[0]!.open();
+    await expect(connection.requestCommand('markRead', { roomId: ROOM_A }, { v: 1, id: 'intent' })).rejects.toThrow();
+    const changed = vi.fn(); connection.subscribeCommandCapabilities(changed);
+    sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: [], commandDedupV1: true });
+    await Promise.resolve();
+    expect(connection.commandState()).toEqual({ generation: 1, commandDedupV1: true, ready: true });
+    expect(changed).toHaveBeenCalledOnce();
+    const pending = connection.requestCommand('markRead', { roomId: ROOM_A }, { v: 1, id: 'intent' });
+    const wire = JSON.parse(sockets[0]!.sent.at(-1)!);
+    expect(wire).toMatchObject({ t: 'req', op: 'markRead', args: { roomId: ROOM_A }, command: { v: 1, id: 'intent' } });
+    expect(wire.id).not.toBe('intent');
+    const receipt = { v: 1, operation: 'markRead', commandId: 'intent', state: 'committed' };
+    sockets[0]!.emit({ t: 'res', id: wire.id, ok: true, result: receipt });
+    await expect(pending).resolves.toEqual(receipt);
+    connection.dispose();
+    expect(connection.commandState().commandDedupV1).toBe(false);
+  });
+
+  it('rejects projection reads outside the local owner before any network admission', async () => {
+    const { connection } = createConnection();
+    await expect(connection.request('readRouterSnapshot', { family: 'room-list', workspaceId: 'workspace' })).rejects.toThrow('local router owner');
+    expect(sockets).toHaveLength(0);
+    connection.dispose();
+  });
+
+  it('R1: silent open socket is replaced only when a user request expires', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const room = vi.fn();
@@ -253,6 +335,11 @@ describe('LiveConnection', () => {
     room.mockClear();
     for (const listener of appStateListeners) listener('active');
     await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(1);
+    const request = connection.request('countNeedsYou', { workspaceId: 'workspace-a' }, { timeoutMs: 100 });
+    const rejected = expect(request).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
     expect(sockets[0]!.closed).toBe(true);
     expect(sockets).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(60_000);
@@ -270,15 +357,16 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('replaces the shared socket when AppState returns to the foreground', async () => {
+  it('retains the shared open socket when AppState returns to foreground', async () => {
     vi.spyOn(monolithSession, 'authorization').mockResolvedValue('phone-session');
     const connection = sharedLiveConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     sockets[0]!.open();
     for (const listener of appStateListeners) listener('background');
     for (const listener of appStateListeners) listener('active');
-    await vi.waitFor(() => expect(sockets).toHaveLength(2));
-    expect(sockets[0]!.closed).toBe(true);
+    await Promise.resolve();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.closed).toBe(false);
     connection.dispose();
   });
 
@@ -310,15 +398,14 @@ describe('LiveConnection', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     networkChanged();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(2);
-    expect(sockets[0]!.closed).toBe(true);
-    sockets[1]!.open();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.closed).toBe(false);
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets[1]!.closed).toBe(true);
+    expect(sockets[0]!.closed).toBe(true);
     networkChanged();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(2);
+    expect(sockets).toHaveLength(1);
     connection.dispose();
   });
 
@@ -1180,13 +1267,14 @@ describe('LiveConnection', () => {
 
     connection.dispose();
   });
-  it('replaces the socket on a network change', async () => {
+  it('retains the open socket on a network change', async () => {
     const { connection, networkChanged } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     sockets[0]!.open();
     networkChanged();
-    await vi.waitFor(() => expect(sockets).toHaveLength(2));
-    expect(sockets[0]!.closed).toBe(true);
+    await Promise.resolve();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.closed).toBe(false);
     connection.dispose();
   });
 
@@ -1305,7 +1393,7 @@ describe('LiveConnection', () => {
     expect(calls).toBe(2);
 
     unsubscribe();
-    sockets[1]!.drop();
+    connection.reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(3);
     sockets[2]!.open();
@@ -1356,7 +1444,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('replaces an open socket when the app returns to the foreground', async () => {
+  it('keeps an open socket across foreground and long idle', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
@@ -1365,14 +1453,10 @@ describe('LiveConnection', () => {
     sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
     foreground();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets[0]!.closed).toBe(true);
-    expect(sockets).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(2);
-    sockets[1]!.open();
-    expect(sockets[1]!.sent).toEqual([
-      JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM_A] }),
-    ]);
+    expect(sockets[0]!.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.sent).toHaveLength(1);
 
     connection.dispose();
   });
@@ -1543,10 +1627,9 @@ describe('LiveConnection', () => {
 
     sockets[1]!.drop();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(3);
-    sockets[2]!.error();
+    expect(sockets).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(sockets).toHaveLength(3);
+    expect(sockets).toHaveLength(2);
 
     connection.dispose();
   });
@@ -1581,7 +1664,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('covers a no-room registration when foreground replaces the socket', async () => {
+  it('does not invalidate a no-room registration on foreground', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();
     const received: unknown[] = [];
@@ -1593,12 +1676,9 @@ describe('LiveConnection', () => {
 
     foreground();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets[0]!.closed).toBe(true);
+    expect(sockets[0]!.closed).toBe(false);
+    expect(sockets).toHaveLength(1);
     expect(received).toEqual([]);
-    sockets[1]!.open();
-    expect(received).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } },
-    ]);
 
     connection.dispose();
   });

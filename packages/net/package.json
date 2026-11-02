@@ -13,6 +13,11 @@
       "types": "./dist/phone-inputs.d.ts",
       "import": "./dist/phone-inputs.js",
       "default": "./dist/phone-inputs.js"
+    },
+    "./owner": {
+      "types": "./dist/private/admission.d.ts",
+      "import": "./dist/private/admission.js",
+      "default": "./dist/private/admission.js"
     }
   },
   "scripts": {

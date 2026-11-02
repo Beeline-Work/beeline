@@ -13,6 +13,8 @@ import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsE
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
+import { useRouterFamily } from '@/buzz/router-family';
+import { retryRouterLane, routerFamilyMode } from '@/buzz/router-owner';
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
@@ -189,7 +191,9 @@ export default function BuzzChannels() {
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
-  const [chatList, setChatList] = useState<ChatListView | null>(null);
+  const chatListMode = useRouterFamily('room-list');
+  const [chatListState, setChatList] = useState<ChatListView | null>(null);
+  const chatList = chatListMode === 'pending' ? null : chatListState;
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   // A covering list read seeds the Needs-you rows behind the badge;
   // ordinary changes carry typed row deltas on the live socket.
@@ -197,6 +201,7 @@ export default function BuzzChannels() {
   const needsYouCount = useNeedsYouCount(
     chatList?.workspace.id,
     needsYouSignal === 0 ? undefined : needsYouSignal,
+    () => deckVisible(),
   );
   const cornerDropdowns = useCornerDropdowns(chatList?.chats);
   const [refreshing, setRefreshing] = useState(false);
@@ -328,8 +333,10 @@ export default function BuzzChannels() {
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
-    chatStore.current?.force();
-  }, []);
+    if (activeCommunityId && routerFamilyMode('room-list') === 'router')
+      retryRouterLane({ family: 'room-list', workspaceId: activeCommunityId });
+    else chatStore.current?.force();
+  }, [activeCommunityId]);
 
   /**
    * Returning to the deck reads only what it skipped while hidden: a change
@@ -521,7 +528,10 @@ export default function BuzzChannels() {
         if (chats.confirmed()) setNeedsYouSignal((signal) => signal + 1);
         // Live list reconciliation must yield to a Room or push navigation.
         // Its committed transcript rows are already in the scoped cache.
-        unsubscribeChats = chats.subscribe(() => startTransition(paint));
+        unsubscribeChats = chats.subscribe(() => {
+          if (routerFamilyMode('room-list') === 'router') paint();
+          else startTransition(paint);
+        });
       }
       const relay = await relayPromise;
       if (cancelled) return;

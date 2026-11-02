@@ -1,4 +1,6 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore, useCallback, useRef } from 'react';
+import { useRouterFamily } from './router-family';
+import { acquireRouterLane, routerLaneSnapshot } from './router-owner';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -330,17 +332,17 @@ function refreshProjection(slot: Slot): Promise<readonly NeedsYouItemView[]> {
     return items;
   }, (error) => { slot.projectionRead = undefined; throw error; });
 }
-export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
-  useEffect(() => { void resolveViewer(); }, []);
+function useLegacyNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, enabled: boolean) {
+  useEffect(() => { if (enabled) void resolveViewer(); }, [enabled]);
   useEffect(() => {
-    if (!workspaceId || refreshKey === undefined) return;
+    if (!enabled || !workspaceId || refreshKey === undefined) return;
     badgeReaders.set(workspaceId, (badgeReaders.get(workspaceId) ?? 0) + 1);
     return () => {
       const remaining = (badgeReaders.get(workspaceId) ?? 1) - 1;
       if (remaining) badgeReaders.set(workspaceId, remaining);
       else badgeReaders.delete(workspaceId);
     };
-  }, [workspaceId, refreshKey]);
+  }, [workspaceId, refreshKey, enabled]);
   // A badge observes its number, not every replacement of the Tray's rows.
   const count = useSyncExternalStore(subscribe, () => {
     const entry = workspaceId ? current(workspaceId)?.entry : undefined;
@@ -348,7 +350,7 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
   });
   const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
   useEffect(() => {
-    if (!workspaceId || refreshKey === undefined) return;
+    if (!enabled || !workspaceId || refreshKey === undefined) return;
     let cancelled = false;
     void (async () => {
       const slot = slotFor(await resolveViewer(), workspaceId);
@@ -360,8 +362,28 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
       } catch { /* Keep the previous projection. */ }
     })();
     return () => { cancelled = true; };
-  }, [workspaceId, refreshKey, count, generation]);
+  }, [workspaceId, refreshKey, count, generation, enabled]);
   return count ?? 0;
+}
+
+
+export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, visible?: () => boolean) {
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const mode = useRouterFamily('needs-you-count');
+  const legacy = useLegacyNeedsYouCount(workspaceId, refreshKey, mode === 'legacy');
+  const subscribeCount = useCallback((listener: () => void) => {
+    if (!workspaceId || refreshKey === undefined) return () => {};
+    const lane = acquireRouterLane({ family: 'needs-you-count', workspaceId }, () => visibleRef.current?.() ?? true, listener);
+    return lane.release;
+  }, [workspaceId, refreshKey === undefined]);
+  const snapshot = useCallback(() => {
+    if (!workspaceId || mode !== 'router') return 0;
+    const value = routerLaneSnapshot({ family: 'needs-you-count', workspaceId }).value as { count?: number } | null;
+    return value?.count ?? 0;
+  }, [mode, workspaceId]);
+  const count = useSyncExternalStore(subscribeCount, snapshot, () => 0);
+  return mode === 'router' ? count : mode === 'legacy' ? legacy : 0;
 }
 
 /** Called only for viewable question cells in the focused Tray, after paint. */

@@ -113,6 +113,39 @@ describe('local admission shadow core (P1)', () => {
     expect(JSON.stringify(owner.localDiagnostics()).length).toBeLessThan(16 * 1024);
   });
 
+  it('keeps AppShell and Room authorities independent and enforces closed snapshot families', () => {
+    const owner = new AdmissionOwner(identity);
+    const badge = { route: 'phone.readRouterSnapshot', input: { family: 'needs-you-count', workspaceId: 'workspace-a' } } as const;
+    const head = { route: 'phone.readRouterSnapshot', input: { family: 'room-head', roomId: 'room-a' } } as const;
+    const [badgePass] = owner.focusOwner('shell', 1, 'AppShell', [badge]);
+    const [headPass] = owner.focusOwner('room', 1, 'Room', [head]);
+    owner.releaseOwner('room');
+    expect(() => owner.spend(head, headPass!)).toThrow('inactive pass');
+    expect(owner.spend(badge, badgePass!).wire.operation).toBe('readRouterSnapshot');
+    expect(() => owner.focusOwner('bad', 2, 'Room', [badge])).toThrow('wrong screen family');
+    expect(() => owner.focusOwner('bad', 2, 'AppShell', [head])).toThrow('wrong screen family');
+  });
+
+  it('resumes observation without reviving a revoked pass; explicit Retry consumes a new synchronous pass', async () => {
+    const owner = new AdmissionOwner(identity);
+    const badge = { route: 'phone.readRouterSnapshot', input: { family: 'needs-you-count', workspaceId: 'workspace-a' } } as const;
+    const [pass] = owner.focusOwner('shell', 1, 'AppShell', [badge]);
+    const spent = owner.spend(badge, pass!);
+    owner.background(); owner.foregrounded();
+    const observation = owner.resumeObservation('shell', 1);
+    expect(observation.isCurrent()).toBe(true);
+    expect(spent.isCurrent()).toBe(false);
+    expect(() => owner.spend(badge, pass!)).toThrow('inactive pass');
+    await owner.retry('shell', badge, async retry => {
+      await Promise.resolve();
+      expect(() => owner.spend(badge, retry)).toThrow('inactive pass');
+    });
+    const retry = owner.retry('shell', badge, retry => owner.spend(badge, retry));
+    expect(retry.isCurrent()).toBe(true);
+    owner.releaseOwner('shell');
+    expect(retry.isCurrent()).toBe(false);
+  });
+
   it('does not enable any production route or export an arbitrary executor', async () => {
     const api = await import('./index.js');
     expect(Object.keys(api)).toEqual(['routes']);

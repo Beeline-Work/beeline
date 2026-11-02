@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
+import { ReadLanes } from '../../../packages/net/src/private/read-lanes.js';
+import { RouterBatchAssembly } from '../../../packages/net/src/private/batch-assembly.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RouterFact } from '@beeline/api-contract/router-protocol';
 import { LIVE_REPLAY_BYTE_LIMIT } from './durable-live.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
-import { buildRouterSnapshot, encodeRouterBatch, fenceRouterEnqueue, RouterProjectionDrain } from './router-projections.js';
+import { buildRouterSnapshot, encodeRouterBatch, fenceRouterEnqueue, readRouterCertificate, RouterProjectionDrain } from './router-projections.js';
 import { routerSocketProtocol } from './router-socket.js';
 import { routerSourcePlan } from './router-source-plan.js';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
@@ -96,6 +99,40 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       expect(tray.atomicGroup).toBe(count.atomicGroup);expect(tray.authority).toEqual(count.authority);
       expect(frames.filter(f=>f.kind==='push-part').every(f=>f.to.through===frames.at(-1)!.to.through)).toBe(true);
       expect(frames.some(f=>f.type==='invalidate')).toBe(false);
+      await database.query('SELECT 1');
+    }finally{protocol.close();}
+  });
+  it('targets Workspace denial explicitly even when the Room authority epoch did not change',async()=>{
+    const live=new LiveHub(),frames:Record<string,any>[]=[];
+    const initial=await readRouterCertificate(database,{family:'room-head',workspaceId:WORKSPACE,roomId:ROOM},VIEWER);
+    const request={family:'room-head' as const,workspaceId:WORKSPACE,roomId:ROOM};
+    const lanes=new ReadLanes({origin:'https://example.test',principal:VIEWER,sessionEpoch:1},()=>true);
+    const phone=new PhoneService(database,'https://example.test');let reads=0;
+    lanes.connected(1,['room-head'],async()=>{reads++;return buildRouterSnapshot(database,request,VIEWER,(db,args,viewer)=>phone.buildRouterValue(db,args,viewer));});
+    let opened!:()=>void,purged!:()=>void;
+    const opening=new Promise<void>(resolve=>{opened=resolve;});
+    const purge=new Promise<void>(resolve=>{purged=resolve;});
+    lanes.subscribe(request,()=>{if(lanes.peek(request).state==='LIVE')opened();if(lanes.peek(request).state==='REVOKED')purged();});
+    const assembly=new RouterBatchAssembly(facts=>createHash('sha256').update(JSON.stringify(facts)).digest('hex'),
+      batch=>{void lanes.accept(batch);},()=>{throw new Error('Unexpected wire assembly fault');});
+
+    let delivered!:()=>void;const complete=new Promise<void>(resolve=>{delivered=resolve;});
+    const protocol=routerSocketProtocol(database,VIEWER,raw=>{const frame=JSON.parse(raw);frames.push(frame);if(frame.kind==='push-part'||frame.kind==='push-commit')assembly.accept(frame);if(frame.kind==='push-commit')delivered();},
+      {families:['room-head'],listenerReady:()=>true},
+      {live,phone:new PhoneService(database,'https://example.test'),rooms:()=>[ROOM]});
+    try{
+      await protocol.handle({type:'router-negotiate',protocol:1,families:['room-head']});
+      lanes.demand(request,{}, {isCurrent:()=>true});await opening;
+      expect(lanes.peek(request).value).not.toBeNull();
+      await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,[WORKSPACE,VIEWER]);
+      live.journalChanged([`workspace:${WORKSPACE}`]);await complete;
+      const removal=frames.filter(f=>f.kind==='push-part').flatMap(f=>f.facts).find(f=>f.payload.kind==='authority');
+      expect(removal.payload).toEqual({kind:'authority',scope:WORKSPACE,authorityScope:`reader:${VIEWER}:workspace:${WORKSPACE}`,allowed:false});
+      expect(removal.authority.scopes.find((s:any)=>s.authorityScope===`room:${ROOM}`).epoch)
+        .toBe(initial.scopes.find(s=>s.authorityScope===`room:${ROOM}`)!.epoch);
+      expect(removal.authority.scopes.some((s:any)=>s.authorityScope===removal.payload.authorityScope)).toBe(true);
+      await purge;
+      expect(lanes.peek(request).value).toBeNull();expect(reads).toBe(1);
       await database.query('SELECT 1');
     }finally{protocol.close();}
   });

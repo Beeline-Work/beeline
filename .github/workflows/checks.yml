@@ -451,6 +451,8 @@ jobs:
           npm test -w @beeline/net -- src/router-pass.test.ts
           npm test -w @beeline/net -- src/route-codecs.test.ts
           npm test -w @beeline/net -- src/phone-inputs.test.ts
+          npm test -w @beeline/net -- src/read-lanes.test.ts
+          npm test -w @beeline/net -- src/command-intents.test.ts
           node --test scripts/network-codec-bundle.test.mjs
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client

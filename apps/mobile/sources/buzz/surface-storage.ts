@@ -86,6 +86,85 @@ export function clearMobileSurfaceStorage(): void {
   clearMessageOutboxStorage();
   mobileSurfaceCache.clear();
   for (const key of responses.getAllKeys()) {
-    if (key.startsWith(RESPONSE_PREFIX)) responses.delete(key);
+    if (key.startsWith(RESPONSE_PREFIX) || key.startsWith('router.group.')) responses.delete(key);
   }
+}
+
+const ROUTER_GROUP_PREFIX = 'router.group.';
+const ROUTER_FENCE_PREFIX = 'router.fence.';
+const routerFenceListeners = new Set<(key: string, epoch: string) => void>();
+const MAX_ROUTER_READER_BYTES = 32 * 1024 * 1024;
+
+/** Router groups use the existing response store, with one encoded atomic
+ * data+cut+authority envelope. Fences have a separate namespace outside LRU.
+ * Private response restore remains hidden until fresh server authorization.
+ */
+export function routerLaneStorage(origin: string, principal: string) {
+  const owner = encodeURIComponent(JSON.stringify([new URL(origin).origin, principal]));
+  const groupPrefix = `${ROUTER_GROUP_PREFIX}${owner}.`;
+  const fencePrefix = `${ROUTER_FENCE_PREFIX}${owner}.`;
+  const groupKey = (key: string) => `${groupPrefix}${encodeURIComponent(key)}`;
+  const fenceKey = (scope: string) => `${fencePrefix}${encodeURIComponent(scope)}`;
+  return {
+    write: async (key: string, encoded: string): Promise<void> => {
+      const length = new TextEncoder().encode(encoded).length;
+      if (length > 1024 * 1024) throw new Error('Router consistency group exceeds storage budget.');
+      // Actual local storage writes are synchronous/atomic for this one key.
+      if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${groupKey(key)}`, encoded);
+      else responses.set(groupKey(key), encoded);
+      const keys = responses.getAllKeys().filter(candidate => candidate.startsWith(groupPrefix));
+      let total = keys.reduce((sum, candidate) => sum + new TextEncoder().encode(responses.getString(candidate) ?? '').length, 0);
+      for (const candidate of keys) {
+        if (total <= MAX_ROUTER_READER_BYTES) break;
+        if (candidate === groupKey(key)) continue;
+        total -= new TextEncoder().encode(responses.getString(candidate) ?? '').length;
+        responses.delete(candidate);
+      }
+    },
+    fence: async (scope: string, epoch: string): Promise<void> => {
+      const key = fenceKey(scope);
+      const previous = responses.getString(key);
+      if (previous && /^\d+$/.test(previous) && BigInt(previous) >= BigInt(epoch)) return;
+      if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${key}`, epoch);
+      else responses.set(key, epoch);
+      // A received fence dominates all older coherent envelopes, even after
+      // process death. Purge matching groups without restoring their content.
+      for (const candidate of responses.getAllKeys()) {
+        if (!candidate.startsWith(groupPrefix)) continue;
+        const encoded = responses.getString(candidate);
+        if (!encoded) continue;
+        try {
+          const envelope = JSON.parse(encoded) as { entries?: { snapshot?: { authority?: { scopes?: { authorityScope: string; epoch?: string }[] } } }[] };
+          if (envelope.entries?.some(entry => entry.snapshot?.authority?.scopes?.some(authority => authority.authorityScope === scope &&
+            (!authority.epoch || !/^\d+$/.test(authority.epoch) || BigInt(authority.epoch) <= BigInt(epoch)))))
+            responses.delete(candidate);
+        } catch { responses.delete(candidate); }
+      }
+    },
+    remove: async (_key: string): Promise<void> => {
+      // Group membership may span several datum keys. The fence operation
+      // above purges every matching group in one storage event, not by LRU key.
+    },
+    subscribeFences: (listener: (scope: string, epoch: string) => void): (() => void) => {
+      const receive = (key: string, epoch: string) => {
+        if (!key.startsWith(fencePrefix) || !/^\d+$/.test(epoch)) return;
+        try { listener(decodeURIComponent(key.slice(fencePrefix.length)), epoch); } catch { /* Invalid foreign key. */ }
+      };
+      routerFenceListeners.add(receive);
+      for (const key of responses.getAllKeys()) {
+        const epoch = responses.getString(key);
+        if (epoch) receive(key, epoch);
+      }
+      return () => { routerFenceListeners.delete(receive); };
+    },
+  };
+}
+
+if (web?.storage && typeof window.addEventListener === 'function') {
+  const shared = web.storage;
+  window.addEventListener('storage', event => {
+    if (event.storageArea !== shared || !event.key?.startsWith(`${RESPONSE_NAMESPACE}${ROUTER_FENCE_PREFIX}`) || !event.newValue) return;
+    const key = event.key.slice(RESPONSE_NAMESPACE.length);
+    for (const listener of routerFenceListeners) listener(key, event.newValue);
+  });
 }

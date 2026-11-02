@@ -19,3 +19,17 @@ test('phone shadow observation does not bundle daemon or response schemas or pas
   assert.ok(bytes.length <= 32 * 1024, `phone input bundle grew to ${bytes.length} bytes`);
   assert.ok(gzipSync(bytes).length <= 8 * 1024, 'phone input gzip budget exceeded');
 });
+
+
+test('trusted phone owner excludes daemon/response registries within its bundle budget', async () => {
+  const result = await build({
+    absWorkingDir: fileURLToPath(new URL('..', import.meta.url)),
+    entryPoints: ['packages/net/src/private/admission.ts'],
+    bundle: true, platform: 'browser', format: 'esm', minify: true, write: false, metafile: true,
+  });
+  for (const file of Object.keys(result.metafile.inputs))
+    assert.doesNotMatch(file, /generated-wire-shapes|route-codecs|routes\.ts$/);
+  const bytes = result.outputFiles[0].contents;
+  assert.ok(bytes.length <= 64 * 1024, `owner bundle grew to ${bytes.length} bytes`);
+  assert.ok(gzipSync(bytes).length <= 16 * 1024, 'owner gzip budget exceeded');
+});

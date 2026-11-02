@@ -94,3 +94,10 @@ test('the narrow public phone observer is allowed but owner factories remain pri
   assert.deepEqual(inspectSource('apps/mobile/sources/example.ts', 'import { observePhoneInput } from \"@beeline/net/phone-inputs\";').errors, []);
   assert.ok(inspectSource('packages/net/src/phone-inputs.ts', 'export { AdmissionOwner } from \"./private/admission.js\";').errors.length);
 });
+
+
+test('only exact persisted owner may access the command executor, including aliases', () => {
+  for (const source of ['socket.requestCommand(op,args,id)', 'const send = socket.requestCommand;', 'socket["requestCommand"](op,args,id)'])
+    assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/command-owner.ts', 'socket.requestCommand(op,args,id)').errors, []);
+});

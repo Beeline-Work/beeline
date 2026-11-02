@@ -177,13 +177,6 @@
       "why": "Web build only: refetches its own page after a failed code-chunk load."
     },
     {
-      "file": "apps/mobile/sources/components/buzz/AppMark.tsx",
-      "kind": "origin:www.google.com",
-      "count": 1,
-      "fate": "exception",
-      "why": "Service icons load from Google's favicon service as images. Could be served by Beeline instead."
-    },
-    {
       "file": "apps/mobile/sources/components/buzz/VoicePreviewPlayer.native.tsx",
       "kind": "import:react-native-webview",
       "count": 1,

@@ -7,12 +7,14 @@ import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
 import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
+import { useRouterNavigationOwner } from '@/buzz/use-router-navigation';
 
 export const unstable_settings = {
   initialRouteName: 'index',
 };
 
 export default function RootLayout() {
+  useRouterNavigationOwner();
   React.useEffect(() => {
     // Delivery is required on every signed-in route, including a stale web tab.
     void startMessageOutbox();

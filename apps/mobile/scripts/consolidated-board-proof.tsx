@@ -192,7 +192,6 @@ function App() {
       canEdit={owner}
       avatarDisabled={false}
       onGenerateAvatar={async () => undefined}
-      refreshAgent={async () => agent}
       editing={false}
       saving={false}
       nameDraft=""

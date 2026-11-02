@@ -35,7 +35,6 @@ export function AgentProfileView({
   canEdit,
   avatarDisabled,
   onGenerateAvatar,
-  refreshAgent,
   refreshUsage,
   loadMoreWork,
   editing,
@@ -63,7 +62,6 @@ export function AgentProfileView({
   canEdit: boolean;
   avatarDisabled: boolean;
   onGenerateAvatar: (soul: string) => Promise<void>;
-  refreshAgent: () => Promise<AgentDetailView>;
   refreshUsage?: () => Promise<unknown>;
   loadMoreWork?: (cursor: string) => Promise<AgentDetailView>;
   editing: boolean;
@@ -262,7 +260,6 @@ export function AgentProfileView({
                       soul={editing ? soulDraft : soul}
                       disabled={avatarDisabled}
                       generate={onGenerateAvatar}
-                      refresh={refreshAgent}
                     />
                   )}
                 </View>

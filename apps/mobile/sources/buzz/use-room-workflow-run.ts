@@ -1,6 +1,6 @@
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { AppState } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useSurfaceFocus } from './use-surface-focus';
 import { isSystemOrCardMessage, useObservedResource } from './use-observed-resource';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -38,7 +38,7 @@ function observeWorkflowRuns(roomId: string) {
     replace: (runs: readonly WorkflowRunSummaryView[]) => void, recover: () => void) => {
     let subscribed = false;
     const stopLive = await sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
-      if (!('monolithLive' in event)) return;
+      if (AppState.currentState !== 'active' || !('monolithLive' in event)) return;
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'subscribed') {
@@ -51,21 +51,11 @@ function observeWorkflowRuns(roomId: string) {
         invalidate();
       } else if (live.type === 'invalidate' && !live.deliveryId) {
         invalidate();
-      } else {
-        // Ordinary Room traffic can recover a failed status read, but does
-        // not cause extra workflow reads while the projection is healthy.
-        recover();
       }
     });
     // Subscribed only once the lane holds, so a failed register leaves no listener.
     const stopCorners = subscribeRoomCornerFacts(roomId, invalidate);
-    let previous = AppState.currentState;
-    const foreground = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && previous !== 'active') invalidate();
-      previous = state;
-    });
     return () => {
-      foreground.remove();
       stopCorners();
       stopLive();
     };
@@ -74,10 +64,11 @@ function observeWorkflowRuns(roomId: string) {
 
 /** The one read of a Room's workflow runs, shared by every screen that shows them. */
 function useRoomWorkflowList(roomId: string | undefined) {
+  const focused = useSurfaceFocus();
   const observed = useObservedResource<readonly WorkflowRunSummaryView[]>(
-    roomId ? `room-workflows:${roomId}` : undefined,
+    focused && roomId ? `room-workflows:${roomId}` : undefined,
     {
-      retryBackoffMs: { initial: 1000, max: 30_000 },
+      retryOnChange: false,
       load: async () =>
         (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId: roomId! })).workflows,
       onError: (cause) => {
@@ -89,7 +80,6 @@ function useRoomWorkflowList(roomId: string | undefined) {
       subscribe: roomId ? observeWorkflowRuns(roomId) : undefined,
     },
   );
-  useFocusEffect(useCallback(() => { void observed.recover(); }, [observed.recover]));
   return observed;
 }
 

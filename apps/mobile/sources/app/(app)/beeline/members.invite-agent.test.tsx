@@ -7,6 +7,8 @@ import { readFileSync } from 'node:fs';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => true }));
+
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'd'.repeat(64);

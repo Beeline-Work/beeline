@@ -93,7 +93,6 @@ export default function NativeProfileProof() {
             canEdit
             avatarDisabled={false}
             onGenerateAvatar={async () => undefined}
-            refreshAgent={async () => detail}
             editing={editing}
             saving={false}
             nameDraft={name}

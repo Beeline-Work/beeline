@@ -1,3 +1,4 @@
+import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -15,6 +16,7 @@ import { USAGE_REFRESH_CLIENT_TIMEOUT_MS } from '@/components/buzz/AgentUsageSec
 // so a screen beside its route is a second URL for the same screen.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   Platform,
   Switch,
   Text,
@@ -224,6 +226,9 @@ export default function BuzzMembers({
   profileRoomId?: string;
   onClose?: () => void;
 } = {}) {
+  const focused = useSurfaceFocus();
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
   useLatencyRouteFrame('/beeline/members');
   const desktop = useIsDesktop();
   const { theme } = useUnistyles();
@@ -332,7 +337,7 @@ export default function BuzzMembers({
 
   const readAgent = async (agentPubkey: string): Promise<AgentDetailView> => {
     const generation = agentRequestGenerationRef.current;
-    if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
+    if (!focusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
     const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
       workspaceId,
       agentPubkey,
@@ -366,13 +371,13 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!selectedAgent || !identity || !relayUrl) return;
+    if (!focused || !selectedAgent || !identity || !relayUrl) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
     const agentId = selectedAgent.agent.identity.pubkey;
     void sharedLiveConnection()
       .register([], (event) => {
-        if (cancelled || !('monolithLive' in event)) return;
+        if (cancelled || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !('monolithLive' in event)) return;
         const live = event.monolithLive;
         if (!(
           (live.type === 'resource-change' &&
@@ -417,7 +422,7 @@ export default function BuzzMembers({
       cancelled = true;
       stop?.();
     };
-  }, [identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
+  }, [focused, identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
 
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
@@ -458,7 +463,7 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!focused || !workspaceId) return;
     let cancelled = false;
     let stopWatch: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
@@ -506,7 +511,7 @@ export default function BuzzMembers({
       // which hear every write of this entry.
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       scheduler = new SurfaceRefreshScheduler({
-        fetch: () =>
+        fetch: () => cancelled || !focusedRef.current ? Promise.resolve(null) :
           mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
           // Null: a newer write or an eviction overtook the read; the entry
@@ -539,7 +544,7 @@ export default function BuzzMembers({
       schedulerRef.current = null;
       setRosterQuery('');
     };
-  }, [retryGeneration, workspaceId, profileAgentId]);
+  }, [focused, retryGeneration, workspaceId, profileAgentId]);
 
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
@@ -581,12 +586,12 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!profileAgentId || !identity || !relayUrl || !workspaceId) return;
+    if (!focused || !profileAgentId || !identity || !relayUrl || !workspaceId) return;
     void openAgent(profileAgentId);
     return () => {
       agentRequestGenerationRef.current += 1;
     };
-  }, [profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
+  }, [focused, profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
 
   const invitePerson = async () => {
     if (!surface?.viewer.permissions.manage || !workspaceId || !relayUrl) return;
@@ -634,7 +639,7 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!surface || requestedActionHandledRef.current) return;
+    if (!focused || !surface || requestedActionHandledRef.current) return;
     if (requestedAction === 'invite') {
       if (!surface.viewer.permissions.manage) return;
       requestedActionHandledRef.current = true;
@@ -647,10 +652,10 @@ export default function BuzzMembers({
     // current authenticated surface at that moment rather than reopening on
     // every indexed refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestedAction, surface]);
+  }, [focused, requestedAction, surface]);
 
   useEffect(() => {
-    if (!identity || !relayUrl || !workspaceId) return;
+    if (!focused || !identity || !relayUrl || !workspaceId) return;
     const q = memberQuery.trim();
     if (!q) {
       setRosterQuery('');
@@ -673,7 +678,7 @@ export default function BuzzMembers({
     };
     // Search is a dedicated server read; identity/relay are the auth it needs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [memberQuery, identity, relayUrl, workspaceId]);
+  }, [focused, memberQuery, identity, relayUrl, workspaceId]);
 
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
     if (!surface || rosterLoading) return;
@@ -1062,7 +1067,6 @@ export default function BuzzMembers({
         canEdit={ownsSelectedAgent}
         avatarDisabled={busy}
         onGenerateAvatar={requestSoulAvatar}
-        refreshAgent={() => readAgent(profileAgentId)}
         refreshUsage={async () => {
           const outcome = await monolithPhoneOperation('refreshAgentUsage', {
             workspaceId: selectedAgent!.workspaceId, agentId: profileAgentId,

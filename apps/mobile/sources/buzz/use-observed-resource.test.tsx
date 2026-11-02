@@ -203,3 +203,30 @@ it('CR1: event cooldown grows to a cap without polling and resets after success'
   await act(async () => push());
   expect(load).toHaveBeenCalledTimes(reads + 2);
 });
+
+it('parks an owner-only read even when a relevant change arrived during its failing flight', async () => {
+  let reject!: (reason: Error) => void;
+  const load = vi.fn().mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }))
+    .mockResolvedValue('ready');
+  let current: ReturnType<typeof useObservedResource<string>>;
+  function Reader() {
+    current = useObservedResource('owner-failure', { load, retryOnChange: false, subscribe: observeRoomResource('room') });
+    return null;
+  }
+  let tree: any;
+  await act(async () => { tree = mount(<Reader />); });
+  await act(async () => {
+    wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'card' } } });
+    reject(new Error('offline'));
+  });
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    for (let n = 0; n < 1000; n++) wire.listener({ monolithLive: {
+      type: 'message-delta', roomId: 'room', message: { presentation: 'card' },
+    } });
+  });
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => { await current!.retry(); });
+  expect(load).toHaveBeenCalledTimes(2);
+  await act(async () => tree.unmount());
+});

@@ -10,6 +10,8 @@ import { StyleSheet } from 'react-native';
 import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => true }));
+
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const VIEWER = 'a'.repeat(64);
 const OWNER = 'b'.repeat(64);
@@ -1005,7 +1007,7 @@ describe('Members workspace management', () => {
     const renderer = await personProfile();
     // Members and the profile hold one relay watch for this Workspace: the
     // profile's grant Room joins the managed Room on the same subscription.
-    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
     expect(subscribes.at(-1)![0]).toEqual([{ kinds: [0, 9, 9000, 9001],
       '#h': ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] }]);
     expect(subscribes).toHaveLength(3);
@@ -1019,7 +1021,7 @@ describe('Members workspace management', () => {
       grants: [{ ...first.grants[0], grantId: 'live-grant', target: 'beeline-work/live' }],
     }));
     const signal = subscribes.at(-1)![1];
-    await act(async () => signal());
+    await act(async () => signal({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
     expect(roomView.workspaceMembers).toHaveBeenCalledTimes(2);
     expect(renderer.root.findByProps({ testID: 'member-grant-live-grant' }).props.title)
       .toBe('beeline-work/live');
@@ -1044,8 +1046,8 @@ describe('Members workspace management', () => {
     roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
       ...(await (base as any)(...args)), agents: [], agentsTruncated: false,
     }));
-    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
-    await act(async () => subscribes.at(-1)![1]());
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
+    await act(async () => subscribes.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
     expect(shown()).toBe(0);
     list.unmount();
   });
@@ -1065,8 +1067,8 @@ describe('Members workspace management', () => {
     roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
       ...(await (base as any)(...args)), agents: [], agentsTruncated: true,
     }));
-    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
-    await act(async () => subscribes.at(-1)![1]());
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
+    await act(async () => subscribes.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
     expect(renderer.root.findAll((node: any) =>
       node.props.title === '@clara').length).toBeGreaterThan(0);
     list.unmount();
@@ -1584,11 +1586,11 @@ describe('Members workspace management', () => {
     await openAgentProfile(renderer);
     expect(renderer.root.findAllByProps({ label: 'Retry' })).not.toHaveLength(0);
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, () => void]
+      [unknown, (event?: unknown) => void]
     >;
     const refresh = subscriptions.at(-1)![1];
     const readsBeforeRefresh = roomView.workspace.mock.calls.length;
-    await act(async () => refresh());
+    await act(async () => refresh({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } }));
     expect(roomView.workspace.mock.calls.length).toBeGreaterThan(readsBeforeRefresh);
     const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
     expect(retry).toBeDefined();
@@ -2059,7 +2061,7 @@ describe('Members workspace management', () => {
     // Another session removes Clara; the Workspace refresh no longer lists her.
     state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 0 };
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, () => void]
+      [unknown, (event?: unknown) => void]
     >;
     const global = subscriptions.find(([filters]) => Array.isArray(filters) && filters.length === 0);
     expect(global).toBeDefined();
@@ -2082,9 +2084,9 @@ describe('Members workspace management', () => {
 
     state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 1, agentsTruncated: true };
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, () => void]
+      [unknown, (event?: unknown) => void]
     >;
-    await act(async () => subscriptions.at(-1)![1]());
+    await act(async () => subscriptions.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
 
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
   });

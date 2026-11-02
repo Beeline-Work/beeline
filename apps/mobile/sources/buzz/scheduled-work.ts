@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react';
+import { AppState } from 'react-native';
+import { useSurfaceFocus } from './use-surface-focus';
 import {
   cornerShortTitle,
   type RoomScheduleView,
@@ -174,43 +176,55 @@ const isScheduledWork = (value: unknown): value is ScheduledWorkResult => {
 };
 const scheduledWorkAddress = (relay: string, pubkey: string, roomId: string) =>
   surfaceAddress(relay, pubkey, '/room/:id/scheduled-work', { roomId });
-const watched = new Map<string, { address: SurfaceCacheAddress; stop?: () => void }>();
+const watched = new Map<string, { address: SurfaceCacheAddress; refs: number; stop?: () => void }>();
 subscribeClientReset(() => {
   for (const entry of watched.values()) entry.stop?.();
   watched.clear();
 });
-function holdScheduledWork(roomId: string, address: SurfaceCacheAddress) {
-  if (watched.has(roomId)) return;
-  const entry: { address: SurfaceCacheAddress; stop?: () => void } = { address };
-  watched.set(roomId, entry);
-  // A route can unmount while its projection stays held. Keep its watch with
-  // that owner, so another visit never needs a focus reconciliation.
-  void sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
-    if (!('monolithLive' in event)) return;
-    const live = event.monolithLive;
-    if (live.type === 'invalidate' &&
-        ((live.roomId === roomId &&
-          ['postgres:agent_schedules', 'postgres:agent_subscriptions', 'postgres:memberships'].includes(live.reason)) ||
-         (live.roomId === '' && live.reason === 'reconnect')))
-      void mobileSurfaceCache.fetch(address, isScheduledWork,
-        () => monolithPhoneOperation('readScheduledWork', { roomId })).catch(() => undefined);
-  }).then((stop) => { if (watched.get(roomId) === entry) entry.stop = stop; else stop(); },
-    () => { watched.delete(roomId); });
-  if (watched.size > 16) {
-    const [oldRoom, oldEntry] = watched.entries().next().value!;
-    watched.delete(oldRoom); oldEntry.stop?.();
+function holdScheduledWork(roomId: string, address: SurfaceCacheAddress): { first: boolean; release(): void } {
+  const key = JSON.stringify([address.relayOrigin, address.viewerPubkey, roomId]);
+  const held = watched.get(key);
+  const entry = held ?? { address, refs: 0, stop: undefined as (() => void) | undefined };
+  entry.refs += 1;
+  if (!held) {
+    watched.set(key, entry);
+    void sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
+      if (watched.get(key) !== entry || !entry.refs || AppState.currentState !== 'active' || !('monolithLive' in event)) return;
+      const live = event.monolithLive;
+      if (live.type === 'invalidate' &&
+          ((live.roomId === roomId &&
+            ['postgres:agent_schedules', 'postgres:agent_subscriptions', 'postgres:memberships'].includes(live.reason)) ||
+           (live.roomId === '' && live.reason === 'reconnect')))
+        void mobileSurfaceCache.fetch(address, isScheduledWork,
+          () => monolithPhoneOperation('readScheduledWork', { roomId })).catch(() => undefined);
+    }).then(stop => { if (watched.get(key) === entry) entry.stop = stop; else stop(); },
+      () => { if (watched.get(key) === entry) watched.delete(key); });
   }
+  let released = false;
+  return { first: !held, release: () => {
+    if (released) return;
+    released = true;
+    entry.refs -= 1;
+    if (!entry.refs && watched.get(key) === entry) { watched.delete(key); entry.stop?.(); }
+  } };
 }
 
 /**
  * One server projection and one registry entry shared by the list and details.
- * A held answer paints without a focus read; Room changes and reconnects reconcile it.
+ * Only focused consumers retain a live observer. A new visible residency
+ * makes one covering read; retained/unmounted screens make no requests.
  */
 export function useScheduledWork(roomId: string | undefined) {
+  const focused = useSurfaceFocus();
   const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
   const { value, address, loading, error, setError, refresh } = useSharedSurface(
-    '/room/:id/scheduled-work', roomId ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId));
-  useEffect(() => { if (roomId && address) holdScheduledWork(roomId, address); }, [address, roomId]);
+    '/room/:id/scheduled-work', roomId ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId) && focused, true);
+  useEffect(() => {
+    if (!focused || !roomId || !address) return;
+    const owner = holdScheduledWork(roomId, address);
+    if (owner.first && AppState.currentState === 'active') void refresh();
+    return owner.release;
+  }, [address, roomId, focused, refresh]);
   const work = useMemo<ScheduledWork | null>(() => value && ({
     roomName: value.roomName,
     isDirectMessage: value.isDirectMessage === true,
@@ -219,7 +233,7 @@ export function useScheduledWork(roomId: string | undefined) {
     subscriptions: value.subscriptions,
   }), [value]);
   return { work, loading: loading && !value, error: roomId ? error : 'Schedules target is missing.',
-    setError, retry: () => { void refresh(); } };
+    setError, retry: () => { if (focused && AppState.currentState === 'active') void refresh(); } };
 }
 
 /**

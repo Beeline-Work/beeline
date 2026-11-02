@@ -41,3 +41,5 @@ No whole finding is closed until all consumers and the specified executable proo
 - Existing socket dispatcher compatibility has 15 passing integration cases. Connector compatibility: 133 passed, one pre-existing skip; MCP compatibility: 140 passed. Current-authority command replay: six passing cases.
 
 These counts identify the staged validation run; later changes must rerun affected suites before a PR claims the result.
+
+- F03/F05/F09 staged compatibility fixes filter transient roster events, release hidden schedule/workflow/profile observers, and make portraits consume parent detail. Focused suites pass; complete negotiated roster/workflow facts and cross-consumer closure remain open.

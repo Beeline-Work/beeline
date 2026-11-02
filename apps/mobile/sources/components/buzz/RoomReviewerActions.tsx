@@ -10,7 +10,6 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 export type RoomReviewerUpdate = {
   roomId: string;
   reviewerAgentId: string | null;
-  reviewerFallbackIds: string[];
 };
 
 const AUTO_MERGE_REVIEWER_WARNING =
@@ -63,10 +62,8 @@ type RoomReviewerActionsProps = {
   allowAutoMerge?: boolean;
   canManage: boolean;
   hasRepository: boolean;
-  onSaved?: (reviewers: readonly string[]) => void;
+  onSaved?: (reviewerAgentId: string | null) => void;
   reviewerAgentId?: string;
-  /** Agents tried in order after `reviewerAgentId`. */
-  reviewerFallbackIds?: readonly string[];
   roomId: string;
   roomName: string;
   updateRoom: (input: RoomReviewerUpdate) => Promise<unknown>;
@@ -77,18 +74,9 @@ const REVIEWER_ROW_HEIGHT = 52;
 /** Rows visible at once; the rest of the list scrolls. */
 const REVIEWER_VISIBLE_ROWS = 5;
 
-function reviewerOrder(
-  reviewerAgentId?: string,
-  reviewerFallbackIds?: readonly string[],
-): string[] {
-  if (!reviewerAgentId) return [];
-  return [reviewerAgentId, ...(reviewerFallbackIds ?? []).filter((id) => id !== reviewerAgentId)];
-}
-
 /**
  * The repository Room's reviewer control, shared by phone and desktop sheets:
- * an ordered list of agents. Tapping an agent adds it to the end of the list
- * or takes it off.
+ * one agent, or none.
  */
 export function RoomReviewerActions({
   agents,
@@ -97,18 +85,16 @@ export function RoomReviewerActions({
   hasRepository,
   onSaved,
   reviewerAgentId,
-  reviewerFallbackIds,
   roomId,
   roomName,
   updateRoom,
 }: RoomReviewerActionsProps) {
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [order, setOrder] = useState(() => reviewerOrder(reviewerAgentId, reviewerFallbackIds));
+  const [reviewer, setReviewer] = useState<string | null>(reviewerAgentId ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const savedOrderKey = reviewerOrder(reviewerAgentId, reviewerFallbackIds).join(',');
-  useEffect(() => setOrder(savedOrderKey ? savedOrderKey.split(',') : []), [savedOrderKey]);
+  useEffect(() => setReviewer(reviewerAgentId ?? null), [reviewerAgentId]);
 
   const handleOf = useCallback(
     (id: string) => {
@@ -117,24 +103,17 @@ export function RoomReviewerActions({
     },
     [agents],
   );
-  const reviewerLabel = useMemo(() => {
-    const handles = order.map(handleOf).filter((handle): handle is string => handle !== null);
-    return handles.length ? handles.join(', then ') : 'None';
-  }, [handleOf, order]);
+  const reviewerLabel = useMemo(() => (reviewer ? handleOf(reviewer) : null) ?? 'None', [handleOf, reviewer]);
 
-  const changeReviewers = useCallback(
-    async (next: string[]) => {
+  const changeReviewer = useCallback(
+    async (next: string | null) => {
       if (busy) return;
       setBusy(true);
       setError(null);
       try {
-        await updateRoom({
-          roomId,
-          reviewerAgentId: next[0] ?? null,
-          reviewerFallbackIds: next.slice(1),
-        });
-        setOrder(next);
-        if (!next.length) setPickerVisible(false);
+        await updateRoom({ roomId, reviewerAgentId: next });
+        setReviewer(next);
+        setPickerVisible(false);
         onSaved?.(next);
       } catch (caught) {
         setError(appErrorCopy(caught, `Could not change ${ROOM_LABEL} reviewer.`));
@@ -150,7 +129,7 @@ export function RoomReviewerActions({
   return (
     <>
       <HullActionSheetRow
-        accessibilityLabel={`Choose reviewers, currently ${reviewerLabel}`}
+        accessibilityLabel={`Choose reviewer, currently ${reviewerLabel}`}
         chevron="right"
         disabled={busy}
         label="Reviewer"
@@ -162,7 +141,7 @@ export function RoomReviewerActions({
         testID="room-reviewer-action"
       />
       <RoomReviewerAutoMergeNotice
-        visible={Boolean(allowAutoMerge && order.length)}
+        visible={Boolean(allowAutoMerge && reviewer)}
         testID="room-reviewer-auto-merge-warning"
       />
       <HullActionSheetModal
@@ -190,9 +169,9 @@ export function RoomReviewerActions({
           if (!busy) setPickerVisible(false);
         }}
         scrollBody={false}
-        subtitle="The first healthy agent on this list reviews every pull request opened from the Room. If its review fails or goes silent, the next one takes over. Tap an agent to add it to the end of the list or take it off."
+        subtitle="This agent reviews every pull request opened from the Room."
         testID="room-reviewer-sheet"
-        title={`Reviewers for ${roomName}`}
+        title={`Reviewer for ${roomName}`}
         visible={pickerVisible}
       >
         <ScrollView
@@ -204,34 +183,20 @@ export function RoomReviewerActions({
           <HullActionSheetRow
             disabled={busy}
             label="None"
-            onPress={() => void changeReviewers([])}
-            selected={!order.length}
+            onPress={() => void changeReviewer(null)}
+            selected={!reviewer}
             testID="room-reviewer-none"
           />
-          {agents.map((agent) => {
-            const position = order.indexOf(agent.pubkey);
-            return (
-              <HullActionSheetRow
-                accessibilityLabel={
-                  position >= 0
-                    ? `@${agent.handle ?? agent.name}, reviewer ${position + 1} of ${order.length}. Take off the list`
-                    : `@${agent.handle ?? agent.name}. Add to the end of the list`
-                }
-                disabled={busy}
-                key={agent.pubkey}
-                label={`@${agent.handle ?? agent.name}`}
-                metadata={position >= 0 ? `#${position + 1}` : undefined}
-                onPress={() =>
-                  void changeReviewers(
-                    position >= 0
-                      ? order.filter((id) => id !== agent.pubkey)
-                      : [...order, agent.pubkey],
-                  )
-                }
-                testID={`room-reviewer-agent-${agent.pubkey}`}
-              />
-            );
-          })}
+          {agents.map((agent) => (
+            <HullActionSheetRow
+              disabled={busy}
+              key={agent.pubkey}
+              label={`@${agent.handle ?? agent.name}`}
+              onPress={() => void changeReviewer(agent.pubkey)}
+              selected={reviewer === agent.pubkey}
+              testID={`room-reviewer-agent-${agent.pubkey}`}
+            />
+          ))}
         </ScrollView>
       </HullActionSheetModal>
     </>

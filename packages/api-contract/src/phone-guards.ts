@@ -195,9 +195,6 @@ function readHeader(value: unknown): RoomViewHeader | null {
   const item = record(value);
   if (!item || !uuid(item.id)) return null;
   const reviewerAgentId = hex64(item.reviewerAgentId) ? item.reviewerAgentId : undefined;
-  const reviewerFallbackIds = reviewerAgentId
-    ? readList(item.reviewerFallbackIds, (id) => (hex64(id) ? id : null))
-    : undefined;
   const parentId = uuid(item.parentId) ? item.parentId : undefined;
   return {
     id: item.id,
@@ -211,7 +208,6 @@ function readHeader(value: unknown): RoomViewHeader | null {
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
     ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
     ...field('reviewerAgentId', reviewerAgentId),
-    ...field('reviewerFallbackIds', reviewerFallbackIds?.length ? reviewerFallbackIds : undefined),
   };
 }
 

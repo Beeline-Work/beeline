@@ -868,8 +868,7 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES ide
 -- Retained but unused: a reviewer class, replaced by reviewer_fallback_ids
 -- (retireAgentClasses converts it). A later migration can drop it.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
--- Agents tried in order after reviewer_agent_id when it is unhealthy or its
--- review turn fails (agent-health.ts). Empty unless reviewer_agent_id is set.
+-- Retired reviewer fallbacks: nothing reads them; a later release drops the column.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_fallback_ids text[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
@@ -3694,12 +3693,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
           : '') +
         `, converted ${classes.runs} workflow run(s)`,
     );
-  await dataStep('empty reviewer fallbacks', () => boundedMigrationUpdate(database,
-    'empty reviewer fallbacks',
-    `UPDATE rooms SET reviewer_fallback_ids=array_remove(reviewer_fallback_ids,'')
-     WHERE id IN (SELECT id FROM rooms WHERE ''=ANY(reviewer_fallback_ids) ORDER BY id LIMIT $1)`,
-    [],
-  ));
   const reviewers = await dataStep('corner reviewers', () =>
     reconcileConfiguredCornerReviewers(database));
   console.log(

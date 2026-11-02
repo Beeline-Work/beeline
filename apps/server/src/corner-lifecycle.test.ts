@@ -1216,6 +1216,7 @@ async function revise(cornerId: string, service = daemon) {
 }
 
 const F = 'e'.repeat(64);
+/** Another agent member of the Room; a stored fallback reviewer list is retired and ignored. */
 async function fallback(cornerId: string, online = true) {
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Fallback','fallback') ON CONFLICT DO NOTHING`, [F]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [F, H]);
@@ -1315,7 +1316,7 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
     `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, A],
   );
 
-  it.each(['removed', 'offline'] as const)('wakes the implementer, not a fallback reviewer, when the primary is %s', async (condition) => {
+  it.each(['removed', 'offline'] as const)('wakes the implementer, not another agent, when the reviewer is %s', async (condition) => {
     const cornerId = await approved();
     await implementerOnline();
     await fallback(cornerId);
@@ -1378,41 +1379,27 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
 });
 
 describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
-  it.each([B, F])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
+  it.each([B])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
     const cornerId = await inReview();
-    if (reviewerId === F) await fallback(cornerId);
     const worker = (await commands(A, cornerId))[0]!;
     await claim(worker);
     const source = await systemLine(db, { roomId: cornerId, subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief', object: 'Revision 2' });
     const review = await createAgentCommand(db, { roomId: cornerId, agentId: reviewerId, sourceMessageId: source.id, reason: 'corner_check' });
     const delivered = (await commands(reviewerId, cornerId)).some(c => c.id === review!.id);
-    console.info(`Reproduction S-07: ${reviewerId === F ? 'fallback' : 'primary'} review with live worker lease → delivered=${delivered}`);
+    console.info(`Reproduction S-07: reviewer review with live worker lease → delivered=${delivered}`);
     expect(delivered).toBe(false);
     await terminalResult(worker, 'Worker finished');
     expect((await commands(reviewerId, cornerId)).some(c => c.id === review!.id)).toBe(true);
   });
 
-  it.each([B, F])('delivers unrelated commands to %s while the worker is busy', async (reviewerId) => {
+  it.each([B])('delivers unrelated commands to %s while the worker is busy', async (reviewerId) => {
     const cornerId = await inReview();
-    if (reviewerId === F) await fallback(cornerId);
     await claim((await commands(A, cornerId))[0]!);
     const source = await systemLine(db, { roomId: cornerId, subject: { kind: 'human', id: H, name: 'Human' }, verb: 'recorded a note' });
     const ordinary = await createAgentCommand(db, { roomId: cornerId, agentId: reviewerId, sourceMessageId: source.id, reason: 'human_tag' });
     expect((await commands(reviewerId, cornerId)).some(c => c.id === ordinary!.id)).toBe(true);
   });
 
-  it('holds a fallback checks-passed review and releases it on lease expiry', async () => {
-    const cornerId = await open('owner/widgets');
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await fallback(cornerId);
-    const worker = (await commands(A, cornerId))[0]!;
-    await claim(worker);
-    await greenHead(cornerId, 7, SHA);
-    expect(await reasons(cornerId, F)).toContain('subscribed_event');
-    expect(await commands(F, cornerId)).toEqual([]);
-    await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [worker.id]);
-    expect(await commands(F, cornerId)).toHaveLength(1);
-  });
 });
 
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {

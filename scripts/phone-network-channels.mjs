@@ -289,7 +289,7 @@ function lineAt(text, index) {
 }
 
 /** Network call sites in one source file: `[{ kind, line }]`. */
-export function scanSource(file, text) {
+export function scanSource(file, text, networkLibraries = NETWORK_LIBRARIES) {
   const hits = [];
   const add = (kind, source, pattern) => {
     for (const match of source.matchAll(pattern)) hits.push({ kind, line: lineAt(source, match.index) });
@@ -308,7 +308,7 @@ export function scanSource(file, text) {
   // A new host is a new channel even through an existing call (the hedged backup origin was one).
   for (const match of code.matchAll(/['"`](?:https?|wss?):\/\/([a-zA-Z0-9.-]+)/g))
     hits.push({ kind: `origin:${match[1].toLowerCase()}`, line: lineAt(code, match.index) });
-  for (const name of NETWORK_LIBRARIES) {
+  for (const name of networkLibraries) {
     const quoted = name.replace(/[/.@-]/g, '\\$&');
     const imports = new RegExp(
       `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|^\\s*import\\s+)['"]${quoted}(?:/[^'"]*)?['"]`,

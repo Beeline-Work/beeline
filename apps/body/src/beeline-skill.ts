@@ -124,6 +124,7 @@ export function beelineCornersSkillMarkdown(releaseId: string): string {
 - For friction in Beeline itself, call report_feedback with tool_name and error_excerpt filled in when a tool failed, so triage can group it.
 - After a fix pull request merges, notify_feedback_fixed(item_ids, title, pr_url) resolves the feedback items it lists. The feedback-triage-steps procedure says when to send Fixed notices.
 - For an operator notice explicitly commanded by lunchboxfortwo, use send_operator_system_dm({recipients,text}) through their own agent. recipients is one exact human id/handle, a list, or all. The server enforces owner-command provenance and audits each send. Keep the returned sendId; pending delivery is not a reason to resend. Read completion counts with read_operator_system_dm({sendId}). Delivered means committed to the System thread, not read by the person. Never substitute an ad-hoc production database write.
+- When lunchboxfortwo answers yes to an ask naming a PR that relaxes architecture/invariants.json and its head commit, call approve_architecture_relax({repository,pullRequest,headSha}) in that commanded turn, then re-run the PR's TYPECHECK job. A new commit needs a new yes.
 
 ## Frontend proof in the PR
 

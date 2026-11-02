@@ -968,6 +968,17 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    "name": "approve_architecture_relax",
+    "description": "Record the owner's yes on one exact PR head that relaxes architecture/invariants.json, so its CI check passes. Only on the owner's own message naming the PR number and head commit; a new commit needs a new yes.",
+    "inputSchema": {
+      "type": "object", "properties": {
+        "repository": {"type": "string", "description": "owner/name"},
+        "pullRequest": {"type": "integer", "minimum": 1},
+        "headSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }, "required": ["repository", "pullRequest", "headSha"], "additionalProperties": false
+    }
+  },
+  {
     "name": "read_operator_system_dm",
     "description": "Read the recipient, delivered, failed and pending counts for a queued System DM send. Requires the operator owner's human command.",
     "inputSchema": {

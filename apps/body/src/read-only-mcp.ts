@@ -3097,7 +3097,8 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
     case 'report_feedback':
     case 'notify_feedback_fixed':
     case 'send_operator_system_dm':
-    case 'read_operator_system_dm': return execute(name);
+    case 'read_operator_system_dm':
+    case 'approve_architecture_relax': return execute(name);
     case 'dispatch_release': return execute(name);
     case 'approve_merge':
     case 'merge_corner':
@@ -3542,6 +3543,12 @@ async function executeAgentOperation(
         ...await activeCommandContext(),
         agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
         recipients: args.recipients as string | string[], text: String(args.text ?? ''),
+      }));
+    case 'approve_architecture_relax':
+      return JSON.stringify(await daemonExecute('approveArchitectureRelax', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        repository: String(args.repository ?? ''), pullRequest: Number(args.pullRequest), headSha: String(args.headSha ?? ''),
       }));
     case 'read_operator_system_dm':
       return JSON.stringify(await daemonExecute('readOperatorSystemDm', {

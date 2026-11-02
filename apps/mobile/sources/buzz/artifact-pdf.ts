@@ -20,7 +20,7 @@
  * `Worker` construction, which is the step that hangs silently.
  */
 export const ARTIFACT_PDF_CSP =
-  "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src blob:";
+  "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src blob:; base-uri 'none'; form-action 'none'; frame-src 'none'";
 
 /**
  * The origin the Android WebView document is given. It is never fetched: the

@@ -39,7 +39,7 @@ export function ArtifactPdfView({
   const recovery = useArtifactRecoveryGeneration();
   const [documentHtml, setDocumentHtml] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const guardRef = useRef(createInitialLoadGuard());
+  const guardRef = useRef(createInitialLoadGuard(ARTIFACT_PDF_BASE_URL));
   useEffect(() => {
     let live = true;
     const controller = new AbortController();
@@ -50,7 +50,10 @@ export function ArtifactPdfView({
       try {
         const pdfBase64 = await artifactBase64(attachment, { signal: controller.signal, preview: mode === 'preview' });
         const html = await loadPdfViewerDocument({ pdfBase64, mode });
-        if (live && !controller.signal.aborted) setDocumentHtml(html);
+        if (live && !controller.signal.aborted) {
+          guardRef.current = createInitialLoadGuard(ARTIFACT_PDF_BASE_URL);
+          setDocumentHtml(html);
+        }
       } catch {
         if (live) setFailed(true);
       }

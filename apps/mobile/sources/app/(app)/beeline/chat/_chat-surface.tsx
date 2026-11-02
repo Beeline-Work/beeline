@@ -5805,7 +5805,7 @@ export function BuzzChatSurface({
       }
       if (item.computerSession) {
         return (
-          <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience}
+          <ComputerSessionCard session={item.computerSession} messageId={item.id} roomId={decodedId} isDesktop={desktopExperience}
           agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />
         );
       }

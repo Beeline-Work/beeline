@@ -2,7 +2,7 @@ import { Button } from './Button';
 import { CloseButton } from './CloseGlyph';
 import { InlineRow } from './IndexRow';
 import React from 'react';
-import { BackHandler, Platform, Pressable, Text, View } from 'react-native';
+import { AppState, BackHandler, Platform, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
@@ -14,11 +14,40 @@ import { Modal } from '@/modal';
 import { openComputerInDesktopWorkPane } from '@/buzz/desktop-computer-pane';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
-import { currentViewerConversation } from '@/buzz/viewer-conversation';
+import { currentViewerConversation, subscribeViewerConversation } from '@/buzz/viewer-conversation';
+import { useArtifactRowVisible } from '@/buzz/artifact-viewport';
 import {
   attachWarmComputerHost, closeWarmComputerSession, openWarmComputerSession,
   readWarmComputerSession, subscribeWarmComputerSession, warmComputerSession,
 } from '@/buzz/warm-computer-session';
+
+const fullViewers = new Map<string, number>();
+const viewerListeners = new Set<() => void>();
+const subscribeViewers = (listener: () => void) => {
+  viewerListeners.add(listener);
+  return () => { viewerListeners.delete(listener); };
+};
+function retainFullViewer(id: string): () => void {
+  fullViewers.set(id, (fullViewers.get(id) ?? 0) + 1);
+  for (const listener of viewerListeners) listener();
+  return () => {
+    const remaining = (fullViewers.get(id) ?? 1) - 1;
+    if (remaining) fullViewers.set(id, remaining); else fullViewers.delete(id);
+    for (const listener of viewerListeners) listener();
+  };
+}
+const foregroundSnapshot = () => AppState.currentState === 'active';
+const subscribeForeground = (listener: () => void) => {
+  const subscription = AppState.addEventListener('change', listener);
+  return () => subscription.remove();
+};
+function useComputerForeground(): boolean {
+  return React.useSyncExternalStore(subscribeForeground, foregroundSnapshot, () => false);
+}
+function useViewerRoomFocused(roomId: string | undefined): boolean {
+  return React.useSyncExternalStore(subscribeViewerConversation,
+    () => roomId ? Boolean(currentViewerConversation(roomId)) : true, () => false);
+}
 
 export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & {
   access?: string; agentHandle?: string;
@@ -128,31 +157,47 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
   );
 }
 
-/** The live card streams while mounted; opening captures its latest frame once. */
-export function ComputerSessionCard({ session, isDesktop, agentHandle }: { session: ComputerSessionView; isDesktop?: boolean; agentHandle?: string }) {
-  const [access, setAccess] = React.useState<string | null>(session.access ?? null);
+/** Only actual visible rows stream; opening captures the latest frame once. */
+export function ComputerSessionCard({ session, messageId, roomId, isDesktop, agentHandle }: { session: ComputerSessionView; messageId: string; roomId: string; isDesktop?: boolean; agentHandle?: string }) {
+  const rowVisible = useArtifactRowVisible(messageId, true);
+  const foreground = useComputerForeground();
+  const visible = rowVisible && foreground;
+  const fullViewer = React.useSyncExternalStore(subscribeViewers,
+    () => fullViewers.has(session.id) || (Platform.OS !== 'web' && fullViewers.size > 0), () => false);
+  const [authorized, setAuthorized] = React.useState({ id: session.id, access: session.access ?? null });
+  const access = session.access ?? (authorized.id === session.id ? authorized.access : null);
+  const owner = React.useRef({ id: session.id, mounted: true });
+  owner.current.id = session.id;
+  React.useEffect(() => {
+    owner.current.mounted = true;
+    return () => { owner.current.mounted = false; };
+  }, []);
   const captureRef = React.useRef<(() => Promise<string | null>) | null>(null);
+  const requested = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
-    if (session.status !== 'live' || session.access) return;
-    let mounted = true;
+    if (!visible || session.status !== 'live' || session.access || requested.current === session.id) return;
+    requested.current = session.id;
     void monolithPhoneOperation('openComputerSession', { id: session.id })
-      .then(({ access: token }) => { if (mounted) setAccess(token); })
-      .catch(() => { if (mounted) setAccess(null); });
-    return () => { mounted = false; };
-  }, [session.id, session.status, session.access]);
+      .then(({ access: token }) => {
+        if (owner.current.mounted && owner.current.id === session.id) setAuthorized({ id: session.id, access: token });
+      })
+      .catch(() => {
+        if (owner.current.mounted && owner.current.id === session.id) setAuthorized({ id: session.id, access: null });
+      });
+  }, [session.id, session.status, session.access, visible]);
   React.useEffect(() => {
-    if (Platform.OS === 'web' || !access || session.status !== 'live') return;
-    return warmComputerSession({ ...session, access }, currentViewerConversation()?.roomId, agentHandle);
-  }, [session.id, session.url, session.title, session.status, access, agentHandle]);
+    if (!visible || Platform.OS === 'web' || !access || session.status !== 'live') return;
+    return warmComputerSession({ ...session, access }, roomId, agentHandle);
+  }, [session.id, session.url, session.title, session.status, access, agentHandle, visible, roomId]);
   const open = async () => {
-    if (!access || session.status !== 'live') return;
+    if (!visible || !access || session.status !== 'live') return;
     // Keep the preview on its existing authorized stream. Replacing its URL
     // tears down the warm connection just as the full viewer needs its frame.
     await openComputerSessionViewer({ ...session, access,
-      previewFrame: captureRef.current?.() }, isDesktop, currentViewerConversation()?.roomId, agentHandle);
+      previewFrame: captureRef.current?.() }, isDesktop, roomId, agentHandle);
   };
   const openInBrowser = async () => {
-    if (!access || session.status !== 'live') return;
+    if (!visible || !access || session.status !== 'live') return;
     try {
       const { access: freshAccess } = await monolithPhoneOperation('openComputerSession', { id: session.id });
       const url = new URL(session.url);
@@ -166,7 +211,7 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
     <View style={styles.card} testID={`computer-session-card-${session.status}`}>
       {session.status === 'live' && access ? (
         <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
-      <View style={styles.preview} pointerEvents="none"><ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /></View>
+      <View style={styles.preview} pointerEvents="none">{visible && !fullViewer ? <ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /> : null}</View>
       <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
         <Text style={styles.kind}>Live browser</Text></View>
     </Pressable>
@@ -216,25 +261,26 @@ export async function openComputerSessionViewer(
   }
 }
 
-/** One native viewer stays mounted while its card is visible and across closes. */
+/** Retain the selected session locally; only an opened viewer mounts a stream. */
 export function WarmComputerSessionHost() {
   const warm = React.useSyncExternalStore(subscribeWarmComputerSession, readWarmComputerSession, () => null);
+  const focused = useViewerRoomFocused(warm?.roomId);
   React.useEffect(() => (Platform.OS === 'web' ? undefined : attachWarmComputerHost()), []);
   React.useEffect(() => {
-    if (!warm?.visible || Platform.OS === 'web') return;
+    if (!warm?.visible || !focused || Platform.OS === 'web') return;
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
       closeWarmComputerSession(); return true;
     });
     return () => back.remove();
-  }, [warm?.visible]);
-  if (Platform.OS === 'web' || !warm) return null;
+  }, [warm?.visible, focused]);
+  if (Platform.OS === 'web' || !warm?.visible) return null;
   return (
-    <View style={[styles.warmHost, { opacity: warm.visible ? 1 : 0 }]}
-    pointerEvents={warm.visible ? 'auto' : 'none'}
-    accessibilityViewIsModal={warm.visible} accessibilityElementsHidden={!warm.visible}
-    importantForAccessibility={warm.visible ? 'auto' : 'no-hide-descendants'}
+    <View style={[styles.warmHost, { opacity: focused ? 1 : 0 }]}
+    pointerEvents={focused ? 'auto' : 'none'}
+    accessibilityViewIsModal={focused} accessibilityElementsHidden={!focused}
+    importantForAccessibility={focused ? 'auto' : 'no-hide-descendants'}
     testID="computer-session-warm-host">
-    <ComputerSessionViewer key={warm.session.id} session={warm.session} active={warm.visible} warm
+    <ComputerSessionViewer key={warm.session.id} session={warm.session} active={focused} warm
       roomId={warm.roomId} agentHandle={warm.agentHandle} onClose={closeWarmComputerSession} />
   </View>
   );
@@ -244,6 +290,10 @@ export function WarmComputerSessionHost() {
 export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, active = true, warm = false }: {
   session: ComputerSessionView; onClose: () => void; roomId?: string; agentHandle?: string; active?: boolean; warm?: boolean;
 }) {
+  const foreground = useComputerForeground();
+  const focused = useViewerRoomFocused(roomId);
+  const displayed = active && focused && foreground;
+  React.useLayoutEffect(() => displayed ? retainFullViewer(session.id) : undefined, [displayed, session.id]);
   const insets = useSafeAreaInsets();
   const captureRef = React.useRef<(() => Promise<string | null>) | null>(null);
   const [ended, setEnded] = React.useState(session.status === 'ended');
@@ -253,19 +303,27 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
     Number(session.access?.split('.')[1]) <= Date.now());
   const [previewFrame, setPreviewFrame] = React.useState<string | null>(null);
   const firstFrame = React.useRef(false);
+  const requested = React.useRef<string | undefined>(undefined);
+  const requestKey = `${session.id}:${session.access ?? ''}`;
+  const owner = React.useRef({ key: requestKey, mounted: true });
+  owner.current.key = requestKey;
   React.useEffect(() => {
-    if (session.status !== 'live' || !session.access) return;
-    let mounted = true;
+    owner.current.mounted = true;
+    return () => { owner.current.mounted = false; };
+  }, []);
+  React.useEffect(() => {
+    const key = `${session.id}:${session.access ?? ''}`;
+    if (!displayed || session.status !== 'live' || !session.access || requested.current === key) return;
+    requested.current = key;
     // The stream still checks current Room membership and token validity.
     // Refresh without replacing its URL and restarting a warm connection.
     void monolithPhoneOperation('openComputerSession', { id: session.id })
-      .then(({ access }) => { if (mounted) setRefreshedAccess(access); })
+      .then(({ access }) => { if (owner.current.mounted && owner.current.key === key) setRefreshedAccess(access); })
       .catch((error: unknown) => {
-        if (mounted && error instanceof Error && 'status' in error
+        if (owner.current.mounted && owner.current.key === key && error instanceof Error && 'status' in error
           && (error.status === 401 || error.status === 403 || error.status === 404)) setUnavailable(true);
       });
-    return () => { mounted = false; };
-  }, [session.id, session.status, session.access, active]);
+  }, [session.id, session.status, session.access, displayed]);
   React.useEffect(() => {
     let mounted = true;
     void session.previewFrame?.then(image => {
@@ -277,7 +335,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
   const shownSession = { ...session, ...(ended ? { status: 'ended' as const } : {}),
     access: accessRejected && refreshedAccess ? refreshedAccess : session.access };
   const openInBrowser = async () => {
-    if (ended || !session.access) return;
+    if (!displayed || ended || !session.access) return;
     try {
       const { access } = await monolithPhoneOperation('openComputerSession', { id: session.id });
       const url = new URL(session.url);
@@ -312,14 +370,14 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
       <View style={styles.viewerStream}>
         {unavailable ? (
           <View style={styles.ended}><Text style={styles.endedText}>Browser is unavailable</Text></View>
-        ) : (
+        ) : displayed ? (
           <ComputerStream session={shownSession} warm={warm} interactive={active} onEnded={() => setEnded(true)}
           onFirstFrame={() => { firstFrame.current = true; setPreviewFrame(null); }}
           onAccessRejected={() => {
             if (accessRejected && refreshedAccess) setUnavailable(true);
             else setAccessRejected(true);
           }} captureRef={captureRef} />
-        )}
+        ) : null}
         {!ended && !unavailable && previewFrame ? (
           <View pointerEvents="none" style={styles.previewFrame}>
         <Image source={{ uri: `data:image/jpeg;base64,${previewFrame}` }} contentFit="cover" contentPosition="top"
@@ -327,7 +385,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
       </View>
         ) : null}
       </View>
-      {active ? (
+      {displayed ? (
         <ViewerConversationDock keyboardAvoidedByParent={!warm} kind="computer" title={session.title} roomId={roomId}
       agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} />
       ) : null}

@@ -241,13 +241,15 @@ export function ArtifactViewerSandbox({
       try {
         if (format === 'pdf') {
           const uri = await artifactPdfLocalUri(attachment, { signal: controller.signal });
-          if (live && !controller.signal.aborted) setSource({ uri });
+          if (live && !controller.signal.aborted) { guardRef.current = createInitialLoadGuard(uri); setSource({ uri }); }
           return;
         }
         if (format === 'html' || format === 'svg') {
           const bytes = await fetchArtifactBytes(attachment, { signal: controller.signal });
-          if (live && !controller.signal.aborted)
+          if (live && !controller.signal.aborted) {
+            guardRef.current = createInitialLoadGuard();
             setSource({ html: wrapArtifactMarkup(new TextDecoder().decode(bytes), format) });
+          }
           return;
         }
         if (live) setFailed('This file type has no inline preview — open it in a browser instead.');

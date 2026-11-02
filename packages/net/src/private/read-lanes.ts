@@ -37,6 +37,12 @@ const bytes = (value: unknown): number => new TextEncoder().encode(JSON.stringif
 const sameStream = (a: LaneCut, b: LaneCut): boolean => a.stream === b.stream && a.epoch === b.epoch && a.protocol === b.protocol;
 const liveOwner = (entry: Entry): boolean => [...entry.owners.values()].some(owner => owner.active && owner.permit.isCurrent());
 const scopeOf = (request: LaneRequest): string => request.family === 'room-head' ? request.roomId! : request.workspaceId;
+// Room heads still follow legacy transport/view filters on the server. They
+// have no proven inactive feed until DB-audience durable facts replace it.
+const CONTINUOUS_CACHE:Readonly<Record<LaneFamily,boolean>>={
+  'room-list':true,'needs-you':true,'needs-you-count':true,'room-head':false,
+};
+const continuouslyFed=(family:LaneFamily):boolean=>CONTINUOUS_CACHE[family]===true;
 
 /** An executor is installed only by the negotiated connection owner. Demand
  * arrives only after admission has atomically consumed a real owner pass.
@@ -122,7 +128,7 @@ export class ReadLanes {
     if (!previous) this.joined.set(token, { key, entry });
     const owner: Owner = { permit, active: true };
     entry.owners.set(token, owner);
-    if(permit.isCurrent()&&entry.view.state==='INACTIVE_CACHED'&&entry.snapshot&&entry.covered&&
+    if(permit.isCurrent()&&continuouslyFed(request.family)&&entry.view.state==='INACTIVE_CACHED'&&entry.snapshot&&entry.covered&&
       entry.connection===this.generation&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length&&
       this.supports(request.family)&&this.authorized(entry.snapshot.authority))
       this.publish(entry,{state:'LIVE',value:entry.snapshot.value,cut:entry.snapshot.cut,error:null});
@@ -131,11 +137,17 @@ export class ReadLanes {
       if (entry.owners.get(token) !== owner) return;
       owner.active = false; entry.owners.delete(token);
       if (!liveOwner(entry)) {
-        const reusable=entry.view.state==='LIVE'&&entry.covered&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length;
+        const reusable=continuouslyFed(entry.request.family)&&entry.view.state==='LIVE'&&entry.covered&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length;
         if(!reusable)entry.covered=false;
         // A pending reply can no longer paint or restore authority.
         entry.revision += 1; entry.flight = undefined;
         entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
+        if(!continuouslyFed(entry.request.family)){
+          entry.snapshot=undefined;entry.baseline=undefined;
+          const state=entry.view.state==='REVOKED'?'REVOKED':'PARKED';
+          this.publish(entry,{...absent(),state,error:state==='REVOKED'?'Access removed.':'Projection unavailable; Retry.'});
+          this.evict();return;
+        }
         const state=entry.view.state==='PARKED'||entry.view.state==='REVOKED'?entry.view.state:
           reusable?'INACTIVE_CACHED':entry.snapshot?'PARKED':'ABSENT';
         this.publish(entry, { ...entry.view, state,error:state==='PARKED'?(entry.view.error??'Connection interrupted; Retry.'):entry.view.error });

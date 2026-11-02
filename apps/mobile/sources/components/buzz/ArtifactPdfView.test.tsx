@@ -116,7 +116,7 @@ describe('the Android PDF render', () => {
     const renderer = render(<ArtifactPdfView attachment={attachment()} mode="viewer" />);
     await flush();
     const webview = renderer.root.findByType('WebView' as any);
-    expect(webview.props.originWhitelist).toEqual([]);
+    expect(webview.props.originWhitelist).toEqual(['*']);
     expect(webview.props.setSupportMultipleWindows).toBe(false);
     expect(webview.props.allowFileAccess).toBe(false);
     expect(Object.hasOwn(webview.props, 'onMessage')).toBe(false);

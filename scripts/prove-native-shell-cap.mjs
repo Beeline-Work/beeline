@@ -17,8 +17,9 @@ await mkdir(out, { recursive: true });
 const home = await mkdtemp(join(tmpdir(), 'beeline-native-model-'));
 const hook = join(home, 'shell-hook.cjs');
 await writeFile(hook, NATIVE_SHELL_OUTPUT_SCRIPT);
-const command = `${JSON.stringify(process.execPath)} -e 'process.stdout.write("HEAD\\n"+"x".repeat(400000)+"\\nTAIL\\n")'`;
-let received,
+const exitCode = process.argv.includes('--fail') ? 7 : 0;
+const command = `${JSON.stringify(process.execPath)} -e 'process.stdout.write("HEAD\\n"+"x".repeat(400000)+"\\nTAIL\\n");process.exitCode=${exitCode}'`;
+let received, receivedError,
   count = 0;
 const server = createServer(async (req, res) => {
   let text = '';
@@ -32,7 +33,7 @@ const server = createServer(async (req, res) => {
   const results = body.messages
     .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
     .filter((c) => c.type === 'tool_result');
-  if (results.length) received = results.at(-1).content;
+  if (results.length) { received = results.at(-1).content; receivedError = results.at(-1).is_error === true; }
   const use = !received && count++ === 0;
   const content = use
     ? [{ type: 'tool_use', id: 'shell-proof', name: 'Bash', input: { command } }]
@@ -120,14 +121,18 @@ try {
   assert.equal(code, 0, logs);
   const text = typeof received === 'string' ? received : JSON.stringify(received);
   assert.ok(text, 'No native tool result reached the model');
+  assert.equal(receivedError, exitCode !== 0, 'Native failure status must reach the model');
   const path = /full output: (.*?)\. Read a bounded/.exec(text)?.[1];
   assert.ok(path, text.slice(0, 1000));
+  assert.ok(text.includes('HEAD') && text.includes('TAIL'), 'Preview must retain head and tail');
   const original = await readFile(path, 'utf8');
   assert.equal(original, 'HEAD\n' + 'x'.repeat(400000) + '\nTAIL\n');
   assert.ok(Buffer.byteLength(text) <= NATIVE_SHELL_OUTPUT_CAP + 1000);
   const proof = {
     reproduction: 'SHELL-CAP',
     harness: 'Claude Code',
+    exitCode,
+    failurePreserved: receivedError === (exitCode !== 0),
     provider: 'local recorded model; installed native harness',
     originalBytes: Buffer.byteLength(original),
     modelBytes: Buffer.byteLength(text),

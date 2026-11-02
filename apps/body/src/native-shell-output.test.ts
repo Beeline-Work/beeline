@@ -20,12 +20,7 @@ it.each(['claude', 'codex', 'cursor'])(
       const input = JSON.stringify({
         tool_name: harness === 'cursor' ? 'Shell' : 'Bash',
         tool_input: { command },
-        tool_response: {
-          stdout: original.stdout,
-          stderr: original.stderr,
-          interrupted: false,
-          isImage: false,
-        },
+
       });
       const result = await new Promise<string>((resolve, reject) => {
         const child = execFile(
@@ -37,15 +32,12 @@ it.each(['claude', 'codex', 'cursor'])(
         child.stdin!.end(input);
       });
       const parsed = JSON.parse(result);
-      const execution =
-        harness !== 'claude'
-          ? await exec('bash', [
-              '-c',
-              (harness === 'cursor' ? parsed.updated_input : parsed.hookSpecificOutput.updatedInput).command,
-            ]).catch((error) => error)
-          : undefined;
-      if (execution) expect(execution.code).toBe(7);
-      const output = execution?.stdout ?? parsed.hookSpecificOutput.updatedToolOutput.stdout;
+      const execution = await exec('bash', [
+        '-c',
+        (harness === 'cursor' ? parsed.updated_input : parsed.hookSpecificOutput.updatedInput).command,
+      ]).catch((error) => error);
+      expect(execution.code).toBe(7);
+      const output = execution.stdout;
       expect(Buffer.byteLength(output)).toBeLessThanOrEqual(NATIVE_SHELL_OUTPUT_CAP);
       expect(output).toContain('HEAD');
       expect(output).toContain('TAIL');
@@ -57,7 +49,7 @@ it.each(['claude', 'codex', 'cursor'])(
   },
 );
 
-it.each(['codex', 'cursor'])('keeps an interactive stdin prompt visible in %s', async harness => {
+it.each(['claude', 'codex', 'cursor'])('keeps an interactive stdin prompt visible in %s', async harness => {
   const directory = await mkdtemp(join(tmpdir(), 'native-shell-stdin-'));
   try {
     const hook = join(directory, 'hook.cjs');

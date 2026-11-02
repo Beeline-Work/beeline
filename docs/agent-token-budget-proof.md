@@ -102,14 +102,18 @@ back and compared byte for byte. The proof commands are:
 ```sh
 npm run build -w @beeline/body
 node scripts/prove-native-shell-cap.mjs
+node scripts/prove-native-shell-cap.mjs .scratch/native-shell-failure --fail
 node scripts/prove-codex-shell-cap.mjs
 node scripts/prove-cursor-shell-cap.mjs
 ```
 
-The generated Claude `PostToolUse` hook replaces successful Bash output, keeping
-native result metadata and native full-output files. Codex and Cursor capture
-output inside their native `PreToolUse`/`preToolUse` hooks before native
-truncation can discard it. The original shell language, stdin and exit status
+Claude, Codex and Cursor capture output inside their native
+`PreToolUse`/`preToolUse` hooks before native truncation can discard it.
+Claude must capture before execution: its successful-only `PostToolUse` event
+never runs for a failed Bash command. The installed-CLI regression uses a local
+recorded provider for both success and failure (exit status 7), and checks the
+actual next model request for failure status, bounded output, head and tail,
+and a recovery file matching the entire original output. The original shell language, stdin and exit status
 are preserved; combined output is archived under the isolated session's temp
 directory, then streamed as a bounded head and tail with its recovery path.
 The preview ceiling is (16,384 bytes); the capture path starts shortening at
@@ -126,7 +130,8 @@ Codex native proof exercises this production trust path without a global trust
 bypass. Cursor's proof uses the generated isolated user configuration from
 `prepareRoomAgentHome`.
 
-The native results received by the model were Claude (2,296 bytes), Codex
+The native results received by the model were Claude (2,196 bytes on success;
+2,208 bytes on failure), Codex
 (2,301 bytes), and Cursor (2,228 bytes), all with complete recovery. Exact byte
 counts include each harness's native framing and can vary with temporary paths.
 The latest native CLIs already have their own truncation: the historical claim

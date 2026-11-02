@@ -1,3 +1,4 @@
+// PENDING lunchboxfortwo approval (wording-neutral repair of main): #3302 made DaemonService.createCorner's 'opened a corner' line pick up internal objective-storage literals ('objective', '') in its fingerprint with the visible template unchanged, and #3300 added the RoomsMcpAgentTools.progress wrapper (this.end) and one more RoomsMcpAgentTools.call wrapper occurrence. Mechanically regenerated; no displayed System wording changed.
 // Failed-install card wording approved by the owner in brief revision 2, reconfirmed by Firstmate instruction 002 on 2026-11-02 for https://github.com/Beeline-Work/beeline/pull/3246; failConnectingOffers producers and connectorStatusReport wrapper only.
 // Capped-owner starter-agent location message approved by the owner on 2026-11-02 ("Yes, do it"), relayed in Firstmate launch brief for https://github.com/Beeline-Work/beeline/pull/3246; this producer entry only.
 // Connected-app report refusal update approved by lunchboxfortwo; Claude relayed lunchboxfortwo's yes in message 068e1d99cd0a96b277aac8b64e5a8a507d30c6a9acd9a938acd06ec3783ed5b1. Only the RoomsMcpAgentTools.inTurn wrapper entry refreshed.
@@ -4137,7 +4138,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:68dcd157b334c91c",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:af336dccd9786554",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name,\n        objective: destination.roomId === roomId ? name : objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
@@ -4145,6 +4146,8 @@
       "\"\"",
       "\"corner-open\"",
       "\"opened a corner\"",
+      "''",
+      "'objective'",
       ".corner_id",
       ".name",
       ".objective",
@@ -5788,6 +5791,26 @@
     "occurrences": 1
   },
   {
+    "id": "src/free-agents.ts:FreeAgentService.#stopStarts:systemLine:c1ef8c924660348a",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    roomId: target.room_id,\n    id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: target.agent_name },\n    verb: 'could not start',\n    ...(target.person_id && target.person_handle\n        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }\n        : {}),\n    consequence: 'the Beeline team has been told. Send a new message to try again',\n})",
+    "literals": [
+      "\"could not start\"",
+      "\"the Beeline team has been told. Send a new message to try again\"",
+      ".agent_name",
+      ".person_handle",
+      ".person_id",
+      ".rows",
+      "FirstLiteralToken:0",
+      "[\"for @\",\"\"]",
+      "binary:&&",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:systemLine:7923290dbd21f55a",
     "file": "apps/server/src/free-agents.ts",
     "kind": "systemLine",
@@ -5807,26 +5830,6 @@
       ".rows",
       ".workspace_name",
       "[\"\",\" in \",\"\"]",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/free-agents.ts:FreeAgentService.#stopStarts:systemLine:c1ef8c924660348a",
-    "file": "apps/server/src/free-agents.ts",
-    "kind": "systemLine",
-    "template": "systemLine(db, {\n    roomId: target.room_id,\n    id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: target.agent_name },\n    verb: 'could not start',\n    ...(target.person_id && target.person_handle\n        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }\n        : {}),\n    consequence: 'the Beeline team has been told. Send a new message to try again',\n})",
-    "literals": [
-      "\"could not start\"",
-      "\"the Beeline team has been told. Send a new message to try again\"",
-      ".agent_name",
-      ".person_handle",
-      ".person_id",
-      ".rows",
-      "FirstLiteralToken:0",
-      "[\"for @\",\"\"]",
-      "binary:&&",
       "conditional:?:",
       "end:expression"
     ],
@@ -8780,7 +8783,7 @@
     "kind": "wrapper",
     "template": "this.inTurn(member, target, run)",
     "literals": [],
-    "occurrences": 19
+    "occurrences": 20
   },
   {
     "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:5b7094fbf9439bbc",
@@ -9107,7 +9110,7 @@
     "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.openCorner:wrapper:4bb6a7cae1812aa0",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
-    "template": "this.inTurn(member, room, async (turn, context) => {\n    const created = await exec('createCorner', { ...context, targetRoomId: room,\n        idempotencyKey: createHash('sha256').update(`open_corner\\0${turn.requestId}`).digest('hex'),\n        name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),\n        objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),\n        implementer, reviewer: args.reviewer, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),\n        ...(repository.resolution === 'repository' ? { repository: repository.key, targetBranch: repository.targetBranch } : {}),\n    }) as {\n        cornerId?: string;\n        watch?: unknown;\n        warnings?: unknown;\n    };\n    return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),\n        ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}), status: 'starting' };\n})",
+    "template": "this.inTurn(member, room, async (turn, context) => {\n    const created = await exec('createCorner', { ...context, targetRoomId: room,\n        idempotencyKey: createHash('sha256').update(`open_corner\\0${turn.requestId}`).digest('hex'),\n        name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),\n        objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),\n        implementer, reviewer: args.reviewer, sourceMessageId: args.sourceMessageId, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),\n        ...(repository.resolution === 'repository' ? { repository: repository.key, targetBranch: repository.targetBranch } : {}),\n    }) as {\n        cornerId?: string;\n        watch?: unknown;\n        warnings?: unknown;\n    };\n    return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),\n        ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}), status: 'starting' };\n})",
     "literals": [
       "\"room\"",
       "$local()",
@@ -9127,6 +9130,66 @@
       ".address",
       ".toLowerCase",
       ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.progress:wrapper:90837b3a0d7d3f6c",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.end(member, turn, false)",
+    "literals": [
+      "\", \"",
+      "\"hex\"",
+      "\"none\"",
+      "$local()",
+      "'2s'",
+      "'90 seconds'",
+      "'claimed'",
+      "'input'",
+      "'mcp_call'",
+      ".$local",
+      ".address",
+      ".agent_depth",
+      ".command",
+      ".db",
+      ".id",
+      ".join",
+      ".join()",
+      ".map",
+      ".map()",
+      ".min",
+      ".min()",
+      ".room_id",
+      ".root_command_id",
+      ".root_source_message_id",
+      ".rowCount",
+      ".rows",
+      ".toLowerCase",
+      ".toLowerCase()",
+      ".toString",
+      ".toString()",
+      ".transaction",
+      ".transaction()",
+      ".turn_request_id",
+      "FalseKeyword",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:1",
+      "FirstLiteralToken:3",
+      "FirstLiteralToken:32",
+      "NullKeyword",
+      "TrueKeyword",
+      "[\"mcp:\",\"\"]",
+      "[\"no order is waiting for your report; order addresses: \",\"; use a corner address to report to its commander\"]",
+      "binary:+",
+      "binary:=",
+      "binary:??",
+      "binary:||",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!",
+      "randomBytes()",
+      "randomUUID()"
     ],
     "occurrences": 1
   },

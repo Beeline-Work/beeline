@@ -1,0 +1,48 @@
+name: Play promote
+
+# Owner-dispatched: move the newest release on one Play track to another,
+# e.g. a stuck internal draft to production. Runs scripts/play-promote-track.sh.
+on:
+  workflow_dispatch:
+    inputs:
+      from_track:
+        description: Track holding the release to promote
+        type: choice
+        default: internal
+        options: [internal, alpha, beta]
+      to_track:
+        description: Destination track
+        type: choice
+        default: production
+        options: [production, beta]
+      release_status:
+        description: completed publishes once review passes; draft waits in Play Console
+        type: choice
+        default: completed
+        options: [completed, draft]
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Authenticate with Google Play
+        id: play-auth
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/play-token.mjs
+      - name: Promote
+        env:
+          ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline
+          FROM_TRACK: ${{ inputs.from_track }}
+          TO_TRACK: ${{ inputs.to_track }}
+          RELEASE_STATUS: ${{ inputs.release_status }}
+        run: bash scripts/play-promote-track.sh

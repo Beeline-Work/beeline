@@ -52,6 +52,23 @@ export async function readRouterAuthority(db: SqlDatabase, args: RouterSnapshotI
   if (!allowed.rowCount) throw new RouterProjectionUnavailable('authority');
   return certificate;
 }
+/** The logical resource and the exact denied authority domain are distinct.
+ * Workspace denial dominates Room denial, even for a Room snapshot. */
+export async function deniedRouterAuthorityScope(db: SqlDatabase, args: RouterSnapshotInput | ResolvedRouterSnapshotInput,
+  viewer:string):Promise<{scope:string;authorityScope:string}> {
+  const input=await resolveRouterInput(db,args);
+  const workspace=await db.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
+    AND room_id IS NULL AND removed_at IS NULL`,[input.workspaceId,viewer]);
+  if(!workspace.rowCount)return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
+  if(input.roomId)return {scope:input.roomId,authorityScope:`room:${input.roomId}`};
+  return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
+}
+async function currentCertificateScopes(db:SqlDatabase,expected:RouterAuthorityCertificate):Promise<RouterAuthorityCertificate>{
+  const rows=await db.query<{scope:string;epoch:string}>(`SELECT scope,epoch::text FROM router_authority WHERE scope=ANY($1::text[]) ORDER BY scope`,
+    [expected.scopes.map(s=>s.authorityScope)]);
+  if(rows.rows.length!==expected.scopes.length)throw new RouterProjectionUnavailable('authority');
+  return routerAuthority(rows.rows.map(row=>({authorityScope:row.scope,epoch:row.epoch})));
+}
 export async function readRouterCut(db: SqlDatabase, workspace: string): Promise<RouterCut> {
   const stream = `workspace:${workspace}`;
   const row = (await db.query<{ epoch: string; sequence: string }>(
@@ -176,7 +193,11 @@ export async function fenceRouterBatch(database: SqlDatabase, workspace: string,
       const input: ResolvedRouterSnapshotInput = {family: fact.payload.kind === 'authority' ? 'room-list' : fact.payload.family,
         workspaceId:workspace,
         ...(fact.authority.scopes.some(s => s.authorityScope === `room:${fact.payload.scope}`) ? {roomId:fact.payload.scope} : {})};
-      const current = fact.payload.kind === 'authority' ? await readRouterCertificate(db,input,viewer) : await readRouterAuthority(db,input,viewer);
+      const current = fact.payload.kind === 'authority' ? await currentCertificateScopes(db,fact.authority) : await readRouterAuthority(db,input,viewer);
+      if(fact.payload.kind==='authority') {
+        const target=fact.payload.authorityScope;
+        if(!fact.authority.scopes.some(s=>s.authorityScope===target))throw new RouterProjectionUnavailable('authority');
+      }
       if (current.digest !== fact.authority.digest)
         throw new RouterProjectionUnavailable('authority');
     }

@@ -31,7 +31,7 @@ export type RouterFact = { [K in RouterFamily]: {
   readonly payload: { readonly kind: 'scope-replace'; readonly family: K; readonly scope: string; readonly value: RouterValues[K] };
 } }[RouterFamily] | {
   readonly atomicGroup: string; readonly authority: RouterAuthorityCertificate;
-  readonly payload: { readonly kind: 'authority'; readonly scope: string; readonly allowed: false };
+  readonly payload: { readonly kind: 'authority'; readonly scope: string; readonly authorityScope: string; readonly allowed: false };
 };
 export type RouterPushFrame = {
   readonly kind: 'push-part'; readonly batchId: string; readonly from: RouterCut; readonly to: RouterCut;

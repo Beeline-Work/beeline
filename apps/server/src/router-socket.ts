@@ -6,7 +6,7 @@ import type { PhoneService } from './phone-service.js';
 import { routerSourcePlan } from './router-source-plan.js';
 import type { SqlDatabase } from './database.js';
 import { PhoneOperationError } from './phone-operations.js';
-import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, fenceRouterBatch, readRouterAuthority, readRouterCertificate, type ResolvedRouterSnapshotInput, routerAtomicGroup, fenceRouterEnqueue } from './router-projections.js';
+import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, fenceRouterBatch, readRouterAuthority, readRouterCertificate, deniedRouterAuthorityScope, type ResolvedRouterSnapshotInput, routerAtomicGroup, fenceRouterEnqueue } from './router-projections.js';
 
 /** An explicit rollout policy, independently gated on the committed LISTEN.
  * Defaults advertise no families until capture/fence/differential proofs pass. */
@@ -52,8 +52,9 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                 try { authority = await readRouterAuthority(db,input,viewer); }
                 catch (error) {
                   if (!(error instanceof RouterProjectionUnavailable) || error.reason !== 'authority') throw error;
+                  const denied=await deniedRouterAuthorityScope(db,input,viewer);
                   facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority:await readRouterCertificate(db,input,viewer),
-                    payload:{kind:'authority',scope,allowed:false}});
+                    payload:{kind:'authority',...denied,allowed:false}});
                   continue;
                 }
                 const value = await sources.phone.buildRouterValue(db,input,viewer);

@@ -17,7 +17,8 @@ awk -W version 2>&1 | grep -q mawk && awk_flags=(-W interactive)
 while true; do
   # Last timestamp already written, so a reconnect's replayed buffer is skipped
   # (lines in that same second too, or each reconnect would duplicate them).
-  last="$(tail -qn1 "$(ls -1 "$dir"/20*.log 2>/dev/null | tail -1)" 2>/dev/null | cut -d' ' -f1)"
+  days=("$dir"/20*.log)  # Day files sort by name, so the last is the newest.
+  last="$(tail -qn1 "${days[-1]}" 2>/dev/null | cut -d' ' -f1)"
   # Reconnect every window in case the stream hangs silently. flyctl can catch
   # SIGTERM and never exit (2026-10-31: wedged for two days), so -k kills it.
   timeout -k "$grace" "$window" "$flyctl" logs -a "$app" 2>>"$dir/collector.err" \

@@ -1,3 +1,4 @@
+import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
 import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, ownedTurnOperationSupported, registerOwnedEffectFence } from './turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
@@ -830,10 +831,16 @@ export class DaemonService {
         if (!ownedIntent && needsLifecycle)
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
+        if (name === 'postAgentTurnReceipt' && candidate.modelOwnerEnd !== undefined &&
+            (candidate.status !== 'failed' || candidate.heartbeat !== undefined)) throw new OwnedModelOwnerEndRefusal();
         if (name === 'postAgentTurnReceipt' && ['failed', 'complete'].includes(String(candidate.status))) {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
             turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
           ]);
+          // A causal model-owner end retains its durable uncertain command.
+          // Commit this transaction before any generic failed/requeue effects.
+          if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner))
+            return this.writeResult() as Output<Name>;
           if (candidate.reasonKind === 'update-interrupted') {
             // The helper keeps this receipt durably until it hears 200. If the
             // first 200 was lost, accept its replay after the command was

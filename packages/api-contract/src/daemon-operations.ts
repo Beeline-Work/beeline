@@ -1308,6 +1308,9 @@ export type RetractLiveOutputInput = TurnOutputAuthority &
     readonly kind: 'draft' | 'thought';
   };
 export type PostTurnReceiptInput = AgentRoomInput & {
+  /** Current owner ends model-dependent work without claiming provider failure
+   * or delivery. Exact model UUID only; server derives all outcome evidence. */
+  readonly modelOwnerEnd?: Readonly<{ requestId: string }>;
   readonly trace?: TurnReplay;
   readonly requestId: string;
   /**

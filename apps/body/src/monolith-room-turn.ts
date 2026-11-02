@@ -1,4 +1,5 @@
 import { CommandActivationContext } from './helper-activation-context.js';
+import { OwnedModelOutcomeUnknown, ownedModelPrompt, ownedModelEndReceipt } from './owned-model-turn.js';
 import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import { agentBehavior } from './agent-command.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
@@ -2031,7 +2032,7 @@ export class MonolithRoomTurnLoop {
                     trace.promptSent();
                     result = await this.turnUsage.measure(
                       { agentEnv: this.agentEnv, sessionId: this.sessionId! },
-                      () =>
+                      () => ownedModelPrompt(this.commandContext, () =>
                         this.client!.sessionPrompt(
                           this.sessionId!,
                           nextPrompt,
@@ -2045,12 +2046,13 @@ export class MonolithRoomTurnLoop {
                             trace.toolCalls(calls);
                             if (openedACorner(openCornerToolCall(calls))) liveCornerOpened = true;
                           },
-                        ),
+                        )),
                     );
                     this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result?.tokenUsage);
                   } catch (error) {
                     promptError = error;
                   }
+                  if (promptError instanceof OwnedModelOutcomeUnknown) throw promptError;
                   this.turnMetrics = await this.captureTurnMetrics();
                   await this.writeBackClaudeLogin();
                   if (result && ['no-reply', 'repeated-tool-call'].includes(result.stopReason)) break;
@@ -2343,6 +2345,12 @@ export class MonolithRoomTurnLoop {
         );
         void finishTrace('cancelled').catch(() => undefined);
         return;
+      }
+      if (error instanceof OwnedModelOutcomeUnknown) {
+        liveStream?.close(); await this.discardSession();
+        await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
+          roomId: this.options.roomId, requestId: item.id, generationId: this.commandContext.generationId }));
+        throw error;
       }
       if (error instanceof AcpTurnBackstopError) await this.discardSession();
       // A backstop after opening a corner settles the Room reply through

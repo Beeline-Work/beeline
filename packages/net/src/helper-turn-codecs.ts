@@ -31,11 +31,20 @@ const receiptFields = {
   trace: true, completionKind: true, heartbeat: true, reason: true,
   inputTokens: true, promptBytes: true, totalInputTokens: true, outputTokens: true,
   modelCalls: true, modelCallsWithoutUsage: true, toolCalls: true, reasonKind: true,
+  modelOwnerEnd: true,
 } as const satisfies Record<keyof DaemonOperationMap['postAgentTurnReceipt']['input'], true>;
+const receiptParams: typeof receipt.params = Object.freeze({ parse(value: unknown) {
+  const parsed = closed(receipt.params, receiptFields).parse(value);
+  const end = parsed.modelOwnerEnd;
+  if (end !== undefined && (parsed.status !== 'failed' || parsed.heartbeat !== undefined || !end || typeof end !== 'object' ||
+      Array.isArray(end) || Object.keys(end).join() !== 'requestId' || typeof end.requestId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(end.requestId))) throw new Error('Turn model owner end invalid');
+  return parsed;
+} });
 const codecs = Object.freeze({
   claimAgentCommand: Object.freeze({ ...claim, result: claimResult, params: closed(claim.params, claimFields) }),
   acknowledgeAgentCommand: Object.freeze({ ...acknowledge, params: closed(acknowledge.params, claimFields) }),
-  postAgentTurnReceipt: Object.freeze({ ...receipt, params: closed(receipt.params, receiptFields) }),
+  postAgentTurnReceipt: Object.freeze({ ...receipt, params: receiptParams }),
 });
 /** Only these existing turn controls, at the two owned machine adapters. */
 export function helperTurnCodecs<K extends keyof typeof codecs>(operation: K): typeof codecs[K] {

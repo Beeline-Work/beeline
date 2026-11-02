@@ -1,5 +1,6 @@
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import type { SqlDatabase } from './database.js';
+import { OWNED_MODEL_OWNER_END_SCHEMA } from './owned-model-parking.js';
 
 /** Independent rollout gate. Legacy rows and helpers retain their receipt adapter. */
 export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-rollout.js';
@@ -66,6 +67,7 @@ DROP TRIGGER IF EXISTS beeline_bind_command_generation ON agent_commands;
 CREATE TRIGGER beeline_bind_command_generation
   AFTER INSERT OR UPDATE OF generation_id,turn_owner_connection_id,turn_owner_epoch ON agent_commands
   FOR EACH ROW EXECUTE FUNCTION beeline_bind_command_generation();
+${OWNED_MODEL_OWNER_END_SCHEMA}
 -- Actual owned effects register one ephemeral row per transaction/source.
 -- The deferred trigger runs at COMMIT, then removes its own evidence. No
 -- heartbeat, reader, journal, sweeper or retained per-effect history uses it.
@@ -105,6 +107,9 @@ BEGIN
     WHERE connection.agent_id=NEW.agent_id AND connection.connection_id=NEW.connection_id
       AND connection.epoch=NEW.connection_epoch AND connection.released_at IS NULL
       AND server.renewed_at>clock_timestamp()-interval '90 seconds'
+      AND (beeline_command_generation_open(command.id,NEW.generation_id) OR EXISTS(
+        SELECT 1 FROM agent_command_owner_ends ended WHERE ended.command_id=command.id
+          AND ended.generation_id=NEW.generation_id AND ended.transaction_id=NEW.transaction_id))
       AND ((command.generation_id=NEW.generation_id AND command.turn_owner_connection_id=NEW.connection_id
         AND command.turn_owner_epoch=NEW.connection_epoch) OR (
           command.state='pending' AND command.generation_id IS NULL AND command.turn_owner_connection_id IS NULL
@@ -145,10 +150,12 @@ export function commandOwnerLiveSql(alias?: string, observedAt = 'now()'): strin
   // Keep the legacy branch local to the row; no connection lookup or SQL
   // function call is needed for a row that has never selected this protocol.
   return `(CASE WHEN ${p}turn_owner_connection_id IS NULL THEN ${p}lease_expires_at>${observedAt}
-    ELSE beeline_command_owner_live(${p}agent_id,${p}turn_owner_connection_id,${p}turn_owner_epoch,${p}lease_expires_at,${observedAt}) END)`;
+    ELSE beeline_command_generation_open(${p}id,${p}generation_id) AND
+      beeline_command_owner_live(${p}agent_id,${p}turn_owner_connection_id,${p}turn_owner_epoch,${p}lease_expires_at,${observedAt}) END)`;
 }
 export function commandOwnerExpiredSql(alias?: string, observedAt = 'now()'): string {
-  return `NOT (${commandOwnerLiveSql(alias, observedAt)})`;
+  const p = prefix(alias);
+  return `((${p}turn_owner_connection_id IS NULL OR beeline_command_generation_open(${p}id,${p}generation_id)) AND NOT (${commandOwnerLiveSql(alias, observedAt)}))`;
 }
 /** Legacy grace periods are retained. A lost registered owner needs no fake turn freshness. */
 export function commandOwnerExpiredBeforeSql(alias: string | undefined, before: string): string {
@@ -183,7 +190,7 @@ export function commandOwnerFenceCteSql(scope: string): string {
       AND connection.epoch=owned_command.turn_owner_epoch AND connection.released_at IS NULL
     JOIN live_server_instances server ON server.instance_id=connection.instance_id
       AND server.renewed_at>clock_timestamp()-interval '90 seconds'
-    WHERE ${scope} FOR SHARE OF connection
+    WHERE ${scope} AND beeline_command_generation_open(owned_command.id,owned_command.generation_id) FOR SHARE OF connection
   )`;
 }
 export function commandOwnerFenceMatchesSql(alias = 'command'): string {

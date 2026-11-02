@@ -29,6 +29,7 @@ import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.
 import { reassignFailedWorkflowRole } from './workflow-runs.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { reportAgentFeedback } from './feedback.js';
+import { guardOwnedModelSilence } from './owned-model-parking.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
 
@@ -130,6 +131,8 @@ export async function reclaimExpiredCommandLeases(
       const current = await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 AND state='claimed'
         AND generation_id IS NOT DISTINCT FROM $2 AND ${commandOwnerExpiredBeforeSql(undefined, 'now()')} FOR UPDATE`, [command.id, command.generation_id]);
       if (!current.rowCount) return false;
+      if (await guardOwnedModelSilence(db, { roomId: command.room_id, agentId: command.agent_id,
+        requestId: command.turn_request_id, generationId: command.generation_id })) return true;
       // The discovery cut may have raced a renewal or takeover. No role may
       // move until the exact expired generation has won this lock.
       await reassignFailedWorkflowRole(db, {
@@ -202,6 +205,7 @@ export async function noteFirstSilence(
     readonly stalled?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
+  if (await database.transaction(db => guardOwnedModelSilence(db, input))) return NO_RESTART;
   if (input.stalled && input.generationId != null &&
       await database.transaction(db => settleReportedTurn(db, input))) {
     live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn' });

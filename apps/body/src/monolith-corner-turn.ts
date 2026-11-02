@@ -1,4 +1,5 @@
 import { CommandActivationContext } from './helper-activation-context.js';
+import { OwnedModelOutcomeUnknown, ownedModelPrompt, ownedModelEndReceipt } from './owned-model-turn.js';
 import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import { agentBehavior } from './agent-command.js';
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
@@ -2300,7 +2301,7 @@ export class MonolithCornerTurnLoop {
                 try {
                   const result = await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
-                  () =>
+                  () => ownedModelPrompt(this.commandContext, () =>
                     promptClient.sessionPrompt(
                       this.sessionId!,
                       promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
@@ -2345,7 +2346,7 @@ export class MonolithCornerTurnLoop {
                           status: call.status === 'failed' ? 'failed' : 'completed',
                         }).catch((error) => console.error('[corner] background tool wake failed', redactTurnError(error)));
                       },
-                    ),
+                    )),
                   );
                   this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result.tokenUsage);
                   return result;
@@ -2678,6 +2679,12 @@ export class MonolithCornerTurnLoop {
         console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
         void finishTrace('cancelled').catch(() => undefined);
         return;
+      }
+      if (error instanceof OwnedModelOutcomeUnknown) {
+        await this.discardSession(false, true);
+        await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
+          roomId: cornerId, requestId, generationId: this.commandContext.generationId }));
+        throw error;
       }
       if (error instanceof AcpTurnBackstopError) await this.discardSession();
       const reason = distillTurnFailureReason(error);

@@ -250,6 +250,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     SELECT command.* FROM agent_commands command
     ${claimFence ? 'CROSS JOIN claim_fence' : ''}
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
+      AND beeline_command_claim_open(command.id)
       AND ${scopeSql}
       AND ${digestSnapshot ? '(command.wake_after IS NULL OR command.id=ANY($3::text[]))' : 'command.wake_after IS NULL'}
       AND command.action IN ('input','resume') AND NOT command.avatar_job
@@ -1515,6 +1516,7 @@ export async function claimAgentCommand(
            AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
        FROM agent_commands command WHERE command.id=$1 AND command.room_id=$2 AND command.agent_id=$3
          AND command.state='claimed' AND command.generation_id=$4
+         AND beeline_command_claim_open(command.id)
          AND command.turn_owner_connection_id=$5 AND command.turn_owner_epoch=$6
        FOR UPDATE OF command`,
       [commandId, roomId, agentId, generation, owner.connectionId, owner.epoch],
@@ -1536,6 +1538,7 @@ export async function claimAgentCommand(
            ), ${commandRecoveryCtes('$2', '$3', '$1', true, 'true', false, false, false)}, eligible AS MATERIALIZED (
              SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
              WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
+               beeline_command_claim_open(id) AND
                (state='pending' OR (state='claimed' AND ${commandOwnerExpiredSql(undefined)}) OR (state='claimed' AND generation_id=$4))
                AND (generation_id IS DISTINCT FROM $4 OR
                  (turn_owner_connection_id IS NOT DISTINCT FROM $6::text AND turn_owner_epoch IS NOT DISTINCT FROM $7::bigint))

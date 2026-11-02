@@ -78,6 +78,31 @@ describe('actual selected model credential claim socket', () => {
     expect(frames.filter(frame => frame.type !== 'turn-result').some(frame => JSON.stringify(frame).includes('bfmc_'))).toBe(false);
   });
 
+  it.each(['unknown','succeeded'] as const)('acknowledges exact owner end over the socket without changing the %s provider outcome', async outcome => {
+    await register(); const claimed=await claim();
+    const actor=await f.credentials.authenticate(f.db,claimed.result!.modelCredential!.token);
+    const attempts=new OwnedModelAttempts(f.db,f.credentials);
+    const modelRequestId='11111111-1111-4111-8111-111111111111';
+    await attempts.reserve(actor,modelRequestId,{step:'synthetic terminal request'},async()=>({
+      reservation:{day:'2026-11-02',reserved:16,maxOutput:8,reservedUsd:0.01,credit:0},
+      payload:{model:actor.binding.model,max_tokens:8,messages:[]},
+    }));
+    if(outcome==='succeeded')await attempts.settleUsage(actor,modelRequestId,{tokens:2,usd:0},'succeeded',async()=>{});
+    send({type:'turn-operation',operation:'postAgentTurnReceipt',requestId:'owner-end',input:{
+      roomId:MODEL_ROOM,agentId:MODEL_AGENT,requestId:'model-socket-request',generationId:'model-socket-generation',
+      status:'failed',modelOwnerEnd:{requestId:modelRequestId},
+    }});
+    const ended=await next(frame=>frame.type==='turn-result'&&frame.requestId==='owner-end');
+    expect(ended.error).toBeUndefined();expect(ended.result).toBeDefined();
+    expect((await f.db.query('SELECT model_request_id FROM agent_command_owner_ends WHERE command_id=$1',[commandId])).rows)
+      .toEqual([{model_request_id:modelRequestId}]);
+    expect((await f.db.query('SELECT state FROM owned_model_attempts WHERE command_id=$1',[commandId])).rows).toEqual([{state:outcome}]);
+    expect((await f.db.query('SELECT state,generation_id FROM agent_commands WHERE id=$1',[commandId])).rows)
+      .toEqual([{state:'claimed',generation_id:'model-socket-generation'}]);
+    expect((await f.db.query("SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND status='working'",[MODEL_ROOM,MODEL_AGENT])).rowCount).toBe(0);
+    const replay=await claim('claim-after-owner-end');expect(replay.error).toBe('turn_operation_unconfirmed');
+  });
+
   it('keeps helpers without installed model support and a server without signer configuration on the legacy claim wire', async () => {
     const old = await register(false); expect(old.capabilities).not.toHaveProperty('ownedModelV1'); expect(old.capabilities).not.toHaveProperty('turnOwnershipV1');
     expect(old.capabilities?.intakeHeartbeat).toBe(true);

@@ -1,0 +1,35 @@
+{
+  "round": 3,
+  "widths": [
+    1440,
+    390
+  ],
+  "option1Unchanged": true,
+  "realComponents": [
+    "LedgerEntry",
+    "TranscriptCard",
+    "RepositoryLifecycleRow",
+    "IdentityMark",
+    "ChannelHeaderTitle",
+    "ConversationComposer"
+  ],
+  "capturedStates": 14,
+  "animationPhases": 13,
+  "sequence": "sequence.html",
+  "spokenDialogue": "Six verbatim lines from round 2 script-data.js",
+  "cards": [
+    "Grok sample feedback",
+    "Codex and Claude corner records",
+    "Hermes illustrative report"
+  ],
+  "activeAvatarAndLineSetsMatch": true,
+  "horizontalOverflow": false,
+  "unwantedDialogs": 0,
+  "publicPhoneConsoleErrors": 0,
+  "publicAutoplayAdvanced": true,
+  "publicResourceRequests": "Only static preview resources; no backend or polling",
+  "absoluteTopLinks": 39,
+  "nativeTapAt390": "Verified navigation from Lavish to the working page",
+  "noPR": true,
+  "session": "https://rides-analyses-ecommerce-gospel.trycloudflare.com/session/617a34f50233f5cc"
+}

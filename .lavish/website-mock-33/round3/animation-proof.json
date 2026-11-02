@@ -1,0 +1,382 @@
+[
+  {
+    "phase": 0,
+    "playing": false,
+    "phone": false,
+    "label": "Alan starts the conversation",
+    "active": [
+      "alan"
+    ],
+    "shown": -1,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [
+      "alan"
+    ],
+    "litLines": 1,
+    "feedback": false,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 2,
+    "playing": false,
+    "phone": false,
+    "label": "grok bot is working",
+    "active": [
+      "grok"
+    ],
+    "shown": 0,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [
+      "grok"
+    ],
+    "litLines": 1,
+    "feedback": false,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 3,
+    "playing": false,
+    "phone": false,
+    "label": "Feedback arrives with a list",
+    "active": [],
+    "shown": 1,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [],
+    "litLines": 0,
+    "feedback": true,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 6,
+    "playing": false,
+    "phone": false,
+    "label": "Alan makes the call",
+    "active": [
+      "alan"
+    ],
+    "shown": 2,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [
+      "alan"
+    ],
+    "litLines": 1,
+    "feedback": true,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 7,
+    "playing": false,
+    "phone": false,
+    "label": "Two corners open",
+    "active": [
+      "codex",
+      "claude"
+    ],
+    "shown": 3,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [
+      "claude",
+      "codex"
+    ],
+    "litLines": 2,
+    "feedback": true,
+    "corners": true,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 10,
+    "playing": false,
+    "phone": false,
+    "label": "Hermes gets the next task",
+    "active": [
+      "hermes"
+    ],
+    "shown": 5,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [
+      "hermes"
+    ],
+    "litLines": 1,
+    "feedback": true,
+    "corners": true,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 12,
+    "playing": false,
+    "phone": false,
+    "label": "A report appears in the Room",
+    "active": [],
+    "shown": 5,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 1440,
+    "overflow": false,
+    "litAvatars": [],
+    "litLines": 0,
+    "feedback": true,
+    "corners": true,
+    "report": true,
+    "dialogs": 0
+  },
+  {
+    "phase": 0,
+    "playing": false,
+    "phone": true,
+    "label": "Alan starts the conversation",
+    "active": [
+      "alan"
+    ],
+    "shown": -1,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [
+      "alan"
+    ],
+    "litLines": 1,
+    "feedback": false,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 2,
+    "playing": false,
+    "phone": true,
+    "label": "grok bot is working",
+    "active": [
+      "grok"
+    ],
+    "shown": 0,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [
+      "grok"
+    ],
+    "litLines": 1,
+    "feedback": false,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 3,
+    "playing": false,
+    "phone": true,
+    "label": "Feedback arrives with a list",
+    "active": [],
+    "shown": 1,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [],
+    "litLines": 0,
+    "feedback": true,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 6,
+    "playing": false,
+    "phone": true,
+    "label": "Alan makes the call",
+    "active": [
+      "alan"
+    ],
+    "shown": 2,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [
+      "alan"
+    ],
+    "litLines": 1,
+    "feedback": true,
+    "corners": false,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 7,
+    "playing": false,
+    "phone": true,
+    "label": "Two corners open",
+    "active": [
+      "codex",
+      "claude"
+    ],
+    "shown": 3,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [
+      "claude",
+      "codex"
+    ],
+    "litLines": 2,
+    "feedback": true,
+    "corners": true,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 10,
+    "playing": false,
+    "phone": true,
+    "label": "Hermes gets the next task",
+    "active": [
+      "hermes"
+    ],
+    "shown": 5,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [
+      "hermes"
+    ],
+    "litLines": 1,
+    "feedback": true,
+    "corners": true,
+    "report": false,
+    "dialogs": 0
+  },
+  {
+    "phase": 12,
+    "playing": false,
+    "phone": true,
+    "label": "A report appears in the Room",
+    "active": [],
+    "shown": 5,
+    "realComponents": [
+      "LedgerEntry",
+      "TranscriptCard",
+      "RepositoryLifecycleRow",
+      "IdentityMark",
+      "ChannelHeaderTitle",
+      "ConversationComposer"
+    ],
+    "width": 390,
+    "overflow": false,
+    "litAvatars": [],
+    "litLines": 0,
+    "feedback": true,
+    "corners": true,
+    "report": true,
+    "dialogs": 0
+  }
+]

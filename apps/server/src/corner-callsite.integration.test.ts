@@ -361,7 +361,6 @@ it.each(['dm', 'room', 'parent'] as const)('Reproduction CORNER-ROOM-2: keeps th
     VALUES(101,77,'owner/widgets','main') ON CONFLICT DO NOTHING`);
   await db.query(`UPDATE rooms SET github_installation_id=77,repository_remote='https://github.com/owner/widgets.git' WHERE id=$1`, [R]);
   const branch = `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0,12)}`;
-  await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [opened.cornerId, branch]);
   const app = {
     installationToken: vi.fn(async () => ({ token: 'fixture-token' })),
     readCommitCheckRollup: vi.fn(async () => ({ state: 'passed', total: 0, failing: [], checks: [] })),
@@ -455,7 +454,6 @@ it.each(['dm','room'] as const)('Reproduction CORNER-ROOM-2: archived %s corner 
     VALUES(77,$1,'42','owner','User','selected','active') ON CONFLICT DO NOTHING`, [H]);
   await db.query(`UPDATE rooms SET github_installation_id=77,repository_remote='https://github.com/owner/widgets.git' WHERE id=$1`, [R]);
   const branch = `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0,12)}`;
-  await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [opened.cornerId, branch]);
   const operations = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 'fixture-secret');
   for (const action of ['opened', 'closed']) {
     const payload = { action, installation: { id: 77 }, repository: { full_name: 'owner/widgets' },

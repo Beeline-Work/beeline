@@ -1,4 +1,5 @@
 import { cornerObjectiveSql } from './corner-objective.js';
+import { deleteCornerBranchBestEffort } from './corner-branch-cleanup.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
@@ -6267,7 +6268,7 @@ export class PhoneService {
     if (locked === undefined)
       await closeCornerPullRequestBestEffort(this.database, roomId,
         this.github ? id => this.github!.closeCornerPullRequest(id) : undefined);
-    await this.database.transaction(async database => {
+    const archived = await this.database.transaction(async database => {
       await authorize(database);
       if (locked !== undefined) {
         await database.query(
@@ -6275,9 +6276,10 @@ export class PhoneService {
           [roomId, locked],
         );
       } else {
-        await closeCornerState(database, roomId);
+        return (await closeCornerState(database, roomId)).archived;
       }
     });
+    if (archived) await deleteCornerBranchBestEffort(roomId, this.github ? id => this.github!.deleteCornerBranch(id) : undefined);
   }
   /** Decline a connector or settle a target-branch proposal under its existing authority. */
   private async decideApprovalCard(input: Input<'decideApprovalCard'>, viewerId: string) {
@@ -8402,7 +8404,7 @@ export class PhoneService {
         [closingCorners.rows.map((corner) => corner.id)],
       );
       await database.query(
-        `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
+        `UPDATE corner_facts SET owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
          WHERE owner_agent_id=ANY($1)`,
         [

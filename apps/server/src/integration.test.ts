@@ -6256,7 +6256,7 @@ describe('monolith integration', () => {
           close_requested: boolean;
           lifecycle: Record<string, unknown>;
         }>(
-          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested,fact.lifecycle
+          `SELECT room.archived_at IS NOT NULL archived,room.archived_at IS NOT NULL close_requested,fact.lifecycle
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
           [cornerId],
         )
@@ -6338,7 +6338,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ archived: boolean; close_requested: boolean }>(
-          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested
+          `SELECT room.archived_at IS NOT NULL archived,room.archived_at IS NOT NULL close_requested
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
           [cornerId],
         )
@@ -6372,7 +6372,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ close_requested: boolean }>(
-          `SELECT close_requested FROM corner_facts WHERE corner_id=$1`,
+          `SELECT archived_at IS NOT NULL close_requested FROM rooms WHERE id=$1`,
           [cornerId],
         )
       ).rows[0]?.close_requested,
@@ -6388,7 +6388,7 @@ describe('monolith integration', () => {
           close_requested: boolean;
           lifecycle: Record<string, unknown>;
         }>(
-          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested,fact.lifecycle
+          `SELECT room.archived_at IS NOT NULL archived,room.archived_at IS NOT NULL close_requested,fact.lifecycle
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
           [cornerId],
         )
@@ -9510,7 +9510,7 @@ describe('monolith integration', () => {
     expect(opened.status).toBe(200);
     const { cornerId } = await opened.json() as { cornerId: string };
     const head = 'a'.repeat(40);
-    await database.query(`UPDATE corner_facts SET workflow_state='review',feature_branch='feature/f1-recovery',merge_attempt_head=$2,lifecycle=jsonb_build_object(
+    await database.query(`UPDATE corner_facts SET workflow_state='review',merge_attempt_head=$2,lifecycle=jsonb_build_object(
       'checks','passing','pr',jsonb_build_object('number',7,'headSha',$2::text),
       'mergeRecovery',jsonb_build_object('attempts',1,'lastAttemptAt',extract(epoch FROM clock_timestamp()),
         'nextAttemptAt',extract(epoch FROM clock_timestamp())+3600)) WHERE corner_id=$1`, [cornerId, head]);

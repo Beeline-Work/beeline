@@ -3,7 +3,8 @@ import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
-import { enqueueCornerBranchDeletion, retryCornerBranchDeletions } from './corner-branch-cleanup.js';
+import { deleteArchivedCornerBranch } from './corner-branch-cleanup.js';
+import { cornerFeatureBranch, cornerFeatureBranchSql } from './corner-branch.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import {
   GITHUB_IDENTITY_AUDIENCE,
@@ -997,27 +998,26 @@ export class GitHubOperations {
 
   /** Repair the opened-webhook race before a worker's done report transaction. */
   async resolveUnregisteredCornerPullRequest(cornerId: string, agentId: string): Promise<void> {
-    const corner = (await this.database.query<{ parent_id: string; feature_branch: string }>(
-      `SELECT room.parent_id,fact.feature_branch FROM rooms room
+    const corner = (await this.database.query<{ parent_id: string; branch: string }>(
+      `SELECT room.parent_id,${cornerFeatureBranchSql('room')} branch FROM rooms room
        JOIN corner_facts fact ON fact.corner_id=room.id
        WHERE room.id=$1 AND room.archived_at IS NULL
          AND ${cornerImplementerSql('fact', 'room')}=$2
-         AND fact.lifecycle->'pr'->>'number' IS NULL
-         AND fact.feature_branch IS NOT NULL`, [cornerId, agentId],
+         AND fact.lifecycle->'pr'->>'number' IS NULL`, [cornerId, agentId],
     )).rows[0];
     if (!corner || (await currentCornerBrief(this.database, cornerId))?.repositoryWork === false) return;
     const target = await this.roomWorkflowTarget(corner.parent_id);
-    const numbers = await this.app.openPullRequestsForBranch(target.token, target.repository, corner.feature_branch);
+    const numbers = await this.app.openPullRequestsForBranch(target.token, target.repository, corner.branch);
     if (numbers.length !== 1) return;
     const pr = await this.app.readPullRequest(target.token, target.repository, numbers[0]!);
-    if (pr.state !== 'open' || pr.merged || pr.headRef !== corner.feature_branch || !pr.baseRef) return;
+    if (pr.state !== 'open' || pr.merged || pr.headRef !== corner.branch || !pr.baseRef) return;
     await this.database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
       // A webhook or close may have won while the provider read was in flight.
       await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb,updated_at=now()
         FROM rooms room WHERE fact.corner_id=$1 AND room.id=fact.corner_id AND room.archived_at IS NULL
-          AND fact.feature_branch=$2 AND fact.lifecycle->'pr'->>'number' IS NULL`,
-      [cornerId, corner.feature_branch, JSON.stringify({ lifecycle: 'in-review', branch: corner.feature_branch,
+          AND ${cornerFeatureBranchSql('room')}=$2 AND fact.lifecycle->'pr'->>'number' IS NULL`,
+      [cornerId, corner.branch, JSON.stringify({ lifecycle: 'in-review',
         pr: { number: pr.number, url: pr.url, title: pr.title ?? `Pull request #${pr.number}`,
           headSha: pr.headSha, targetBranch: pr.baseRef, mergeability: 'unknown',
           ...(pr.baseSha ? { baseSha: pr.baseSha } : {}) } })]);
@@ -1425,10 +1425,10 @@ export class GitHubOperations {
     const target = (
       await this.database.query<CornerWebhookTarget & {
         number: number;
-        feature_branch: string | null;
+        branch: string;
         full_name: string;
       }>(
-        `SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.feature_branch,
+        `SELECT (fact.lifecycle->'pr'->>'number')::int number,${cornerFeatureBranchSql('corner')} branch,
            repository.repository_id,repository.installation_id,repository.full_name,
            corner.id corner_id,parent.id parent_id,corner.name corner_name,
            COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary
@@ -1493,7 +1493,7 @@ export class GitHubOperations {
       } catch (readError) {
         console.error(`[server] merge outcome read failed for ${cornerId}:`, readError);
       }
-      if (pr?.merged && pr.headSha === status.headSha && pr.headRef === target.feature_branch) {
+      if (pr?.merged && pr.headSha === status.headSha && pr.headRef === target.branch) {
         await this.recordConfirmedCornerMerge(target, target.full_name, target.number, pr);
         return { status: 'started' };
       }
@@ -1507,7 +1507,7 @@ export class GitHubOperations {
         kind: 'merge-refused',
         headSha: status.headSha,
         confirmedUnmerged: confirmedUnqueued && pr?.merged === false
-          && pr.headSha === status.headSha && pr.headRef === target.feature_branch,
+          && pr.headSha === status.headSha && pr.headRef === target.branch,
         reason,
       });
       this.onRoomChanged?.(cornerId);
@@ -1520,7 +1520,7 @@ export class GitHubOperations {
         repositoryIds: [Number(target.repository_id)],
       });
       const pr = await this.app.readPullRequest(token.token, target.full_name, target.number);
-      if (pr.merged && pr.headSha === status.headSha && pr.headRef === target.feature_branch)
+      if (pr.merged && pr.headSha === status.headSha && pr.headRef === target.branch)
         await this.recordConfirmedCornerMerge(target, target.full_name, target.number, pr);
     } catch (error) {
       console.error(`[server] merged corner confirmation deferred for ${cornerId}:`, error);
@@ -1757,108 +1757,6 @@ export class GitHubOperations {
     }
   }
 
-  /** One startup pass for repository corners whose first GitHub events were missed. */
-  async repairPromotedCornerBranches(): Promise<void> {
-    const candidates = await this.database.query<{
-      corner_id: string;
-      repository: string;
-      repository_id: string;
-      installation_id: string;
-      branch: string;
-    }>(
-      `SELECT corner.id corner_id,github.full_name repository,
-              github.repository_id,github.installation_id,
-              'feature/corner-' || left(replace(corner.id::text,'-',''),12) branch
-       FROM rooms corner
-       JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_facts fact ON fact.corner_id=corner.id
-       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-           COALESCE(parent.repository_remote,parent.repository_key,''),
-           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND fact.lifecycle->'pr' IS NULL
-         AND (fact.lifecycle->>'branch' IS NULL OR fact.lifecycle->>'branch'=
-           'feature/corner-' || left(replace(corner.id::text,'-',''),12))
-         AND fact.feature_branch IS DISTINCT FROM
-           'feature/corner-' || left(replace(corner.id::text,'-',''),12)`,
-    );
-    for (const candidate of candidates.rows) {
-      try {
-        const collisions = await this.database.query(
-          `SELECT 1 FROM rooms corner
-           JOIN rooms parent ON parent.id=corner.parent_id
-           WHERE corner.id<>$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
-             AND parent.github_installation_id=$2
-             AND left(replace(corner.id::text,'-',''),12)=$3
-             AND lower(regexp_replace(regexp_replace(
-               COALESCE(parent.repository_remote,parent.repository_key,''),
-               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($4)
-           LIMIT 1`,
-          [candidate.corner_id, candidate.installation_id, candidate.branch.slice(-12), candidate.repository],
-        );
-        if (collisions.rowCount) continue;
-        const duplicate = await this.database.query(
-          `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-           JOIN rooms parent ON parent.id=corner.parent_id
-           WHERE fact.feature_branch=$1 AND fact.corner_id<>$2
-             AND parent.github_installation_id=$3
-             AND lower(regexp_replace(regexp_replace(
-               COALESCE(parent.repository_remote,parent.repository_key,''),
-               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($4)`,
-          [candidate.branch, candidate.corner_id, candidate.installation_id, candidate.repository],
-        );
-        if (duplicate.rowCount) continue;
-        const token = await this.app.installationToken(Number(candidate.installation_id), {
-          repositoryIds: [Number(candidate.repository_id)],
-        });
-        const headSha = await this.app.readBranchHead(token.token, candidate.repository, candidate.branch);
-        const numbers = await this.app.openPullRequestsForBranch(
-          token.token, candidate.repository, candidate.branch,
-        );
-        if (numbers.length > 1) continue;
-        const pr = numbers.length === 1
-          ? await this.app.readPullRequest(token.token, candidate.repository, numbers[0]!)
-          : undefined;
-        if (pr && (pr.headRef !== candidate.branch || pr.headSha !== headSha || !pr.baseRef))
-          continue;
-        const claimed = await this.database.query(
-          `UPDATE corner_facts SET feature_branch=$2,
-             lifecycle=jsonb_set(COALESCE(lifecycle,'{}'::jsonb),'{branch}',to_jsonb($2::text),true),
-             updated_at=now()
-           WHERE corner_id=$1 AND lifecycle->'pr' IS NULL
-             AND (lifecycle->>'branch' IS NULL OR lifecycle->>'branch'=$2)
-           RETURNING corner_id`,
-          [candidate.corner_id, candidate.branch],
-        );
-        if (!claimed.rowCount) continue;
-        if (pr) {
-          await this.processWebhook('pull_request', {
-            action: 'opened', installation: { id: Number(candidate.installation_id) },
-            repository: { full_name: candidate.repository },
-            pull_request: {
-              number: pr.number, html_url: pr.url, title: pr.title ?? 'Pull request',
-              head: { ref: pr.headRef, sha: pr.headSha },
-              base: { ref: pr.baseRef, sha: pr.baseSha },
-              mergeable_state: pr.mergeability,
-            },
-          });
-        }
-        await this.processWebhook('check_run', {
-          action: 'in_progress', installation: { id: Number(candidate.installation_id) },
-          repository: { full_name: candidate.repository },
-          check_run: {
-            name: 'GitHub checks', status: 'in_progress', head_sha: headSha,
-            check_suite: { head_branch: candidate.branch, head_sha: headSha },
-          },
-        });
-      } catch (error) {
-        if (error instanceof GitHubHttpError && error.status === 404) continue;
-        console.error(`[github] repository corner ${candidate.corner_id} repair failed:`, error);
-      }
-    }
-  }
-
   /**
    * Retry GitHub's asynchronous mergeability calculation for open corner PRs,
    * and re-read a stored 'dirty' PR so a conflict that GitHub has since
@@ -2039,14 +1937,14 @@ export class GitHubOperations {
         const target = (await this.database.query<CornerWebhookTarget & { repository: string; branch: string }>(
           `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
              COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
-             github.repository_id,github.installation_id,github.full_name repository,fact.feature_branch branch
+             github.repository_id,github.installation_id,github.full_name repository,${cornerFeatureBranchSql('corner')} branch
            FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
            JOIN corner_facts fact ON fact.corner_id=corner.id
            JOIN github_repositories github ON github.installation_id=parent.github_installation_id
              AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
                COALESCE(parent.repository_remote,parent.repository_key,''),
                '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-           WHERE corner.id=$1 AND fact.feature_branch IS NOT NULL`, [claim.corner_id],
+           WHERE corner.id=$1`, [claim.corner_id],
         )).rows[0];
         if (!target) throw new Error(`Repository target unavailable for PR #${claim.number}`);
         const token = await this.app.installationToken(Number(target.installation_id), {
@@ -2123,7 +2021,7 @@ export class GitHubOperations {
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
               COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,
               ${cornerObjectiveSql('corner')} summary,github.repository_id,github.installation_id,
-              github.full_name repository,fact.feature_branch branch,
+              github.full_name repository,${cornerFeatureBranchSql('corner')} branch,
               (fact.lifecycle->'pr'->>'number')::integer number,
               fact.lifecycle->'pr'->>'title' title,
               fact.lifecycle->'pr'->>'targetBranch' target_branch
@@ -2136,7 +2034,6 @@ export class GitHubOperations {
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) IS NOT NULL
-         AND fact.feature_branch IS NOT NULL
          AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
          AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
     );
@@ -2300,9 +2197,14 @@ export class GitHubOperations {
          SELECT corner.id corner_id FROM rooms corner
          JOIN corner_facts fact ON fact.corner_id=corner.id
          WHERE corner.parent_id=room.id AND $3::text IS NOT NULL
-           AND (fact.lifecycle->'pr'->>'url'=$3 OR ($4::text IS NOT NULL AND
-             (fact.feature_branch=$4 OR ($5::text ~ '^feature/corner-[0-9a-f]{12}$'
-               AND left(replace(corner.id::text,'-',''),12)=right($5,12)))))
+           AND $4::text IS NOT NULL AND ${cornerFeatureBranchSql('corner')}=$4
+           AND NOT EXISTS (
+               SELECT 1 FROM rooms other JOIN rooms other_parent ON other_parent.id=other.parent_id
+               WHERE other.id<>corner.id AND ${cornerFeatureBranchSql('other')}=$4
+                 AND other_parent.github_installation_id=$1
+                 AND lower(regexp_replace(regexp_replace(
+                   COALESCE(other_parent.repository_remote,other_parent.repository_key,''),
+                   '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2))
          ORDER BY corner.created_at,corner.id LIMIT 1
        ) destination ON true
        LEFT JOIN LATERAL(
@@ -2323,7 +2225,7 @@ export class GitHubOperations {
            COALESCE(room.repository_remote,room.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)`,
       [installationId, repository, event === 'pull_request' ? url : null,
-        fallbackBranch, fallbackBranch],
+        fallbackBranch],
     );
     for (const room of rooms.rows) {
       const note = await systemLine(database, {
@@ -2353,15 +2255,12 @@ export class GitHubOperations {
       ? null
       : /^feature\/corner-([0-9a-f]{12})$/.exec(branch)?.[1] ?? null;
     const matches = await this.database.query<CornerWebhookTarget & {
-      feature_branch: string | null;
-      lifecycle_branch: string | null;
       has_pr: boolean;
       pr_number: string | null;
     }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
          COALESCE(fact.owner_agent_id,first_agent.author_id,corner.created_by,parent.created_by) author_id,
          ${cornerObjectiveSql('corner')} summary,
-         fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
          fact.lifecycle->'pr' IS NOT NULL has_pr,
          fact.lifecycle->'pr'->>'number' pr_number,
          github.repository_id,github.installation_id
@@ -2381,45 +2280,21 @@ export class GitHubOperations {
          ORDER BY message.created_at,message.id LIMIT 1
        )first_agent ON fact.owner_agent_id IS NULL
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND (fact.feature_branch=$3 OR ($4::text IS NOT NULL
-           AND left(replace(corner.id::text,'-',''),12)=$4))
+         AND $3::text IS NOT NULL AND ${cornerFeatureBranchSql('corner')}=$3
+         AND NOT EXISTS (
+           SELECT 1 FROM rooms other JOIN rooms other_parent ON other_parent.id=other.parent_id
+           WHERE other.id<>corner.id AND ${cornerFeatureBranchSql('other')}=$3
+             AND other_parent.github_installation_id=$1
+             AND lower(regexp_replace(regexp_replace(
+               COALESCE(other_parent.repository_remote,other_parent.repository_key,''),
+               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2))
          AND parent.github_installation_id=$1
          AND lower(regexp_replace(regexp_replace(
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)`,
-      [installationId, repository, branch, cornerPrefix],
+      [installationId, repository, cornerPrefix ? branch : null],
     );
-    const exact = matches.rows.filter((target) => target.feature_branch === branch);
-    let targets = exact;
-    if (!exact.length && cornerPrefix) {
-      const candidates = matches.rows.filter((target) =>
-        !target.has_pr && (!target.lifecycle_branch || target.lifecycle_branch === branch),
-      );
-      // A prefix is only a recovery hint. It must identify one corner in this
-      // installation and repository, and never displace another PR association.
-      if (matches.rows.length === 1 && candidates.length === 1) {
-        const candidate = candidates[0]!;
-        const assignedElsewhere = await database.query(
-          `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-           JOIN rooms parent ON parent.id=corner.parent_id
-           WHERE fact.feature_branch=$1 AND fact.corner_id<>$2
-             AND parent.github_installation_id=$3
-             AND lower(regexp_replace(regexp_replace(
-               COALESCE(parent.repository_remote,parent.repository_key,''),
-               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($4)
-           LIMIT 1`,
-          [branch, candidate.corner_id, installationId, repository],
-        );
-        if (!assignedElsewhere.rowCount) {
-          await database.query(
-            `UPDATE corner_facts SET feature_branch=$2,updated_at=now()
-             WHERE corner_id=$1 AND feature_branch IS DISTINCT FROM $2`,
-            [candidate.corner_id, branch],
-          );
-          targets = [candidate];
-        }
-      }
-    }
+    const targets = matches.rows;
     const actorLogin = text(record(body.sender)?.login);
     const actor = (login?: string) =>
       login ? { kind: 'github' as const, name: login } : GITHUB_SUBJECT;
@@ -2500,7 +2375,6 @@ export class GitHubOperations {
               target.corner_id,
               {
                 lifecycle: 'in-review',
-                branch,
                 pr: {
                   number,
                   url,
@@ -2573,7 +2447,6 @@ export class GitHubOperations {
           await this.updateLifecycle(
             target.corner_id,
             {
-              branch,
               checks: 'unknown',
               checksSummary: {
                 status: 'unknown',
@@ -3026,7 +2899,7 @@ export class GitHubOperations {
     return (
       (
         await database.query<{ lifecycle: CornerLifecycleView }>(
-          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          `SELECT lifecycle-'branch' lifecycle FROM corner_facts WHERE corner_id=$1`,
           [cornerId],
         )
       ).rows[0]?.lifecycle ?? { lifecycle: 'unknown', checks: 'unknown' }
@@ -3039,7 +2912,7 @@ export class GitHubOperations {
     database: SqlDatabase = this.database,
   ) {
     const previous = await this.lifecycle(cornerId, database);
-    const lifecycle = { ...previous, ...patch };
+    const { branch: _branch, ...lifecycle } = { ...previous, ...patch };
     await database.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb,
        updated_at=now() WHERE corner_id=$1`,
@@ -3110,20 +2983,22 @@ export class GitHubOperations {
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
+    let archived = false;
     await retryOnDeadlock(() => database.transaction(async (database) => {
       updated = false;
+      archived = false;
       await lockCornerLifecycle(database, target.corner_id);
       if (unfinishedClaimHead) {
         const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
         if (claim?.head_sha !== unfinishedClaimHead || claim.number !== expectedPrNumber) return;
       }
       const current = (
-        await database.query<{ lifecycle: CornerLifecycleView; feature_branch: string | null; locked: boolean }>(
-          `SELECT lifecycle,feature_branch,locked FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+        await database.query<{ lifecycle: CornerLifecycleView; locked: boolean }>(
+          `SELECT lifecycle,locked FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
           [target.corner_id],
         )
       ).rows[0];
-      if (unfinishedClaimHead && current?.feature_branch !== pullRequest.branch) return;
+      if (unfinishedClaimHead && cornerFeatureBranch(target.corner_id) !== pullRequest.branch) return;
       const currentLifecycle = current?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
       // The branch lookup runs outside this transaction, so a second pull
@@ -3162,14 +3037,15 @@ export class GitHubOperations {
           [target.corner_id],
         );
         if (!changed.rowCount) return;
+        archived = true;
       }
       updated = true;
       if (!locked) await abandonCornerWorkflowRuns(database, target.corner_id);
       if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
-        `UPDATE corner_facts SET close_requested=$3,merge_attempt_head=NULL,
+        `UPDATE corner_facts SET merge_attempt_head=NULL,
            lifecycle=((lifecycle-'mergeRecovery'-'mergeQueue') -
-             CASE WHEN $4 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb,
+             CASE WHEN $3 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb,
            updated_at=now() WHERE corner_id=$1`,
         [
           target.corner_id,
@@ -3190,7 +3066,6 @@ export class GitHubOperations {
                 }
               : {}),
           }),
-          !locked,
           locked,
         ],
       );
@@ -3219,7 +3094,6 @@ export class GitHubOperations {
           ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
         },
       });
-      if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
       await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
@@ -3236,14 +3110,16 @@ export class GitHubOperations {
     if (!updated) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);
-    await this.retryBranchDeletions(target.corner_id);
+    if (archived) await this.deleteCornerBranch(target.corner_id);
   }
 
-  async retryBranchDeletions(cornerId?: string) {
-    if (!cornerId) {
-      await retryCornerPullRequestClosures(this.database, id => this.closeCornerPullRequest(id));
-    }
-    await retryCornerBranchDeletions(this.database, this.app, cornerId);
+  /** One post-commit attempt; no persistent branch cleanup queue or retry. */
+  async deleteCornerBranch(cornerId: string) {
+    return deleteArchivedCornerBranch(this.database, this.app, cornerId);
+  }
+
+  async retryPullRequestClosures() {
+    await retryCornerPullRequestClosures(this.database, id => this.closeCornerPullRequest(id));
   }
 
   private async syncInstallation(

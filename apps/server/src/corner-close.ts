@@ -1,4 +1,3 @@
-import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
@@ -101,13 +100,12 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   if (!corner) throw new Error('corner not found');
   await cancelCornerAgentCommands(database, cornerId);
   // Match command output: command locks precede the room's archival write lock.
-  await database.query(
-    `UPDATE rooms SET archived_at=COALESCE(archived_at,now()),updated_at=now() WHERE id=$1`,
+  const changed = await database.query(
+    `UPDATE rooms SET archived_at=now(),updated_at=now() WHERE id=$1 AND archived_at IS NULL`,
     [cornerId],
   );
   await database.query(
-    `UPDATE corner_facts SET close_requested=true,
-       lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb,
+    `UPDATE corner_facts SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb,
        updated_at=now() WHERE corner_id=$1`,
     [cornerId],
   );
@@ -115,8 +113,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   await deleteCornerWakeSources(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });
   await enqueueCornerPullRequestClosure(database, cornerId);
-  await enqueueCornerBranchDeletion(database, cornerId);
-  return { parentId: corner.parent_id };
+  return { parentId: corner.parent_id, archived: Boolean(changed.rowCount) };
 }
 
 /** Must be committed with archival, even if the immediate GitHub call failed. */

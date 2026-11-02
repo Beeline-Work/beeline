@@ -28,7 +28,7 @@ const app = {
 const event = {
   action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
   pull_request: { number: 1, title: 'Fix archival', html_url: 'https://github.com/owner/widgets/pull/1',
-    head: { ref: 'feature/archival', sha: '1'.repeat(40) }, base: { ref: 'main' },
+    head: { ref: 'feature/corner-333333333333', sha: '1'.repeat(40) }, base: { ref: 'main' },
     merged: true, merged_at: '2026-10-19T18:33:00Z', merge_commit_sha: 'f'.repeat(40) },
 };
 
@@ -69,8 +69,8 @@ beforeEach(async () => {
     VALUES($1,$2,$3,'member'),($1,$2,$4,'member'),($1,$2,$5,'owner')`, [W,R,A,B,H]);
   await db.query(`INSERT INTO memberships(workspace_id,identity_id,role)
     VALUES($1,$2,'member'),($1,$3,'member'),($1,$4,'owner')`, [W,A,B,H]);
-  await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle)
-    VALUES($1,'Fix archival',$2,'feature/archival',$3::jsonb)`, [C,A,JSON.stringify({
+  await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle)
+    VALUES($1,'Fix archival',$2,$3::jsonb)`, [C,A,JSON.stringify({
       checks: 'passing', pr: { number: 1, headSha: '1'.repeat(40), url: event.pull_request.html_url },
     })]);
   const command = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
@@ -115,8 +115,7 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   expect(attempts).toBe(2);
   await assertArchived();
   expect(app.branchDeletionSafety).toHaveBeenCalledTimes(1);
-  expect((await db.query(`SELECT attempts,finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [C])).rows[0])
-    .toMatchObject({ attempts: 1, finished_at: expect.anything(), last_error: null });
+  expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [C])).rowCount).toBe(0);
   expect(app.deleteBranch).toHaveBeenCalledTimes(1);
   await operations().processWebhook('pull_request', event);
   await assertArchived();

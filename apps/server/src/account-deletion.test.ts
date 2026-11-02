@@ -321,7 +321,7 @@ describe('deleteAccount', () => {
     await expectRowCount(
       `SELECT 1 FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        WHERE r.id=$1 AND r.archived_at IS NOT NULL
-         AND f.owner_agent_id IS NULL AND f.close_requested
+         AND f.owner_agent_id IS NULL
          AND f.lifecycle->>'lifecycle'='done' AND f.lifecycle->>'outcome'='abandoned'`,
       [CORNER],
       1,

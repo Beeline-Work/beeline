@@ -14,7 +14,7 @@ import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
-import { advanceCorner, reassignFailedCornerReviewer } from './corner-lifecycle.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
@@ -1051,14 +1051,6 @@ describe('corner message attribution', () => {
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='corner-merge-yes'`, [C])).rowCount).toBe(0);
   });
 
-  it('reports an unavailable reviewer list privately to its commander', async () => {
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B, reviewerFallbackIds: [A] }, H);
-    await greenHead(25, '9'.repeat(40));
-    expect(await commands(B, C)).toHaveLength(0);
-    expect((await commands(A, R)).filter(command => command.reason === 'report')
-      .some(command => command.private && command.source.body.startsWith('blocked: no reviewer on the configured list'))).toBe(true);
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%healthy enough to review%'`, [C])).rowCount).toBe(0);
-  });
 
   it('reports the failure privately and wakes the implementer when reviewer command insertion cannot queue', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -1407,7 +1399,6 @@ describe('corner message attribution', () => {
       await advanceCorner(db, C, { kind: 'checks-pending' });
       await greenHead(95, head);
       await reconcileConfiguredCornerReviewers(db, R);
-      await reassignFailedCornerReviewer(db, { roomId: C, requestId: review!.turnRequestId, agentId: B });
       expect(await commands(B, C)).toEqual([]);
       await greenHead(95, 'f'.repeat(40));
       expect((await commands(B, C)).length).toBeGreaterThan(0);
@@ -1500,7 +1491,6 @@ describe('corner message attribution', () => {
     await routeSystemCommand(db, { roomId: C, sourceMessageId: sourceId, kind: 'check-passed', targets: [B] });
     await advanceCorner(db, C, { kind: 'checks', result: 'passing', sourceMessageId: sourceId });
     await reconcileConfiguredCornerReviewers(db, R);
-    await reassignFailedCornerReviewer(db, { roomId: C, requestId: review!.turnRequestId, agentId: B });
     const afterPaths = (await db.query<{ id: string; reason: string }>(
       `SELECT id,reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND NOT (id=ANY($3::text[]))`,
       [C, B, [...verdicted]],

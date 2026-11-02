@@ -168,8 +168,6 @@ export type RoomViewHeader = {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent configured to review repository corners opened from this Room. */
   readonly reviewerAgentId?: string;
-  /** Agents tried in order after `reviewerAgentId` when it is unhealthy or its review turn fails. */
-  readonly reviewerFallbackIds?: readonly string[];
   /** Absent when this bundle could not read it. Only `true` paints a Room as
    *  archived. */
   readonly archived?: boolean;

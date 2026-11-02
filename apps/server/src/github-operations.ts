@@ -1,6 +1,6 @@
 import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
 import { enqueueCornerBranchDeletion, retryCornerBranchDeletions } from './corner-branch-cleanup.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -43,7 +43,7 @@ import {
   routeSystemCommand,
 } from './agent-command.js';
 import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
-import { reviewerList, roomAgentHealth } from './agent-health.js';
+import { roomAgentHealth } from './agent-health.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
@@ -1070,7 +1070,6 @@ export class GitHubOperations {
         archived: boolean;
         review_woken: boolean;
         configured_reviewer_id: string | null;
-        reviewer_fallback_ids: string[];
         reviewer_identity_id: string | null;
         parent_reviewer_id: string | null;
         corner_reviewer_id: string | null;
@@ -1083,7 +1082,6 @@ export class GitHubOperations {
                 r.archived_at IS NOT NULL archived,
                 (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
                 ${cornerReviewerSql('r')} configured_reviewer_id,
-                ${cornerReviewerFallbacksSql('r')} reviewer_fallback_ids,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
                 corner_member.identity_id corner_reviewer_id,
@@ -1186,48 +1184,15 @@ export class GitHubOperations {
       headSha: pr.headSha,
     });
     const { reviewerExists } = gate;
-    const listed = corner.reviewer_fallback_ids.length
-      ? reviewerList({
-          reviewer_agent_id: configuredReviewerId,
-          reviewer_fallback_ids: corner.reviewer_fallback_ids,
-        })
-      : [];
-    const listLabel = listed.length
-      ? `the reviewer list (${(
-          await this.database.query<{ id: string; handle: string | null }>(
-            `SELECT id,handle FROM identities WHERE id=ANY($1::text[])`,
-            [listed],
-          )
-        ).rows
-          .sort((a, b) => listed.indexOf(a.id) - listed.indexOf(b.id))
-          .map((row) => (row.handle ? `@${row.handle}` : row.id))
-          .join(', ')})`
-      : null;
-    const reviewer = listLabel
-      ? `an agent on ${listLabel}`
-      : configuredReviewerId && corner.reviewer_handle
-        ? `@${corner.reviewer_handle}`
-        : null;
-    let reviewerWake = listLabel
-      ? await this.listReviewerWake({
-          parentId: corner.parent_id,
-          candidates: listed,
-          listLabel,
-          checks,
-          reviewWoken: corner.review_woken,
-        })
-      : reviewerWakeFromFacts({
-          configuredReviewerId,
-          reviewerHandle: corner.reviewer_handle,
-          parentMember: Boolean(
-            configuredReviewerId && corner.reviewer_identity_id && corner.parent_reviewer_id,
-          ),
-          cornerMember: Boolean(
-            configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id,
-          ),
-          checks,
-          reviewWoken: corner.review_woken,
-        });
+    const reviewer = configuredReviewerId && corner.reviewer_handle ? `@${corner.reviewer_handle}` : null;
+    let reviewerWake = reviewerWakeFromFacts({
+      configuredReviewerId,
+      reviewerHandle: corner.reviewer_handle,
+      parentMember: Boolean(configuredReviewerId && corner.reviewer_identity_id && corner.parent_reviewer_id),
+      cornerMember: Boolean(configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id),
+      checks,
+      reviewWoken: corner.review_woken,
+    });
     if (reviewerWake.status === 'dispatched' && !gate.approved) {
       const delivery = (await this.database.query<{ ended: boolean; live: boolean }>(
         `SELECT bool_or(command.state='complete') ended,
@@ -1290,40 +1255,6 @@ export class GitHubOperations {
       held: gate.held,
       holds: gate.holds,
       ...mergeDecision,
-    };
-  }
-
-  /** `reviewerWake` for a Room with fallback reviewers: the list's health, then the dispatch state. */
-  private async listReviewerWake(input: {
-    parentId: string;
-    candidates: readonly string[];
-    listLabel: string;
-    /** The live GitHub verdict reported beside this status, never the stored lifecycle. */
-    checks: string | undefined;
-    reviewWoken: boolean;
-  }): Promise<{ status: ReviewerWakeStatus; detail: string }> {
-    const health = await roomAgentHealth(this.database, input.parentId, input.candidates);
-    if (!health.size)
-      return {
-        status: 'unreachable',
-        detail: `No agent on ${input.listLabel} is a current member of the parent Room, so the checks-passed transition cannot wake anyone.`,
-      };
-    if (![...health.values()].some((agent) => agent.healthy))
-      return {
-        status: 'unreachable',
-        detail: `Every agent on ${input.listLabel} is offline, recently failed, or out of credit.`,
-      };
-    if (input.reviewWoken)
-      return {
-        status: 'dispatched',
-        detail: `The checks-passed transition woke the first healthy agent on ${input.listLabel}.`,
-      };
-    return {
-      status: 'waiting',
-      detail:
-        input.checks === 'pending'
-          ? `Checks are still pending, so nobody on ${input.listLabel} has been woken yet.`
-          : `A review turn has not been dispatched to ${input.listLabel} yet.`,
     };
   }
 
@@ -1400,8 +1331,7 @@ export class GitHubOperations {
         JOIN rooms parent ON parent.id=corner.parent_id
         JOIN corner_facts fact ON fact.corner_id=corner.id
         WHERE approval.corner_id=$1 AND approval.head_sha=$2
-          AND (approval.approved_by=${cornerReviewerSql('corner')}
-            OR approval.approved_by=ANY(${cornerReviewerFallbacksSql('corner')}))`, [cornerId, status.headSha]);
+          AND approval.approved_by=${cornerReviewerSql('corner')}`, [cornerId, status.headSha]);
       if (!reviewerPass.rowCount) return notAttempted('PR is a draft; waiting for reviewer PASS');
       const draftHeadSha = status.headSha;
       try {

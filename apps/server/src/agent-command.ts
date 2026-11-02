@@ -1,5 +1,5 @@
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { recordMcpMention, recordMcpMemberWebhook } from './rooms-mcp-members.js';
@@ -515,7 +515,7 @@ export async function refuseVerdictedReviewerWake(
          WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
            AND turn.request_id=command.turn_request_id AND turn.status='failed'
        )
-       AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
+       AND command.agent_id=${cornerReviewerSql()}
        AND (
          command.reason='corner_review_dispatch'
          OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed')
@@ -554,7 +554,7 @@ function reviewerQuietSql(command: string): string {
     SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
     LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
     WHERE corner.id=${command}.room_id
-      AND (${cornerReviewerSql()}=${command}.agent_id OR ${command}.agent_id=ANY(${cornerReviewerFallbacksSql()}))
+      AND ${cornerReviewerSql()}=${command}.agent_id
       AND EXISTS (
         SELECT 1 FROM agent_commands wake LEFT JOIN messages source ON source.id=wake.source_message_id
         WHERE wake.room_id=${command}.room_id AND wake.agent_id=${command}.agent_id
@@ -692,7 +692,7 @@ export async function createAgentCommand(
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN corner_facts fact ON fact.corner_id=corner.id
        WHERE corner.id=$1 AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-         AND ($3::boolean OR $2=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()}))`,
+         AND ($3::boolean OR $2=${cornerReviewerSql()})`,
       [input.roomId, input.agentId, input.reason === 'corner_review_needed'],
     )).rows[0]?.context;
   }
@@ -1355,7 +1355,6 @@ async function setCornerImplementer(
      JOIN prior ON prior.corner_id=corner.id
      WHERE fact.corner_id=corner.id AND corner.id=$1
        AND $2<>COALESCE(${cornerReviewerSql()},'')
-       AND NOT ($2=ANY(${cornerReviewerFallbacksSql()}))
        AND (fact.worker_agent_id IS DISTINCT FROM $2
             OR (fact.kind='human' AND fact.owner_agent_id IS NULL))
      RETURNING prior.previous`,
@@ -2629,8 +2628,7 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM agent_commands command
          JOIN messages dispatch ON dispatch.id=command.source_message_id
          WHERE command.room_id=corner.id
-           AND (command.agent_id=${cornerReviewerSql()}
-             OR command.agent_id=ANY(${cornerReviewerFallbacksSql()}))
+           AND command.agent_id=${cornerReviewerSql()}
            AND command.state IN ('pending','claimed') AND command.action='input'
            AND (command.reason='corner_review_dispatch'
              OR (command.reason='subscribed_event' AND

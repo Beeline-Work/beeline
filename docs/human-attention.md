@@ -18,7 +18,7 @@ rule:
 | `github-operations.ts`: `refreshCheckRollup` | Wakes on the first failure and once when the run finishes; tracks new attempts on the same head, including new Actions job URLs when a start webhook was missed |
 | `corner-lifecycle.ts`: `checksReported`, `noteNoReviewer`, merge recovery | No CI loop cap or automatic merge approval ask; wakes the implementer; historical `ask_human` cards can resume |
 | `agent-command.ts`: `noteCornerAgentUnreachable` | Names the requester or current Workspace managers only after queue refusal or an unclaimed wake outlasts delivery retries; explicit card recipients drive notification and waiting state |
-| `corner-lifecycle.ts`: reviewer dispatch and fallback exhaustion | Preserves notices for unavailable reviewers and failed reviewer dispatch |
+| `corner-lifecycle.ts`: reviewer dispatch | Preserves notices for unavailable reviewers and failed reviewer dispatch |
 | `connection-presence.ts`, `turn-silence-notice.ts`, `phone-service.ts`: silence and unanswered mentions | Preserves agent reach/start failures and normal hiccup retries |
 | `workflow-runs.ts`: gates and role exhaustion | Preserves configured decision gates and unavailable role notices; gate-default owner notices report the result of an existing decision request |
 | `daemon-service.ts`, `room-choice.ts`, `needs-you.ts`: agent questions and approvals | Preserves explicit agent questions and grant, permission, connector, sign-in and Squire approval cards |

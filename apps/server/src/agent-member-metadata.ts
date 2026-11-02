@@ -1,4 +1,4 @@
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import type { AgentMemberMetadata } from '@beeline/api-contract/daemon';
 import { AGENT_REACHABLE_HORIZON_MS } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -29,9 +29,9 @@ export async function agentMemberMetadata<T extends {
   // Only the membership-authorized Room read exposes billing and allowance.
   const details = roomId ? await database.query<AgentUsageRow & {
     agent_id: string; selected_model: string | null;
-    reviewer_agent_id: string | null; reviewer_fallback_ids: string[];
+    reviewer_agent_id: string | null;
   }>(`SELECT a.agent_id,a.selected_model,${agentUsageColumns('a', 'a.owner_id')},
-       ${cornerReviewerSql('room')} reviewer_agent_id,${cornerReviewerFallbacksSql('room')} reviewer_fallback_ids
+       ${cornerReviewerSql('room')} reviewer_agent_id
      FROM agents a CROSS JOIN rooms room
      JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
      WHERE room.id=$1 AND a.agent_id=ANY($2::text[])`, [roomId, ids]) : undefined;
@@ -48,9 +48,7 @@ export async function agentMemberMetadata<T extends {
     }]) ?? [];
     const billing = usage?.spend ? 'pay-per-use' as const
       : usage && (usage.plan || usage.windows.length || usage.credits) ? 'subscription' as const : undefined;
-    const reviewer = detail && detail.reviewer_agent_id === member.id ? 'primary' as const
-      : detail?.reviewer_agent_id && detail.reviewer_fallback_ids.includes(row?.agent_id ?? '')
-        ? 'fallback' as const : undefined;
+    const reviewer = detail && detail.reviewer_agent_id === member.id ? 'primary' as const : undefined;
     return { ...member,
       ...(detail ? { model: detail.selected_model } : {}),
       ...(billing ? { billing } : {}),

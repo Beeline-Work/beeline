@@ -10,7 +10,7 @@ import { readUsageRefreshOutcome, sanitizeTurnReplay } from '@beeline/api-contra
 import { observeOnboardingMessage } from './signin-funnel.js';
 import { postStarterInviteOffer } from './starter-invite.js';
 import { modelChoiceLabel, squireApprovalAction } from '@beeline/api-contract/phone';
-import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
 import { agentPostText } from './agent-post-text.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
@@ -4188,11 +4188,6 @@ export class DaemonService {
         `SELECT a.soul,a.selected_model,a.selected_effort,a.fast_mode,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NULL THEN NULL
-                     -- A fallback reviewer is told it holds the post itself.
-                     WHEN ${cornerReviewerSql('room')} IS NOT NULL
-                          AND a.agent_id=ANY(${cornerReviewerFallbacksSql('room')})
-                          AND a.agent_id<>COALESCE(fact.owner_agent_id,room.created_by)
-                     THEN self.handle
                      WHEN reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
                      THEN reviewer.handle END reviewer_handle
          FROM agents a
@@ -7163,7 +7158,7 @@ export class DaemonService {
          JOIN corner_facts fact ON fact.corner_id=corner.id
          WHERE corner.id=$2 AND g.room_id=corner.id
            AND g.agent_id=${cornerImplementerSql('fact', 'corner')}
-           AND (${cornerReviewerSql()}=$1 OR $1=ANY(${cornerReviewerFallbacksSql()}))
+           AND ${cornerReviewerSql()}=$1
        )) AND g.status IN ('pending','approved','once') AND g.superseded_at IS NULL
          AND (g.expires_at IS NULL OR g.expires_at>now())
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
@@ -9064,11 +9059,7 @@ export class DaemonService {
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          WHERE corner.id=$1 AND (
-           ${cornerReviewerSql('corner')}=$2 OR (
-             ${cornerReviewerSql('corner')} IS NOT NULL AND $2=ANY(${cornerReviewerFallbacksSql('corner')})
-             AND EXISTS(SELECT 1 FROM memberships parent_member
-                        WHERE parent_member.room_id=parent.id AND parent_member.identity_id=$2
-                          AND parent_member.removed_at IS NULL)))
+           ${cornerReviewerSql('corner')}=$2)
        ) corner_reviewer,
        EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner,
        EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=$1 AND command.agent_id=$2

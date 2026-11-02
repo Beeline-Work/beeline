@@ -370,7 +370,7 @@ describe('monolith integration', () => {
     // refusal, so it must reach the route's 503 default intact.
     const query = database.query.bind(database);
     const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
-      if (sql.includes('parent.reviewer_fallback_ids')) throw new Error('database is unavailable');
+      if (sql.includes(') corner_reviewer,')) throw new Error('database is unavailable');
       return query(sql, values);
     });
     try {

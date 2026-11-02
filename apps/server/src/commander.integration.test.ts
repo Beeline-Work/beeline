@@ -1032,13 +1032,12 @@ it('migration leaves legacy opening provenance empty and preserves new provenanc
     .toEqual({ opened_from_corner_id: opened.cornerId });
 });
 
-it.each(['primary reviewer', 'fallback reviewer', 'commander'])('Reproduction reviewer-handback-2471: %s orders its corner worker', async (role) => {
+it.each(['primary reviewer', 'commander'])('Reproduction reviewer-handback-2471: %s orders its corner worker', async (role) => {
   const opened = await open();
   if (role !== 'commander') {
     await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, WORKER]);
     await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE room_id=$1`, [opened.cornerId, WORKER]);
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`,
-      [ROOM, role === 'primary reviewer' ? RUBY : WORKER, role === 'fallback reviewer' ? [RUBY] : []]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
   }
   const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: RUBY,
     sourceMessageId: null, reason: 'corner_review_dispatch',
@@ -1187,12 +1186,12 @@ it('compact schedule operations manage only self-owned sources', async () => {
   expect((await db.query(`SELECT message FROM agent_schedules WHERE id=$1`, [otherId])).rows[0]).toEqual({ message: 'Other agent work' });
 });
 
-it.each(['primary', 'fallback'])('vocabulary: commander orders the child %s reviewer and its report returns privately', async kind => {
+it('vocabulary: commander orders the child reviewer and its report returns privately', async () => {
   const reviewer = '6'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Speedy','speedy') ON CONFLICT DO NOTHING`, [reviewer]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [reviewer,HUMAN]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WS,reviewer,ROOM]);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [ROOM,kind === 'primary' ? reviewer : null,kind === 'fallback' ? [reviewer] : []]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM,reviewer]);
   const opened = await open();
   await daemon.execute('order', { ...authority(order), address:opened.cornerId, agent:'speedy', text:'Review the exact head' }, RUBY);
   const review = (await commands(opened.cornerId,reviewer)).find(command => command.reason === 'order')!;

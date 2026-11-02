@@ -107,6 +107,8 @@ export interface AuthServerOptions {
   onSigninAttempt?: (input: SigninAttemptObservation) => Promise<void>;
   onFunnelAuth?: (input: FunnelAuthObservation) => Promise<void>;
   store: AuthStore;
+  /** Existing committed LISTEN owner; keys are ticket hashes, never recovery secrets. */
+  subscribeCompletion?: (ticketHash: string, wake: () => void) => () => void;
   oidc: OidcClient;
   /** GitHub is the shipped sign-in and repository-access provider. */
   github?: {

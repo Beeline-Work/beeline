@@ -322,7 +322,7 @@ export const state: {
   logLines: [],
 };
 
-export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>; onSigninAttempt?: (input:SigninAttemptObservation)=>Promise<void>; nativeGoogle?: boolean} = {}): void {
+export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>; onSigninAttempt?: (input:SigninAttemptObservation)=>Promise<void>; nativeGoogle?: boolean; subscribeCompletion?: (hash:string,wake:()=>void)=>()=>void} = {}): void {
   beforeEach(async () => {
     provider = new DemoOidcProvider();
     await provider.start();
@@ -357,6 +357,7 @@ export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthO
       onFunnelAuth: options.onFunnelAuth,
       onSigninAttempt: options.onSigninAttempt,
       store,
+      subscribeCompletion: options.subscribeCompletion,
       oidc: new OidcClient({
         issuer: options.nativeGoogle ? 'https://accounts.google.com' : provider.issuer,
         ...(options.nativeGoogle ? { androidClientIds: ['android-client'] } : {}),

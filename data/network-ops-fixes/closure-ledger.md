@@ -43,3 +43,4 @@ No whole finding is closed until all consumers and the specified executable proo
 These counts identify the staged validation run; later changes must rerun affected suites before a PR claims the result.
 
 - F03/F05/F09 staged compatibility fixes filter transient roster events, release hidden schedule/workflow/profile observers, and make portraits consume parent detail. Focused suites pass; complete negotiated roster/workflow facts and cross-consumer closure remain open.
+- F11 staged auth/update migration uses held completion over committed ticket notifications, one event-driven recovery boundary and one shared SDK owner. Native-runtime40 SDK-internal launch behavior and the released native/browser matrix remain required before closure.

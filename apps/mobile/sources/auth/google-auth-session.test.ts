@@ -191,27 +191,22 @@ describe('Google sign-in continuation', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(remove).toHaveBeenCalledOnce();
   });
-  it.each(['opened', 'dismiss'])('R-onb-1: recovers after interrupted completion reads with browser %s', async (type) => {
+  it.each(['opened', 'dismiss'])('R-onb-1: an actual callback/close recovers the same proof after a failed held request (%s)', async type => {
     vi.useFakeTimers();
-    const fetcher = vi.fn()
-      .mockRejectedValueOnce(new TypeError('Network request failed'))
-      .mockImplementationOnce(async () => {
-        await new Promise(resolve => setTimeout(resolve, 11_000));
-        throw new TypeError('Network request failed');
-      })
-      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
-      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetcher);
-    try {
-      const result = runGoogleSignIn({ state, recoveryToken,
-        openAuthSession: async () => ({ type }),
-        subscribeToUrls: () => ({ remove() {} }),
-      });
-      const assertion = expect(result).resolves.toBe(recoveryToken);
-      await vi.runAllTimersAsync();
+    const fetcher=vi.fn().mockRejectedValueOnce(new TypeError('Network request failed'))
+      .mockResolvedValueOnce(new Response('{}',{status:200}));
+    vi.stubGlobal('fetch',fetcher);
+    let callback!: (url:string)=>void;
+    try{
+      const result=runGoogleSignIn({state,recoveryToken,openAuthSession:async()=>({type}),
+        subscribeToUrls:listener=>{callback=listener;return{remove(){}};}});
+      const assertion=expect(result).resolves.toBe(recoveryToken);
+      await vi.advanceTimersByTimeAsync(0);
+      if(type==='opened')callback(`beeline://beeline/google-callback?state=${state}&completed=1`);
       await assertion;
-      expect(fetcher).toHaveBeenCalledTimes(4);
-    } finally { vi.useRealTimers(); }
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(fetcher).toHaveBeenCalledTimes(2); // Hold + actual provider/browser boundary.
+    }finally{vi.useRealTimers();}
   });
   it('R-onb-21: recovers and cancels on Hermes without AbortSignal.timeout', async () => {
     vi.stubGlobal('AbortSignal', {});
@@ -231,4 +226,33 @@ describe('Google sign-in continuation', () => {
       .rejects.toThrow('Browser could not open');
     expect(fetcher.mock.calls.some(([url])=>url.endsWith('/cancel'))).toBe(true);
   });
+});
+
+it('F11 pending browser holds one completion request until an actual result; timers never read pending', async () => {
+  picker.enabled = false; storage.clear(); vi.useFakeTimers();
+  let finish!: (response: Response) => void;
+  const held = new Promise<Response>(resolve => { finish = resolve; });
+  const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+    expect(JSON.parse(String(init?.body))).toMatchObject({ recoveryToken, waitMs: 120_000 });
+    return held;
+  });
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    const result = runGoogleSignIn({ state, recoveryToken, openAuthSession: async () => ({ type: 'opened' }), subscribeToUrls: () => ({ remove() {} }) });
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    finish(new Response('{}', { status: 200 }));
+    expect(await result).toBe(recoveryToken);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals(); }
+});
+
+it('F11 cold pending recovery inspects once and never schedules another observation', async () => {
+  storage.clear(); vi.useFakeTimers(); pending();
+  const fetcher = vi.fn(async () => new Response('{}', { status: 202 })); vi.stubGlobal('fetch', fetcher);
+  try {
+    expect(await resumeGoogleSignIn(null)).toBeNull();
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals(); }
 });

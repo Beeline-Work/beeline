@@ -33,20 +33,23 @@ export async function clearPendingGoogleSignIn(): Promise<void> {
 }
 
 /** Hermes supports AbortController but not every AbortSignal static helper. */
-async function googleAuthFetch(url: string, init: RequestInit): Promise<Response> {
+async function googleAuthFetch(url: string, init: RequestInit, timeoutMs = 5_000): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  init.signal?.addEventListener('abort', abort, { once: true });
+  if (init.signal?.aborted) abort();
   try {
     return await fetch(url, { ...init, signal: controller.signal });
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); init.signal?.removeEventListener('abort', abort); }
 }
 
-async function completion(pending: PendingGoogle): Promise<string | null> {
+async function completion(pending: PendingGoogle, waitMs = 0, signal?: AbortSignal): Promise<string | null> {
   const base = getBuzzRuntimeConfig().monolithUrl;
   const response = await googleAuthFetch(`${base}/auth/oidc/completion`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ recoveryToken: pending.recoveryToken }),
-  });
+    body: JSON.stringify({ recoveryToken: pending.recoveryToken, ...(waitMs ? { waitMs } : {}) }), signal,
+  }, waitMs + 5_000);
   if (response.status === 202) return null;
   if (response.status >= 500 || response.status === 429) {
     throw new Error('Google sign-in service temporarily unavailable');
@@ -144,53 +147,51 @@ export async function runGoogleSignIn(input: {
   url.searchParams.set('app_redirect', redirect);
   url.searchParams.set('app_state', input.state);
   url.searchParams.set('app_recovery_challenge', bytesToHex(sha256(utf8ToBytes(input.recoveryToken))));
-  let callbackUrl: string | null = null;
-  let browserClosed = false;
-  let browserFailure: unknown;
-  const subscription = await input.subscribeToUrls((value) => {
-    if (value === redirect || value.startsWith(`${redirect}?`)) callbackUrl = value;
+  const controller = new AbortController();
+  let terminal: ReturnType<typeof setTimeout> | undefined;
+  let completionFailure: unknown;
+  const never = () => new Promise<never>(() => {});
+  let observed!: (url: string) => void;
+  const callback = new Promise<string>(resolve => { observed = resolve; });
+  const subscription = await input.subscribeToUrls(value => {
+    if (value === redirect || value.startsWith(`${redirect}?`)) observed(value);
   });
-  try {
-    void input.openAuthSession(url.toString(), redirect).then((result) => {
-      if (result.url) callbackUrl = result.url;
-      // A dismissed tab can also have completed sign-in. Check the server
-      // before treating either close result as cancellation.
-      browserClosed = result.type === 'cancel' || result.type === 'dismiss';
-    }, (error: unknown) => { browserFailure = error; browserClosed = true; });
-    const deadline = Date.now() + 120_000;
-    let closedAt: number | undefined;
-    let connectionInterrupted = false;
-    while (Date.now() < deadline) {
-      if (browserFailure) throw browserFailure;
-      const checkingClosedBrowser = browserClosed;
-      let serverPending = false;
-      try {
-        const ticket = await resumeGoogleSignIn(callbackUrl);
-        if (ticket) return ticket;
-        serverPending = true;
-        connectionInterrupted = false;
-      } catch (error) {
-        if (error instanceof OidcBindError) throw error;
-        // A suspended browser handoff or a slow server cannot establish that
-        // the device is offline. Keep recovering the same proof until expiry.
-        connectionInterrupted = true;
-      }
-      if (checkingClosedBrowser && serverPending) {
-        closedAt ??= Date.now();
-        if (Date.now() - closedAt >= 1_500) throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 750));
+  // One outstanding recovery connection also covers a lost OS/browser callback.
+  const held = completion(pending, 120_000, controller.signal);
+  const completed = held.then(ticket => ticket ?? never(), error => { completionFailure = error; return never(); });
+  const callbackResult = callback.then(async value => {
+    const ticket = await resumeGoogleSignIn(value);
+    if (!ticket) throw new OidcBindError('token_expired', 'Google sign-in expired. Try again.');
+    return ticket;
+  });
+  let browserFailed = false;
+  const browser = input.openAuthSession(url.toString(), redirect).then(async result => {
+    if (controller.signal.aborted) return never();
+    if (result.url) { observed(result.url); return never(); }
+    if (result.type !== 'cancel' && result.type !== 'dismiss') return never();
+    // Browser close is an actual event, not a scheduled pending observation.
+    const ticket = await completion(pending);
+    if (ticket) return ticket;
+    throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
+  }, error => { browserFailed = true; throw error; });
+  const deadline = new Promise<never>((_resolve, reject) => {
+    terminal = setTimeout(() => reject(completionFailure ??
+      new OidcBindError('token_expired', 'Google sign-in expired. Try again.')), 120_000);
+  });
+  try { return await Promise.race([completed, callbackResult, browser, deadline]); }
+  catch (error) {
+    // Preserve correlation after uncertain transport loss so a cold callback
+    // gets one recovery inspection. Explicit close/invalid proof revokes it.
+    if (error instanceof OidcBindError || browserFailed) {
+      await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recoveryToken: input.recoveryToken }),
+      }).catch(() => undefined);
+      await clearPendingGoogleSignIn();
     }
-    throw new OidcBindError(connectionInterrupted ? 'connection_failed' : 'token_expired',
-      connectionInterrupted ? 'Could not reach Google sign-in. Try again.' : 'Google sign-in expired. Try again.');
-  } catch (error) {
-    await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ recoveryToken: input.recoveryToken }),
-    }).catch(() => undefined);
-    await clearPendingGoogleSignIn();
     throw error;
-  } finally { subscription.remove(); }
+  } finally { if (terminal) clearTimeout(terminal); controller.abort(); subscription.remove(); }
+
 }
 
 export async function pendingGoogleLinkIdentity(): Promise<string | null> {

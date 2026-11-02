@@ -84,7 +84,7 @@ import {
 import type { PushLevel } from '@beeline/api-contract/phone';
 import { readIdentitySettings } from '@/buzz/managed-identity-surface';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
-import { UpdateProvider } from '@/hooks/useUpdates';
+import { UpdateProvider } from '@/hooks/update-provider';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';

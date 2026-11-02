@@ -105,13 +105,16 @@ export class TrayClockWork{
   private dropEpoch():void{
     this.stopEpoch?.();this.stopEpoch=undefined;
     const epoch=this.epoch,connection=this.epochConnection;this.epoch=undefined;this.epochConnection=undefined;
-    if(epoch){
-      // release revokes synchronously before its one causal durable write.
-      // A different server must not mistake a parked local epoch for health.
-      this.retirement=this.ownership.release(epoch).catch(()=>{
-        this.retirementFailed=true;if(connection)this.options.retireOwner?.(connection);
-      });
-    }
+    if(epoch)this.retireEpoch(epoch,connection);
+  }
+  private retireEpoch(epoch:BackgroundEpoch,connection:LeaderConnection|undefined):Promise<void>{
+    // release revokes synchronously before its one causal durable write.
+    // A late acquisition must retire too, even if it never became this.epoch.
+    const release=this.ownership.release(epoch).catch(()=>{
+      this.retirementFailed=true;if(connection)this.options.retireOwner?.(connection);
+    });
+    this.retirement=Promise.all([this.retirement,release]).then(()=>{});
+    return this.retirement;
   }
   private retireConnection():void{
     this.stopConnection?.();this.stopConnection=undefined;this.connection=undefined;this.connectionSignal=undefined;
@@ -155,11 +158,11 @@ export class TrayClockWork{
     this.sourceDirty=false;this.readinessDirty=false;this.readinessPending=false;this.readiness.clear();this.healthPublished=false;
     this.displayJob={pending:false};this.choiceJob={pending:false};
     if(!this.options.listenerReady()){this.park('listener',false);return;}
-    let epoch:BackgroundEpoch|undefined;
+    const connection=this.connection;let epoch:BackgroundEpoch|undefined;
     try{
-      epoch=await this.ownership.claim(this.connection);
-      if(!this.current(version)){this.ownership.revoke(epoch);return;}
-      this.epoch=epoch;this.epochConnection=this.connection;const lost=()=>{if(this.epoch===epoch)this.park('owner');};
+      epoch=await this.ownership.claim(connection);
+      if(!this.current(version)){await this.retireEpoch(epoch,connection);return;}
+      this.epoch=epoch;this.epochConnection=connection;const lost=()=>{if(this.epoch===epoch)this.park('owner');};
       epoch.signal.addEventListener('abort',lost,{once:true});this.stopEpoch=()=>epoch!.signal.removeEventListener('abort',lost);
       const head=await this.head(this.database,'jobs:tray-clock');
       if(!this.current(version,epoch))return;

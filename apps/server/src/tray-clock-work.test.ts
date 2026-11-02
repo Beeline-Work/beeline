@@ -87,6 +87,25 @@ describe('unselected existing-leader Tray clock composition',()=>{
     now=86400000;expect(await c.runner.run()).toBe(Infinity);expect(statements).toHaveLength(count);
     live.journalChanged([`workspace:${WS}`]);expect(c.wake).not.toHaveBeenCalled();expect(c.runner.status().state).toBe('live');
   });
+  it.each(['listener','owner'] as const)('durably retires a claim completed after %s loss',async loss=>{
+    const c=make(),reached=deferred(),release=deferred();
+    const claim=c.ownership.claim.bind(c.ownership);
+    vi.spyOn(c.ownership,'claim').mockImplementation(async connection=>{
+      const epoch=await claim(connection);reached.resolve();await release.promise;return epoch;
+    });
+    const attaching=c.attach();
+    try{
+      await reached.promise;
+      if(loss==='listener'){ready=false;live.projectionUnavailable();}else c.controller.abort();
+      expect(c.runner.status().state).toBe('parked');
+    }finally{release.resolve();await attaching;}
+    expect((await db.query('SELECT released_at IS NOT NULL AS released FROM background_leader_owners')).rows)
+      .toEqual([{released:true}]);
+    const count=statements.length;
+    await c.runner.run();live.journalChanged(['jobs:tray-clock']);await c.runner.run();
+    expect(statements).toHaveLength(count);expect(c.runner.status().state).toBe('parked');
+  });
+
   it('executes real question expiry100 then a due continuation1, never an invented repair deadline',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       SELECT 'q-'||n,$1,$2,'@reader please?','2000-01-07' FROM generate_series(1,101)n`,[ROOM,AUTHOR]);

@@ -63,6 +63,7 @@
     "prove:approval-card-avatar": "npm run build -w @beeline/server && node --import tsx scripts/prove-approval-card-avatar.mjs",
     "prove:free-agent": "node scripts/prove-free-agent.mjs",
     "prove:free-agent-images": "npm run build -w @beeline/server && node --import tsx scripts/prove-free-agent-images.mjs",
+    "prove:hosted-squire-failure": "npm run build -w @beeline/server && node --import tsx scripts/prove-hosted-squire-failure.mjs",
     "prove:free-agent-instructions": "node --import tsx scripts/prove-free-agent-instructions.ts",
     "prove:free-agent:docker-machines": "node scripts/free-agent-docker-machines.mjs",
     "prove:agent-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-agent-sign-in.ts",

@@ -140,3 +140,10 @@ restore parked data and an unaffected visible Room list. This phone/socket slice
 is not yet in the combined PR; the owner bundle still exceeds its unchanged
 budget. Full production composition, workload/cohort proof and the removal sweep
 remain open. No additional whole finding is closed.
+
+Acquisition loss is also fenced after the claim returns: listener or exact-owner
+loss during the claim await retires the returned generation durably, even when
+it was never installed as the runner epoch. Retirement retains the captured
+backend identity and drains outstanding releases. Both race regressions failed
+with `released_at` still null before the fix; runner13 and real PostgreSQL14
+pass after it. No source hint retries the retirement or reopens the runner.

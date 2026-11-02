@@ -38,7 +38,9 @@ export async function ownerApprovedRelaxation({ repository, pullRequest, head },
   url.search = new URLSearchParams({ repository, pullRequest: String(pullRequest), head }).toString();
   try {
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
-    return response.ok && (await response.json()).approved === true;
+    const record = response.ok ? await response.json() : {};
+    if (record.approved === true) console.log(`Owner approved this head in message ${record.messageId} at ${record.approvedAt}.`);
+    return record.approved === true;
   } catch {
     return false;
   }

@@ -11,8 +11,7 @@ import { OPERATOR_OWNER_ID } from './operator-system-dm.js';
 export const ARCHITECTURE_APPROVALS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS architecture_relax_approvals (
  repository text NOT NULL, pull_request_number integer NOT NULL, head_sha text NOT NULL,
- approved_by text NOT NULL, command_message_id text NOT NULL, agent_id text NOT NULL,
- approved_at timestamptz NOT NULL DEFAULT now(),
+ command_message_id text NOT NULL, approved_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(repository,pull_request_number,head_sha)
 );
 `;
@@ -55,20 +54,24 @@ export async function approveArchitectureRelax(database: SqlDatabase, command: C
   if (!namesPullRequest || !namesHead)
     throw new CommandRefusalError(`The owner's message, or the message it answers, must name PR #${key.pullRequest} and head ${key.headSha.slice(0, 7)}`, 403);
   await database.query(
-    `INSERT INTO architecture_relax_approvals(repository,pull_request_number,head_sha,approved_by,command_message_id,agent_id)
-     VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
-    [key.repository, key.pullRequest, key.headSha, OPERATOR_OWNER_ID, root.id, agentId],
+    `INSERT INTO architecture_relax_approvals(repository,pull_request_number,head_sha,command_message_id)
+     VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+    [key.repository, key.pullRequest, key.headSha, root.id],
   );
   return { approved: true as const, ...key };
 }
 
-/** The public read CI makes: was this exact head approved? Unknown input reads as no. */
-export async function readArchitectureApproval(database: SqlDatabase, query: URLSearchParams): Promise<{ approved: boolean }> {
+/** The public read CI makes: was this exact head approved, by which owner message? Unknown input reads as no. */
+export async function readArchitectureApproval(database: SqlDatabase, query: URLSearchParams):
+  Promise<{ approved: boolean; messageId?: string; approvedAt?: string }> {
   const key = approvalKey({ repository: query.get('repository'), pullRequest: query.get('pullRequest'), headSha: query.get('head') });
   if (!key) return { approved: false };
-  const found = await database.query(
-    `SELECT 1 FROM architecture_relax_approvals WHERE repository=$1 AND pull_request_number=$2 AND head_sha=$3`,
+  const found = (await database.query<{ command_message_id: string; approved_at: Date }>(
+    `SELECT command_message_id,approved_at FROM architecture_relax_approvals
+     WHERE repository=$1 AND pull_request_number=$2 AND head_sha=$3`,
     [key.repository, key.pullRequest, key.headSha],
-  );
-  return { approved: Boolean(found.rowCount) };
+  )).rows[0];
+  return found
+    ? { approved: true, messageId: found.command_message_id, approvedAt: found.approved_at.toISOString() }
+    : { approved: false };
 }

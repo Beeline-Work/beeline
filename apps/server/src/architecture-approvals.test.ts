@@ -48,7 +48,7 @@ describe('architecture relax approvals', () => {
     const ask = await message(AGENT, `Relax corner.state-writes? https://github.com/${REPOSITORY}/pull/3264 head ${HEAD.slice(0, 7)}`);
     expect(await read()).toEqual({ approved: false });
     await approve(await message(OWNER, '@worker yes', ask));
-    expect(await read()).toEqual({ approved: true });
+    expect(await read()).toMatchObject({ approved: true, messageId: expect.stringMatching(/^[0-9a-f]{64}$/), approvedAt: expect.any(String) });
     expect(await read('f'.repeat(40))).toEqual({ approved: false });
     expect(await read(HEAD, '3265')).toEqual({ approved: false });
     expect(await read('not-a-sha')).toEqual({ approved: false });

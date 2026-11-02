@@ -169,6 +169,7 @@ const phoneOperations = {
 const daemonOperations = {
   acknowledgeAgentCommand: true,
   answerUsageRefresh: true,
+  approveArchitectureRelax: true,
   approveCornerMerge: true,
   archiveCorner: true,
   archiveWorkflow: true,

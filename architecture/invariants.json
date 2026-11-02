@@ -28,7 +28,7 @@
         "apps/server/src/corner-lifecycle.ts",
         "apps/server/src/corner-close.ts"
       ],
-      "total": 38,
+      "total": 36,
       "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
     },
     {
@@ -44,7 +44,7 @@
         "apps/server/src/corner-close.ts",
         "apps/server/src/github-operations.ts"
       ],
-      "total": 1,
+      "total": 0,
       "fix": "Close the corner with closeCornerState(db, cornerId) from apps/server/src/corner-close.ts. It archives the room, cancels commands, abandons the workflow run, deletes wake sources and advances the corner to closed."
     },
     {
@@ -86,7 +86,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 6,
+      "total": 7,
       "fix": "Use one of three shapes: a global job via the leader's work.add in apps/server/src/background.ts; a timeout chain owned by one connection and cleared in its close handler; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
     },
     {
@@ -237,8 +237,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1890,
-    "unusedTotal": 197,
+    "bootstrapTotal": 1899,
+    "unusedTotal": 220,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -756,7 +756,8 @@
           "brief_references": "existing before the registry; weekly audit reviews",
           "approval_basis": "existing before the registry; weekly audit reviews",
           "revision_hash": "existing before the registry; weekly audit reviews",
-          "spec": "existing before the registry; weekly audit reviews"
+          "spec": "existing before the registry; weekly audit reviews",
+          "objective": "existing before the registry; weekly audit reviews"
         }
       },
       "corner_facts": {
@@ -2927,6 +2928,29 @@
           "by_ad": "existing before the registry; weekly audit reviews",
           "all_site_visits": "existing before the registry; weekly audit reviews"
         }
+      },
+      "architecture_relax_approvals": {
+        "module": "Architecture guards",
+        "reason": "The owner's yes on one exact PR head that relaxes an invariant; it exists nowhere else.",
+        "columns": {
+          "repository": "Which repository the approved pull request belongs to.",
+          "pull_request_number": "Which pull request the owner approved.",
+          "head_sha": "The exact commit approved; a new commit needs a new yes.",
+          "command_message_id": "The owner's own message that gave the yes; CI reports it as provenance.",
+          "approved_at": "When the yes was recorded, reported with the provenance."
+        }
+      },
+      "operation_outcomes_hourly": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "hour": "existing before the registry; weekly audit reviews",
+          "op": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "code": "existing before the registry; weekly audit reviews",
+          "release": "existing before the registry; weekly audit reviews",
+          "count": "existing before the registry; weekly audit reviews"
+        }
       }
     },
     "jsonb": {
@@ -2939,7 +2963,8 @@
         "text": "existing before the registry; weekly audit reviews",
         "originCornerId": "existing before the registry; weekly audit reviews",
         "attachments": "existing before the registry; weekly audit reviews",
-        "reportedOutcome": "existing before the registry; weekly audit reviews"
+        "reportedOutcome": "existing before the registry; weekly audit reviews",
+        "objective": "existing before the registry; weekly audit reviews"
       },
       "review_context": {
         "reportIds": "existing before the registry; weekly audit reviews",

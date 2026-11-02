@@ -60,10 +60,10 @@ reads the steps. An agent starts a run with `start_workflow`, binding
 | Step | Who | What happens |
 | --- | --- | --- |
 | `notify` | triager | Finds fix pull requests merged since the last `notified` run, plus any an earlier run left unnotified (their body has a `Feedback items:` line), and calls `notify_feedback_fixed` for each. Hands off `notified`, or `skipped` when it cannot send (see below). |
-| `pull` | triager | Reads new `feedback_items` and each report's `message_ids` context through the vaulted database credential, groups them by problem, and ranks the groups by report count. It judges which problems are prompt defects (no label marks them) and drafts a saved case for each (`docs/prompts/cases/`). |
-| `adapters` | triager | Runs `scripts/check-acp-adapters.mjs`: latest adapters in temp directories, no credentials, ACP initialize/session/new only. Versioned failures join the same approval card and dispatch path. |
-| `approve` | a person | A card with **dispatch** or **skip**. Nothing is dispatched before someone answers. |
-| `dispatch` | triager | One fix corner per approved problem, opened with `open_corner` (from a corner it opens a sibling in the parent Room), with an agent tagged. The brief lists the item ids and requires the fix PR body to carry `Feedback items: <ids>`. A prompt-fix brief also carries the drafted case; its PR adds the case, passes the `PROMPT CASES` check, and carries an agent's replay table. |
+| `verify` | triager | Checks earlier fixes against their signal after release: not yet released, still occurring, stopped, or not enough evidence yet. Never claims a fix held from a missing or incomplete reading. |
+| `pull` | triager | Reads new `feedback_items` and each report's `message_ids` context through the vaulted database credential, groups them by problem, and ranks the groups. It also reads the other fix-loop inputs (below). It judges which problems are prompt defects (no label marks them) and drafts a saved case for each (`docs/prompts/cases/`). |
+| `adapters` | triager | Runs `scripts/check-acp-adapters.mjs` against the installed harness programs: latest adapters in temp directories, no credentials, ACP initialize/session/new only. |
+| `present` | triager | Merges every source into one ranked list with a verdict per group (build, hold, drop) and hands it to the team's approval point. Fix corners are opened after a person's yes, outside the run, with the brief carrying the group's item ids or signature. |
 | `done` | | The run ends. |
 
 Feedback is written by people across all of Beeline, so the procedure treats
@@ -145,8 +145,8 @@ separate CI job. See `docs/workflows/feedback-triage-steps.md`.
 
 The workspace-walk workflow starts at 06:00 America/New_York and reads every
 eligible workspace with human activity in the last 24 hours. The feedback-triage
-workflow starts at 10:00 America/New_York and merges that walk's findings with
-feedback into one ranked card. Server-seeded schedules preserve their assigned
+workflow starts at 07:00 America/New_York and merges that walk's findings with
+feedback into one ranked list. Server-seeded schedules preserve their assigned
 agent; team-authored workflows and prompts are not overwritten.
 
 Agent feedback is grouped by tool, normalized error and category using
@@ -158,6 +158,28 @@ occurrence without human impact cannot open a fix corner. Each dispatch records
 a stable signal; the next day's verification checks whether it stopped after
 release, still occurs, or has not been released. See the
 [step procedure](workflows/feedback-triage-steps.md).
+
+### Fix-loop inputs
+
+Every input is a bounded result with a freshness check. A missing or stale input
+is reported as missing, never as "nothing found". Producers do their own
+deterministic work on their own schedule, so the run only reads.
+
+| Input | Producer | Where the run reads it | Fresh when |
+| --- | --- | --- | --- |
+| Feedback | `report_feedback`, `@system`, Report issue | `feedback_items` (pull query above) | always current |
+| Release failures | `release-failure.yml` | open `release-failure` issues | closed on proven recovery |
+| Nightly Checks | `nightly-checks.yml`, 03:00 | open `nightly-checks` issues (failed twice, flaky, unfinished) | closed when the job next passes first time |
+| ACP adapters, latest/latest | `acp-adapters.yml` | open `adapter-compat` issues | until a passing run |
+| ACP adapters, installed programs | this run's `adapters` step | its own results | this run |
+| Production logs | log walk on squire, 06:40 (`scripts/log-walk/README.md`) | `report.md`/`report.json` in the triager's home | `window.to` is this morning |
+| Sentry | Sentry webhook wake (`sentry-wake.ts`) and the run's own Sentry read | Sentry issues; existing Sentry fix corners | last 24 hours |
+| Latency | nightly latency rig, 03:00 | the night's verdict and any filed fix order in the latency-rig corner | last night |
+
+Every fix brief carries the group's `Feedback items: <ids>` line, or its
+signature (Sentry short id, `log:<pattern>`, nightly job name, release run), so
+`notify` and `verify` can find the fix again. A corner opened without that line
+leaves its reports unresolved forever.
 
 ## Close the loop: Fixed DMs
 

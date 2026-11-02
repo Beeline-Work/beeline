@@ -195,31 +195,14 @@ describe('free agent Machine entry', () => {
     expect(installer).toContain("resolveAgentCommand({ kind: 'pi', env })");
   });
 
-  it('retries a failed bootstrap and stops on a refused token', async () => {
-    const calls: string[] = [];
-    const responses = [new Response('busy', { status: 503 }), Response.json(GRANT)];
-    const grant = await fetchFreeAgentGrant(
-      'https://server.test',
-      'bfb_token',
-      (async (url: string | URL, init?: RequestInit) => {
-        calls.push(`${String(url)} ${String(init?.body)}`);
-        return responses.shift()!;
-      }) as typeof fetch,
-      async () => undefined,
-    );
-    expect(grant.agentId).toBe(GRANT.agentId);
-    expect(calls).toEqual([
-      'https://server.test/v1/free-agents/bootstrap {"token":"bfb_token"}',
-      'https://server.test/v1/free-agents/bootstrap {"token":"bfb_token"}',
-    ]);
-    await expect(
-      fetchFreeAgentGrant(
-        'https://server.test',
-        'bfb_token',
-        (async () => new Response('no', { status: 401 })) as typeof fetch,
-        async () => undefined,
-      ),
-    ).rejects.toThrow('refused');
+  it('attempts bootstrap once per explicit invocation and stops on a refused token',async()=>{
+    const fetcher=vi.fn(async()=>new Response('busy',{status:503})),sleep=vi.fn(async()=>undefined);
+    await expect(fetchFreeAgentGrant('https://server.test','synthetic',fetcher,sleep)).rejects.toThrow('503');
+    expect(fetcher).toHaveBeenCalledTimes(1);expect(sleep).not.toHaveBeenCalled();
+    const refused=vi.fn(async()=>new Response('no',{status:401}));
+    await expect(fetchFreeAgentGrant('https://server.test','synthetic',refused)).rejects.toThrow('refused');
+    expect(refused).toHaveBeenCalledTimes(1);
+    expect((await fetchFreeAgentGrant('https://server.test','synthetic',async()=>Response.json(GRANT))).agentId).toBe(GRANT.agentId);
   });
 
   it('reports idleness with its own daemon token', async () => {

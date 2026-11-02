@@ -174,7 +174,7 @@ export class DaemonApiClient {
         onItems?: (items: readonly InboxItem[], cursor?: string) => void;
         onState?: (
           connected: boolean,
-          capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+          capabilities?: { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number },
         ) => void;
         onCommands?: (commands: readonly AgentCommand[]) => void;
         presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
@@ -299,7 +299,7 @@ export class DaemonApiClient {
     onItems?: (items: readonly InboxItem[], cursor?: string) => void,
     onState?: (
       connected: boolean,
-      capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+      capabilities?: { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number },
     ) => void,
     presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean },
     onCommands?: (commands: readonly AgentCommand[]) => void,
@@ -467,7 +467,11 @@ export class DaemonApiClient {
     if (this.liveRooms.size || this.roomsChangedListener) this.channel.start();
   }
 
+  private readonly pendingLiveRecovery = new Set<string>();
+
   private liveOpened(): void {
+    this.pendingLiveRecovery.clear();
+    for(const roomId of this.liveRooms.keys()) this.pendingLiveRecovery.add(roomId);
     for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
     // Every wake on this socket is fire-and-forget: a membership written, or
     // a Connect tapped, while this socket was connecting (or between
@@ -475,6 +479,7 @@ export class DaemonApiClient {
     // so the reconciliation and the drain still reach them.
     this.roomsChangedListener?.();
     this.connectorAssignmentListener?.();
+    if(!this.pendingLiveRecovery.size)this.channel.recovered();
   }
 
   private liveMessage(event: Record<string, unknown>): void {
@@ -527,10 +532,15 @@ export class DaemonApiClient {
       return;
     }
     if (event.type === 'subscribed' && typeof event.roomId === 'string') {
+      if(this.liveRooms.has(event.roomId)){
+        this.pendingLiveRecovery.delete(event.roomId);
+        if(!this.pendingLiveRecovery.size)this.channel.recovered();
+      }
       const capabilities = event.capabilities as Record<string, unknown> | undefined;
       for (const registration of this.liveRooms.get(event.roomId)?.registrations ?? [])
         registration.onState?.(true, {
           pushIntake: capabilities?.pushIntake === true,
+          connectionGeneration: this.channel.reconnects,
           connectionPresence: capabilities?.connectionPresence === true,
         });
       return;

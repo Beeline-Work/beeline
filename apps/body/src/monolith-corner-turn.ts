@@ -87,7 +87,6 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
-import { retryNotBefore } from './retry-barrier.js';
 import { distillTurnFailureReason, redactToolDetail, redactTurnError } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { hasCornerPrepareScript } from './corner-prepare-script.js';
@@ -118,7 +117,7 @@ import {
   ROOM_PROMPT_BACKSTOP_MS,
 } from './monolith-room-turn.js';
 import { bodyAgentCommand, type BodyConfig } from './config.js';
-import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   isSilentCompletion,
@@ -181,7 +180,6 @@ const TOOL_ARGUMENT_MAX_BYTES = 1_200;
 const TOOL_OUTPUT_MAX_BYTES = 3_200;
 const TOOL_PATH_LIMIT = 12;
 /** How long a turn start waits out a GitHub outage before it fails. */
-const GITHUB_OUTAGE_WAIT_MS = 120_000;
 
 function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
   return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
@@ -2767,33 +2765,9 @@ export class MonolithCornerTurnLoop {
     const repository = this.options.repository;
     this.branchSyncNotice = undefined;
     if (!repository || repository.readOnly) return;
-    let token: string | undefined;
-    // A GitHub outage (the server's 502) gets a bounded wait so a short blip
-    // does not fail the turn; any other failure keeps the three quick tries.
-    const outageDeadline = Date.now() + GITHUB_OUTAGE_WAIT_MS;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        token = (
-          await this.options.api.execute('getRoomGitHubToken', {
-            roomId: this.options.parentRoomId,
-          })
-        ).token;
-        break;
-      } catch (error) {
-        // Known resets belong to command intake's timed barrier, never this
-        // short transport retry loop. Its failed receipt requeues the turn.
-        if (retryNotBefore(error) !== undefined) throw error;
-        const outage = error instanceof DaemonApiError && error.status === 502;
-        const delay = outage ? Math.min(2_000 * 2 ** attempt, 30_000) : 250 * (attempt + 1);
-        if (
-          (outage ? Date.now() + delay > outageDeadline : attempt === 2) ||
-          this.forcedStop ||
-          (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId))
-        )
-          throw error;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
+    // One command-authorized credential lookup. A failed provider observation
+    // parks through intake until configuration/link/provider recovery.
+    const token=(await this.options.api.execute('getRoomGitHubToken',{roomId:this.options.parentRoomId})).token;
     if (!token) throw new Error('corner repository credential lookup returned no token');
     const stop = new AbortController();
     let watchStop: NodeJS.Timeout | undefined;

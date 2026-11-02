@@ -59,9 +59,6 @@ import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStora
 import { monitorHelperUsage } from './helper-usage.js';
 import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
-/** A failed agent restarts inside the helper after this, doubling to the cap. */
-const AGENT_RESTART_BASE_MS = 5_000;
-const AGENT_RESTART_MAX_MS = 60_000;
 /** How long an old per-agent daemon gets to drain before forced takeover. */
 const PREVIOUS_OWNER_STOP_MS = 15_000;
 const PREVIOUS_OWNER_KILL_MS = 2_000;
@@ -487,7 +484,6 @@ async function serveMachineHelper(
 
   /** One agent's whole life in this process: start, restart on failure, stop. */
   const supervise = async (slot: AgentSlot) => {
-    let failures = 0;
     let migrationReleaseChecked = false;
     let reportedPreviousOwner: number | undefined;
     while (!controller.signal.aborted && !slot.controller.signal.aborted) {
@@ -593,7 +589,6 @@ async function serveMachineHelper(
       }
       if (controller.signal.aborted || slot.controller.signal.aborted) break;
       if (reason === 'restart-requested') {
-        failures = 0;
         setState(slot, 'restarting', 'restart requested');
         continue;
       }
@@ -606,12 +601,11 @@ async function serveMachineHelper(
         restartHelper('update');
         break;
       }
-      // An ordinary failure restarts only this agent, the way the service
-      // manager used to restart its unit: 5 s, doubling to a minute.
-      const delay = Math.min(AGENT_RESTART_MAX_MS, AGENT_RESTART_BASE_MS * 2 ** failures);
-      failures += 1;
-      setState(slot, 'restarting');
-      await sleep(delay, slot.controller.signal);
+      // A failed activation cannot schedule another activation/read. The
+      // existing runtime revision watcher or explicit start admits one retry.
+      if(slot.revision!==slot.attemptRevision)continue;
+      setState(slot,'needs-config',slot.status || 'agent failed; awaiting configuration or explicit start');
+      break;
     }
     if (slot.state !== 'removed' && slot.state !== 'needs-auth' && slot.state !== 'needs-config')
       setState(slot, 'stopped');

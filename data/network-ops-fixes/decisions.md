@@ -24,3 +24,5 @@ Owner instruction 006 authorizes recommended or conservative compatible implemen
 
 | D015 | Journal retention selects one exact count victim and only the newly expired byte interval, using a function-local indexed plan. | Bulk writes must not revisit dead history while retaining both existing replay bounds. | Real PostgreSQL generic-plan and independent trailing-history model proofs; numeric replay-order regression. |
 | D016 | Hosting readiness reports held dependency state; vendor reporting refreshes require explicit authenticated operator scope. | F16/F22 forbid status discovery on elapsed time. | Zero-query readiness and refresh authorization regressions; other scheduled obligations remain open. |
+
+| D017 | Failed Body acquisition parks until explicit Retry or a real source revision; only authenticated catch-up resets one incident replacement. | F18 forbids elapsed-time/backoff discovery and socket flaps cannot replenish attempts. | Body link, intake, machine and runtime regressions; remaining provider and command-policy obligations remain explicit gates. |

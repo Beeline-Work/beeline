@@ -145,23 +145,23 @@ export async function runServerCommandIntake(options: {
   let busy: Promise<void> | undefined;
   let wake: ((reconcile: boolean) => void) | undefined;
   let hasSubscribed = false;
+  let subscribed = false;
+  let connectionGeneration = -1;
+  const blockedClaims = new Set<string>();
   let reconciliation: Promise<void> | undefined;
   let reconciliationError: unknown;
   let stopped = false;
   let retryAt = 0;
   let standingFailure = false;
   let configurationVersion = 0;
-  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const canStartTurn = () => !standingFailure && Date.now() >= retryAt && options.canStartTurn?.() !== false;
   const parkFailure = (error: unknown, sameConfiguration: boolean) => {
     if (sameConfiguration && isStandingRuntimeFault(error)) standingFailure = true;
     const reset = retryNotBefore(error);
     if (reset === undefined) return;
     retryAt = Math.max(retryAt, reset);
-    clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => { if (!stopped) wake?.(false); },
-      Math.min(2_147_483_647, Math.max(0, retryAt - Date.now()) + 50 + Math.floor(Math.random() * 250)));
-    retryTimer.unref?.();
+    // Retry-After is an earliest eligible bound, never a timer admission.
+    // A new configuration/connection/command boundary must wake parked work.
   };
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
@@ -194,14 +194,19 @@ export async function runServerCommandIntake(options: {
       });
   };
   options.onWake?.(notify);
-  options.onRecovery?.(() => { configurationVersion++; standingFailure = false; notify(); });
+  options.onRecovery?.(() => { configurationVersion++; standingFailure = false; blockedClaims.clear(); notify(); });
   const off = api.liveSubscribe?.(
     roomId,
     undefined,
     undefined,
     (connected, capabilities) => {
       options.onSubscriptionState?.(connected && capabilities?.pushIntake === true);
-      if (!connected) return;
+      if (!connected) { subscribed = false; return; }
+      const nextGeneration = capabilities?.connectionGeneration;
+      if (nextGeneration !== undefined ? nextGeneration <= connectionGeneration : subscribed) return;
+      subscribed = true;
+      if (nextGeneration !== undefined) connectionGeneration = nextGeneration;
+      blockedClaims.clear();
       if (capabilities?.pushIntake !== true) {
         options.onError?.(new Error('server push intake is required; refusing timer-free intake'));
         return;
@@ -221,6 +226,7 @@ export async function runServerCommandIntake(options: {
       if (options.closed && (await options.closed())) return;
       for (let command of [...pending.values()].sort((a, b) => Number(a.reason === 'computer_activity') - Number(b.reason === 'computer_activity'))) {
         validateServerCommand(command, roomId, agentId);
+        if (blockedClaims.has(command.id)) continue;
         if (busy && command.action !== 'stop' && command.action !== 'restart') continue;
         if (
           (command.action === 'input' || command.action === 'resume') &&
@@ -243,7 +249,8 @@ export async function runServerCommandIntake(options: {
         let claimSucceeded = false;
         try {
           // A lost response may already have committed this generation's claim.
-          for (let attempt = 0; ; attempt += 1) {
+          // One attempt per admitted boundary; uncertainty never starts backoff.
+          for (let attempt = 0; attempt < 1; attempt += 1) {
             if (signal?.aborted) break;
             try {
               const claim = await api.execute('claimAgentCommand', {
@@ -276,25 +283,16 @@ export async function runServerCommandIntake(options: {
                 : isNetworkFailure(error);
               if (!retryable) {
                 // A queued snapshot can legitimately lose to coalescing or a
-                // higher-priority human request. Refresh instead of reporting
-                // a helper fault for the server's refusal.
-                if (error instanceof DaemonApiError && error.status === 409) requestReconciliation();
-                else options.onError?.(error);
+                // higher-priority human request. Drop that stale delivery;
+                // the server's targeted push owns its replacement.
+                if (!(error instanceof DaemonApiError && error.status === 409)) options.onError?.(error);
                 break;
               }
-              if (attempt === 3) throw error;
-              const waitMs = Math.max(250 * 2 ** attempt,
-                (retryNotBefore(error) ?? Date.now()) - Date.now());
-              await new Promise<void>((resolve) => {
-                const done = () => {
-                  clearTimeout(timer);
-                  signal?.removeEventListener('abort', done);
-                  resolve();
-                };
-                const timer = setTimeout(done, waitMs);
-                signal?.addEventListener('abort', done, { once: true });
-                if (signal?.aborted) done();
-              });
+              retryAt=Math.max(retryAt,retryNotBefore(error)??0);
+              blockedClaims.add(command.id);
+              pending.set(command.id, command);
+              options.onError?.(error);
+              break;
             }
           }
         } catch (error) {
@@ -405,9 +403,8 @@ export async function runServerCommandIntake(options: {
           !busy &&
           [...pending.values()].some(
             (command) =>
-              command.action === 'stop' ||
-              command.action === 'restart' ||
-              canStartTurn(),
+              !blockedClaims.has(command.id) && (command.action === 'stop' ||
+              command.action === 'restart' || canStartTurn()),
           )
         )
           done(false);
@@ -420,7 +417,6 @@ export async function runServerCommandIntake(options: {
     throw error;
   } finally {
     stopped = true;
-    clearTimeout(retryTimer);
     off?.();
     options.onWake?.(undefined);
     options.onRecovery?.(undefined);

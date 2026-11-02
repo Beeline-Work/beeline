@@ -406,7 +406,7 @@ describe('DaemonApiClient', () => {
       ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
     );
     const delivered: string[] = [];
-    const states: Array<[boolean, { pushIntake: boolean; connectionPresence: boolean }?]> = [];
+    const states: Array<[boolean, { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number }?]> = [];
     const release = client.liveSubscribe(
       'room-1',
       '1000,' + 'a'.repeat(64),
@@ -457,9 +457,9 @@ describe('DaemonApiClient', () => {
 
     expect(delivered).toEqual(['1', '2', '3']);
     expect(states).toEqual([
-      [true, { pushIntake: false, connectionPresence: false }],
+      [true, { pushIntake: false, connectionPresence: false, connectionGeneration: 0 }],
       [false, undefined],
-      [true, { pushIntake: true, connectionPresence: true }],
+      [true, { pushIntake: true, connectionPresence: true, connectionGeneration: 2 }],
     ]);
     release();
     vi.useRealTimers();

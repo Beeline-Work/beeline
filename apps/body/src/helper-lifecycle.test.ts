@@ -186,11 +186,11 @@ describe('before READY', () => {
       },
       extendStartTimeout: extend,
     }).then((value) => (settled = value), (error) => (settled = error));
-    // The bounded early retries, then nothing but waiting on the link.
+    // Local watchdog extensions never retry server work.
     await vi.advanceTimersByTimeAsync(1_000 + 5_000 + 30_000);
-    expect(work).toHaveBeenCalledTimes(4);
+    expect(work).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(4 * 60_000);
-    expect(work).toHaveBeenCalledTimes(4);
+    expect(work).toHaveBeenCalledTimes(1);
     expect(settled).toBeUndefined();
     expect(extend).toHaveBeenCalled();
     expect(extend.mock.calls.every(([ms]) => (ms as number) <= 75_000)).toBe(true);
@@ -199,7 +199,7 @@ describe('before READY', () => {
     await vi.advanceTimersByTimeAsync(0);
     await replay;
     expect(settled).toBe('replayed');
-    expect(work).toHaveBeenCalledTimes(5);
+    expect(work).toHaveBeenCalledTimes(2);
   });
 
   it('stops waiting on shutdown and propagates a real fault immediately', async () => {

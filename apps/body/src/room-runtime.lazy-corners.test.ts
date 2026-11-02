@@ -66,7 +66,7 @@ describe('idle corner discovery', () => {
       return listener;
     });
     await vi.advanceTimersByTimeAsync(581_000);
-    expect(wakes.every(wake => wake.mock.calls.length === 1)).toBe(true);
+    expect(wakes.every(wake => wake.mock.calls.length === 0)).toBe(true);
     const resumed = start(0);
     await vi.advanceTimersByTimeAsync(1000);
     await resumed;

@@ -694,9 +694,6 @@ const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'searchInstitutionalMemory',
 ]);
 
-const DAEMON_NETWORK_RETRY_LIMIT = 2;
-const DAEMON_NETWORK_RETRY_BASE_MS = 200;
-
 /** Whether a failed daemon call may be sent again: a read, or any call
  *  that carries its own idempotency key. */
 export function daemonOperationIsSafeToRepeat(name: string, input: JsonObject): boolean {
@@ -713,10 +710,6 @@ export function isDaemonNetworkFailure(error: unknown): boolean {
   return error instanceof TypeError && /^fetch failed/i.test(error.message);
 }
 
-function daemonRetryDelay(attempt: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, DAEMON_NETWORK_RETRY_BASE_MS * 2 ** attempt));
-}
-
 const toolOwedStorage = new AsyncLocalStorage<{ owedMentions?: unknown[] }>();
 
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
@@ -729,9 +722,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
       ? await activeCommandContext()
       : {}),
   });
-  const safeToRepeat = daemonOperationIsSafeToRepeat(name, input);
-  for (let attempt = 0; ; attempt += 1) {
-    try {
+  try {
       const response = await fetch(new URL(`/v1/daemon/operations/${name}`, `${baseUrl}/`), {
         method: 'POST',
         headers: {
@@ -759,20 +750,9 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
         if (result && typeof result === 'object' && '_beelineToolResult' in result) return result._beelineToolResult as JsonObject;
       }
       return result as JsonObject;
-    } catch (error) {
-      if (!isDaemonNetworkFailure(error)) throw error;
-      if (!safeToRepeat) {
-        throw new Error(
-          `daemon operation ${name} failed with a network error before the server answered; the call may not have run`,
-        );
-      }
-      if (attempt >= DAEMON_NETWORK_RETRY_LIMIT) {
-        throw new Error(
-          `daemon operation ${name} failed with a network error after ${attempt + 1} attempts`,
-        );
-      }
-      await daemonRetryDelay(attempt);
-    }
+  } catch(error){
+    if(!isDaemonNetworkFailure(error))throw error;
+    throw new Error(`daemon operation ${name} failed before the server answered; await a new action or recovery boundary${daemonOperationIsSafeToRepeat(name,input)?'':'; the write outcome is unknown'}`);
   }
 }
 
@@ -3957,14 +3937,10 @@ async function executeAgentOperation(
       const id = stringArg(args, 'id')?.trim();
       if (!id || !/^lsrq_[A-Za-z0-9]+$/.test(id)) throw new Error('valid Link request ID required');
       const context = await activeCommandContext();
-      for (let attempt = 0; attempt < 20; attempt++) {
-        const result = await daemonExecute('retrieveLinkSpendRequest', {
-          ...context, agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), id });
-        if (result.status !== 'pending_approval' && result.status !== 'created')
-          return JSON.stringify(result);
-        if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      return JSON.stringify({ id, status: 'pending_approval' });
+      // Provider without correlated push support stays pending until an
+      // explicit later tool action. A tool named wait cannot hide status polls.
+      return JSON.stringify(await daemonExecute('retrieveLinkSpendRequest',{
+        ...context,agentId:requiredEnv('BEELINE_DAEMON_AGENT_ID'),id}));
     }
     case 'connect': {
       const service = stringArg(args, 'service')?.trim();

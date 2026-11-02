@@ -6,12 +6,6 @@ import { LIVE_LINK_TIMING, LiveLink, type LiveLinkTiming, type LiveSocketFactory
 /** Subprotocol of the one socket a helper machine holds for all of its agents. */
 export const MACHINE_SOCKET_PROTOCOL = 'beeline.machine.1';
 
-/** Re-registration after the server dropped or refused one agent. */
-const REGISTRATION_BACKOFF_BASE_MS = 1_000;
-const REGISTRATION_BACKOFF_MAX_MS = 30_000;
-/** Only a registration that lived this long resets its backoff. */
-const STABLE_REGISTRATION_MS = 30_000;
-
 export interface AgentChannelHandlers {
   /** The registration frame: the agent's own token and presence metadata. */
   registration: () => Record<string, unknown>;
@@ -36,9 +30,8 @@ export class AgentChannel {
   /** A register frame is in flight on the current socket. */
   #pending = false;
   #refused = false;
-  #registeredAt: number | undefined;
-  #failures = 0;
-  #retry: ReturnType<typeof setTimeout> | undefined;
+  #recovered = false;
+  #replacementSpent = false;
   #registrations = 0;
   #intakeHeartbeat = false;
   #intakeDeadline: ReturnType<typeof setTimeout> | undefined;
@@ -76,8 +69,6 @@ export class AgentChannel {
     if (!this.#wanted) return;
     this.#wanted = false;
     this.#clearIntakeDeadline();
-    clearTimeout(this.#retry);
-    this.#retry = undefined;
     if (this.#registered) this.send({ type: 'unregister' });
     this.#registered = false;
     this.#pending = false;
@@ -103,8 +94,6 @@ export class AgentChannel {
   /** The socket opened: ask the server to take this agent. */
   register(): void {
     if (!this.#wanted || this.#registered || this.#pending || this.#refused) return;
-    clearTimeout(this.#retry);
-    this.#retry = undefined;
     // Pending before the send: an answer can arrive before send() returns.
     this.#pending = true;
     this.#armIntakeDeadline();
@@ -124,7 +113,6 @@ export class AgentChannel {
       );
       this.#clearIntakeDeadline();
       if (this.#intakeHeartbeat) this.#armIntakeDeadline();
-      this.#registeredAt = Date.now();
       this.#registrations += 1;
       this.handlers.onOpen();
       this.machine.registered();
@@ -151,19 +139,18 @@ export class AgentChannel {
       this.handlers.onRefused?.(code);
       if (this.#refused) {
         this.#wanted = false;
-        clearTimeout(this.#retry);
-        this.#retry = undefined;
         // A helper with only refused agents must not keep opening sockets
         // that the server will immediately close for having no registration.
         this.machine.unwant(this);
-      } else this.#retryLater();
+      }
       return;
     }
     if (event.type === 'unregistered') {
       if (!this.#registered) return;
       console.warn(`[machine-link] server dropped agent ${this.agentId}: ${String(event.reason)}`);
+      const recovered=this.#recovered;
       this.#ended();
-      this.#retryLater();
+      if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
     if (this.#registered) this.handlers.onMessage(event);
@@ -172,8 +159,6 @@ export class AgentChannel {
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
     this.#clearIntakeDeadline();
-    clearTimeout(this.#retry);
-    this.#retry = undefined;
     this.#pending = false;
     if (this.#registered) this.#ended();
   }
@@ -199,36 +184,30 @@ export class AgentChannel {
     this.#intakeDeadline = setTimeout(() => {
       this.#intakeDeadline = undefined;
       if (!this.#wanted) return;
-      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; reconnecting`);
-      this.machine.reconnectNow();
+      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; parked`);
+      // A missing registration/intake acknowledgement is not an independent
+      // recovery boundary and cannot reopen the machine repeatedly.
+      this.#pending = false;
+      if(this.#registered) this.#ended();
     }, this.machine.intakeTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs);
     this.#intakeDeadline.unref?.();
   }
 
   #ended(): void {
-    const registeredAt = this.#registeredAt;
     this.#registered = false;
     this.#clearIntakeDeadline();
-    this.#registeredAt = undefined;
-    if (registeredAt !== undefined && Date.now() - registeredAt >= STABLE_REGISTRATION_MS)
-      this.#failures = 0;
+    this.#recovered = false;
     this.handlers.onClose();
   }
 
-  #retryLater(): void {
-    if (!this.#wanted || this.#retry) return;
-    const ceiling = Math.min(
-      REGISTRATION_BACKOFF_MAX_MS,
-      REGISTRATION_BACKOFF_BASE_MS * 2 ** this.#failures,
-    );
-    this.#failures += 1;
-    // Full jitter: agents dropped together do not come back in lockstep.
-    this.#retry = setTimeout(() => {
-      this.#retry = undefined;
-      if (this.machine.link.isOpen()) this.register();
-    }, Math.floor(this.machine.random() * ceiling));
-    this.#retry.unref?.();
+  /** Authentication plus current demanded-lane acknowledgements. */
+  recovered(): void {
+    if(!this.isOpen() || this.#recovered)return;
+    this.#recovered=true;this.#replacementSpent=false;
+    this.machine.recovered();
   }
+  get recoveryComplete(): boolean {return this.#recovered;}
+
 }
 
 /**
@@ -299,6 +278,12 @@ export class MachineLink {
     }
   }
 
+  /** Reset one incident only when every owned agent has caught up. */
+  recovered(): void {
+    if([...this.#channels.values()].every(channel=>channel.isOpen() && channel.recoveryComplete))
+      this.link.markRecovered();
+  }
+
   /** A later channel for the same agent (an in-process restart) replaces the earlier one. */
   attach(agentId: string, handlers: AgentChannelHandlers): AgentChannel {
     return new AgentChannel(this, agentId, handlers);
@@ -310,7 +295,11 @@ export class MachineLink {
     this.#channels.set(channel.agentId, channel);
     if (previous && previous !== channel) previous.socketClosed();
     if (this.link.isOpen()) channel.register();
-    else this.link.start();
+    else {
+      this.link.start();
+      // A newly attached agent/configuration is an independent demand boundary.
+      if(this.link.state==='disconnected')this.link.reconnectNow();
+    }
   }
 
   /** @internal */

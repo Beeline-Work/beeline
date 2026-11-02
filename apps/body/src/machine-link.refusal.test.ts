@@ -32,22 +32,14 @@ it.each(['daemon_token_required', 'agent_removed', 'too_many_agents'])(
   },
 );
 
-it('keeps bounded backoff for a transient registration failure', async () => {
-  vi.useFakeTimers();
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  const send = vi.fn(() => true);
-  const machine = { link: { isOpen: () => true, send }, want: vi.fn(), unwant: vi.fn(), random: () => 1 } as unknown as MachineLink;
-  const channel = new AgentChannel(machine, 'a'.repeat(64), {
-    registration: () => ({ token: 'bdt_valid' }), onOpen: vi.fn(), onClose: vi.fn(),
-    onMessage: vi.fn(), onUpdateRequired: vi.fn(),
-  });
-  channel.start(); channel.register();
-  channel.receive({ type: 'register-refused', code: 'registration_failed' });
-  await vi.advanceTimersByTimeAsync(999);
-  expect(send).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(1);
-  expect(send).toHaveBeenCalledTimes(2);
-  channel.stop();
+it('parks a transient registration refusal until a distinct registration boundary',async()=>{
+  vi.useFakeTimers();vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  const send=vi.fn(()=>true);
+  const machine={link:{isOpen:()=>true,send},want:vi.fn(),unwant:vi.fn()} as unknown as MachineLink;
+  const channel=new AgentChannel(machine,'a'.repeat(64),{registration:()=>({token:'fixture-token'}),onOpen:vi.fn(),onClose:vi.fn(),onMessage:vi.fn(),onUpdateRequired:vi.fn()});
+  channel.start();channel.register();channel.receive({type:'register-refused',code:'registration_failed'});
+  await vi.advanceTimersByTimeAsync(24*60*60*1000);expect(send).toHaveBeenCalledTimes(1);
+  channel.socketClosed();channel.register();expect(send).toHaveBeenCalledTimes(2);channel.stop();
 });
 
 it.each([false, true])('a permanent refusal stops the socket only when no sibling needs it (sibling=%s)', async sibling => {

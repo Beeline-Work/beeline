@@ -28,7 +28,8 @@ export function readWordingCatalog(source: string): WordingCatalog {
         : declaration.initializer;
       if (!ts.isObjectLiteralExpression(expression))
         throw new Error('System-message catalog must contain literal template data');
-      const catalog: WordingCatalog = {};
+      // Preserve every key as data, including JavaScript prototype names.
+      const catalog = Object.create(null) as WordingCatalog;
       const propertyName = (name: ts.PropertyName) =>
         ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined;
       for (const property of expression.properties) {

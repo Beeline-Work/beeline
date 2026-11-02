@@ -75,6 +75,17 @@ it('rejects a new key and a removed key', () => {
   expect(() => assertWordingLock(catalog, locked)).toThrow(/owner.*approve wording/);
 });
 
+it('rejects adding a reserved prototype key to the catalog source', () => {
+  const changed = Object.fromEntries([
+    ...Object.entries(readWordingCatalog(catalogSource())),
+    ['__proto__', { parts: ['New prototype notice'], variables: [] }],
+  ]);
+  const source = `export const SYSTEM_MESSAGE_CATALOG = ${JSON.stringify(changed)} as const;`;
+  expect(() => assertWordingLock(readWordingCatalog(source), locked)).toThrow(
+    /owner.*approve wording/,
+  );
+});
+
 it('does not lock variable descriptions, source formatting, or declaration order', () => {
   const catalog = readWordingCatalog(catalogSource());
   for (const entry of Object.values(catalog))

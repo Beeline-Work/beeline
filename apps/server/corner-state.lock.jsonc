@@ -3,6 +3,7 @@
 // Queued work stays working: lunchboxfortwo message 1d183c7884173194edd919705a769c759205506422a1a6704a933775823d640c.
 // Queue label removed: lunchboxfortwo message 44451dd4e1ed1d4e7f3e50c3dc4af769ad9c189b283f2bd97325815e3bd1a674.
 // A pending check stays review: lunchboxfortwo message f33288d32e5c70141c1e670672a60128bdd6eeb4e8bd70189120b1283131f480.
+// cornerWorkSql drops the deleted reviewer fallbacks: lunchboxfortwo, 2026-11-02 ("Yes, do it": delete rooms.reviewer_fallback_ids; update the hash-locked cornerRowState/cornerWorkSql/cornerBlockerSql).
 {
   "entries": [
     {
@@ -38,7 +39,7 @@
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerWorkSql",
-      "sha256": "b10ce5a74379a02fd2cbc970edbabe831d753363303b625d26e6a57f1105db5e"
+      "sha256": "810ed670484188821d425811d5511e4fd5e9cd71c9b7ba1499019ae9086cd00f"
     },
     {
       "file": "apps/server/src/chat-corner-counts.ts",

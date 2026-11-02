@@ -1,3 +1,4 @@
+// PENDING lunchboxfortwo approval (not yet given): deleting Room reviewer fallbacks (owner order 2026-11-02, relayed by firstmate) removes the fallback-only System reports 'blocked: no reviewer on the configured list is healthy…', 'no reviewer on the configured list is healthy enough to continue' and 'the fallback reviewer command could not be queued', and shifts the checksReported/ensureReviewDispatch wrapper snapshots. Mechanically regenerated; no other wording changed.
 // Failed-install card wording approved by the owner in brief revision 2, reconfirmed by Firstmate instruction 002 on 2026-11-02 for https://github.com/Beeline-Work/beeline/pull/3246; failConnectingOffers producers and connectorStatusReport wrapper only.
 // Capped-owner starter-agent location message approved by the owner on 2026-11-02 ("Yes, do it"), relayed in Firstmate launch brief for https://github.com/Beeline-Work/beeline/pull/3246; this producer entry only.
 // Connected-app report refusal update approved by lunchboxfortwo; Claude relayed lunchboxfortwo's yes in message 068e1d99cd0a96b277aac8b64e5a8a507d30c6a9acd9a938acd06ec3783ed5b1. Only the RoomsMcpAgentTools.inTurn wrapper entry refreshed.
@@ -2540,22 +2541,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:checksReported:wrapper:3183dee2094e73b4",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "reachableReviewer(db, cornerId, corner, event.sourceMessageId, headSha)",
-    "literals": [
-      ".headSha",
-      ".lifecycle",
-      ".pr",
-      ".sourceMessageId",
-      "NullKeyword",
-      "binary:??",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/corner-lifecycle.ts:checksReported:wrapper:4f53cda18c2baa0c",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
@@ -2570,30 +2555,6 @@
     "template": "transition.take('approved', { verdict: 'approved' })",
     "literals": [
       "\"approved\""
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:checksReported:wrapper:834ca6f3919c6f1a",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "transition.take(plan.outcome, headSha ? { headSha } : {})",
-    "literals": [
-      "\"failing\"",
-      "\"no_reviewer\"",
-      "\"passing\"",
-      "$local()",
-      ".headSha",
-      ".lifecycle",
-      ".outcome",
-      ".pr",
-      ".sourceMessageId",
-      "FalseKeyword",
-      "NullKeyword",
-      "TrueKeyword",
-      "binary:??",
-      "conditional:?:",
-      "end:expression"
     ],
     "occurrences": 1
   },
@@ -2615,7 +2576,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:checksReported:wrapper:d033417832605ac3",
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:baab19fb7593945a",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId, reason)",
@@ -2698,6 +2659,40 @@
     "occurrences": 1
   },
   {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:dda5a37435684187",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reachableReviewer(db, cornerId, corner, event.sourceMessageId)",
+    "literals": [
+      ".sourceMessageId"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:e0de2427a95dee27",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "transition.take(plan.outcome, headSha ? { headSha } : {})",
+    "literals": [
+      "\"failing\"",
+      "\"no_reviewer\"",
+      "\"passing\"",
+      "$local()",
+      ".headSha",
+      ".lifecycle",
+      ".outcome",
+      ".pr",
+      ".sourceMessageId",
+      "FalseKeyword",
+      "NullKeyword",
+      "TrueKeyword",
+      "binary:??",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/corner-lifecycle.ts:checksReported:wrapper:f2267fd4be014e6c",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
@@ -2710,50 +2705,6 @@
       "NullKeyword",
       "binary:??",
       "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:dispatchableListReviewer:wrapper:4f53cda18c2baa0c",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewerListExhausted(db, { cornerId, sourceMessageId, headSha })",
-    "literals": [],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:dispatchableListReviewer:wrapper:d1da2b02079bc23c",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "readableByReviewer(db, cornerId, reviewerAgentId, sourceMessageId)",
-    "literals": [
-      "\"offline\"",
-      "\"out-of-credit\"",
-      "\"recent-failure\"",
-      "$local()",
-      "'online'",
-      "'status'",
-      ".agent_id",
-      ".find",
-      ".find()",
-      ".get",
-      ".get()",
-      ".healthy",
-      ".includes",
-      ".includes()",
-      ".map",
-      ".map()",
-      ".now",
-      ".now()",
-      ".parent_id",
-      ".rows",
-      "FalseKeyword",
-      "NullKeyword",
-      "TrueKeyword",
-      "binary:&&",
-      "binary:??",
-      "end:expression",
-      "prefix:!"
     ],
     "occurrences": 1
   },
@@ -2779,7 +2730,70 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:154095578a486f25",
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:4ae3d33b3cb1e1b1",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
+    "literals": [
+      "\"\"",
+      "$local()",
+      ".headSha",
+      ".id",
+      ".lifecycle",
+      ".pr",
+      ".rows",
+      ".text",
+      "FirstLiteralToken:0",
+      "[\"\",\":\",\"\"]",
+      "[\"; prior verdict and evidence: \",\"\"]",
+      "[\"the reviewer completed its review of the current head\",\"\"]",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:5ab120ad5ed1c649",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, 'the configured reviewer is unreachable or unhealthy', false)",
+    "literals": [
+      "\"the configured reviewer is unreachable or unhealthy\"",
+      ".headSha",
+      ".lifecycle",
+      ".pr"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:852ca89f0fbcb532",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reachableReviewer(db, cornerId, corner, sourceId)",
+    "literals": [
+      ".id",
+      ".lastCardId",
+      ".rows",
+      "FirstLiteralToken:0",
+      "binary:??",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:99f1ff09e6361727",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteMissingReviewer(db, cornerId, corner, pr.headSha)",
+    "literals": [
+      ".headSha",
+      ".lifecycle",
+      ".pr"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:f94e4e31f18400c0",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, reason)",
@@ -3001,72 +3015,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:4ae3d33b3cb1e1b1",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
-    "literals": [
-      "\"\"",
-      "$local()",
-      ".headSha",
-      ".id",
-      ".lifecycle",
-      ".pr",
-      ".rows",
-      ".text",
-      "FirstLiteralToken:0",
-      "[\"\",\":\",\"\"]",
-      "[\"; prior verdict and evidence: \",\"\"]",
-      "[\"the reviewer completed its review of the current head\",\"\"]",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:5ab120ad5ed1c649",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, 'the configured reviewer is unreachable or unhealthy', false)",
-    "literals": [
-      "\"the configured reviewer is unreachable or unhealthy\"",
-      ".headSha",
-      ".lifecycle",
-      ".pr"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:831c01bb37d10a9c",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "reachableReviewer(db, cornerId, corner, sourceId, pr.headSha)",
-    "literals": [
-      ".headSha",
-      ".id",
-      ".lastCardId",
-      ".lifecycle",
-      ".pr",
-      ".rows",
-      "FirstLiteralToken:0",
-      "binary:??",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:99f1ff09e6361727",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteMissingReviewer(db, cornerId, corner, pr.headSha)",
-    "literals": [
-      ".headSha",
-      ".lifecycle",
-      ".pr"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/corner-lifecycle.ts:mergeRefused:systemLine:1760ce842afb68bd",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "systemLine",
@@ -3195,30 +3143,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:noteReviewerListExhausted:wrapper:9867a4a78f248913",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "reportToCommander(db, input.cornerId, SYSTEM_IDENTITY_ID, 'blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access', undefined, id)",
-    "literals": [
-      "\"blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access\"",
-      "\"hex\"",
-      "\"no-head\"",
-      "\"sha256\"",
-      ".cornerId",
-      ".digest",
-      ".digest()",
-      ".headSha",
-      ".sourceMessageId",
-      ".update",
-      ".update()",
-      "[\"beeline:\",\":reviewer-list-exhausted:\",\":\",\"\"]",
-      "binary:??",
-      "createHash()",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/corner-lifecycle.ts:noteUnreachableReviewer:wrapper:6bda624fd051c0ab",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
@@ -3246,7 +3170,7 @@
     "id": "src/corner-lifecycle.ts:reachableReviewer:wrapper:02bd7d3f3540851b",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
-    "template": "noteUnreachableReviewer(db, {\n    cornerId,\n    sourceMessageId,\n    reviewerId: corner.configured_reviewer_id,\n    reviewerKind: corner.configured_reviewer_kind,\n    reviewerName: corner.configured_reviewer_name,\n    reason: REVIEWER_NOT_PARENT_MEMBER,\n})",
+    "template": "noteUnreachableReviewer(db, {\n    cornerId,\n    sourceMessageId,\n    reviewerId,\n    reviewerKind: corner.configured_reviewer_kind,\n    reviewerName: corner.configured_reviewer_name,\n    reason: REVIEWER_NOT_PARENT_MEMBER,\n})",
     "literals": [
       "\"not a current member of the parent Room\"",
       ".configured_reviewer_id",
@@ -3256,18 +3180,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:reachableReviewer:wrapper:4f53cda18c2baa0c",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "dispatchableListReviewer(db, cornerId, corner, sourceMessageId, headSha)",
-    "literals": [],
-    "occurrences": 1
-  },
-  {
     "id": "src/corner-lifecycle.ts:reachableReviewer:wrapper:7b9d695adbac335a",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
-    "template": "readableByReviewer(db, cornerId, corner.configured_reviewer_id, sourceMessageId)",
+    "template": "readableByReviewer(db, cornerId, reviewerId, sourceMessageId)",
     "literals": [
       ".configured_reviewer_id"
     ],
@@ -3286,125 +3202,6 @@
       "FirstLiteralToken:0",
       "NullKeyword",
       "binary:??",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:reassignFailedCornerReviewer:wrapper:389b06bf7e6b2693",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "dispatchableListReviewer(db, input.roomId, corner, input.requestId, corner.lifecycle.pr?.headSha ?? null, input.agentId)",
-    "literals": [
-      "$local()",
-      ".headSha",
-      ".lifecycle",
-      ".pr",
-      ".requestId",
-      ".roomId",
-      ".rows",
-      "FirstLiteralToken:0",
-      "NullKeyword",
-      "binary:??",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:reassignFailedCornerReviewer:wrapper:5f0a3a3d22943b02",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId, 'no reviewer on the configured list is healthy enough to continue', false)",
-    "literals": [
-      "\"no reviewer on the configured list is healthy enough to continue\"",
-      "$local()",
-      ".headSha",
-      ".lifecycle",
-      ".pr",
-      ".requestId",
-      ".roomId",
-      ".rows",
-      "FirstLiteralToken:0",
-      "binary:??",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-lifecycle.ts:reassignFailedCornerReviewer:wrapper:7188fee54002b5b0",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId, `the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`)",
-    "literals": [
-      "\"\"",
-      "\"\\n\"",
-      "\"agent_tag\"",
-      "\"order\"",
-      "\"repair\"",
-      "\"report\"",
-      "\"unknown dispatch error\"",
-      "\"verdict\"",
-      "$local()",
-      "'attemptId'",
-      "'briefRevision'",
-      "'checks'",
-      "'cornerId'",
-      "'effort'",
-      "'harness'",
-      "'headSha'",
-      "'model'",
-      "'name'",
-      "'number'",
-      "'object'",
-      "'pr'",
-      "'pullRequest'",
-      "'reviewerConfiguration'",
-      "'signIn'",
-      "'status'",
-      "'unavailable'",
-      ".agentId",
-      ".context",
-      ".error",
-      ".filter",
-      ".filter()",
-      ".headSha",
-      ".includes",
-      ".includes()",
-      ".join",
-      ".join()",
-      ".lifecycle",
-      ".message",
-      ".parent",
-      ".pr",
-      ".pullRequest",
-      ".purpose",
-      ".reason",
-      ".reportSource",
-      ".requestId",
-      ".review_context",
-      ".revision",
-      ".roomId",
-      ".rows",
-      ".slice",
-      ".slice()",
-      ".text",
-      ".transaction",
-      ".transaction()",
-      "FirstLiteralToken:0",
-      "FirstLiteralToken:160",
-      "NullKeyword",
-      "TrueKeyword",
-      "[\": \",\"\"]",
-      "[\"Current handoff target: PR #\",\" at \",\". Older heads in the conversation are historical.\"]",
-      "[\"Prior reviewer verdict and evidence (historical context):\\n\",\"\"]",
-      "[\"Review against brief revision \",\", the corner's current brief at this dispatch.\"]",
-      "[\"the fallback reviewer command could not be queued\",\"\"]",
-      "binary:!==",
-      "binary:&&",
-      "binary:===",
-      "binary:??",
-      "binary:instanceof",
-      "conditional:?:",
       "end:expression"
     ],
     "occurrences": 1
@@ -4137,7 +3934,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:68dcd157b334c91c",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:af336dccd9786554",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name,\n        objective: destination.roomId === roomId ? name : objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
@@ -4145,6 +3942,8 @@
       "\"\"",
       "\"corner-open\"",
       "\"opened a corner\"",
+      "''",
+      "'objective'",
       ".corner_id",
       ".name",
       ".objective",
@@ -5788,6 +5587,26 @@
     "occurrences": 1
   },
   {
+    "id": "src/free-agents.ts:FreeAgentService.#stopStarts:systemLine:c1ef8c924660348a",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    roomId: target.room_id,\n    id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: target.agent_name },\n    verb: 'could not start',\n    ...(target.person_id && target.person_handle\n        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }\n        : {}),\n    consequence: 'the Beeline team has been told. Send a new message to try again',\n})",
+    "literals": [
+      "\"could not start\"",
+      "\"the Beeline team has been told. Send a new message to try again\"",
+      ".agent_name",
+      ".person_handle",
+      ".person_id",
+      ".rows",
+      "FirstLiteralToken:0",
+      "[\"for @\",\"\"]",
+      "binary:&&",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:systemLine:7923290dbd21f55a",
     "file": "apps/server/src/free-agents.ts",
     "kind": "systemLine",
@@ -5807,26 +5626,6 @@
       ".rows",
       ".workspace_name",
       "[\"\",\" in \",\"\"]",
-      "conditional:?:",
-      "end:expression"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/free-agents.ts:FreeAgentService.#stopStarts:systemLine:c1ef8c924660348a",
-    "file": "apps/server/src/free-agents.ts",
-    "kind": "systemLine",
-    "template": "systemLine(db, {\n    roomId: target.room_id,\n    id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: target.agent_name },\n    verb: 'could not start',\n    ...(target.person_id && target.person_handle\n        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }\n        : {}),\n    consequence: 'the Beeline team has been told. Send a new message to try again',\n})",
-    "literals": [
-      "\"could not start\"",
-      "\"the Beeline team has been told. Send a new message to try again\"",
-      ".agent_name",
-      ".person_handle",
-      ".person_id",
-      ".rows",
-      "FirstLiteralToken:0",
-      "[\"for @\",\"\"]",
-      "binary:&&",
       "conditional:?:",
       "end:expression"
     ],
@@ -8780,7 +8579,7 @@
     "kind": "wrapper",
     "template": "this.inTurn(member, target, run)",
     "literals": [],
-    "occurrences": 19
+    "occurrences": 20
   },
   {
     "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.call:wrapper:5b7094fbf9439bbc",
@@ -9107,7 +8906,7 @@
     "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.openCorner:wrapper:4bb6a7cae1812aa0",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
-    "template": "this.inTurn(member, room, async (turn, context) => {\n    const created = await exec('createCorner', { ...context, targetRoomId: room,\n        idempotencyKey: createHash('sha256').update(`open_corner\\0${turn.requestId}`).digest('hex'),\n        name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),\n        objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),\n        implementer, reviewer: args.reviewer, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),\n        ...(repository.resolution === 'repository' ? { repository: repository.key, targetBranch: repository.targetBranch } : {}),\n    }) as {\n        cornerId?: string;\n        watch?: unknown;\n        warnings?: unknown;\n    };\n    return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),\n        ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}), status: 'starting' };\n})",
+    "template": "this.inTurn(member, room, async (turn, context) => {\n    const created = await exec('createCorner', { ...context, targetRoomId: room,\n        idempotencyKey: createHash('sha256').update(`open_corner\\0${turn.requestId}`).digest('hex'),\n        name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),\n        objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),\n        implementer, reviewer: args.reviewer, sourceMessageId: args.sourceMessageId, hold: args.hold === true ? true : undefined, brief: briefDraft(args.brief),\n        ...(repository.resolution === 'repository' ? { repository: repository.key, targetBranch: repository.targetBranch } : {}),\n    }) as {\n        cornerId?: string;\n        watch?: unknown;\n        warnings?: unknown;\n    };\n    return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),\n        ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}), status: 'starting' };\n})",
     "literals": [
       "\"room\"",
       "$local()",
@@ -9127,6 +8926,66 @@
       ".address",
       ".toLowerCase",
       ".toLowerCase()"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.progress:wrapper:90837b3a0d7d3f6c",
+    "file": "apps/server/src/rooms-mcp-agent.ts",
+    "kind": "wrapper",
+    "template": "this.end(member, turn, false)",
+    "literals": [
+      "\", \"",
+      "\"hex\"",
+      "\"none\"",
+      "$local()",
+      "'2s'",
+      "'90 seconds'",
+      "'claimed'",
+      "'input'",
+      "'mcp_call'",
+      ".$local",
+      ".address",
+      ".agent_depth",
+      ".command",
+      ".db",
+      ".id",
+      ".join",
+      ".join()",
+      ".map",
+      ".map()",
+      ".min",
+      ".min()",
+      ".room_id",
+      ".root_command_id",
+      ".root_source_message_id",
+      ".rowCount",
+      ".rows",
+      ".toLowerCase",
+      ".toLowerCase()",
+      ".toString",
+      ".toString()",
+      ".transaction",
+      ".transaction()",
+      ".turn_request_id",
+      "FalseKeyword",
+      "FirstLiteralToken:0",
+      "FirstLiteralToken:1",
+      "FirstLiteralToken:3",
+      "FirstLiteralToken:32",
+      "NullKeyword",
+      "TrueKeyword",
+      "[\"mcp:\",\"\"]",
+      "[\"no order is waiting for your report; order addresses: \",\"; use a corner address to report to its commander\"]",
+      "binary:+",
+      "binary:=",
+      "binary:??",
+      "binary:||",
+      "conditional:?:",
+      "end:expression",
+      "prefix:!",
+      "randomBytes()",
+      "randomUUID()"
     ],
     "occurrences": 1
   },

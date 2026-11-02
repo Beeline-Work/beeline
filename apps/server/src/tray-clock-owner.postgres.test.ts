@@ -52,13 +52,21 @@ async function fixture(){
 }
 
 describe.skipIf(!url)('real aggregate-owner fenced Tray expiry at PostgreSQL COMMIT',()=>{
-  it('holds exact owner and source through deferred commit, blocks takeover, then consumes one version once across owners',async()=>{
+  it.each(['question','agent-sign-in','squire-approval'] as const)('holds %s owner/source through COMMIT and consumes once across owners',async(kind)=>{
     const f=await fixture(),entered=deferred(),release=deferred();let pause=false;
     const observed:SqlDatabase={query:(sql,args)=>f.first.query(semanticSql(sql),args),transaction:work=>f.first.transaction(async tx=>{
       const result=await work(semanticDb(tx));if(pause){entered.resolve();await release.promise;}return result;
     })};
     let flight:Promise<unknown>|undefined;
     try{
+      if(kind!=='question'){
+        await f.first.query(`DELETE FROM messages WHERE id='question'`);
+        const card={status:'pending',expiresAt:Date.UTC(2000,0,15),
+          ...(kind==='agent-sign-in'?{ownerId:viewer}:{approvalId:'approval',sourceRoomId:room})};
+        await f.first.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+          VALUES('question',$1,$2,'Synthetic','card',$3,$4::jsonb)`,[room,author,kind,JSON.stringify(card)]);
+        await f.first.query(`UPDATE clock_fixture SET now_at='2000-01-16'`);
+      }
       const lockA=await f.acquire(),coreA=new BackgroundOwnership(observed,'first'),epochA=await coreA.claim(lockA);f.scopes.push({owner:coreA,epoch:epochA});
       pause=true;flight=new TrayClockOwner(coreA).drain(epochA);await entered.promise;
       // The work callback and its final SELECT have returned. SQL COMMIT has

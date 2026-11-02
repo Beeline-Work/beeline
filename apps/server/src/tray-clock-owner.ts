@@ -1,11 +1,11 @@
 import { BackgroundOwnership, type BackgroundEpoch } from './background-ownership.js';
 import { consumeTrayClockInTransaction, type TrayClockClaim } from './tray-clock-source.js';
 
-export type TrayQuestionDeadline = Readonly<Omit<TrayClockClaim, 'kind'> & {
-  kind: 'question-age' | 'question-seen'; remainingMs: number;
+export type TrayDeadline = Readonly<Omit<TrayClockClaim, 'kind'> & {
+  kind: Exclude<TrayClockClaim['kind'], 'choice-close'>; remainingMs: number;
 }>;
 export type TrayClockDrain = Readonly<{
-  attempted: number; consumed: number; next: TrayQuestionDeadline | null;
+  attempted: number; consumed: number; next: TrayDeadline | null;
   /** Only an actual still-due semantic row permits bounded continuation. */
   continuation: boolean;
 }>;
@@ -15,8 +15,6 @@ export type TrayClockDrain = Readonly<{
  * ephemeral row queues an exact owner check at actual SQL COMMIT and deletes
  * itself there, matching the existing turn-owned effect fence pattern. */
 export const TRAY_CLOCK_OWNER_SCHEMA = `
-CREATE INDEX IF NOT EXISTS tray_clock_question_pending_idx ON tray_clock_deadlines(due_at,id)
- WHERE state='pending' AND kind IN ('question-age','question-seen');
 CREATE TABLE IF NOT EXISTS tray_clock_owner_fences(
  transaction_id bigint PRIMARY KEY,instance_id text NOT NULL,generation bigint NOT NULL,claim_nonce uuid NOT NULL
 );
@@ -57,8 +55,9 @@ CREATE CONSTRAINT TRIGGER beeline_commit_tray_clock_owner AFTER INSERT ON tray_c
 /** A real source/init/exact-due wake may invoke one bounded transaction. The
  * existing scheduler must coalesce its own wakes; this adapter neither loops
  * nor retries. Exceptions return no next deadline or continuation permission.
- * Cards and choices are deliberately excluded until their exact effect
- * adapters exist. A due choice can never pin this adapter's next wake at zero.
+ * Card expiry changes the committed projection clock, not the external approval
+ * or sign-in operation. Choices require their real domain terminal adapter and
+ * remain excluded; a due choice cannot pin this adapter's next wake at zero.
  */
 export class TrayClockOwner {
   constructor(private readonly ownership: BackgroundOwnership) {}
@@ -66,14 +65,14 @@ export class TrayClockOwner {
     return this.ownership.withTransaction(epoch, 'tray.expire', async db => {
       const claims = (await db.query<TrayClockClaim>(`SELECT id,incarnation,revision::text,kind,
         to_char(due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "dueAt"
-        FROM tray_clock_deadlines WHERE state='pending' AND kind IN ('question-age','question-seen')
+        FROM tray_clock_deadlines WHERE state='pending' AND kind<>'choice-close'
           AND due_at<=clock_timestamp() ORDER BY due_at,id LIMIT 100`)).rows;
       let consumed = 0;
       for (const claim of claims) if (await consumeTrayClockInTransaction(db, claim)) consumed++;
-      const next = (await db.query<TrayQuestionDeadline>(`SELECT id,incarnation,revision::text,kind,
+      const next = (await db.query<TrayDeadline>(`SELECT id,incarnation,revision::text,kind,
         to_char(due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "dueAt",
         EXTRACT(epoch FROM (due_at-clock_timestamp()))::double precision*1000 AS "remainingMs"
-        FROM tray_clock_deadlines WHERE state='pending' AND kind IN ('question-age','question-seen')
+        FROM tray_clock_deadlines WHERE state='pending' AND kind<>'choice-close'
         ORDER BY due_at,id LIMIT 1`)).rows[0];
       return Object.freeze({ attempted: claims.length, consumed, next: next ? Object.freeze({ ...next }) : null,
         continuation: next !== undefined && next.remainingMs <= 0 });

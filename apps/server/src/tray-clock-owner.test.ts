@@ -30,7 +30,7 @@ const observed=(db:SqlDatabase,after?:Observe):SqlDatabase=>({
 });
 const lock=()=>({query:vi.fn(async()=>({rows:[{held:true}]}))}) as unknown as Pick<LeaderConnection,'query'>;
 
-describe('unselected background-owned question expiry adapter',()=>{
+describe('unselected background-owned display expiry adapter',()=>{
   let db:PgliteDatabase;const owners:Array<{core:BackgroundOwnership;epoch:BackgroundEpoch}>=[];
   const makeOwner=async(after?:Observe)=>{
     const core=new BackgroundOwnership(observed(db,after),'instance'),epoch=await core.claim(lock());
@@ -58,16 +58,48 @@ describe('unselected background-owned question expiry adapter',()=>{
     expect(await causes()).toHaveLength(101);expect((await db.query(`SELECT * FROM tray_clock_owner_fences`)).rows).toEqual([]);
   });
 
-  it('excludes due cards and choices from both discovery and next deadline, preserving their unhandled obligations',async()=>{
+  it('consumes due sign-in display expiry while excluding choices from discovery and next deadline',async()=>{
     await question();await db.query(`INSERT INTO room_choices VALUES('33333333-3333-4333-8333-333333333333',$1,$2,'open','2000-01-09')`,[workspace,room]);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES('sign-in',$1,$2,'Synthetic','card','agent-sign-in',$3::jsonb)`,
       [room,author,JSON.stringify({ownerId:viewer,status:'pending',expiresAt:947462400000})]);
     await advance('2000-01-10');const{adapter,epoch}=await makeOwner();
-    const pending=await adapter.drain(epoch);expect(pending).toMatchObject({attempted:0,consumed:0,continuation:false,next:{kind:'question-age',dueAt:'2000-01-14T00:00:00.000000Z',remainingMs:4*86400000}});
+    const pending=await adapter.drain(epoch);expect(pending).toMatchObject({attempted:1,consumed:1,continuation:false,next:{kind:'question-age',dueAt:'2000-01-14T00:00:00.000000Z',remainingMs:4*86400000}});
     await advance();expect(await adapter.drain(epoch)).toEqual({attempted:1,consumed:1,continuation:false,next:null});
     expect((await db.query(`SELECT kind,state FROM tray_clock_deadlines WHERE kind NOT IN ('question-age','question-seen') ORDER BY kind`)).rows)
-      .toEqual([{kind:'agent-sign-in',state:'pending'},{kind:'choice-close',state:'pending'}]);
+      .toEqual([{kind:'agent-sign-in',state:'elapsed'},{kind:'choice-close',state:'pending'}]);
+    expect((await db.query(`SELECT card->>'status' status FROM messages WHERE id='sign-in'`)).rows).toEqual([{status:'pending'}]);
     expect((await db.query(`SELECT status FROM room_choices`)).rows).toEqual([{status:'open'}]);
+  });
+
+  it('publishes sign-in only to its current owner and Squire only to eligible members without external decisions',async()=>{
+    const other='c'.repeat(64);
+    await db.query(`INSERT INTO identities VALUES($1,'human','other')`,[other]);
+    await db.query(`INSERT INTO memberships VALUES($1,NULL,$3,NULL),($1,$2,$3,NULL)`,[workspace,room,other]);
+    for(const [id,type,card] of [
+      ['sign-in','agent-sign-in',{ownerId:viewer,status:'pending',expiresAt:947462400000}],
+      ['squire','squire-approval',{approvalId:'approval',sourceRoomId:room,status:'pending',expiresAt:947462400000}],
+    ] as const)await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES($1,$2,$3,'Synthetic','card',$4,$5::jsonb)`,[id,room,author,type,JSON.stringify(card)]);
+    await advance('2000-01-10');const{adapter,epoch}=await makeOwner();
+    expect(await adapter.drain(epoch)).toEqual({attempted:2,consumed:2,continuation:false,next:null});
+    const readers=(await db.query<{kind:string;reader:string}>(`SELECT event->>'kind' kind,event->>'trayReaderId' reader
+      FROM live_journal WHERE event->>'sourceTable'='tray-clock' ORDER BY kind,reader`)).rows;
+    expect(readers).toEqual([{kind:'agent-sign-in',reader:viewer},{kind:'squire-approval',reader:viewer},{kind:'squire-approval',reader:other}]);
+    expect((await adapter.drain(epoch)).consumed).toBe(0);
+    expect((await db.query(`SELECT card->>'status' status FROM messages ORDER BY id`)).rows).toEqual([{status:'pending'},{status:'pending'}]);
+  });
+
+  it('does not publish a decided Squire card or a sign-in owner who lost membership before expiry',async()=>{
+    for(const [id,type,card] of [
+      ['sign-in','agent-sign-in',{ownerId:viewer,status:'pending',expiresAt:947462400000}],
+      ['squire','squire-approval',{approvalId:'approval',sourceRoomId:room,status:'pending',expiresAt:947462400000}],
+      ['decision','squire-approval-decision',{approvalId:'approval'}],
+    ] as const)await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES($1,$2,$3,'Synthetic','card',$4,$5::jsonb)`,[id,room,author,type,JSON.stringify(card)]);
+    await db.query(`UPDATE memberships SET removed_at=tray_clock_test_now() WHERE identity_id=$1`,[viewer]);
+    await advance('2000-01-10');const{adapter,epoch}=await makeOwner();
+    expect(await adapter.drain(epoch)).toEqual({attempted:2,consumed:2,continuation:false,next:null});
+    expect(await causes()).toEqual([]);
   });
 
   it('handles question-seen through the same exact owner transaction, without consuming it twice',async()=>{

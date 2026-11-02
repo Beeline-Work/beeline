@@ -160,7 +160,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     address: address(), item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
     title: { type: 'string', minLength: 1, maxLength: 120 }, pr_url: { type: 'string', minLength: 1 }, notify: { type: 'boolean' },
   }, ['address', 'item_ids', 'title', 'pr_url']),
-  tool('approve_merge', 'As the corner\'s configured reviewer, record PASS on the exact head SHA. You cannot review a corner you implement or authored. This does not land or release a hold.', {
+  tool('approve_merge', 'As the corner\'s configured reviewer, record PASS on the exact head SHA; the server lands the PR at once when checks are green and no hold stands. You cannot review a corner you implement or authored. This never releases a hold.', {
     address: address('Corner id.'), headSha: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
   }, ['address', 'headSha']),
   tool('merge_corner', 'Land a corner through the live gate: green checks, a yes on the exact head, and no hold.', { address: address('Corner id.') }, ['address']),

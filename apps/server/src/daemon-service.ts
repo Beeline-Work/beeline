@@ -4071,7 +4071,7 @@ export class DaemonService {
   }
 
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
-    return this.database.transaction(async (db) => {
+    const approved = await this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
       const target = (
         await db.query<{
@@ -4117,6 +4117,17 @@ export class DaemonService {
         status: 'approved' as const,
       };
     });
+    // A reviewer's PASS lands at once through the one merge path, like a
+    // person's yes. The live gate still decides: pending checks, a hold or a
+    // brief without repository work leave the recorded yes waiting.
+    if (this.landCorner) {
+      try {
+        await this.landCorner(input.cornerId);
+      } catch (error) {
+        console.error(`[server] reviewer PASS on corner ${input.cornerId} did not land:`, error);
+      }
+    }
+    return approved;
   }
   private async repository(roomId: string, agentId: string) {
     await this.access(roomId, agentId);

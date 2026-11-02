@@ -1,3 +1,4 @@
+import { withdrawAgentMergeApprovals } from './corner-merge-approval.js';
 import { setCornerReviewerFact } from './corner-lifecycle.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { SqlDatabase } from './database.js';
@@ -38,8 +39,7 @@ export async function setCornerReviewer(
   await assertIndependentCornerReviewer(db, cornerId, reviewer.id, checkAuthors);
   if (!(await setCornerReviewerFact(db, cornerId, reviewer.id))) return;
   // A changed assignment must never inherit an earlier agent's PASS.
-  await db.query(`DELETE FROM corner_merge_approvals approval USING identities identity
-    WHERE approval.corner_id=$1 AND identity.id=approval.approved_by AND identity.kind='agent'`, [cornerId]);
+  await withdrawAgentMergeApprovals(db, cornerId);
   const actor = (await db.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [actorId])).rows[0]!;
   await systemLine(db, {
     roomId: cornerId, subject: { kind: 'agent', id: actorId, name: actor.name },

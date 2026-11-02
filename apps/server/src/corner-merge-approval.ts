@@ -123,3 +123,19 @@ export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, ac
        AND identity.kind='agent'`, [returnRoom, actorId]);
   return Boolean(member.rowCount);
 }
+
+/** A changed corner reviewer never inherits an earlier agent's PASS. */
+export async function withdrawAgentMergeApprovals(db: SqlDatabase, cornerId: string): Promise<void> {
+  await db.query(`DELETE FROM corner_merge_approvals approval USING identities identity
+    WHERE approval.corner_id=$1 AND identity.id=approval.approved_by AND identity.kind='agent'`, [cornerId]);
+}
+
+/** A closed pull request takes its yeses with it. */
+export async function withdrawPullRequestMergeApprovals(db: SqlDatabase, cornerId: string, number: number): Promise<void> {
+  await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND pull_request_number=$2`, [cornerId, number]);
+}
+
+/** Account deletion: a deleted identity's yeses no longer stand. */
+export async function withdrawMergeApprovalsBy(db: SqlDatabase, identityIds: string[]): Promise<void> {
+  await db.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [identityIds]);
+}

@@ -1,3 +1,4 @@
+import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerLifecycleSql } from './corner-github-cache.js';
 import { cornerObjectiveSql } from './corner-objective.js';
@@ -41,7 +42,7 @@ import {
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
-import { releaseArchivedCornerHolds, setCornerHold } from './corner-holds.js';
+import { releaseArchivedCornerHolds, setCornerHold, collapseTombstonedCornerHolds } from './corner-holds.js';
 import {
   createAgentCommand,
   dropQueuedOrdersForStop,
@@ -167,7 +168,7 @@ import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from './permission-cards.js';
-import { advanceCorner, createCornerFacts, lockCornerLifecycle, setCornerLockedFact } from './corner-lifecycle.js';
+import { advanceCorner, createCornerFacts, lockCornerLifecycle, setCornerLockedFact, clearCornerReviewers } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
   cornerFactsSql,
@@ -8288,17 +8289,7 @@ export class PhoneService {
       // now share the tombstone, only the hardest to release stays. Any member
       // may release an agent's hold, while a person's hold needs standing above
       // its own, so person holds outrank agent holds before standing does.
-      await database.query(
-        `WITH tombstoned AS (
-           SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY set_by_agent_id IS NOT NULL,
-             CASE standing WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,set_at,id) rank
-           FROM corner_merge_holds
-           WHERE released_at IS NULL
-             AND (coalesce(set_by_agent_id,actor_id)=ANY($1) OR coalesce(set_by_agent_id,actor_id)=$2))
-         UPDATE corner_merge_holds SET released_at=now(),released_by=$2
-         WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
-        [gone, DELETED_ACCOUNT_IDENTITY_ID],
-      );
+      await collapseTombstonedCornerHolds(database, gone, DELETED_ACCOUNT_IDENTITY_ID);
       // Corner records and installed apps are shared
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
@@ -8318,9 +8309,10 @@ export class PhoneService {
             gone,
             DELETED_ACCOUNT_IDENTITY_ID,
           ]);
-      // Optional attributions simply lose the deleted id.
+      // Optional attributions simply lose the deleted id; a corner's own
+      // reviewer changes only through the corner module.
+      await clearCornerReviewers(database, gone);
       for (const [table, column] of [
-        ['corner_facts', 'reviewer_agent_id'],
         ['rooms', 'reviewer_agent_id'],
         ['connector_offers', 'accepted_by'],
         ['agent_schedules', 'owner_id'],
@@ -8371,7 +8363,7 @@ export class PhoneService {
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_mandates WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM permission_authority WHERE principal_id=ANY($1)`, [gone]);
-      await database.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [gone]);
+      await withdrawMergeApprovalsBy(database, gone);
       await database.query(`DELETE FROM invites WHERE created_by=ANY($1)`, [gone]);
       await database.query(
         `DELETE FROM agent_pairing_codes WHERE created_by=ANY($1) OR claimed_by=ANY($1)`,

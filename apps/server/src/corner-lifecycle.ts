@@ -251,6 +251,11 @@ export async function setCornerLockedFact(db: SqlDatabase, cornerId: string, loc
   await db.query(`UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`, [cornerId, locked]);
 }
 
+/** Account deletion: corners whose own reviewer was a deleted agent fall back to their Room's. */
+export async function clearCornerReviewers(db: SqlDatabase, agentIds: string[]): Promise<void> {
+  await db.query(`UPDATE corner_facts SET reviewer_agent_id=NULL WHERE reviewer_agent_id=ANY($1)`, [agentIds]);
+}
+
 /** The corner's own reviewer; returns whether it changed. Callers check authority first. */
 export async function setCornerReviewerFact(db: SqlDatabase, cornerId: string, reviewerId: string): Promise<boolean> {
   return ((await db.query(

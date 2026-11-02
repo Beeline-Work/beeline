@@ -25,7 +25,7 @@ import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contra
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
-import { recordPersonMergeYes } from './corner-merge-approval.js';
+import { recordPersonMergeYes, withdrawPullRequestMergeApprovals } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
@@ -1538,7 +1538,7 @@ export class GitHubOperations {
       );
       if (!removed.rowCount) return;
       changed = true;
-      await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND pull_request_number=$2`, [cornerId, number]);
+      await withdrawPullRequestMergeApprovals(db, cornerId, number);
       if (!removed.rows[0]!.archived)
         await advanceCorner(db, cornerId, { kind: 'pull-request-closed', number });
     });

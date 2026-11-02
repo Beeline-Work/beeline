@@ -489,19 +489,7 @@ export async function closeExpiredChoices(database: SqlDatabase): Promise<number
   let closed = 0;
   for (const row of due.rows) {
     try {
-      const changed = await database.transaction(async tx => {
-        const current = await tx.query(
-          `SELECT id FROM room_choices WHERE id=$1 AND status='open'
-           AND closes_at=$2::timestamptz AND closes_at<=clock_timestamp() FOR UPDATE`,
-          [row.id, row.expiry_version],
-        );
-        if (!current.rowCount) return false;
-        const choice = await loadChoice(tx, row.id);
-        if (!choice || choice.status !== 'open') return false;
-        if (choice.mode === 'question') await skipOpenChoice(tx, choice, undefined, 'expired');
-        else await closeOpenPoll(tx, choice);
-        return true;
-      });
+      const changed = await database.transaction(tx => closeExpiredChoiceVersion(tx, row.id, row.expiry_version));
       if (changed) closed += 1;
     } catch (error) {
       if (error instanceof Error && error.message.includes('conflict')) continue;
@@ -509,6 +497,23 @@ export async function closeExpiredChoices(database: SqlDatabase): Promise<number
     }
   }
   return closed;
+}
+
+/** Exact domain transition shared by the legacy batch and the owned clock.
+ * The caller owns its transaction and any stronger aggregate/source fences.
+ * No provider operation, scheduler or follow-up read is admitted here. */
+export async function closeExpiredChoiceVersion(database: SqlDatabase, id: string, expiryVersion: string): Promise<boolean> {
+  const current = await database.query(
+    `SELECT id FROM room_choices WHERE id=$1 AND status='open'
+     AND closes_at=$2::timestamptz AND closes_at<=clock_timestamp() FOR UPDATE`,
+    [id, expiryVersion],
+  );
+  if (!current.rowCount) return false;
+  const choice = await loadChoice(database, id);
+  if (!choice || choice.status !== 'open') return false;
+  if (choice.mode === 'question') await skipOpenChoice(database, choice, undefined, 'expired');
+  else await closeOpenPoll(database, choice);
+  return true;
 }
 
 async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<void> {

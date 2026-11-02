@@ -3,6 +3,7 @@
 // Queued work stays working: lunchboxfortwo message 1d183c7884173194edd919705a769c759205506422a1a6704a933775823d640c.
 // Queue label removed: lunchboxfortwo message 44451dd4e1ed1d4e7f3e50c3dc4af769ad9c189b283f2bd97325815e3bd1a674.
 // A pending check stays review: lunchboxfortwo message f33288d32e5c70141c1e670672a60128bdd6eeb4e8bd70189120b1283131f480.
+// cornerBlockerSql reads derived report waits: lunchboxfortwo, 2026-11-02 ("Yes, do it": update the hash-locked cornerRowState/cornerWorkSql/cornerBlockerSql for the minimal corner state).
 {
   "entries": [
     {
@@ -43,7 +44,7 @@
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerBlockerSql",
-      "sha256": "99c2e608aea8018d9b6fefd1f6557a9df45def43617e8f849a45590a73e5dc86"
+      "sha256": "933f64ad04413bbb405f4a46fd3cbf59d57404cb8d497b89b86b07f93647480b"
     },
     {
       "file": "packages/api-contract/src/phone-types.ts",

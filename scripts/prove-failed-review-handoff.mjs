@@ -71,7 +71,8 @@ try {
   assert.match(repairs[0].source.body, /FAIL: demonstrate the missing user path/);
   assert.equal((await commands(reviewer)).length, 0, 'unchanged findings must not return to reviewer');
   await finish(worker, repairs[0], 'Waiting for evidence before a new push.');
-  await db.query('INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)', [corner, human, room]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+    VALUES('explicit-wait',$1,$2,'blocked: waiting for evidence','message',jsonb_build_object('reportToId',$3::text))`, [corner, worker, human]);
   for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, room);
   assert.equal((await commands(reviewer)).length, 0);
   assert.equal((await commands(worker)).length, 0);

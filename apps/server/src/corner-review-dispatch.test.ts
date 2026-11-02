@@ -98,7 +98,6 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM corner_merge_approvals`);
-  await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM live_outputs`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
@@ -690,12 +689,13 @@ describe('corner message attribution', () => {
     const [review] = await commands(B, C);
     await claim(review!);
     await result(review!, 'FAIL: demonstrate the missing user path.');
-    await db.query(`INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)`, [C, H, R]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+      VALUES('explicit-wait',$1,$2,'blocked: waiting for a decision','message',jsonb_build_object('reportToId',$3::text))`, [C, A, H]);
     for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(0);
     expect(await commands(A, C)).toHaveLength(0);
     expect((await commands(A, R)).filter(c => c.reason === 'report')).toHaveLength(0);
-    await db.query(`DELETE FROM corner_report_blockers WHERE corner_id=$1`, [C]);
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true') WHERE room_id=$1 AND card->>'reportToId' IS NOT NULL`, [C]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
   });
@@ -717,7 +717,8 @@ describe('corner message attribution', () => {
     expect(await commands(B, C)).toHaveLength(0);
     await claim(repair!);
     await result(repair!, 'Waiting for the requested evidence before pushing.');
-    await db.query(`INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)`, [C, H, R]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+      VALUES('explicit-wait',$1,$2,'blocked: waiting for a decision','message',jsonb_build_object('reportToId',$3::text))`, [C, A, H]);
     for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
     const failures = await db.query(`SELECT id FROM agent_commands WHERE reason='report'
       AND private_payload->>'text' LIKE '%implementer cannot be woken%'`);
@@ -1527,7 +1528,7 @@ describe('corner message attribution', () => {
     expect(nextHead?.source.body).toContain('1'.repeat(40));
     // A repair handback is an order whose purpose is repair. It is not a repeat review.
     expect(reviewerDispatchCarriesHead('order', undefined, { purpose: 'repair', headSha: '1'.repeat(40) })).toBe(false);
-    await db.query(`DELETE FROM corner_report_blockers WHERE corner_id=$1`, [C]);
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true') WHERE room_id=$1 AND card->>'reportToId' IS NOT NULL`, [C]);
     const parent = (await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [nextHead!.id])).rows[0];
     const handback = await createAgentCommand(db, {
       roomId: C, agentId: B, sourceMessageId: null, reason: 'order', parent,

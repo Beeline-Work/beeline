@@ -1,3 +1,4 @@
+import { cornerWaitingReportSql, humanReportCornerSql } from './corner-waiting-report.js';
 import { createHash } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -94,13 +95,25 @@ BEGIN
     ELSIF TG_OP='UPDATE' AND OLD.status='working' AND NEW.status<>'working'
       AND COALESCE(OLD.generation_id,'') NOT LIKE 'pending:%' THEN
       UPDATE corner_attention_spans SET last_turn_ended_at=CASE
-        WHEN EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=corner)
+        WHEN EXISTS(SELECT 1 FROM rooms report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting WHERE report_corner.id=corner)
           OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=corner AND released_at IS NULL)
           OR EXISTS(SELECT 1 FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
             WHERE owed.corner_id=corner AND owed.blocking AND report.card->>'reportToId' IS NOT NULL
               AND (owed.expires_at IS NULL OR owed.expires_at>now())) THEN NULL
         ELSE clock_timestamp() END WHERE corner_id=corner;
     END IF;
+  ELSIF TG_TABLE_NAME='agent_commands' THEN
+    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' OR NOT EXISTS (
+      SELECT 1 FROM messages visible
+      WHERE visible.id=encode(sha256(convert_to('agent-command-card:'||NEW.id,'UTF8')),'hex')
+        AND visible.card_type='agent-command' AND visible.card->>'kind'='report'
+        AND visible.card->>'text' ~ '^(needs-decision|blocked):'
+    ) THEN RETURN NULL; END IF;
+    SELECT id INTO corner FROM rooms WHERE id::text=NEW.private_payload->>'fromRoomId';
+  ELSIF TG_TABLE_NAME='messages' THEN
+    IF NEW.card->>'reportToId' IS NULL AND NOT COALESCE(NEW.card_type='agent-command'
+      AND NEW.card->>'kind'='report' AND NEW.card->>'text' ~ '^(needs-decision|blocked):',false) THEN RETURN NULL; END IF;
+    SELECT id INTO corner FROM rooms WHERE id::text=${humanReportCornerSql('NEW')};
   ELSIF TG_TABLE_NAME='agent_schedules' THEN
     corner=COALESCE(NEW.room_id,OLD.room_id);
   ELSE
@@ -108,7 +121,7 @@ BEGIN
   END IF;
   -- An explicit wait ends the work stretch. Answering it must not revive
   -- the previous turn's grace period as if work had resumed.
-  IF TG_TABLE_NAME IN ('corner_report_blockers','corner_merge_holds') THEN
+  IF TG_TABLE_NAME IN ('agent_commands','messages','corner_merge_holds') THEN
     UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=corner;
   END IF;
   IF TG_TABLE_NAME='corner_facts' AND TG_OP<>'DELETE' THEN
@@ -140,7 +153,11 @@ DROP TRIGGER IF EXISTS corner_state_facts ON corner_facts;
 CREATE TRIGGER corner_state_facts AFTER INSERT OR UPDATE OF lifecycle ON corner_facts
  FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_report ON corner_report_blockers;
-CREATE TRIGGER corner_state_report AFTER INSERT OR UPDATE OR DELETE ON corner_report_blockers
+DROP TRIGGER IF EXISTS corner_state_report ON agent_commands;
+CREATE TRIGGER corner_state_report AFTER INSERT OR UPDATE OF private_payload ON agent_commands
+ FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
+DROP TRIGGER IF EXISTS corner_state_report ON messages;
+CREATE TRIGGER corner_state_report AFTER INSERT OR UPDATE OF card,text,deleted_at ON messages
  FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_hold ON corner_merge_holds;
 CREATE TRIGGER corner_state_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merge_holds

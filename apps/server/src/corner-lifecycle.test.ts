@@ -1727,10 +1727,10 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
       checks: 'pending', lifecycle: 'in-review',
       pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, title: 'Ship the widget' },
     })]);
-    // The reviewer reported blocked while the gate was still pending. The head did not move.
+    // The worker reported blocked while the gate was still pending. The head did not move.
     await db.query(
-      `INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id,commander_id) VALUES($1,$2,$1,$3)`,
-      [cornerId, H, B],
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card) VALUES('pending-gate-report',$1,$2,'blocked: waiting for checks','message',jsonb_build_object('reportToId',$3::text))`,
+      [cornerId, A, H],
     );
     await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`, [cornerId]);
     const source = await systemLine(db, {

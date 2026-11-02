@@ -1,3 +1,4 @@
+import {BackgroundLeader,type LeaderConnection} from './background-leader.js';
 import {LiveHub} from './live.js';
 import {TrayClockWork,TRAY_CLOCK_WORK_SCHEMA} from './tray-clock-work.js';
 import {randomUUID} from 'node:crypto';
@@ -79,6 +80,37 @@ describe.skipIf(!url)('real PostgreSQL readiness at the existing aggregate-owner
       expect(await readTrayClockHealth(f.second,WS)).toBe(true);
       expect((await f.second.query(`SELECT generation::text FROM background_leader_owners`)).rows).toEqual([{generation:'2'}]);
     }finally{await runner?.close();await f.close();}
+  });
+
+  it('failed retirement parks the actual leader backend so the other pool refuses its old receipt',async()=>{
+    const f=await fixture();let runner:TrayClockWork|undefined,leader:BackgroundLeader|undefined;
+    const initial=deferred(),retired=deferred();let connections=0,listenerReady=true;
+    try{
+      await f.first.query(TRAY_CLOCK_WORK_SCHEMA);
+      const observed:SqlDatabase={query:(sql,args)=>{
+        if(sql.startsWith('UPDATE background_leader_owners SET released_at='))
+          return Promise.reject(new Error('Synthetic durable retirement failure'));
+        return f.first.query(sql,args);
+      },transaction:work=>f.first.transaction(work)};
+      const owner=new BackgroundOwnership(observed,'first'),live=new LiveHub();
+      runner=new TrayClockWork(f.first,live,owner,{listenerReady:()=>listenerReady,wake:()=>leader?.wake(),
+        unavailable:()=>{},retireOwner:connection=>leader!.parkOwner(connection)});
+      leader=new BackgroundLeader({connectDedicated:async()=>{
+        connections++;const client=await f.acquire();
+        return {query:(sql,args)=>client.query(sql,args),release:()=>{f.drop(client);retired.resolve();}} as LeaderConnection;
+      }},async()=>{const delay=await runner!.run();if(delay>0)initial.resolve();return delay;},runner.leadership);
+      void leader.run();await initial.promise;
+      expect(await readTrayClockHealth(f.second,WS)).toBe(true);
+      // A waiting physical lock acquisition proves the former backend has
+      // actually released its advisory lock, without probing on a timer.
+      const standby=f.acquire();listenerReady=false;live.projectionUnavailable();
+      await retired.promise;const replacement=await standby;
+      expect(await readTrayClockHealth(f.second,WS)).toBe(false);
+      expect((await f.second.query(`SELECT released_at IS NULL unconfirmed FROM background_leader_owners`)).rows)
+        .toEqual([{unconfirmed:true}]);
+      expect(runner.status()).toEqual({state:'parked',retirementFailed:true});
+      expect(connections).toBe(1);f.drop(replacement);
+    }finally{await leader?.stop();await runner?.close();await f.close();}
   });
 
   it('bounds the actual health overdue probe with cold and generic plans across33024 pending deadlines',async()=>{

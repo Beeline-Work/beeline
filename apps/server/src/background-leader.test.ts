@@ -76,6 +76,23 @@ describe('source and deadline owned background leadership',()=>{
     expect(lock.clients[1]!.destroyed).toBe(true);const stopped=first.stop();await settle();expect(lock.clients[0]!.destroyed).toBe(false);
     finish();await stopped;expect(lock.clients[0]!.destroyed).toBe(true);
   });
+  it('parks only the exact owner after draining and grants no failure-caused replacement',async()=>{
+    vi.useFakeTimers();const lock=new Ownership();let finish!:()=>void;let recovery!:()=>void;
+    const work=new Promise<void>(resolve=>{finish=resolve;}),signals:AbortSignal[]=[];
+    const cycle=vi.fn().mockImplementationOnce(()=>work).mockResolvedValue(Infinity);
+    const leader=new BackgroundLeader({connectDedicated:lock.connect,onRecovery:listener=>{recovery=listener;return()=>{};}},cycle,
+      {acquired:async(_connection,signal)=>{signals.push(signal);},lost:()=>{}});
+    void leader.run();await settle();
+    leader.parkOwner(new Client(lock));expect(signals[0]!.aborted).toBe(false);
+    leader.wake();leader.parkOwner(lock.clients[0]!);
+    expect(signals[0]!.aborted).toBe(true);expect(lock.clients[0]!.destroyed).toBe(false);
+    finish();await settle();expect(lock.clients[0]!.destroyed).toBe(true);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(lock.clients).toHaveLength(1);expect(cycle).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+    recovery();await settle();expect(lock.clients).toHaveLength(2);expect(cycle).toHaveBeenCalledTimes(2);
+    leader.parkOwner(lock.clients[0]!);expect(signals[1]!.aborted).toBe(false);
+    await leader.stop();
+  });
   it('does not run a far future obligation at the host timer maximum',async()=>{
     vi.useFakeTimers();const lock=new Ownership();const cycle=vi.fn().mockResolvedValueOnce(3_000_000_000).mockResolvedValue(Infinity);
     const leader=new BackgroundLeader({connectDedicated:lock.connect},cycle);void leader.run();await settle();

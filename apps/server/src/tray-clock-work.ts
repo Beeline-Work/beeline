@@ -34,6 +34,8 @@ export type TrayClockWorkOptions={
   listenerReady:()=>boolean;
   wake:()=>void;
   unavailable:(reason:TrayClockWorkLoss)=>void;
+  /** Existing aggregate leader parks its exact backend after active work drains. */
+  retireOwner?:(connection:LeaderConnection)=>void;
   now?:()=>number;
 };
 
@@ -50,7 +52,7 @@ export class TrayClockWork{
   private readonly now:()=>number;
   private state:State='inactive';private version=0;
   private connection?:LeaderConnection;private connectionSignal?:AbortSignal;private stopConnection?:()=>void;
-  private epoch?:BackgroundEpoch;private stopEpoch?:()=>void;
+  private epoch?:BackgroundEpoch;private epochConnection?:LeaderConnection;private stopEpoch?:()=>void;
   private position?:Position;private readinessPosition?:Position;
   private sourceDirty=false;private readinessDirty=false;private readinessPending=false;private recoveryPending=false;
   private displayJob:Domain={pending:false};private choiceJob:Domain={pending:false};
@@ -102,11 +104,13 @@ export class TrayClockWork{
   }
   private dropEpoch():void{
     this.stopEpoch?.();this.stopEpoch=undefined;
-    const epoch=this.epoch;this.epoch=undefined;
+    const epoch=this.epoch,connection=this.epochConnection;this.epoch=undefined;this.epochConnection=undefined;
     if(epoch){
       // release revokes synchronously before its one causal durable write.
       // A different server must not mistake a parked local epoch for health.
-      this.retirement=this.ownership.release(epoch).catch(()=>{this.retirementFailed=true;});
+      this.retirement=this.ownership.release(epoch).catch(()=>{
+        this.retirementFailed=true;if(connection)this.options.retireOwner?.(connection);
+      });
     }
   }
   private retireConnection():void{
@@ -155,7 +159,7 @@ export class TrayClockWork{
     try{
       epoch=await this.ownership.claim(this.connection);
       if(!this.current(version)){this.ownership.revoke(epoch);return;}
-      this.epoch=epoch;const lost=()=>{if(this.epoch===epoch)this.park('owner');};
+      this.epoch=epoch;this.epochConnection=this.connection;const lost=()=>{if(this.epoch===epoch)this.park('owner');};
       epoch.signal.addEventListener('abort',lost,{once:true});this.stopEpoch=()=>epoch!.signal.removeEventListener('abort',lost);
       const head=await this.head(this.database,'jobs:tray-clock');
       if(!this.current(version,epoch))return;

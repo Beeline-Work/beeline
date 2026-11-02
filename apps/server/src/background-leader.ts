@@ -103,6 +103,17 @@ export class BackgroundLeader {
     }
   }
 
+  /** A failed durable retirement must end this exact physical owner after
+   * its active business cycle drains. This is parking, not transport loss:
+   * it grants no replacement attempt and discards prior queued wakes. */
+  parkOwner(connection: LeaderConnection): void {
+    if (this.stopped || connection !== this.client) return;
+    this.lost = true;
+    this.wakePending = false;
+    this.retireOwner?.();
+    this.resume?.();
+  }
+
   async stop(): Promise<void> {
     this.stopped = true; this.stopRecovery?.(); this.stopRecovery = undefined;
     this.retireOwner?.();

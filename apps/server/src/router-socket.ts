@@ -1,5 +1,5 @@
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
-import type { RouterFamily, RouterSnapshot, RouterSnapshotInput, RouterFact } from '@beeline/api-contract/router-protocol';
+import type { RouterFamily, RouterSnapshot, RouterSnapshotInput, RouterFact, RouterCapabilities } from '@beeline/api-contract/router-protocol';
 import { ROUTER_FAMILIES } from '@beeline/api-contract/router-protocol';
 import type { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
@@ -81,8 +81,9 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         for (const release of releases.splice(0)) release();
         send(JSON.stringify({kind:'router-unavailable',stream:'',families:affected,reason:'listener'}));
       }
-      send(JSON.stringify({ type: 'router-capabilities', protocol: 1, families: negotiated,
-        commandDedupV1: policy?.commandDedupV1 === true }));
+      const capabilities: RouterCapabilities = { protocol: 1, families: negotiated,
+        commandDedupV1: policy?.commandDedupV1 === true };
+      send(JSON.stringify({ type: 'router-capabilities', ...capabilities }));
       releaseReady();
       return true;
     },

@@ -1,3 +1,4 @@
+import { ROUTER_PROTOCOL, ROUTER_MAX_PART_BYTES as PART_BYTES, ROUTER_MAX_PARTS as MAX_PARTS, ROUTER_MAX_BATCH_BYTES as MAX_BYTES } from '@beeline/api-contract/router-protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   RouterAuthorityCertificate, RouterCut, RouterFact, RouterFamily, RouterPushFrame,
@@ -7,7 +8,6 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 
-const PART_BYTES = 64 * 1024, MAX_PARTS = 16, MAX_BYTES = 1024 * 1024;
 export class RouterProjectionUnavailable extends Error {
   constructor(readonly reason: RouterUnavailable['reason']) { super(`Router projection unavailable: ${reason}`); }
 }
@@ -58,7 +58,7 @@ export async function readRouterCut(db: SqlDatabase, workspace: string): Promise
     `SELECT epoch,sequence::text FROM live_streams WHERE id=$1`, [stream])).rows[0];
   const through = Number(row?.sequence);
   if (!row || !Number.isSafeInteger(through) || through < 0) throw new RouterProjectionUnavailable('dependency');
-  return { stream, epoch: row.epoch, through, protocol: 1 };
+  return { stream, epoch: row.epoch, through, protocol: ROUTER_PROTOCOL };
 }
 
 /** All DTO queries, authority and head share this transaction handle. */

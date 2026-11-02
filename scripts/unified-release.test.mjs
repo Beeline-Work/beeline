@@ -34,6 +34,7 @@ import {
   pendingComponents,
   applyJobFacts,
   planOutputs,
+  restoreReleasePlan,
   otaMemory,
   selectReleaseComponents,
   selectReleaseComponentsFromPublishedInputs,
@@ -771,7 +772,9 @@ test('PIN-STORE-NONE: the plan CLI returns a plan, a notice and no store leg for
     assert.deepEqual(decodeReleaseOutput(lines.ota_memory).previousTargets.map((t) => `${t.platform}@${t.runtimeVersion}`),
       ['android@40', 'android@39', 'android@38', 'ios@36', 'ios@34', 'ios@31']);
     assert.equal(decodeReleaseOutput(lines.ota_memory).previousBranch, 'release-v0.0.8');
-    assert.equal(decodeReleaseOutput(lines.release_state).plan.paths, undefined);
+    assert.equal(lines.release_state, undefined);
+    assert.equal(lines.previous_version, previous.version);
+    assert.equal(lines.previous_sha, previous.sourceSha);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1077,7 +1080,12 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.doesNotMatch(source, /release-checkpoint-|unified-release-index|unified-release-state|unified-release-plan|server-image-ledger|store-runtime-|run-id:/);
   const result = workflow.jobs.release_result.steps.find((step) => step.id === 'result');
   assert.equal(result.env.NEEDS, '${{ toJSON(needs) }}');
-  assert.equal(result.env.RELEASE_STATE, '${{ needs.initialize.outputs.release_state }}');
+  assert.equal(result.env.RELEASE_STATE, undefined);
+  assert.equal(result.env.PREVIOUS_RECORD, undefined);
+  assert.equal(workflow.jobs.initialize.outputs.release_state, undefined);
+  const baseline = workflow.jobs.release_result.steps.find((step) => step.name === 'Read the published baseline for release finalization');
+  assert.match(baseline.run, /release-record.mjs previous/);
+  assert.equal(baseline.if, "needs.initialize.outputs.has_previous == 'true'");
   assert.match(result.run, /unified-release\.mjs job-checkpoints --needs/);
   assert.match(result.run, /apply-facts --state/);
   // The Mac bundles travel only inside this run; the helper leg merges them.
@@ -1288,21 +1296,22 @@ test('release_result records a fully delivered slow attempt as a success', () =>
 
   // Run the release_result classifier exactly as the job does: a fully
   // delivered attempt whose wall clock passed the old 20-minute budget.
-  function classifyDeliveredAttempt(triggerAgoSeconds, { otaResult = 'success', stateOutput, previous, previousOutput, suppress = false, expectedFailure } = {}) {
+  function classifyDeliveredAttempt(triggerAgoSeconds, { otaResult = 'success', stateOutput, previous, previousOutput, planOverrides = {}, suppress = false, expectedFailure } = {}) {
     const root = mkdtempSync(join(tmpdir(), 'beeline-release-budget-'));
     try {
       const state = initializeRelease({ ...identity, previous });
       const transport = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map((line) => { const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)]; }));
       // Replay the runner's false positive: a multiline credential registered
       // JSON punctuation as secret lines. Public encoded metadata survives.
-      if (suppress) for (const key of Object.keys(transport)) {
-        if (/[{}\[\]]/.test(transport[key])) delete transport[key];
+      if (suppress) {
+        delete transport.release_state;
+        delete transport.previous_record;
+        delete transport.ota_memory;
       }
       const now = Math.floor(Date.now() / 1000);
       const needs = {
         initialize: { result: 'success', outputs: {
-          ...Object.fromEntries(RELEASE_COMPONENTS.map((component) => [`run_${component.replace('-', '_')}`, 'true'])),
-          native_android: 'true', native_ios: 'true',
+          ...transport, ...planOverrides,
         } },
         ...Object.fromEntries(['helper', 'desktop_installers', 'website',
           'mobile_native_android', 'mobile_native_ios'].map((job) => [job, { result: 'success', outputs: {} }])),
@@ -1310,6 +1319,11 @@ test('release_result records a fully delivered slow attempt as a success', () =>
         mobile_ota: { result: otaResult, outputs: { completed_at: String(now - 60), ota_branch: 'release-v0.0.9', ota_targets: 'android@40,ios@36' } },
         mobile_ota_after_proof: { result: 'skipped', outputs: {} },
       };
+      const previousPath = join(root, 'previous', 'release.json');
+      mkdirSync(dirname(previousPath), { recursive: true });
+      if (previousOutput !== undefined) {
+        if (previousOutput) writeFileSync(previousPath, previousOutput);
+      } else if (previous) writeFileSync(previousPath, JSON.stringify(previous));
       const output = join(root, 'github-output');
       writeFileSync(output, '');
       execFileSync('bash', ['-c', classify.run], {
@@ -1349,18 +1363,21 @@ test('release_result records a fully delivered slow attempt as a success', () =>
   const previous = deliveredPrevious();
   const masked = classifyDeliveredAttempt(26 * 60, { previous, suppress: true });
   assert.equal(masked.outcome, 'success');
-  for (const [stateOutput, failure] of [['', 'release-state:missing'], ['{', 'release-state:invalid'], ['b64:broken', 'release-state:invalid'], ['null', 'release-state:invalid'], [JSON.stringify({ ...initializeRelease(identity), sourceSha: OLD_SHA }), 'release-state:invalid']]) {
-    const result = classifyDeliveredAttempt(60, { stateOutput, expectedFailure: failure });
-    assert.equal(result.outcome, 'failure');
-    assert.equal(result.failure_class, failure);
+  // Replay41456438656: GitHub discarded the entire base64 state output.
+  // Neither a missing state nor a masked previous-record output is consumed.
+  for (const stateOutput of ['', '{', 'b64:broken']) {
+    assert.equal(classifyDeliveredAttempt(60, { previous, stateOutput, suppress: true }).outcome, 'success');
   }
-  for (const [previousOutput, failure] of [['', 'previous-record:missing'], ['{', 'previous-record:invalid'], [encodeReleaseOutput({ ...previous, sourceSha: NEW_SHA }), 'previous-record:invalid']]) {
+  for (const [previousOutput, failure] of [['', 'previous-record:missing'], ['{', 'previous-record:invalid'], [JSON.stringify({ ...previous, sourceSha: NEW_SHA }), 'previous-record:invalid']]) {
     const result = classifyDeliveredAttempt(60, { previous, previousOutput, expectedFailure: failure });
     assert.equal(result.outcome, 'failure');
     assert.equal(result.failure_class, failure);
   }
-  // Legacy raw JSON is accepted for local fixtures and same-commit reruns.
-  assert.equal(classifyDeliveredAttempt(60, { stateOutput: JSON.stringify(initializeRelease(identity)) }).outcome, 'success');
+  for (const planOverrides of [{ run_server: undefined }, { no_op: 'true' }, { desktop_version: '0.0.1' }]) {
+    const result = classifyDeliveredAttempt(60, { planOverrides, expectedFailure: 'release-plan:invalid' });
+    assert.equal(result.outcome, 'failure');
+    assert.equal(result.failure_class, 'release-plan:invalid');
+  }
 
   // Run 541 shape: every component shipped and the OTA landed 25 minutes
   // after dispatch. The old budget rule failed this release.
@@ -1376,6 +1393,38 @@ test('release_result records a fully delivered slow attempt as a success', () =>
   const undelivered = classifyDeliveredAttempt(26 * 60, { otaResult: 'failure' });
   assert.equal(undelivered.outcome, 'failure');
   assert.equal(undelivered.failure_class, 'component:mobile-ota');
+});
+
+test('MASKED-RELEASE-STATE: scalar reconstruction preserves selective carries and rejects changed baselines', () => {
+  const previous = deliveredPrevious();
+  const startedAt = '2026-11-02T13:50:20.000Z';
+  const state = initializeRelease({ version: 'v0.0.9', sourceSha: NEW_SHA, previous,
+    selectedComponents: ['server', 'mobile-native'], startedAt,
+    runtimePin: { changed: true, changedPlatforms: ['android'], previous: { android: '40', ios: '36' }, next: { android: '44', ios: '36' } },
+  });
+  const plan = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map(line => {
+    const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
+  }));
+  // No large output is available to finalization, including the baseline blob.
+  delete plan.release_state;
+  delete plan.previous_record;
+  delete plan.ota_memory;
+  const restore = (overrides = {}, baseline = previous) => restoreReleasePlan({
+    version: state.version, sourceSha: state.sourceSha, plan: { ...plan, ...overrides }, previous: baseline, startedAt,
+  });
+  const restored = restore();
+  assert.deepEqual(restored.components, state.components);
+  assert.deepEqual(restored.supersedes, state.supersedes);
+  assert.deepEqual(restored.plan.selected, ['server', 'mobile-native']);
+  assert.deepEqual(restored.plan.nativePlatforms, ['android']);
+  assert.equal(restored.startedAt, startedAt);
+  assert.equal(restored.plan.runtimePinChanged, true);
+  assert.deepEqual(restored.plan.previousRuntimeVersion, state.plan.previousRuntimeVersion);
+  assert.deepEqual(restored.plan.nextRuntimeVersion, state.plan.nextRuntimeVersion);
+  assert.throws(() => restore({}, { ...previous, version: 'v0.0.7' }), /previous-record:invalid/);
+  assert.throws(() => restore({ has_previous: undefined }), /plan flag/);
+  assert.throws(() => restore({ native_android: 'false' }), /no platform/);
+  assert.throws(() => restore({ desktop_version: '0.0.1' }), /desktop version mismatch/);
 });
 
 test('the emulator release proof gates OTA promotion', () => {
@@ -1938,8 +1987,7 @@ test('ARTIFACT-NOT-FOUND: a rerun plans from the published record alone and read
       } });
       assert.equal(result.status, 0, result.stderr);
       const outputs = readFileSync(join(dir, 'outputs'), 'utf8');
-      return outputs.replace(/^release_state=(.+)$/m, (_, value) => `release_state=${JSON.stringify(decodeReleaseOutput(value))}`)
-        .replace(/"(?:startedAt|updatedAt)":"[^"]+"/g, '');
+      return outputs;
     };
     const first = runPlan();
     assert.match(first, /^run_server=true$/m);
@@ -1977,7 +2025,8 @@ test('public JSON release outputs survive punctuation masking across plan, OTA a
   const outputs = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map((line) => {
     const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
   }));
-  for (const key of ['release_state', 'previous_record', 'ota_memory']) {
+  assert.equal(outputs.release_state, undefined);
+  for (const key of ['previous_record', 'ota_memory']) {
     assert.doesNotMatch(outputs[key], /[{}\[\]]/);
     assert.equal(typeof decodeReleaseOutput(outputs[key]), 'object');
   }
@@ -1998,11 +2047,12 @@ test('public JSON release outputs survive punctuation masking across plan, OTA a
     });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), previous);
-    // A same-head no-op passes the published record as both state and previous;
-    // its supersedes identity still points at the older release.
+    // A same-head no-op rereads the published record; its supersedes identity
+    // still points at the older release.
     const published = { ...previous, plan: { selected: RELEASE_COMPONENTS, carried: [] }, delivery: { state: 'success' }, supersedes: { version: 'v0.0.7', sourceSha: OLD_SHA } };
+    writeFileSync(join(dir, 'previous.json'), JSON.stringify(published));
     const restored = spawnSync(process.execPath, [RELEASE_SCRIPT, 'restore-job-state', '--state', output, '--previous', join(dir, 'previous.json')], {
-      env: { ...process.env, RELEASE_STATE: encodeReleaseOutput(published), PREVIOUS_RECORD: encodeReleaseOutput(published),
+      env: { ...process.env, NEEDS: JSON.stringify({ initialize: { outputs: Object.fromEntries(planOutputs(published, published).trim().split('\n').map(line => { const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)]; })) } }), TRIGGER_EPOCH: '1700000000',
         RELEASE_VERSION: published.version, RELEASE_SHA: published.sourceSha, GITHUB_OUTPUT: join(dir, 'outputs') }, encoding: 'utf8',
     });
     assert.equal(restored.status, 0, restored.stderr);

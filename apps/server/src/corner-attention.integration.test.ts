@@ -1,3 +1,5 @@
+import { cornerReportWaiting } from './corner-state.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
@@ -6,7 +8,7 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, recordCornerRun } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -75,11 +77,8 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`,
     [C, WS, ROOM, COMMANDER],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective)
-    VALUES($1,$2,$2,$3,'Truthful corner states')`,
-    [C, WORKER, HUMAN],
-  );
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$3,'Truthful corner states')`, [C, WORKER, WORKER]);
+  await seedCornerOpening(db, { cornerId: C, agentId: WORKER, commissionedBy: HUMAN });
   await createAgentCommand(db, {
     id: 'opening-order',
     roomId: C,
@@ -295,7 +294,7 @@ it('Reproduction R1: a human hold beside an older agent-commander report stays r
   const { reportToCommander } = await import('./commander.js');
   await reportToCommander(db, C, WORKER, 'blocked: awaiting CI and review');
   await db.query(
-    `UPDATE corner_report_blockers SET created_at=now()-interval '1 minute' WHERE corner_id=$1`,
+    `UPDATE agent_commands SET created_at=now()-interval '1 minute' WHERE private_payload->>'kind'='report' AND private_payload->>'fromRoomId'=$1::text`,
     [C],
   );
   await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
@@ -428,7 +427,7 @@ it.each([['agent','blocked'],['agent','needs-decision'],['human','blocked'],['hu
     expect(await state()).toBe('waiting');
     const blocker = (
       await db.query<{ message_id: string; report_id: string }>(
-        `SELECT * FROM corner_report_blockers WHERE corner_id=$1`,
+        `SELECT waiting.* FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=$1`,
         [C],
       )
     ).rows[0]!;
@@ -474,7 +473,7 @@ it.each(['blocked', 'needs-decision'] as const)(
       agentCommand: { kind: 'report', status, text },
     });
     const blocker = (await db.query<{ message_id: string }>(
-      `SELECT message_id FROM corner_report_blockers WHERE corner_id=$1 AND person_id=$2`,
+      `SELECT waiting.message_id FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=$1 AND waiting.person_id=$2`,
       [C, COMMANDER],
     )).rows[0]!;
     expect(blocker.message_id).toBe(row.itemId);
@@ -572,7 +571,10 @@ it('Reproduction IDLE-1: incidental orders cannot redirect an idle alert from it
 });
 it.each(['archived', 'closed', 'landed'])('Reproduction IDLE-1: %s corners never alert', async (kind) => {
   if (kind === 'archived') await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
-  else await db.query(`UPDATE corner_facts SET workflow_state=$2,lifecycle=jsonb_build_object('lifecycle',$2::text) WHERE corner_id=$1`, [C, kind]);
+  else {
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('lifecycle',$2::text) WHERE corner_id=$1`, [C, kind]);
+    await recordCornerRun(db, C, kind);
+  }
   await refreshCornerAttention(db, C);
   expect(await commanderFlags()).toHaveLength(0);
 });
@@ -856,8 +858,8 @@ it.each(['queued-review', 'hold-behind-report', 'pending-with-old-summary'])(
       await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`, [C]);
       await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=$1`,[C]);
     } else if (kind === 'hold-behind-report') {
-      await db.query(`INSERT INTO corner_report_blockers(corner_id,report_id,person_id,commander_id,return_room_id,created_at)
-        VALUES($1,'opening-order',$2,$2,$3,now()-interval '1 hour')`, [C, COMMANDER, ROOM]);
+      const { reportToCommander } = await import('./commander.js');
+      await reportToCommander(db, C, WORKER, 'blocked: awaiting a decision');
       await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`, [C,HUMAN]);
     } else {
       await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
@@ -1033,4 +1035,80 @@ it('Reproduction R1: a worker order waiting on an offline helper stays working',
   expect(await state()).toBe('idle');
   await db.query(`UPDATE agent_commands SET wake_after=NULL,state='complete',completed_at=now() WHERE id='queued-implementer'`);
   expect(await state()).toBe('idle');
+});
+
+
+it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets wakes and clears on each authorized input', async recipientKind => {
+  const { reportToCommander } = await import('./commander.js');
+  const recipient = recipientKind === 'agent' ? COMMANDER : HUMAN;
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text))
+    WHERE id='opening-order'`, [recipient]);
+  const changes: string[] = [];
+  const unlisten = db instanceof PgliteDatabase ? await db.client.listen('beeline_live_v1', raw => {
+    const event = JSON.parse(raw);
+    if (event.table === 'corner_state') changes.push(event.roomId);
+  }) : undefined;
+  try {
+    for (const input of ['return-room-answer', 'commander-order', 'new-head'] as const) {
+      const automatic = await createAgentCommand(db, { id: `automatic-${input}`, roomId: C, agentId: WORKER,
+        sourceMessageId: null, reason: 'corner_lifecycle',
+        privatePayload: { kind: 'lifecycle', authorId: WORKER, fromRoomId: C, text: 'Continue automatically' } });
+      expect(automatic).toBeDefined();
+      expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`, [C,automatic!.turn_request_id])).rows)
+        .toEqual([{ status: 'working' }]);
+      changes.length = 0;
+      const report = await reportToCommander(db, C, WORKER, 'blocked: choose the next direction', undefined, `report-${input}`);
+      expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1', [C])).rowCount).toBe(0);
+      expect(await cornerReportWaiting(db, C)).toBe(true);
+      expect(await state()).toBe('waiting');
+      if (unlisten) expect(changes).toContain(C);
+      expect((await db.query(`SELECT state,cancellation_reason FROM agent_commands WHERE id=$1`, [automatic!.id])).rows)
+        .toEqual([{ state: 'cancelled', cancellation_reason: 'corner_waiting' }]);
+      expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND status='working'`, [C,automatic!.turn_request_id])).rows)
+        .toEqual([]);
+      // An unrelated agent's prose and order cannot answer this report.
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+        VALUES($1,$2,$3,'Proceed','message')`, [`unrelated-${input}`, ROOM, REVIEWER]);
+      await createAgentCommand(db, { id: `unrelated-order-${input}`, roomId: C, agentId: REVIEWER,
+        sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', authorId: REVIEWER, fromRoomId: ROOM, text: 'Other work' } });
+      expect(await cornerReportWaiting(db, C)).toBe(true);
+      await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [`unrelated-order-${input}`]);
+      await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND agent_id=$2`, [C,REVIEWER]);
+      changes.length = 0;
+      if (input === 'return-room-answer') {
+        // A current human member may answer even when the commander is an agent.
+        await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+          VALUES('derived-answer',$1,$2,'Proceed','message')`, [ROOM,HUMAN]);
+      } else if (input === 'commander-order') {
+        const next = await createAgentCommand(db, { id: 'derived-order', roomId: C, agentId: WORKER,
+          sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', authorId: recipient, fromRoomId: ROOM, text: 'Proceed' } });
+        await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [next!.id]);
+        await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND request_id=$2`, [C,next!.turn_request_id]);
+      } else {
+        await db.query(`UPDATE corner_facts SET lifecycle='{"pr":{"headSha":"new-head"},"checks":"failing"}'::jsonb WHERE corner_id=$1`, [C]);
+      }
+      expect(await cornerReportWaiting(db, C)).toBe(false);
+      if (unlisten) expect(changes).toContain(C);
+      const saved = recipientKind === 'agent'
+        ? (await db.query(`SELECT private_payload->>'waitingAnswered' answered FROM agent_commands WHERE id=$1`, [report.id])).rows
+        : (await db.query(`SELECT card->>'waitingAnswered' answered FROM messages WHERE id=$1`, [report.id])).rows;
+      expect(saved).toEqual([{ answered: 'true' }]);
+      const cardId = (await db.query<{ card_id: string }>(`SELECT encode(sha256(convert_to('agent-command-card:'||$1::text,'UTF8')),'hex') card_id`, [report.id])).rows[0]!.card_id;
+      expect((await db.query(`SELECT card->>'waitingAnswered' answered FROM messages WHERE id=$1`, [cardId])).rows)
+        .toEqual([{ answered: 'true' }]);
+      expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1', [C])).rowCount).toBe(0);
+    }
+  } finally { await unlisten?.(); }
+});
+
+
+it('REPORT-WAITING-DERIVED: automatic blocked prose preserves the post-turn grace period', async () => {
+  await turn();
+  await end(WORKER, 10);
+  const before = (await db.query(`SELECT last_turn_ended_at FROM corner_attention_spans WHERE corner_id=$1`, [C])).rows;
+  expect(before[0]!.last_turn_ended_at).not.toBeNull();
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'blocked: an automatic completion', undefined, 'automatic-report', { automatic: true });
+  expect(await cornerReportWaiting(db, C)).toBe(false);
+  expect((await db.query(`SELECT last_turn_ended_at FROM corner_attention_spans WHERE corner_id=$1`, [C])).rows).toEqual(before);
 });

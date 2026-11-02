@@ -1,5 +1,6 @@
 import { commandOwnerExpiredSql, commandOwnerLiveSql } from './turn-ownership.js';
 import { ServerLeaseDeadlines } from './server-lease-deadlines.js';
+import { startConnectionWork } from './background-work.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
 import { CommanderWakeDeadlines } from './commander-wakes.js';
@@ -105,7 +106,7 @@ export class ConnectionPresence {
   #observeWorker: Promise<void> | undefined;
   readonly #release: () => void;
   readonly #releaseResync: () => void;
-  #leaseTimer: ReturnType<typeof setInterval> | undefined;
+  #leaseTimer: (() => void) | undefined;
   readonly #ownedConnections = new Map<string,string>();
   readonly #turnReads = new Map<string, symbol>();
   readonly #ownerChecks = new Map<string, Promise<void>>();
@@ -197,8 +198,7 @@ export class ConnectionPresence {
   startLease(): void {
     if (this.#leaseTimer || this.#stopped || (!this.#ownedConnections.size && !this.#phoneConnections)) return;
     const tick = () => void this.renewLease().catch(this.report);
-    this.#leaseTimer = setInterval(tick, this.#leaseRenewMs);
-    this.#leaseTimer.unref?.();
+    this.#leaseTimer = startConnectionWork(tick, this.#leaseRenewMs);
   }
 
   /** A healthy authenticated phone also owns viewing/push suppression rows.
@@ -212,7 +212,7 @@ export class ConnectionPresence {
     return ()=>{
       if(released)return;released=true;
       this.#phoneConnections=Math.max(0,this.#phoneConnections-1);
-      if(!this.#ownedConnections.size && !this.#phoneConnections){clearInterval(this.#leaseTimer);this.#leaseTimer=undefined;}
+      if(!this.#ownedConnections.size && !this.#phoneConnections){this.#leaseTimer?.();this.#leaseTimer=undefined;}
     };
   }
 
@@ -264,7 +264,7 @@ export class ConnectionPresence {
   async releaseConnection(agentId: string, connectionId: string, forUpdate = false): Promise<void> {
     if (this.#stopped) return;
     if(this.#ownedConnections.get(agentId)===connectionId)this.#ownedConnections.delete(agentId);
-    if(!this.#ownedConnections.size && !this.#phoneConnections){clearInterval(this.#leaseTimer);this.#leaseTimer=undefined;}
+    if(!this.#ownedConnections.size && !this.#phoneConnections){this.#leaseTimer?.();this.#leaseTimer=undefined;}
     if (await releaseAgentConnection(this.database, this.live, agentId, connectionId, forUpdate))
       this.checkOwnedAgent(agentId);
   }
@@ -340,7 +340,7 @@ export class ConnectionPresence {
 
   async stop(): Promise<void> {
     this.#stopped = true;
-    clearInterval(this.#leaseTimer);
+    this.#leaseTimer?.();
     this.#attention.stop();
     this.#commanderWakes.stop();
     this.#leaseTimer = undefined;

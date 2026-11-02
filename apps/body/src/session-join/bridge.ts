@@ -1,5 +1,6 @@
 // The machine's one session bridge: for every joined session it waits on Beeline for tags and wakes, and hands each
 // to the session's app by the fastest way the app has. It needs no public address: it only calls out to Beeline.
+import { sessionAgentBehavior } from '../agent-command.js';
 import { spawn } from 'node:child_process';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
@@ -83,7 +84,7 @@ const realDeps: DeliverDeps = {
  * there. Returns how it went, for the log.
  */
 export async function deliver(dir: string, joined: JoinedSession, session: LiveSession | undefined, deps: DeliverDeps = realDeps): Promise<string> {
-  if (joined.agent !== 'claude-code' && joined.agent !== 'codex') return 'waiting for the app to collect it';
+  if (!sessionAgentBehavior(joined.agent).delivery) return 'waiting for the app to collect it';
   if (!session) return 'waiting for the session to open';
   if (joined.agent === 'claude-code' && hasClaudeMcp(dir, session.pid)) return 'waiting for the in-session MCP server';
   const text = takeInbox(dir, joined.key);

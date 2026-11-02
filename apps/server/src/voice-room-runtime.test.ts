@@ -1,3 +1,4 @@
+import * as backgroundWork from './background-work.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
 import { voiceTempo } from './voice-tempo.js';
@@ -1943,7 +1944,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    const timer = vi.spyOn(globalThis, 'setInterval');
+    const timer = vi.spyOn(backgroundWork, 'startConnectionWork').mockImplementation(() => () => {});
     const joined = await owner.join(room, human);
     const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
     const runtime = (await owner.ensureRuntime(call))!;
@@ -1988,7 +1989,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
 it('call-wide-end-3: completion between quiet checks restarts the full window', async () => {
   let clock=0;
   const now=vi.spyOn(performance,'now').mockImplementation(()=>clock);
-  const intervals=vi.spyOn(globalThis,'setInterval');
+  const intervals=vi.spyOn(backgroundWork,'startConnectionWork').mockImplementation(() => () => {});
   const {service}=conversationService(1);
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
   const tick = () => (runtime as any).checkInactivity();
@@ -2005,7 +2006,7 @@ it('call-wide-end-3: completion between quiet checks restarts the full window', 
 it('call-wide-end-3: stalled TTS without new playback cannot hold the call open', async () => {
   let clock=0, release!:()=>void;
   const now=vi.spyOn(performance,'now').mockImplementation(()=>clock);
-  const intervals=vi.spyOn(globalThis,'setInterval');
+  const intervals=vi.spyOn(backgroundWork,'startConnectionWork').mockImplementation(() => () => {});
   const {service,speech}=conversationService(1);
   const held=new Promise<void>(resolve=>{release=resolve;});
   speech.synthesize.mockImplementation(async function*(){yield new Uint8Array(960).fill(5);await held;});
@@ -2022,7 +2023,7 @@ it('call-wide-end-3: stalled TTS without new playback cannot hold the call open'
 it('warns after 45 seconds and cancels the deadline on human speech or call work', async () => {
   let clock=0;
   const now=vi.spyOn(performance,'now').mockImplementation(()=>clock);
-  const intervals=vi.spyOn(globalThis,'setInterval');
+  const intervals=vi.spyOn(backgroundWork,'startConnectionWork').mockImplementation(() => () => {});
   const {service}=conversationService(2);
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
   const tick = () => (runtime as any).checkInactivity();
@@ -2167,13 +2168,13 @@ it('Reproduction VOICE-BOUND-2: two call audio pumps retain independent one-seco
     INSERT INTO voice_participants VALUES('a','human'),('b','human');`);
   let now = Date.now();
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const timers = vi.spyOn(backgroundWork, 'startConnectionWork').mockImplementation(() => () => {});
   const stores = [new VoiceBudgetStore(db), new VoiceBudgetStore(db)];
   const runtimes: VoiceRoomRuntime[] = [];
   const frames: ReadableStreamDefaultController<any>[] = [];
   const sends = [vi.fn(), vi.fn()];
   const failures: ReturnType<typeof vi.spyOn>[] = [];
-  // Keep intervals frozen while exercising actual SDK-reader -> STT.send pumps.
+  // Keep scheduled checkpoints frozen while exercising actual SDK-reader -> STT.send pumps.
   const until = async (condition: () => boolean) => {
     for (let i = 0; !condition(); i++) {
       if (i === 2000) throw new Error('Audio pump did not become ready');
@@ -2212,7 +2213,7 @@ it('Reproduction VOICE-BOUND-2: two call audio pumps retain independent one-seco
   } finally {
     failures.forEach(spy => spy.mockRestore());
     for (const runtime of runtimes) await runtime.close();
-    vi.useRealTimers(); clock.mockRestore(); await db.close();
+    timers.mockRestore(); clock.mockRestore(); await db.close();
   }
 });
 

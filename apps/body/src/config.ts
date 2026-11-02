@@ -264,9 +264,6 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   const tsx = executableOnPath('tsx', env);
   if (source && tsx) return { command: tsx, args: [source] };
 
-  const legacyBinary = executableOnPath('buzz-readonly-mcp', env);
-  if (legacyBinary) return { command: legacyBinary, args: [] };
-
   throw new Error(
     'read-only tools unavailable: beeline-readonly-mcp was not found. Reinstall Beeline or set BEELINE_READONLY_MCP_BIN / BEELINE_READONLY_MCP_SCRIPT',
   );

@@ -5,7 +5,7 @@ import type { SqlDatabase } from './database.js';
 import { DEFAULT_FREE_AGENT_LIMITS } from './free-agent-limits.js';
 import { freeAgentModelTakesImages } from './free-agent-image-input.js';
 import { handleFreeAgentModelRequest, type FreeAgentModelProxyOptions } from './free-agent-model-proxy.js';
-import { MODEL, MODEL_AGENT, MODEL_ROOM, ownedModelFixture } from './owned-model.test-support.js';
+import { MODEL, MODEL_AGENT, MODEL_ROOM, ownedModelFixture } from './test-fixtures/owned-model.js';
 
 vi.mock('./free-agent-image-input.js', async original => ({
   ...await original<typeof import('./free-agent-image-input.js')>(), freeAgentModelTakesImages: vi.fn(async () => false),

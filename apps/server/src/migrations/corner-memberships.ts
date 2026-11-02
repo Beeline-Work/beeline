@@ -1,3 +1,4 @@
+import { deleteCornerMembershipBatch } from '../membership-join.js';
 import { CornerAccessDatabase } from '../corner-access-database.js';
 import type { SqlDatabase } from '../database.js';
 
@@ -20,12 +21,7 @@ export async function removeCornerMemberships(database: SqlDatabase): Promise<nu
   const physical = CornerAccessDatabase.physical(database);
   let total = 0;
   while (true) {
-    const removed = await physical.query(
-      `DELETE FROM memberships member WHERE member.id IN (
-         SELECT legacy.id FROM memberships legacy JOIN rooms corner ON corner.id=legacy.room_id
-         WHERE corner.parent_id IS NOT NULL ORDER BY legacy.id LIMIT 250
-       ) RETURNING member.id`,
-    );
+    const removed = await deleteCornerMembershipBatch(physical);
     total += removed.rowCount;
     if (!removed.rowCount) return total;
   }

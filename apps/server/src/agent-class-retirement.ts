@@ -4,11 +4,8 @@
  * A Room reviewer or a workflow role used to name a class word (a weight
  * tier, harness, provider, exact model id, or admin custom tag) that resolved
  * to a random healthy Room member. Both now name an ordered list of agents
- * instead. This converts what is stored:
- *  - A Room reviewer class becomes the list of the Room's current agent
- *    members matching it now, ordered by name. A class matching nobody clears
- *    the Room's reviewer; those Rooms are returned so the release log names
- *    them.
+ * instead. Room reviewer classes are already converted. This converts what
+ * else is stored:
  *  - A workflow run's class-bound role gets the class's matching agents as
  *    its list (`roleAgents` on the start card). A role already resolved keeps
  *    its agent; an unresolved class word is dropped from `roleBindings` so the
@@ -102,36 +99,7 @@ async function roomAgentsWithClass(db: SqlDatabase, roomId: string, word: string
   return rows.rows.filter((agent) => carriesClass(agent, rules, word)).map((agent) => agent.agent_id);
 }
 
-export async function retireAgentClasses(
-  database: SqlDatabase,
-): Promise<{ convertedRooms: number; clearedRooms: { id: string; name: string }[]; runs: number }> {
-  const clearedRooms: { id: string; name: string }[] = [];
-  let convertedRooms = 0;
-  const rooms = await database.query<{
-    id: string;
-    name: string;
-    reviewer_agent_id: string | null;
-    reviewer_class: string;
-  }>(`SELECT id,name,reviewer_agent_id,reviewer_class FROM rooms WHERE reviewer_class IS NOT NULL`);
-  for (const room of rooms.rows) {
-    let agents: string[] = [];
-    await database.transaction(async (db) => {
-      // A fixed reviewer always won over a class; only the class goes.
-      agents = room.reviewer_agent_id ? [] : await roomAgentsWithClass(db, room.id, room.reviewer_class);
-      await db.query(
-        `UPDATE rooms SET reviewer_class=NULL,
-           reviewer_agent_id=COALESCE(reviewer_agent_id,$2),
-           reviewer_fallback_ids=CASE WHEN reviewer_agent_id IS NULL THEN $3::text[] ELSE reviewer_fallback_ids END,
-           updated_at=now()
-         WHERE id=$1 AND reviewer_class IS NOT NULL`,
-        [room.id, agents[0] ?? null, agents.slice(1)],
-      );
-    });
-    if (room.reviewer_agent_id) continue;
-    if (agents.length) convertedRooms += 1;
-    else clearedRooms.push({ id: room.id, name: room.name });
-  }
-
+export async function retireAgentClasses(database: SqlDatabase): Promise<{ runs: number }> {
   const runs = await database.query<{ id: string; room_id: string; role_classes: Record<string, string> }>(
     `SELECT id,room_id,card->'roleClasses' role_classes FROM messages
      WHERE card_type='workflow-handoff' AND card ? 'roleClasses'`,
@@ -163,5 +131,5 @@ export async function retireAgentClasses(
 
   await database.query(`UPDATE agents SET custom_tags='[]'::jsonb WHERE custom_tags<>'[]'::jsonb`);
   await database.query(`UPDATE workspaces SET weight_tier_rules=NULL WHERE weight_tier_rules IS NOT NULL`);
-  return { convertedRooms, clearedRooms, runs: runs.rowCount ?? runs.rows.length };
+  return { runs: runs.rowCount ?? runs.rows.length };
 }

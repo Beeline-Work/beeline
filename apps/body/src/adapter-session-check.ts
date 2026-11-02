@@ -1,3 +1,4 @@
+import { agentBehavior } from './agent-command.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -104,7 +105,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n'); });`
   } finally {
     try {
       await client?.stop();
-      if (options.agentKind === 'claude') {
+      if (agentBehavior(options.agentKind).sharedLoginWriteBack) {
         await writeBackRoomClaudeLogin({ root: homeRoot, operatorHome: options.env.HOME });
       }
     } finally {

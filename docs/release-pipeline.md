@@ -126,7 +126,10 @@ installable when processing finishes, with no release rerun required.
 
 Installed helpers use the verified bundles published earlier by the daemon
 promotion step to `https://usebeeline.app/dl/manifest.json`, independently of
-npm. The final release notification wakes connected helpers; their first socket
+npm. The final release notification verifies that the live Pages manifest matches the
+release version and source commit, then wakes connected helpers even if another
+component or release bookkeeping failed. A no-op release sends no notice.
+Notification failure never changes the authoritative release outcome; their first socket
 registration also checks this channel. Downloads and activation follow the
 [helper update channel](cli-bundle-channel.md), so npm processing does not delay
 fleet updates.
@@ -322,13 +325,20 @@ desktop updater counter, and the store builds this pipeline uploaded.
 published before `release.json` existed is read as a migration record whose
 OTA branch is the legacy `production` branch.
 
-Jobs hand facts to each other only through job outputs. Public JSON metadata
-uses the `b64:` transport in `scripts/release-job-output.mjs`; it carries no
-credentials. Raw JSON punctuation can match masked lines of a multiline secret,
-which makes GitHub drop the whole output. The result job validates its state,
-identity and required previous record before applying checkpoints. Missing or
-invalid metadata reports `release-state:missing`, `release-state:invalid`,
-`previous-record:missing` or `previous-record:invalid` and blocks publication.
+Jobs hand component facts and scalar plan flags through job outputs. The result
+job reconstructs its state from those flags and rereads the newest published
+GitHub Release record, requiring its version and source to match the baseline
+pinned by initialize. Missing flags, changed baseline identity, inconsistent
+no-op or desktop version, and invalid metadata block publication. The original
+large `release_state` output is not emitted or consumed: GitHub dropped even
+its base64 form in run 41456438656 after secret-mask false positives. No Actions
+artifact or cache carries release state.
+
+Public JSON used by the OTA and observational bookkeeping legs still uses the
+`b64:` transport in `scripts/release-job-output.mjs`; it carries no credentials.
+A result job never relies on that encoded previous-record output. Reconstruction
+reports `release-plan:invalid`, `previous-record:missing` or
+`previous-record:invalid` and fails closed.
 
 A component-complete attempt whose result job failed has not published a
 release record. The next dispatch reads the newest **published** release,
@@ -339,6 +349,11 @@ Rerunning an old Actions run still uses its old workflow and checked-out scripts
 not pick up a later pipeline fix.
 Do not promote an empty draft or infer a delivered record from Actions success:
 the permanent record must include validated component and rollback facts.
+
+There is no record-only recovery workflow. A component-complete failed attempt
+must not be published from Actions success alone; use the existing audited
+recovery dispatch after the pipeline fix is on main. A rerun of an old run
+keeps its old workflow and scripts and cannot pick up this handoff fix.
 
 No Actions artifact, cache or run lookup carries state between jobs or runs. Artifacts carry build
 outputs only: Mac helper binaries, the Android AAB for the emulator proof,

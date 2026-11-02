@@ -973,7 +973,9 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   const expired = [
     ['agent_turn_traces', "created_at<now()-interval '30 days'"],
     ['room_push_views', 'expires_at<now()'],
-    ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'"],
+    // A corner's assignment commands are its worker, owner and opening provenance
+    // (corner-worker.ts): they stay for the corner's life.
+    ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days' AND NOT (reason IN ('corner_objective','human_tag') AND room_id IN (SELECT id FROM rooms WHERE parent_id IS NOT NULL))"],
     ['phone_access_tokens', 'expires_at<now()'],
     ['rooms_mcp_event_deliveries', "delivered_at<now()-interval '7 days'"],
     ['rooms_mcp_event_subscriptions', "expires_at<now()-interval '7 days'"],

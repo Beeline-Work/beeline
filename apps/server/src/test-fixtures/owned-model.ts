@@ -1,7 +1,7 @@
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
-import { OWNED_MODEL_CREDENTIAL_SCHEMA, OwnedModelCredentials, type AuthenticatedOwnedModel } from './owned-model-credential.js';
-import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
-import type { SqlDatabase } from './database.js';
+import { migratedDatabase, type PgliteDatabase } from '../test-support.js';
+import { OWNED_MODEL_CREDENTIAL_SCHEMA, OwnedModelCredentials, type AuthenticatedOwnedModel } from '../owned-model-credential.js';
+import { OWNED_MODEL_ATTEMPT_SCHEMA } from '../owned-model-attempt.js';
+import type { SqlDatabase } from '../database.js';
 
 export const MODEL_OWNER = 'a'.repeat(64), MODEL_AGENT = 'b'.repeat(64);
 export const MODEL_WORKSPACE = '11111111-1111-4111-8111-111111111111', MODEL_ROOM = '22222222-2222-4222-8222-222222222222';

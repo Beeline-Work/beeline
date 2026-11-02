@@ -1,3 +1,4 @@
+import * as backgroundWork from './background-work.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ConnectionPresence, recordAgentEvidence, claimAgentConnection } from './connection-presence.js';
@@ -60,17 +61,18 @@ describe('delivery-driven presence', () => {
     await vi.advanceTimersByTimeAsync(100);
   }
   it('starts no repeating command, commander wake, or corner attention sweep', async()=>{
-    const interval=vi.spyOn(globalThis,'setInterval');
+    const interval=vi.spyOn(backgroundWork,'startConnectionWork');
     await presence.start();
     expect(interval.mock.calls.map(call=>call[1])).toEqual([]);
     interval.mockRestore();
   });
   it('renews one aggregate lease only while it owns connections and ignores a replaced socket close',async()=>{
-    const interval=vi.spyOn(globalThis,'setInterval'),clear=vi.spyOn(globalThis,'clearInterval'),query=vi.spyOn(database,'query');
+    const interval=vi.spyOn(globalThis,'setTimeout'),clear=vi.spyOn(globalThis,'clearTimeout'),query=vi.spyOn(database,'query');
     try{
-      await presence.start();expect(interval).not.toHaveBeenCalled();
+      await presence.start();expect(interval.mock.calls.filter(call=>call[1]===30000)).toHaveLength(0);
       await presence.claimConnection(AGENT,{connectionId:'older'});
-      expect(interval).toHaveBeenCalledOnce();const timer=interval.mock.results[0]!.value;
+      const leaseCalls=interval.mock.calls.flatMap((call,index)=>call[1]===30000?[index]:[]);
+      expect(leaseCalls).toHaveLength(1);const timer=interval.mock.results[leaseCalls[0]!]!.value;
       await presence.claimConnection(AGENT,{connectionId:'newer'});
       expect(query.mock.calls.filter(([sql])=>sql.includes('INSERT INTO live_server_instances'))).toHaveLength(1);
       expect(query.mock.calls.some(([sql])=>sql.includes('WITH stale AS'))).toBe(false);
@@ -79,12 +81,12 @@ describe('delivery-driven presence', () => {
     }finally{interval.mockRestore();clear.mockRestore();query.mockRestore();}
   });
   it('keeps a phone-only server lease alive until the last actual phone releases it',async()=>{
-    const interval=vi.spyOn(globalThis,'setInterval'),clear=vi.spyOn(globalThis,'clearInterval'),query=vi.spyOn(database,'query');
+    const interval=vi.spyOn(globalThis,'setTimeout'),clear=vi.spyOn(globalThis,'clearTimeout'),query=vi.spyOn(database,'query');
     const first=presence.holdServerConnection(),second=presence.holdServerConnection();
     try{
       await presence.renewLease();
-      expect(interval).toHaveBeenCalledOnce();const timer=interval.mock.results[0]!.value;
-      expect(interval.mock.calls[0]![1]).toBe(30000);
+      const leaseCalls=interval.mock.calls.flatMap((call,index)=>call[1]===30000?[index]:[]);
+      expect(leaseCalls).toHaveLength(1);const timer=interval.mock.results[leaseCalls[0]!]!.value;
       expect(query.mock.calls.filter(([sql])=>sql.includes('INSERT INTO live_server_instances'))).toHaveLength(1);
       first();first();expect(clear).not.toHaveBeenCalledWith(timer);
       second();expect(clear).toHaveBeenCalledWith(timer);

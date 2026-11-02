@@ -1,3 +1,5 @@
+import type { OwnedModelAttemptReceipt } from '@beeline/api-contract/helper-model';
+export type { OwnedModelAttemptReceipt } from '@beeline/api-contract/helper-model';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { CommandRefusalError } from './command-refusal.js';
@@ -87,7 +89,6 @@ export type OwnedModelReservation = Readonly<{ day: string; reserved: number; ma
 type RefusalReason = 'authority' | 'queue' | 'cancelled' | 'deadline';
 export type OwnedModelEvidence = Readonly<{ kind: 'usage'; tokens: number; usd: number }> |
   Readonly<{ kind: 'not-dispatched'; reason: RefusalReason }> | Readonly<{ kind: 'provider-refused'; status: number }>;
-export type OwnedModelAttemptReceipt = Readonly<{ requestId: string; state: 'unknown' | 'succeeded' | 'refused'; evidence?: OwnedModelEvidence }>;
 declare const permitBrand: unique symbol;
 export type OwnedModelDispatchPermit = Readonly<{ readonly [permitBrand]: true }>;
 type Permit = { actor: AuthenticatedOwnedModel; requestId: string; digest: string; body: string; consumed: boolean; entered: boolean };

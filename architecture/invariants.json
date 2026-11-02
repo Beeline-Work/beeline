@@ -3,7 +3,7 @@
     {
       "id": "work.command-creation",
       "module": "Work authority",
-      "invariant": "Agent commands are created only by createAgentCommand; only a command authorizes a turn.",
+      "invariant": "Agent commands are created only by agent-command.ts creation functions; only a command authorizes a turn.",
       "pattern": "INSERT\\s+INTO\\s+agent_commands\\b",
       "flags": "i",
       "scope": [
@@ -12,8 +12,8 @@
       "owners": [
         "apps/server/src/agent-command.ts"
       ],
-      "total": 1,
-      "fix": "Call createAgentCommand(db, {...}) from apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
+      "total": 0,
+      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
     },
     {
       "id": "corner.state-writes",
@@ -28,7 +28,7 @@
         "apps/server/src/corner-lifecycle.ts",
         "apps/server/src/corner-close.ts"
       ],
-      "total": 36,
+      "total": 27,
       "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
     },
     {
@@ -75,20 +75,20 @@
         "apps/server/src/postgres-live.ts",
         "apps/server/src/postgres-live-notifications.ts"
       ],
-      "total": 14,
-      "fix": "Publish through a named notifier in apps/server/src/postgres-live-notifications.ts (or the listener owner postgres-live.ts), so LiveNotification and its channel-specific decoder cover the event."
+      "total": 0,
+      "fix": "Publish through a named notifier in apps/server/src/postgres-live-notifications.ts (or the listener owner postgres-live.ts) and call it, so LiveNotification and its decoder cover the event."
     },
     {
       "id": "timers.server-interval",
       "module": "Background work and timers",
-      "invariant": "Server background work runs on the leader's work queue, not on free-running intervals.",
+      "invariant": "Server background work runs on owned work queues or connection timeout chains, not on free-running intervals.",
       "pattern": "\\bsetInterval\\s*\\(",
       "scope": [
         "apps/server/src"
       ],
       "owners": [],
-      "total": 3,
-      "fix": "Use one of three shapes: a global job via the leader's work.add in apps/server/src/background.ts; a timeout chain owned by one connection and cleared in its close handler; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
+      "total": 0,
+      "fix": "Use leader work.add for shared jobs; startBackgroundWork in apps/server/src/background-work.ts for instance-local memory flushes/channel cleanup; startConnectionWork there for a connection-owned timeout chain cancelled on close; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
     },
     {
       "id": "access.membership-writes",
@@ -102,7 +102,7 @@
       "owners": [
         "apps/server/src/membership-join.ts"
       ],
-      "total": 40,
+      "total": 0,
       "fix": "Change membership through a named helper in apps/server/src/membership-join.ts (add one there if needed) and call it."
     },
     {
@@ -115,7 +115,7 @@
         "packages/api-contract/src"
       ],
       "owners": [],
-      "total": 3,
+      "total": 0,
       "fix": "Send the server a capability or setting, not the harness name, and keep the per-harness value in a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts."
     },
     {
@@ -129,7 +129,7 @@
       "owners": [
         "apps/body/src/agent-command.ts"
       ],
-      "total": 85,
+      "total": 0,
       "fix": "Add the behaviour as a field of a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts and read that field here instead of comparing the harness name."
     },
     {
@@ -142,7 +142,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 63,
+      "total": 61,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -155,7 +155,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 56,
+      "total": 55,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -168,7 +168,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 13,
+      "total": 11,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -193,7 +193,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 22,
+      "total": 19,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -205,7 +205,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 31,
+      "total": 30,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -217,7 +217,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 24,
+      "total": 22,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -229,7 +229,7 @@
         "packages"
       ],
       "owners": [],
-      "total": 5,
+      "total": 4,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     }
   ],
@@ -238,8 +238,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1816,
-    "unusedTotal": 193,
+    "bootstrapTotal": 1802,
+    "unusedTotal": 189,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -693,7 +693,8 @@
           "finished_at": "existing before the registry; weekly audit reviews",
           "last_error": "existing before the registry; weekly audit reviews",
           "require_containment": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_brief_revisions": {
         "module": "Corner state machine",
@@ -728,24 +729,45 @@
           "commissioned_by": "existing before the registry; weekly audit reviews",
           "objective": "existing before the registry; weekly audit reviews",
           "lifecycle": "existing before the registry; weekly audit reviews",
-          "plan": "existing before the registry; weekly audit reviews",
-          "request_id": "existing before the registry; weekly audit reviews",
-          "open_idempotency_key": "existing before the registry; weekly audit reviews",
-          "feature_branch": "existing before the registry; weekly audit reviews",
-          "close_requested": "existing before the registry; weekly audit reviews",
+          "plan": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "request_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "open_idempotency_key": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "feature_branch": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "close_requested": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "kind": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews",
           "locked": "existing before the registry; weekly audit reviews",
           "worker_agent_id": "existing before the registry; weekly audit reviews",
-          "opened_from_corner_id": "existing before the registry; weekly audit reviews",
+          "opened_from_corner_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "workflow_state": "existing before the registry; weekly audit reviews",
           "workflow_outcome": "existing before the registry; weekly audit reviews",
-          "merge_attempt_head": "existing before the registry; weekly audit reviews",
+          "merge_attempt_head": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "reviewer_agent_id": "existing before the registry; weekly audit reviews",
-          "title_generated": "existing before the registry; weekly audit reviews",
-          "command_check_state": "existing before the registry; weekly audit reviews",
-          "review_handback_head": "existing before the registry; weekly audit reviews",
-          "review_handback_count": "existing before the registry; weekly audit reviews"
+          "title_generated": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          }
         }
       },
       "corner_follows": {
@@ -812,17 +834,6 @@
           "created_at": "existing before the registry; weekly audit reviews"
         }
       },
-      "corner_pr_closures": {
-        "module": "Corner state machine",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "corner_id": "existing before the registry; weekly audit reviews",
-          "attempts": "existing before the registry; weekly audit reviews",
-          "next_attempt_at": "existing before the registry; weekly audit reviews",
-          "finished_at": "existing before the registry; weekly audit reviews",
-          "last_error": "existing before the registry; weekly audit reviews"
-        }
-      },
       "corner_report_blockers": {
         "module": "Corner state machine",
         "reason": "existing before the registry; weekly audit reviews",
@@ -834,7 +845,8 @@
           "created_at": "existing before the registry; weekly audit reviews",
           "message_id": "existing before the registry; weekly audit reviews",
           "commander_id": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_validation_stages": {
         "module": "Corner state machine",
@@ -1049,7 +1061,6 @@
         "columns": {
           "identity_id": "existing before the registry; weekly audit reviews",
           "replies": "existing before the registry; weekly audit reviews",
-          "reached_milestone": "existing before the registry; weekly audit reviews",
           "answered_milestone": "existing before the registry; weekly audit reviews",
           "checked_milestone": "existing before the registry; weekly audit reviews",
           "closed": "existing before the registry; weekly audit reviews",
@@ -1670,10 +1681,8 @@
           "owner_id": "existing before the registry; weekly audit reviews",
           "source_message_id": "existing before the registry; weekly audit reviews",
           "recipients": "existing before the registry; weekly audit reviews",
-          "text_hash": "existing before the registry; weekly audit reviews",
           "text": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews",
-          "recipient_count": "existing before the registry; weekly audit reviews"
+          "created_at": "existing before the registry; weekly audit reviews"
         }
       },
       "pending_mention_notices": {
@@ -1942,8 +1951,10 @@
           "reviewer_agent_id": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews",
-          "reviewer_class": "existing before the registry; weekly audit reviews",
-          "reviewer_fallback_ids": "existing before the registry; weekly audit reviews"
+          "reviewer_fallback_ids": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          }
         }
       },
       "rooms_mcp_admission": {
@@ -2633,7 +2644,6 @@
           "id": "existing before the registry; weekly audit reviews",
           "identity_id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
-          "workspace_name": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
         }
       },
@@ -3105,7 +3115,8 @@
         "savingAttempt": "existing before the registry; weekly audit reviews",
         "fromState": "existing before the registry; weekly audit reviews",
         "commandId": "existing before the registry; weekly audit reviews",
-        "trigger": "existing before the registry; weekly audit reviews"
+        "trigger": "existing before the registry; weekly audit reviews",
+        "reportToId": "the person a human-directed worker report addresses; written with the report, it scopes the derived wait"
       },
       "legacy_event": {
         "turnGenerationId": "existing before the registry; weekly audit reviews"

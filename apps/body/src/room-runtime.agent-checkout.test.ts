@@ -155,7 +155,6 @@ async function cornerFixture(prefix: string, implementerAgentId: (self: string) 
   await internal.startCorner({ cornerId: 'corner', parentRoomId: 'parent' });
   const turn = loop as unknown as {
     withCheckout(work: () => Promise<void>): Promise<void>;
-    releaseImplementer(requestId: string): Promise<void>;
     retainBackgroundClient(client: unknown): Promise<void>;
     commandContext: { current?: { reason: string } };
     options: { worktreePath: string; repository: { readOnly: boolean } };
@@ -189,55 +188,4 @@ it('a commander or tagged agent reads the Room checkout; an order gives it a pri
     turn.commandContext.current = { reason: 'agent_tag' };
     await turn.withCheckout(async () => expect(turn.options.worktreePath).toBe(own.path));
   } finally { turn.commandContext.current = undefined; await fixture.close(); }
-});
-
-it('a swapped-out implementer stops its background jobs and backs up work while preserving an open corner', async () => {
-  const fixture = await cornerFixture('corner-swap-', self => self);
-  const { turn, own, remote, posted } = fixture;
-  try {
-    await turn.withCheckout(async () => expect(turn.options.worktreePath).toBe(own.path));
-    await writeFile(resolve(own.path, 'committed'), 'local commit');
-    await exec('git', ['-C', own.path, 'add', '.']);
-    await exec('git', ['-C', own.path, 'commit', '-m', 'unpushed']);
-    await writeFile(resolve(own.path, 'edit'), 'uncommitted');
-    const { EventEmitter } = await import('node:events');
-    const job = Object.assign(new EventEmitter(), { hasBackgroundTools: true, stop: vi.fn(async () => undefined) });
-    void turn.retainBackgroundClient(job);
-
-    await turn.releaseImplementer('release-request');
-
-    expect(job.stop).toHaveBeenCalledOnce();
-    await expect(access(own.path)).resolves.toBeUndefined();
-    await expect(access(own.gitCommonDir)).resolves.toBeUndefined();
-    const backup = `beeline/backup/corner-${fixture.identity.publicKey.slice(0, 8)}`;
-    const files = (await exec('git', [`--git-dir=${remote}`, 'ls-tree', '--name-only', backup])).stdout.split('\n');
-    expect(files).toEqual(expect.arrayContaining(['committed', 'edit', 'file']));
-    expect(posted).toEqual([expect.stringContaining(`to branch ${backup}`)]);
-    expect(posted[0]).toContain('1 background job session');
-    expect(posted[0]).toContain(`My copy at ${own.path} is still on disk`);
-  } finally { await fixture.close(); }
-});
-
-it('a swap publishes every stash entry while preserving the open corner copy', async () => {
-  const fixture = await cornerFixture('corner-swap-stashes-', self => self);
-  const { turn, own, remote, posted } = fixture;
-  try {
-    await turn.withCheckout(async () => undefined);
-    const stashes: string[] = [];
-    for (const content of ['older stashed work', 'newer stashed work']) {
-      await writeFile(resolve(own.path, 'file'), content);
-      await exec('git', ['-C', own.path, 'stash', 'push', '-m', content]);
-      stashes.push((await exec('git', ['-C', own.path, 'rev-parse', 'refs/stash'])).stdout.trim());
-    }
-    await turn.releaseImplementer('release-stashes');
-    const backup = `beeline/backup/corner-${fixture.identity.publicKey.slice(0, 8)}`;
-    for (const [index, sha] of stashes.entries()) {
-      const ref = `${backup}-stash-${sha}`;
-      expect((await exec('git', [`--git-dir=${remote}`, 'show', `${ref}:file`])).stdout)
-        .toBe(index === 0 ? 'older stashed work' : 'newer stashed work');
-    }
-    await expect(access(own.path)).resolves.toBeUndefined();
-    await expect(access(own.gitCommonDir)).resolves.toBeUndefined();
-    expect(posted[0]).toContain(`My copy at ${own.path} is still on disk`);
-  } finally { await fixture.close(); }
 });

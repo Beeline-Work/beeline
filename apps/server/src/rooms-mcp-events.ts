@@ -3,8 +3,8 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
 import { openSecrets, sealSecrets } from './free-agents.js';
-import { MCP_WEBHOOK_TABLE, postMcpWebhook } from './rooms-mcp-members.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+import { postMcpWebhook } from './rooms-mcp-members.js';
+import { notifyMcpWakesSql, notifyMcpWebhook, POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 // Replay stays in list_mentions; event cursors are null so queued events cannot be skipped.
 const MENTION_EVENT = {
@@ -157,8 +157,7 @@ export async function queueMcpMentionEvents(db: SqlDatabase, member: string, roo
       delivered_at=NULL,claimed_at=NULL,attempts=0,next_attempt_at=now()
       WHERE $4::integer>0
     RETURNING subscription_id`, [member, room, message, rewake]);
-  if (queued.rowCount) await db.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId: room })]);
+  if (queued.rowCount) await notifyMcpWebhook(db, room);
 }
 
 /**
@@ -206,8 +205,7 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
       RETURNING room_id
     )`,
     join: `LEFT JOIN LATERAL (
-      SELECT count(pg_notify(${channel}, jsonb_build_object(
-        'table','${MCP_WEBHOOK_TABLE}','operation','INSERT','roomId',room_id::text)::text)) notified
+      SELECT ${notifyMcpWakesSql(channel)} notified
       FROM (SELECT DISTINCT room_id FROM queued_mcp_wakes) notices
     ) mcp_wake_notice ON true`,
   };

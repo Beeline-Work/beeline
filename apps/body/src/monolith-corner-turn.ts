@@ -1,5 +1,6 @@
 import { CommandActivationContext } from './helper-activation-context.js';
 import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
+import { agentBehavior } from './agent-command.js';
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
 import { tryWithKernelLock } from './kernel-lock.js';
 import { extraDependencyRoots, dependencyFingerprint, prepareDependencyGeneration, installDependencyNpmGuard, dependencyRequest } from './dependency-generation.js';
@@ -42,7 +43,7 @@ import {
   listenCornerEmulator,
   stopKeptCornerEmulator,
 } from './corner-emulator.js';
-import { IMPLEMENTER_RELEASED_REASON, type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   openAcpConversation,
@@ -470,8 +471,6 @@ export interface MonolithCornerTurnOptions {
   /** Gives a writer its private copy; every other turn gets the Room's read-only checkout. */
   prepareCheckout?: (repositoryWork: boolean, implementerAgentId?: string, assigned?: boolean) =>
     Promise<{ path: string; gitCommonDir: string; writable: boolean }>;
-  /** Saves unpushed work and deletes this agent's copy; returns what it did. */
-  releaseCheckout?: () => Promise<string>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -829,7 +828,7 @@ export class MonolithCornerTurnLoop {
    * do not spend the old refresh token before this Room's next activation.
    */
   private async writeBackClaudeLogin(): Promise<void> {
-    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
     await writeBackRoomClaudeLogin({
       root: this.options.config.agentHomeRoot,
       operatorHome: this.options.config.operatorHome,
@@ -898,7 +897,7 @@ export class MonolithCornerTurnLoop {
    */
   private watchClaudeLogin(): void {
     this.stopClaudeLoginWatch();
-    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    if (!agentBehavior(this.options.config.agentKind).sharedLoginWriteBack || !this.options.config.agentHomeRoot) return;
     this.claudeLoginWatch = watchRoomClaudeLogin({
       root: this.options.config.agentHomeRoot,
       operatorHome: this.options.config.operatorHome,
@@ -924,32 +923,6 @@ export class MonolithCornerTurnLoop {
       (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
     if (client?.hasBackgroundTools && !cancelled && !stopBackground) void this.retainBackgroundClient(client);
     else if (client) await client.stop();
-  }
-
-  /**
-   * The owner made another agent this corner's implementer. Stop this
-   * agent's session and every retained background job, save unpushed work,
-   * delete its copy, and say which in the corner. No model turn runs.
-   */
-  private async releaseImplementer(requestId: string): Promise<void> {
-    const { api, cornerId } = this.options;
-    const retired = [...this.retiredClients.values()];
-    const jobs = retired.length + (this.client?.hasBackgroundTools ? 1 : 0);
-    await this.discardSession(false, true);
-    for (const client of retired) client.stop();
-    await Promise.all(retired.map(client => client.done));
-    const copy = this.options.releaseCheckout
-      ? await this.options.releaseCheckout()
-      : 'I had no copy of this corner\'s code.';
-    const stopped = jobs ? `I stopped my session and ${jobs} background job session${jobs === 1 ? '' : 's'}.` : 'I stopped my session.';
-    await api.execute('postRoomMessage', {
-      roomId: cornerId, requestId, presentation: 'message',
-      text: `Another agent is now this corner's implementer. ${stopped} ${copy}`,
-    });
-    await api.execute('postAgentTurnReceipt', {
-      agentId: this.agent.publicKey, roomId: cornerId, requestId,
-      status: 'complete', generationId: this.commandContext.generationId,
-    });
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
@@ -1039,7 +1012,7 @@ export class MonolithCornerTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
-          writeBackNewerClaudeLogin: this.options.config.agentKind === 'claude',
+          writeBackNewerClaudeLogin: agentBehavior(this.options.config.agentKind).sharedLoginWriteBack === true,
         });
       }
       return this.sessionId;
@@ -1224,7 +1197,7 @@ export class MonolithCornerTurnLoop {
       : isolatedCategories.includes('package-cache')
         ? workspaceCacheEnv(workspaceAssetPaths(privateAssetRoot), this.options.worktreePath, privateAssetRoot)
         : {};
-    if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
+    if (assets && agentBehavior(this.options.config.agentKind).codexCacheBindings && homeOverlay.CODEX_HOME)
       await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
     if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
     // A build output belongs to this corner, even when its package downloads
@@ -1369,7 +1342,7 @@ export class MonolithCornerTurnLoop {
               agentRuntimeDir: runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
               privateHomeRoot: this.options.config.agentHomeRoot,
               ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
-              ...(this.options.config.agentKind === 'codex' && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
+              ...(agentBehavior(this.options.config.agentKind).codexCacheBindings && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
               ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
               privateAssetRoot,
               isolatedCategories,
@@ -2906,16 +2879,14 @@ export class MonolithCornerTurnLoop {
           await this.options.onCloseRequested();
           return true;
         },
-        run: (command) => command.reason === IMPLEMENTER_RELEASED_REASON
-          ? this.releaseImplementer(command.turnRequestId)
-          : this.prompt(
-            command.turnRequestId,
-            command.source.body,
-            command.source.attachments,
-            command.source.authorId,
-            command.reason === 'corner_check' ? [command.source.body] : undefined,
-            ['message', 'private'].includes(command.source.type) ? command.sourceMessageId : undefined,
-          ),
+        run: (command) => this.prompt(
+          command.turnRequestId,
+          command.source.body,
+          command.source.attachments,
+          command.source.authorId,
+          command.reason === 'corner_check' ? [command.source.body] : undefined,
+          ['message', 'private'].includes(command.source.type) ? command.sourceMessageId : undefined,
+        ),
       });
     try {
       await (supervisor

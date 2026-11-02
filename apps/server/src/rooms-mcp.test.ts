@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, assignCornerWorker } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { recordSigninAttempt } from './signin-attempts.js';
 import { PhoneService } from './phone-service.js';
@@ -2255,7 +2255,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     async function reportCorner(member: string) {
       const corner = randomUUID();
       await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$2,'Report proof',$3,$4)`, [corner, WORKSPACE, ROOM, AGENT]);
-      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id) VALUES($1,$2,$3)`, [corner, AGENT, member]);
+      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, AGENT]);
+      await assignCornerWorker(db, corner, member);
       await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,approval_basis,author_id,source_room_id)
         VALUES($1,1,'Report proof','{"repositoryWork":false}',$2,$3)`, [corner, AGENT, ROOM]);
       return corner;

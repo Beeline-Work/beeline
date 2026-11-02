@@ -1,5 +1,6 @@
 // `usebeeline join` and `usebeeline session …`: a coding session that is already running joins a person's Beeline
 // Rooms as its own member, from one pasted line and one sign-in on any device.
+import { sessionAgentBehavior } from '../agent-command.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
@@ -106,7 +107,7 @@ export function findOwnSession(env: NodeJS.ProcessEnv, dir: string): Found {
     return { agent: 'claude-code', cwd: own?.cwd ?? env.CLAUDE_PROJECT_DIR ?? cwd, sessionId, pid: own?.pid ?? detected.pid, chosen: own ? chosenName(own) : undefined,
       claudeInboundFallback: held && !hasClaudeMcp(dir, own?.pid ?? detected.pid) };
   }
-  if (detected.agent === 'codex') {
+  if (sessionAgentBehavior(detected.agent).delivery === 'queue') {
     const thread = env.CODEX_THREAD_ID ?? env.CODEX_SESSION_ID;
     const live = scanCodex();
     const own = thread ? live.find(s => s.threadId === thread) : live.find(s => detected.pid !== undefined && s.pid === detected.pid);
@@ -152,7 +153,7 @@ async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void
     !known&&!previous.pending.signIn.exchangeStarted&&previous.pending.startedAt+600_000>Date.now());
   const signIn = resume?previous.pending.signIn:signInLink(server, clientId, name, own.claudeInboundFallback);
   const pending: Pending = resume?previous.pending:{ server, clientId, signIn, agent: own.agent, cwd: own.cwd, name, sessionId: own.sessionId, pid: own.pid,
-    agentBin: own.agent === 'codex' ? which('codex', env) : undefined, startedAt: Date.now(), claudeInboundFallback: own.claudeInboundFallback };
+    agentBin: sessionAgentBehavior(own.agent).delivery === 'queue' ? which('codex', env) : undefined, startedAt: Date.now(), claudeInboundFallback: own.claudeInboundFallback };
   mkdirSync(join(dir, 'pending'), { recursive: true, mode: 0o700 });
   const file = join(dir, 'pending', `${createHash('sha256').update(signIn.state).digest('hex').slice(0, 24)}.json`);
   // A running finisher owns its progress file. An explicit repeated join may
@@ -221,7 +222,7 @@ async function finishJoinOwned(file: string, env: NodeJS.ProcessEnv): Promise<vo
       if (waiting.length) queueInbox(dir, key, waiting.join('\n\n'));
     });
     const changes = setupAgent(pending.agent, { env, node: run.node, bundle: run.bundle });
-    if (pending.agent === 'codex' && await trustCodexHook({ env, node: run.node, bundle: run.bundle }, pending.agentBin ?? 'codex', pending.cwd)) {
+    if (sessionAgentBehavior(pending.agent).delivery === 'queue' && await trustCodexHook({ env, node: run.node, bundle: run.bundle }, pending.agentBin ?? 'codex', pending.cwd)) {
       const prompt = changes.findIndex(line => line.startsWith('Codex asks once'));
       if (prompt >= 0) changes.splice(prompt, 1);
       changes.push('Trusted only Beeline’s SessionStart hook, pinned to its current Codex hash.');
@@ -244,7 +245,7 @@ async function announce(joined: JoinedSession, text: string, dir: string): Promi
     const session = scanClaude().find(s => s.sessionId === joined.sessionId || s.pid === joined.pid);
     if (session?.messagingSocketPath) { await postToClaude({ path: session.messagingSocketPath }, text).catch(() => undefined); return; }
   }
-  if (joined.agent === 'codex' && joined.sessionId) { await codexQueue(joined.sessionId, text, joined.agentBin ?? 'codex').catch(() => undefined); return; }
+  if (sessionAgentBehavior(joined.agent).delivery === 'queue' && joined.sessionId) { await codexQueue(joined.sessionId, text, joined.agentBin ?? 'codex').catch(() => undefined); return; }
   const { queueInbox } = await import('./store.js');
   queueInbox(dir, joined.key, text);
 }
@@ -371,7 +372,7 @@ export async function runSessionCommand(args: string[], env: NodeJS.ProcessEnv =
       const denied = [failure, cause].some(e => e && (
         ['EACCES', 'EPERM', 'EROFS'].includes(e.code ?? '') || (e.code === 'ENOENT' && e.syscall === 'mkdir')
       ));
-      if (detectAgent(env)?.agent === 'codex' && denied) {
+      if (sessionAgentBehavior(detectAgent(env)?.agent).delivery === 'queue' && denied) {
         throw new Error('Codex blocked access needed to join Beeline. Run /permissions, pick "Ask for approval", then run Join again. Choose "Yes, proceed" for the Join command once; no permanent allowance or Full Access is needed.', { cause: error });
       }
       throw error;

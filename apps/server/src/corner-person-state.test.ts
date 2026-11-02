@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { migrateCornerPersonState, setRoomEventSubscriptions } from './corner-person-state.js';
-import { PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -53,10 +53,8 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       `UPDATE memberships SET push_muted=true,joined_at='2020-01-01T00:00:00Z' WHERE room_id=$1 AND identity_id=$2`,
       [corner, agent],
     );
-    await db.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by) VALUES($1,$2,$3)`,
-      [corner, agent, person],
-    );
+    await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, agent]);
+    await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: person });
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('ask',$1,$2,'@person can you check?')`,
       [corner, agent],

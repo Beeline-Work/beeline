@@ -1,4 +1,5 @@
 import { readCornerObjective, backfillCornerObjectives } from './corner-objective.js';
+import { cornerOpenedFromSql } from './corner-opening.js';
 import { activeCornerHolds } from './corner-holds.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { cornerMergeGate } from './corner-lifecycle.js';
@@ -82,6 +83,36 @@ it('opens in an unrelated member Room from a DM and records the caller as comman
     source: { authorId: RUBY, body: 'Build the widget' } });
   expect(opened.watch?.kinds).toEqual(['opened', 'merged']);
 });
+it.each(['opening key', 'request fallback', 'legacy open key', 'legacy request id'])(
+  'PROVENANCE-REPLAY reuses the active corner through %s', async provenance => {
+    const key = provenance === 'request fallback' ? order.turnRequestId : 'stable-open-key';
+    const input = { ...authority(order), targetRoomId: ROOM, idempotencyKey: key,
+      name: 'Widget', objective: 'Build the widget', implementer: 'worker',
+      brief: { spec: 'Build the widget', repositoryWork: false,
+        approval: { sourceMessageId: order.sourceMessageId } },
+    };
+    const first = await daemon.execute('createCorner', input, RUBY);
+    expect((await db.query(`SELECT private_payload->>'openKey' key FROM agent_commands
+      WHERE room_id=$1 AND reason='corner_objective'`, [first.cornerId])).rows[0]?.key).toBe(key);
+    if (provenance !== 'opening key') {
+      await db.query(`UPDATE agent_commands SET private_payload=private_payload-'openKey'
+        WHERE room_id=$1 AND reason='corner_objective'`, [first.cornerId]);
+      if (provenance.startsWith('legacy')) await db.query(
+        `UPDATE corner_facts SET open_idempotency_key=$2,request_id=$3 WHERE corner_id=$1`,
+        [first.cornerId, provenance === 'legacy open key' ? key : null,
+          provenance === 'legacy request id' ? key : order.turnRequestId],
+      );
+    }
+    expect(await daemon.execute('createCorner', input, RUBY)).toEqual(first);
+    await expect(daemon.execute('createCorner', { ...input, objective: 'Different work' }, RUBY))
+      .rejects.toThrow('different assignment');
+    expect(await daemon.execute('getRequestCompletion', { roomId: ROOM,
+      requestId: order.turnRequestId }, RUBY)).toMatchObject({ openedCornerId: first.cornerId });
+    expect((await db.query(`SELECT count(*)::int count FROM rooms WHERE parent_id=$1`, [ROOM])).rows[0]?.count)
+      .toBe(1);
+  },
+);
+
 it('delivers blocked privately to Ruby and Ruby orders the current worker privately', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await daemon.execute('report', { status: 'blocked', ...authority(turn), text: 'blocked: need an endpoint decision' }, WORKER);
@@ -114,7 +145,7 @@ it('records each corner order and report as one collapsed card in the corner onl
     [opened.cornerId])).rows;
   expect(cards.map(({ id: _id, ...card }) => card)).toEqual(expect.arrayContaining([
     { author_id: WORKER, presentation: 'card', text: '@worker reported to @ruby · blocked',
-      card: { kind: 'report', recipient: { id: RUBY, name: 'Ruby', handle: 'ruby' }, status: 'blocked', text: reportText } },
+      card: { kind: 'report', recipient: { id: RUBY, name: 'Ruby', handle: 'ruby' }, status: 'blocked', text: reportText, waitingAnswered: true } },
     { author_id: RUBY, presentation: 'card', text: '@ruby ordered @worker',
       card: { kind: 'order', recipient: { id: WORKER, name: 'Worker', handle: 'worker' }, text: 'Use endpoint v2' } },
   ]));
@@ -125,7 +156,7 @@ it('records each corner order and report as one collapsed card in the corner onl
   expect(await unread()).toBe(unreadBefore);
   const view = (await phone.readRoom(opened.cornerId, HUMAN))!.messages.filter(m => m.agentCommand);
   expect(view.map(m => [m.author.pubkey, m.agentCommand])).toEqual(expect.arrayContaining([
-    [WORKER, { kind: 'report', recipient: { id: RUBY, name: 'Ruby', handle: 'ruby' }, status: 'blocked', text: reportText }],
+    [WORKER, { kind: 'report', recipient: { id: RUBY, name: 'Ruby', handle: 'ruby' }, status: 'blocked', text: reportText, waitingAnswered: true }],
     [RUBY, { kind: 'order', recipient: { id: WORKER, name: 'Worker', handle: 'worker' }, text: 'Use endpoint v2' }],
   ]));
 });
@@ -206,8 +237,8 @@ it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', a
   const opened = await open();
   const branch = `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0, 12)}`;
   await db.query(`UPDATE rooms SET repository_key='owner/widgets' WHERE id=$1`, [ROOM]);
-  await db.query(`UPDATE corner_facts SET feature_branch=$2,lifecycle=$3::jsonb WHERE corner_id=$1`,
-    [opened.cornerId, branch, JSON.stringify({ lifecycle: 'in-review', checks: 'passing',
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    [opened.cornerId, JSON.stringify({ lifecycle: 'in-review', checks: 'passing',
       pr: { number: 42, url: 'https://github.com/owner/widgets/pull/42', headSha: '9'.repeat(40), targetBranch: 'main' } })]);
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
     VALUES(77,$1,'42','owner','User','selected','active') ON CONFLICT DO NOTHING`, [HUMAN]);
@@ -1031,19 +1062,18 @@ it('migration leaves legacy opening provenance empty and preserves new provenanc
     brief: { spec: 'Child widget', repositoryWork: false, approval: { sourceMessageId: turn.sourceMessageId } },
   }, WORKER);
   await migrate(db);
-  expect((await db.query(`SELECT opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
+  expect((await db.query(`SELECT ${cornerOpenedFromSql('corner_id')} opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
     .toEqual({ opened_from_corner_id: null });
-  expect((await db.query(`SELECT opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [child.cornerId])).rows[0])
+  expect((await db.query(`SELECT ${cornerOpenedFromSql('corner_id')} opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [child.cornerId])).rows[0])
     .toEqual({ opened_from_corner_id: opened.cornerId });
 });
 
-it.each(['primary reviewer', 'fallback reviewer', 'commander'])('Reproduction reviewer-handback-2471: %s orders its corner worker', async (role) => {
+it.each(['primary reviewer', 'commander'])('Reproduction reviewer-handback-2471: %s orders its corner worker', async (role) => {
   const opened = await open();
   if (role !== 'commander') {
     await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, WORKER]);
     await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE room_id=$1`, [opened.cornerId, WORKER]);
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`,
-      [ROOM, role === 'primary reviewer' ? RUBY : WORKER, role === 'fallback reviewer' ? [RUBY] : []]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
   }
   const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: RUBY,
     sourceMessageId: null, reason: 'corner_review_dispatch',
@@ -1191,12 +1221,12 @@ it('compact schedule operations manage only self-owned sources', async () => {
   expect((await db.query(`SELECT message FROM agent_schedules WHERE id=$1`, [otherId])).rows[0]).toEqual({ message: 'Other agent work' });
 });
 
-it.each(['primary', 'fallback'])('vocabulary: commander orders the child %s reviewer and its report returns privately', async kind => {
+it('vocabulary: commander orders the child reviewer and its report returns privately', async () => {
   const reviewer = '6'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Speedy','speedy') ON CONFLICT DO NOTHING`, [reviewer]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [reviewer,HUMAN]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WS,reviewer,ROOM]);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [ROOM,kind === 'primary' ? reviewer : null,kind === 'fallback' ? [reviewer] : []]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM,reviewer]);
   const opened = await open();
   await daemon.execute('order', { ...authority(order), address:opened.cornerId, agent:'speedy', text:'Review the exact head' }, RUBY);
   const review = (await commands(opened.cornerId,reviewer)).find(command => command.reason === 'order')!;
@@ -1372,7 +1402,7 @@ it('closed-corner reports do not wake even the nearest live opening ancestor', a
   const opened = await open(), turn = await worker(opened.cornerId), ancestor = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Live parent corner',$4)`, [ancestor, WS, ROOM, RUBY]);
   await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"implement"}')`, [ancestor, RUBY]);
-  await db.query(`UPDATE corner_facts SET opened_from_corner_id=$2 WHERE corner_id=$1`, [opened.cornerId, ancestor]);
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($2::text)) WHERE room_id=$1 AND reason='corner_objective'`, [opened.cornerId, ancestor]);
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($2::text)) WHERE id=$1`, [turn.id, opened.cornerId]);
   await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [opened.cornerId]);
   const { reportToCommander } = await import('./commander.js');

@@ -882,7 +882,7 @@ export function BuzzChatSurface({
     applyRoomMessageResult,
     applyPendingAgentCommands,
     applyRoomName,
-    applyRoomReviewers,
+    applyRoomReviewer,
     firstUnreadMessageId,
     advanceReadCursor,
     acknowledgeReadMark,
@@ -7364,9 +7364,8 @@ export function BuzzChatSurface({
               allowAutoMerge={roomRepository?.allowAutoMerge}
               canManage={canManageWorkspace}
               hasRepository={roomRepository !== null}
-              onSaved={(reviewers) => applyRoomReviewers(reviewers[0], reviewers.slice(1))}
+              onSaved={(reviewer) => applyRoomReviewer(reviewer ?? undefined)}
               reviewerAgentId={roomSurface?.room.reviewerAgentId}
-              reviewerFallbackIds={roomSurface?.room.reviewerFallbackIds}
               roomId={decodedId}
               roomName={displayRoomName}
               updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}

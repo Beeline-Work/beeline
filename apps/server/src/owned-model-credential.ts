@@ -1,3 +1,4 @@
+import type { OwnedModelCredential } from '@beeline/api-contract/helper-model';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
@@ -153,7 +154,7 @@ export class OwnedModelCredentials {
    * Only opaque ID, token hash and immutable DB-derived metadata are stored. */
   async issueInTransaction(database: SqlDatabase, input: {
     agentId: string; commandId: string; generationId: string; source: { connectionId: string; epoch: number };
-  }): Promise<Readonly<{ v: 1; token: string; expiresAt: number }>> {
+  }): Promise<OwnedModelCredential> {
     if (![input.agentId, input.commandId, input.generationId, input.source?.connectionId].every(value => scalar(value)) ||
         !Number.isSafeInteger(input.source.epoch) || input.source.epoch < 1) throw new OwnedModelRefusal();
     // The actual claim already owns this row. The explicit read fence also

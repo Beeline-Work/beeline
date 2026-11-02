@@ -20,7 +20,7 @@ import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { backfillMcpMemberRoomsAndAvatars, backfillMcpMembers } from './rooms-mcp-members.js';
 import { seedPreregisteredMcpClients } from './rooms-mcp-preregistered.js';
-import { backfillCornerHoldMessages } from './corner-holds.js';
+import { backfillCornerHoldMessages, releaseArchivedCornerHolds } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
@@ -70,7 +70,11 @@ import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStal
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
-import { syncTopLevelSharedRoomRoles } from './membership-join.js';
+import {
+  retireWorkspaceBansSql,
+  perItemMembershipSubscriptionCleanupSql,
+  syncTopLevelSharedRoomRoles,
+} from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
@@ -79,6 +83,7 @@ import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
+import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
@@ -876,11 +881,7 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
--- Retained but unused: a reviewer class, replaced by reviewer_fallback_ids
--- (retireAgentClasses converts it). A later migration can drop it.
-ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
--- Agents tried in order after reviewer_agent_id when it is unhealthy or its
--- review turn fails (agent-health.ts). Empty unless reviewer_agent_id is set.
+-- Retired reviewer fallbacks: nothing reads them; a later release drops the column.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_fallback_ids text[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
@@ -901,15 +902,7 @@ CREATE TABLE IF NOT EXISTS memberships (
 -- person simply needs a fresh invite to rejoin (the invite itself is now
 -- single-use). Existing ban rows become plain removals before the table goes,
 -- so no banned person is restored by the drop.
-DO $$
-BEGIN
-  IF to_regclass('workspace_bans') IS NOT NULL THEN
-    UPDATE memberships m SET removed_at=now()
-    FROM workspace_bans b
-    WHERE m.workspace_id=b.workspace_id AND m.identity_id=b.identity_id AND m.removed_at IS NULL;
-  END IF;
-END;
-$$;
+${retireWorkspaceBansSql()}
 DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
 DROP FUNCTION IF EXISTS enforce_workspace_ban();
 DROP TABLE IF EXISTS workspace_bans;
@@ -2030,16 +2023,6 @@ CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(revie
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
 -- Cleanup intents survive archival and provider failures.
-CREATE TABLE IF NOT EXISTS corner_pr_closures (
-  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  attempts integer NOT NULL DEFAULT 0,
-  next_attempt_at timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz,
-  last_error text
-);
-CREATE INDEX IF NOT EXISTS corner_pr_closures_due_idx
-  ON corner_pr_closures(next_attempt_at) WHERE finished_at IS NULL;
-
 CREATE TABLE IF NOT EXISTS corner_branch_deletions (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   installation_id bigint,
@@ -2424,9 +2407,10 @@ CREATE TABLE IF NOT EXISTS workspace_deletion_notices (
   id bigserial PRIMARY KEY,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL,
-  workspace_name text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- The name is read from workspace_deletions.
+ALTER TABLE workspace_deletion_notices DROP COLUMN IF EXISTS workspace_name;
 CREATE INDEX IF NOT EXISTS workspace_deletion_notices_identity_idx
   ON workspace_deletion_notices(identity_id, created_at);
 
@@ -3472,6 +3456,18 @@ export async function migrate(
        WHERE state='active' AND embedding IS NULL`,
     ));
   await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
+  // A corner's run state is its newest handoff card (corner-run.ts).
+  await retryMigrationStep('corner run card index', () => createIndexConcurrently(
+    database, 'messages_corner_run_card_idx',
+    `CREATE INDEX CONCURRENTLY messages_corner_run_card_idx
+     ON messages (room_id, ((card->>'seq')::int) DESC) WHERE card_type='corner-workflow-handoff'`,
+  ));
+  // A corner's worker and owner are its assignment commands (corner-worker.ts).
+  await retryMigrationStep('corner assignment index', () => createIndexConcurrently(
+    database, 'agent_commands_corner_assignment_idx',
+    `CREATE INDEX CONCURRENTLY agent_commands_corner_assignment_idx
+     ON agent_commands (room_id, inbox_sequence) WHERE reason IN ('corner_objective','human_tag')`,
+  ));
   await createIndexConcurrently(
     database, 'messages_corner_fact_idx',
     `CREATE INDEX CONCURRENTLY messages_corner_fact_idx
@@ -3590,7 +3586,18 @@ export async function migrate(
   ));
   await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
   await ddlScript('corner membership guard', CORNER_MEMBERSHIPS_SCHEMA);
+  await retryMigrationStep('corner human report return index', () => createIndexConcurrently(
+    database, 'corner_human_reports_return',
+    `CREATE INDEX CONCURRENTLY corner_human_reports_return ON messages(room_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
+  await retryMigrationStep('corner human report worker index', () => createIndexConcurrently(
+    database, 'corner_human_reports_worker',
+    `CREATE INDEX CONCURRENTLY corner_human_reports_worker ON messages(author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
+  await ddlScript('corner explicit wait function', cornerWaitingFunctionSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
@@ -3613,6 +3620,7 @@ export async function migrate(
 /** Idempotent data work runs after both schema owners have expanded. Each step
  * commits separately, so retrying a release resumes completed work. */
 export async function migrateData(database: SqlDatabase): Promise<void> {
+  await releaseArchivedCornerHolds(database);
   await backfillCornerHoldMessages(database);
   const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     let result!: T;
@@ -3659,7 +3667,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
-  await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('continuous corner names', () =>
     workflowBackfillOnce(database, 'corner-names-continuous-v1', hyphenateCornerNames));
@@ -3703,21 +3710,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
   const classes = await dataStep('agent class retirement', () => retireAgentClasses(database));
-  if (classes.convertedRooms || classes.clearedRooms.length || classes.runs)
-    console.log(
-      `retireAgentClasses: converted ${classes.convertedRooms} Room reviewer class(es) to agent lists, ` +
-        `cleared ${classes.clearedRooms.length} with no matching agent` +
-        (classes.clearedRooms.length
-          ? ` (${classes.clearedRooms.map((room) => `${room.name} ${room.id}`).join(', ')})`
-          : '') +
-        `, converted ${classes.runs} workflow run(s)`,
-    );
-  await dataStep('empty reviewer fallbacks', () => boundedMigrationUpdate(database,
-    'empty reviewer fallbacks',
-    `UPDATE rooms SET reviewer_fallback_ids=array_remove(reviewer_fallback_ids,'')
-     WHERE id IN (SELECT id FROM rooms WHERE ''=ANY(reviewer_fallback_ids) ORDER BY id LIMIT $1)`,
-    [],
-  ));
+  if (classes.runs) console.log(`retireAgentClasses: converted ${classes.runs} workflow run(s)`);
   const reviewers = await dataStep('corner reviewers', () =>
     reconcileConfiguredCornerReviewers(database));
   console.log(
@@ -4129,12 +4122,7 @@ export async function backfillSystemEventKinds(database: SqlDatabase): Promise<v
  */
 export async function backfillPerItemEventSubscriptions(database: SqlDatabase): Promise<number> {
   return boundedMigrationUpdate(database, 'per-item event subscriptions',
-    `UPDATE memberships SET event_subscriptions=COALESCE(
-       (SELECT jsonb_agg(elem) FROM jsonb_array_elements_text(event_subscriptions) elem
-        WHERE NOT (elem=ANY($1::text[]))),
-       '[]'::jsonb
-     )
-     WHERE id IN (SELECT id FROM memberships WHERE event_subscriptions ?| $1::text[] ORDER BY id LIMIT $2)`,
+    perItemMembershipSubscriptionCleanupSql(),
     [PER_ITEM_EVENT_KINDS],
   );
 }
@@ -4160,24 +4148,6 @@ export async function backfillCornerOwed(database: SqlDatabase): Promise<void> {
     if ((current.rows[0]?.version ?? 0) >= 26) return;
   }
   await database.query(cornerOwedBackfillSql());
-}
-
-export async function backfillCornerOwners(database: SqlDatabase): Promise<void> {
-  await database.query(`
-    UPDATE corner_facts fact
-    SET owner_agent_id=COALESCE(
-      (
-        SELECT room.created_by FROM rooms room JOIN identities agent ON agent.id=room.created_by
-        WHERE room.id=fact.corner_id AND agent.kind='agent'
-      ),
-      (
-        SELECT message.author_id FROM messages message JOIN identities agent ON agent.id=message.author_id
-        WHERE message.room_id=fact.corner_id AND agent.kind='agent'
-        ORDER BY message.created_at,message.id LIMIT 1
-      )
-    )
-    WHERE fact.owner_agent_id IS NULL
-  `);
 }
 
 export async function measureDatabase(database: SqlDatabase): Promise<{

@@ -78,7 +78,8 @@ it('allows named corner peers and preserves agent DM orders', async () => {
   const opened = await daemon.execute('createCorner', { ...authority(), targetRoomId: ROOM, name: 'Widget',
     objective: 'Build the widget', implementer: 'candy',
     brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, JELLYBEAN);
-  await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [opened.cornerId]);
+  // The opening order stays: it is what names Candy the corner's worker.
+  await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [opened.cornerId]);
   await daemon.execute('order', { ...authority(), address: opened.cornerId, text: 'Use the new endpoint' }, JELLYBEAN);
   expect(await orderWakes()).toEqual([{ agent_id: CANDY, room_id: opened.cornerId }]);
   await daemon.execute('order', { ...authority(), address: opened.cornerId, agent: 'baby', text: 'Replay the path' }, JELLYBEAN);

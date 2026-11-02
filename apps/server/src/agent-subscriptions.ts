@@ -1,3 +1,4 @@
+import { deleteMembershipSubscription } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { validateScheduleTitle } from './schedule-title.js';
@@ -327,28 +328,7 @@ export async function deleteRoomSubscription(db: SqlDatabase, roomId: string, id
   composio?: ComposioApps) {
   const legacy = legacyId(id);
   if (legacy) {
-    const updated = await db.query(
-      `WITH surface AS (
-         SELECT room.id,room.parent_id,member.event_subscriptions
-         FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-         JOIN room_access member ON member.room_id=room.id AND member.identity_id=$3
-           AND member.removed_at IS NULL
-         WHERE room.id=$2 AND (room.id=$1 OR room.parent_id=$1)
-           AND member.event_subscriptions ? $4
-           AND NOT ($4='check-passed' AND ${cornerReviewerSql('room')}=$3)
-       ), room_update AS (
-         UPDATE memberships member SET event_subscriptions=member.event_subscriptions-$4
-         FROM surface WHERE surface.parent_id IS NULL AND member.room_id=surface.id
-           AND member.identity_id=$3 RETURNING member.identity_id
-       ), corner_update AS (
-         INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
-         SELECT id,$3,event_subscriptions-$4 FROM surface WHERE parent_id IS NOT NULL
-         ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=
-           COALESCE(corner_person_state.event_subscriptions-$4,EXCLUDED.event_subscriptions)
-         RETURNING identity_id
-       ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`,
-      [roomId,legacy.roomId,legacy.agentId,legacy.event],
-    );
+    const updated = await deleteMembershipSubscription(db, [roomId,legacy.roomId,legacy.agentId,legacy.event]);
     if (!updated.rowCount) throw new Error('subscription not found');
     return;
   }

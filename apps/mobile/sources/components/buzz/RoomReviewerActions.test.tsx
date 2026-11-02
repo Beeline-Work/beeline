@@ -98,7 +98,7 @@ describe('RoomReviewerActions', () => {
     expect(render({ canManage: false }).renderer.root.findAllByType('Row')).toHaveLength(0);
   });
 
-  it('adds agents to the end of the reviewer list, takes them off, and clears it', async () => {
+  it('sets one reviewer, replaces it, and clears it', async () => {
     const { renderer, updateRoom } = render();
     const press = async (testID: string) => {
       await act(async () => {
@@ -111,38 +111,19 @@ describe('RoomReviewerActions', () => {
 
     act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
     await press(`room-reviewer-agent-${BEE}`);
-    expect(updateRoom).toHaveBeenLastCalledWith({
-      roomId: 'room-1',
-      reviewerAgentId: ECHO,
-      reviewerFallbackIds: [BEE],
-    });
-    expect(metadata()).toBe('@echo, then @bee');
-    expect(renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.metadata).toBe(
-      '#2',
-    );
-
-    await press(`room-reviewer-agent-${ECHO}`);
-    expect(updateRoom).toHaveBeenLastCalledWith({
-      roomId: 'room-1',
-      reviewerAgentId: BEE,
-      reviewerFallbackIds: [],
-    });
+    expect(updateRoom).toHaveBeenLastCalledWith({ roomId: 'room-1', reviewerAgentId: BEE });
     expect(metadata()).toBe('@bee');
 
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.selected).toBe(true);
     await press('room-reviewer-none');
-    expect(updateRoom).toHaveBeenLastCalledWith({
-      roomId: 'room-1',
-      reviewerAgentId: null,
-      reviewerFallbackIds: [],
-    });
+    expect(updateRoom).toHaveBeenLastCalledWith({ roomId: 'room-1', reviewerAgentId: null });
     expect(metadata()).toBe('None');
   });
 
-  it('shows the saved reviewer list in order and offers no class option', () => {
-    const { renderer } = render({ reviewerAgentId: BEE, reviewerFallbackIds: [ECHO] });
-    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      '@bee, then @echo',
-    );
+  it('shows the saved reviewer and offers no class option', () => {
+    const { renderer } = render({ reviewerAgentId: BEE });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe('@bee');
     act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
     expect(renderer.root.findAllByProps({ testID: 'room-reviewer-class' })).toHaveLength(0);
     expect(
@@ -185,9 +166,7 @@ describe('RoomReviewerActions', () => {
       renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.onPress();
       await Promise.resolve();
     });
-    expect(updateRoom).toHaveBeenCalledWith({
-      roomId: 'room-1', reviewerAgentId: BEE, reviewerFallbackIds: [],
-    });
+    expect(updateRoom).toHaveBeenCalledWith({ roomId: 'room-1', reviewerAgentId: BEE });
     expect(renderedNotice(renderer, 'room-reviewer-auto-merge-warning')).toHaveLength(1);
   });
 

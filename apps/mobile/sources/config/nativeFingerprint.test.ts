@@ -78,11 +78,11 @@ describe('native fingerprint gate', () => {
     // already installed carried the literal stamp it was built with, so it
     // could never match the published updates and reported NoUpdatesAvailable.
     // Each platform pin moves by hand only when that platform's native side moves.
-    expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "45"');
+    expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "46"');
     expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "38"');
     expect(appConfig).not.toContain('policy: "fingerprint"');
-    expect(readPinnedRuntimeVersion(mobileRoot)).toEqual({ android: '45', ios: '38' });
-    expect(runtimeVersionsFromConfig(baseline)).toEqual({ android: '45', ios: '38' });
+    expect(readPinnedRuntimeVersion(mobileRoot)).toEqual({ android: '46', ios: '38' });
+    expect(runtimeVersionsFromConfig(baseline)).toEqual({ android: '46', ios: '38' });
   });
 
   it('records one committed fingerprint per platform beside the runtime it belongs to', () => {
@@ -99,6 +99,12 @@ describe('native fingerprint gate', () => {
     // versions, the baked update channel) is behaviourally pinned by
     // appBranding.test.ts; only this skip exists for the gate's sake.
     expect(fingerprintConfig).toContain('ExpoConfigRuntimeVersionIfString');
+    const integrityPatch = readFileSync(join(mobileRoot, 'patches/expo-updates+55.0.26.patch'), 'utf8');
+    const changedPaths = [...integrityPatch.matchAll(/^diff --git a\/(\S+) b\/\S+$/gm)].map((match) => match[1]);
+    expect(changedPaths.length).toBeGreaterThan(0);
+    // This is why the patch is excluded from the iOS stamp. An iOS edit must
+    // remove that exclusion and receive its own runtime pin and binary.
+    expect(changedPaths.every((file) => file.startsWith('node_modules/expo-updates/android/'))).toBe(true);
   });
 
   it('runs as a named PR gate over exactly the inputs that can move the stamp', () => {
@@ -243,7 +249,7 @@ describe('native fingerprint gate', () => {
       expect(recordedRun.stderr).toBe('');
       expect(recordedRun.status).toBe(0);
       const before = JSON.parse(readFileSync(baselineFile, 'utf8'));
-      expect(runtimeVersionsFromConfig(before)).toEqual({ android: '45', ios: '38' });
+      expect(runtimeVersionsFromConfig(before)).toEqual({ android: '46', ios: '38' });
 
       // Store submission happens after compilation. Changing the entire submit
       // section must pass the real gate under the same native runtime pins.
@@ -311,19 +317,19 @@ module.exports = withoutIosPushCapabilities;\n`,
       const dirty = await runGate(fixture);
 
       expect(dirty.status).toBe(1);
-      expect(dirty.stderr).toContain('Native inputs changed but android.runtimeVersion is still "45"');
+      expect(dirty.stderr).toContain('Native inputs changed but android.runtimeVersion is still "46"');
       expect(dirty.stderr).toContain(
         `android: ${before.fingerprints.android} -> `,
       );
       expect(dirty.stderr).toContain(`ios: ${before.fingerprints.ios} -> `);
-      expect(dirty.stderr).toContain('bump android.runtimeVersion in apps/mobile/app.config.js to "46"');
+      expect(dirty.stderr).toContain('bump android.runtimeVersion in apps/mobile/app.config.js to "47"');
       expect(dirty.stderr).toContain('new native build');
 
       // `--write` will not quietly re-record a native change under the old pin:
       // that is the move that strands installed binaries.
       const refused = await runGate(['--write', ...fixture]);
       expect(refused.status).toBe(1);
-      expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "45"');
+      expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "46"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
     // Six real fingerprint runs, each hashing the whole mobile tree plus

@@ -199,7 +199,7 @@ Follow beeline-triage. Before PR, prove the user path in the built app/service o
 Non-repo work: post_artifact and report. End awaiting orders/checks/review; committed wakes resume. Landing archives this corner, cancels its work and abandons saved runs. The surviving commander owns follow-up at its address. Claim others' progress only from durable commands, this prompt or tool evidence. No unrequested features or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
-  "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS wakes the implementer to land; use merge_corner yourself only on an explicit commander order.";
+  "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS lands the PR once checks are green and no hold stands; use merge_corner yourself only on an explicit commander order.";
 
 export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
   'A current green review target matching this checkout could not be verified. Read checks before reviewing; confirm the checkout matches the live PR head. The server still requires green checks and approval on that exact head.';
@@ -207,12 +207,12 @@ export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
 export const CORNER_DELIVERY_NUDGE =
   'Only when you write code in this corner and the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. If you wrote no code, deliver with post_artifact.';
 
-/** What the implementer does when a reviewer's PASS wakes it in `land`. */
+/** What the implementer does when a yes given during checks wakes it to land. */
 export const CORNER_LAND_RULE =
   "Then call merge_corner when the live merge gate allows it. Report unresolved questions to your commander.";
 
 export const CORNER_CHECKS_NUDGE =
-  'Call read with facet checks now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", report blocked: to your commander with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Use merge_corner for landing.';
+  'Call read with facet checks now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", report blocked: to your commander with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS lands the PR; if you are woken to merge, call merge_corner. Use merge_corner for landing.';
 
 const handle = (value: string): string => value.replace(/^@/, '');
 
@@ -230,11 +230,12 @@ function memoryListsWorkspaceCoreProcedure(memory: string | undefined): boolean 
 
 /**
  * The one merge rule for an author session: what to do once the pull request
- * exists, and who merges it (the author through `merge_corner`, after a PASS).
+ * exists, and who merges it (the server on a PASS, or the author through
+ * `merge_corner` when woken to land).
  * The `corner` section renders it; no other section speaks about merging.
  */
 export function cornerMergeInstruction(reviewerHandle?: string): string {
-  const review = reviewerHandle ? `Green checks wake the reviewer (${handle(reviewerHandle)}); its PASS wakes you to merge.` : 'If review capability is missing, report blocked: to your commander.';
+  const review = reviewerHandle ? `Green checks wake the reviewer (${handle(reviewerHandle)}); its PASS lands the PR.` : 'If review capability is missing, report blocked: to your commander.';
   return `Once the pull request exists, post its URL when useful and end the turn; do not poll CI. ${review} A PR lands through merge_corner only with live green checks, a yes on that exact head and no hold. A new head needs a fresh yes. Repair failing checks or requested changes.`;
 }
 
@@ -250,7 +251,7 @@ export function cornerReviewerInstruction(input: {
   // the head is named in the transcript, so it is described, not guessed.
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Review PR ${number} at ${headSha}${input.briefRevision ? ` against brief revision ${input.briefRevision}` : ''} with beeline-review. Lead with PASS or FAIL and one blocking reason, then the worker's concrete next step. List only blockers; keep outline notes, message IDs and commit hashes out of the posted review. Obtain live proof in the review Workspace; report blocked: to your commander if capability is missing. FAIL: order the worker at this corner's address to fix the blocker. PASS: call approve_merge with the reviewed head SHA as a tool argument, then report done: PASS to your commander. PASS wakes the implementer to land. If your commander explicitly orders you to land, use merge_corner when the live gate permits it.`;
+  return `Review PR ${number} at ${headSha}${input.briefRevision ? ` against brief revision ${input.briefRevision}` : ''} with beeline-review. Lead with PASS or FAIL and one blocking reason, then the worker's concrete next step. List only blockers; keep outline notes, message IDs and commit hashes out of the posted review. Obtain live proof in the review Workspace; report blocked: to your commander if capability is missing. FAIL: order the worker at this corner's address to fix the blocker. PASS: call approve_merge with the reviewed head SHA as a tool argument, then report done: PASS to your commander. PASS lands the PR once checks are green and no hold stands. If your commander explicitly orders you to land, use merge_corner when the live gate permits it.`;
 }
 
 /**

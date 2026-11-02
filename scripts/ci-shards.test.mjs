@@ -36,7 +36,8 @@ test('isolated latency and voice suites remain covered exactly once outside para
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
   });
-  assert.deepEqual(shards[2].isolatedFiles.sort(), ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts']);
+  assert.deepEqual(shards[2].isolatedFiles.sort(), ['src/phone-service.read-room-latency.test.ts',
+    'src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts']);
   const files = shards.flatMap(shard => [...shard.files, ...shard.isolatedFiles]);
   assert.equal(new Set(files).size, files.length);
   assert.equal(files.length, shards[0].totalFiles);
@@ -47,7 +48,8 @@ test('isolated latency and voice suites remain covered exactly once outside para
 
 test('a PR selection runs each selected file once and skips unselected integration batches', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'server-selection-')), 'selection.json');
-  const wanted = ['apps/server/src/agent-access.test.ts', 'apps/server/src/rooms-mcp.test.ts', 'apps/server/src/voice-room-runtime.test.ts'];
+  const wanted = ['apps/server/src/agent-access.test.ts', 'apps/server/src/phone-service.read-room-latency.test.ts',
+    'apps/server/src/rooms-mcp.test.ts', 'apps/server/src/voice-room-runtime.test.ts'];
   writeFileSync(path, JSON.stringify({ mode: 'subset', reason: 'test', files: wanted }));
   const env = { ...process.env, SERVER_TEST_SELECTION: path };
   const shards = [1, 2, 3, 4].map(position => {

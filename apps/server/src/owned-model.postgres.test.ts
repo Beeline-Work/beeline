@@ -5,13 +5,13 @@ import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { OwnedModelCredentials, OwnedModelUnknownGeneration } from './owned-model-credential.js';
-import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './owned-model.test-support.js';
+import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './test-fixtures/owned-model.js';
 import { ROUTER_AUTHORITY_LOCK, ROUTER_PROJECTION_SCHEMA } from './router-projection-schema.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { FreeAgentService, freeAgentConfigFromEnv, sealSecrets, tokenHash } from './free-agents.js';
 import { retireAgentFromWorkspace } from './agent-retirement.js';
 import { lockDaemonCredentialLifetime } from './daemon-credential-lifetime.js';
-import { MODEL_OWNER, MODEL_WORKSPACE } from './owned-model.test-support.js';
+import { MODEL_OWNER, MODEL_WORKSPACE } from './test-fixtures/owned-model.js';
 import type { FreeAgentMachines } from './fly-machines.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;

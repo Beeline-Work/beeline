@@ -1,3 +1,4 @@
+import { restoreRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { approvalAsk } from './tray-approval-ask.js';
@@ -162,13 +163,7 @@ export async function ensureSystemDirectMessageRoomResult(
     await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [roomId]);
   }
   for (const memberId of participants)
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES ($1,$2,$3,'member')
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-       DO UPDATE SET removed_at=NULL`,
-      [workspaceId, roomId, memberId],
-    );
+    await restoreRoomMembership(database, [workspaceId, roomId, memberId]);
   return { id: roomId, created: Boolean(inserted.rowCount) };
 }
 

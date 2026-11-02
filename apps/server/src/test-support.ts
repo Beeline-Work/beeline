@@ -1,3 +1,7 @@
+export { assignCornerWorker, seedCornerOpening } from './test-fixtures/corner-commands.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
+import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -218,3 +222,25 @@ export function describedWorkflow(value: unknown): unknown {
     } : {}),
   };
 }
+
+
+/**
+ * Records a corner run state as its newest handoff card, the way
+ * `corner-lifecycle.ts` writes one; the card is the run state (`corner-run.ts`).
+ */
+export async function recordCornerRun(
+  db: SqlDatabase, cornerId: string, toState: string, outcome?: string,
+): Promise<void> {
+  await ensureSystemIdentity(db);
+  const seq = (await db.query<{ seq: number }>(
+    `SELECT COALESCE(max((card->>'seq')::int),0)+1 seq FROM messages WHERE room_id=$1 AND card_type=$2`,
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
+  )).rows[0]!.seq;
+  await systemLine(db, {
+    roomId: cornerId, authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' },
+    verb: 'handed off', object: toState, presentation: 'card', cardType: CORNER_LIFECYCLE_CARD_TYPE,
+    card: { runId: cornerId, toState, outcome: outcome ?? null, seq },
+  });
+}
+

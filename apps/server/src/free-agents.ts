@@ -9,7 +9,12 @@ import type { FreeAgentMachines } from './fly-machines.js';
 import { FlyApiError } from './fly-machines.js';
 import type { LiveHub } from './live.js';
 import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
-import { joinRooms } from './membership-join.js';
+import {
+  createInvitedWorkspaceMembership,
+  writeActiveRoomEventSubscriptions,
+  writeActiveRoomMembersEventSubscriptions,
+  joinRooms,
+} from './membership-join.js';
 import { captureServerError } from './sentry.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
@@ -342,11 +347,7 @@ export async function createFreeAgentInWorkspace(
       FREE_AGENT_HARNESS,
     ],
   );
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
-     VALUES($1,NULL,$2,'member',$3)`,
-    [input.workspaceId, agent.publicKey, input.creatorId],
-  );
+  await createInvitedWorkspaceMembership(database, [input.workspaceId, agent.publicKey, input.creatorId]);
   await database.query(
     `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,model,starter_role)
      VALUES($1,$2,$3,$4,$5,$6)`,
@@ -367,11 +368,7 @@ export async function createFreeAgentInWorkspace(
     workspaceJoined: true,
   });
   // Subscribed after its own arrival, so only later joins and leaves wake it.
-  if (!input.team) await database.query(
-    `UPDATE memberships SET event_subscriptions=$3::jsonb
-     WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL`,
-    [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)],
-  );
+  if (!input.team) await writeActiveRoomEventSubscriptions(database, [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
   // Reachable from the first moment: a mention before the Machine has booted
   // is a wake to deliver, not an offline agent.
   await database.query(
@@ -629,9 +626,7 @@ export class FreeAgentService {
       ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
     }, { ...input, name: 'Luna', silent: true, team: true });
     if (!beebee || !luna) throw new Error('starter team provisioning failed');
-    await database.query(`UPDATE memberships SET event_subscriptions=$3::jsonb
-      WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`,
-      [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
+    await writeActiveRoomMembersEventSubscriptions(database, [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
     await createStarterOnboardingRun(database, { roomId: input.roomId, userId: input.creatorId, beebeeId: beebee, lunaId: luna, timeZone: input.timeZone });
     return beebee;
   }

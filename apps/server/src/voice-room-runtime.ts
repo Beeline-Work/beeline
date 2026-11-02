@@ -1,3 +1,4 @@
+import {startConnectionWork} from './background-work.js';
 import { voiceTempo, VOICE_PCM_THRESHOLD } from './voice-tempo.js';
 import { VoiceEagerReply } from './voice-eager-reply.js';
 import { VoiceSpeechPrefetch } from './voice-speech-prefetch.js';
@@ -166,7 +167,7 @@ export class VoiceRoomRuntime {
   private quietCheck?: ReturnType<typeof setTimeout>;
   private inactivityCheck?: Promise<void>;
   private leaseExpiry?: ReturnType<typeof setTimeout>;
-  private leaseRenewal?: ReturnType<typeof setInterval>;
+  private leaseRenewal?: (() => void);
   private closed = false;
   private closeWork?: Promise<void>;
   private audioDisposed = false;
@@ -556,8 +557,7 @@ export class VoiceRoomRuntime {
   private armLeaseRenewal() {
     if (this.closed || this.leaseParked || this.leaseRenewal) return;
     // Private owner evidence only: no participant, budget or projection read.
-    this.leaseRenewal = setInterval(() => this.task(() => this.renewLease()), 5000);
-    this.leaseRenewal.unref();
+    this.leaseRenewal = startConnectionWork(() => this.task(() => this.renewLease()), 5000);
   }
   private renewLease(): Promise<boolean> {
     if (this.closed || this.leaseParked) return Promise.resolve(false);
@@ -578,7 +578,7 @@ export class VoiceRoomRuntime {
         renewed = true; return true;
       } catch (error) {
         failure = error; this.leaseParked = true;
-        clearInterval(this.leaseRenewal); this.leaseRenewal = undefined;
+        this.leaseRenewal?.(); this.leaseRenewal = undefined;
         if (performance.now() >= this.leaseValidUntil) await this.close();
         throw error;
       }
@@ -1355,7 +1355,7 @@ export class VoiceRoomRuntime {
     this.settleLeaseRecovery(false);
     for (const resolve of this.quietWaiters) resolve();
     this.quietWaiters.clear();
-    clearInterval(this.leaseRenewal);
+    this.leaseRenewal?.();
     clearTimeout(this.leaseExpiry);
     clearTimeout(this.leaseRecoveryTimer);
     clearTimeout(this.quietCheck);

@@ -1,7 +1,7 @@
 import { createUsageRefresh } from './agent-usage-refresh.js';
 import { storeVaultSubmission, type VaultSaveSubmission } from './vault-save.js';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
-import { requireInstalledAgentProgram } from './agent-command.js';
+import { agentBehavior, requireInstalledAgentProgram } from './agent-command.js';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { loadBodyConfig } from './config.js';
@@ -161,7 +161,7 @@ export async function runAgentRuntime(
     await writeRuntimeRecord(runtime);
   }
   if (preflightModelSelection && !agentProgramError) {
-    const validation = host.freeAgent && runtime.agentKind === 'pi' &&
+    const validation = host.freeAgent && agentBehavior(runtime.agentKind).validateHostedModelInSession &&
       preflightModelSelection.model?.startsWith('beeline/') ? 'session' : 'startup';
     await applyRuntimeModelPreflight(config, agent, preflightModelSelection, undefined, undefined, validation);
     if (validation === 'session') {

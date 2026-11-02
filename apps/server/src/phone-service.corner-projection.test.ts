@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
 
@@ -39,10 +39,8 @@ async function fixture() {
        VALUES($1,$2,$3,$4,$5,'2026-01-01T00:00:00Z'::timestamptz + make_interval(mins => $6))`,
       [id, WORKSPACE, ROOM, AGENT, name, index],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by) VALUES($1,$2,$3)`,
-      [id, AGENT, mine ? VIEWER : null],
-    );
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [id, AGENT]);
+    await seedCornerOpening(database, { cornerId: id, agentId: AGENT, commissionedBy: mine ? VIEWER : null });
   }
   await database.query(
     `UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL,
@@ -72,7 +70,8 @@ describe('one corner projection for the Room list read, the live frame and the C
   it('reads idle for finished failing checks with no running or queued work everywhere', async () => {
     const { database, phone } = await fixture();
     // Mine, so the capped Room list carries it. The repair window has elapsed.
-    await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [FAILING, VIEWER]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [FAILING]);
+    await seedCornerOpening(database, { cornerId: FAILING, agentId: AGENT, commissionedBy: VIEWER });
     await database.query(
       `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
       [FAILING],

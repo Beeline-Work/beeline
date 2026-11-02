@@ -1929,6 +1929,7 @@ export class RoomRuntimeCoordinator {
       await this.yieldReconciliation();
       if (this.stopped) return;
       if (desired.has(cornerId) || this.running.has(cornerId) || this.pendingCornerReaps.has(cornerId)) continue;
+      if (await this.cleanupWasRefused(cornerId)) continue;
       try {
         const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
         if (state.archived !== true) {
@@ -1942,7 +1943,10 @@ export class RoomRuntimeCoordinator {
         localIds.delete(itemId);
 
       } catch (error) {
-        console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
+        if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
+          await this.refuseArchiveCleanup(cornerId, error);
+        else
+          console.warn(`[body] corner ${cornerId} archive state or cleanup unavailable; retrying:`, error);
       }
     }
   }

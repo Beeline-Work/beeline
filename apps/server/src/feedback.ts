@@ -22,7 +22,7 @@ import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { PROHIBITED_SECRET_PATTERNS } from './institutional-memory-shadow.js';
 import { hasSystemReportMention } from './message-mentions.js';
-import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { sendSystemDirectMessage } from './system-line.js';
 
 /**
  * The Beeline feedback loop's one store. Two intake paths write it: an
@@ -649,13 +649,9 @@ async function sendFixedMessage(
   ).rows[0];
   // A deleted account has no Workspace left to read a DM in.
   if (!workspace) return false;
-  const roomId = await ensureSystemDirectMessageRoom(database, workspace.workspace_id, personId);
   const id = createHash('sha256')
     .update(`beeline-feedback-fixed:v2:${url.toLowerCase()}:${personId}`)
     .digest('hex');
-  const inserted = await database.query(
-    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`,
-    [id, roomId, SYSTEM_IDENTITY_ID, systemMessage("feedback.fixed", title, url)],
-  );
-  return Boolean(inserted.rowCount);
+  return sendSystemDirectMessage(database, workspace.workspace_id, personId,
+    systemMessage("feedback.fixed", title, url), id);
 }

@@ -707,11 +707,12 @@ export async function backfillComputerObservations(database: SqlDatabase): Promi
 
 /** A plain operator notice in the recipient's existing System thread. */
 export async function sendSystemDirectMessage(database: SqlDatabase, workspaceId: string, recipientId: string,
-  text: string, id: string): Promise<void> {
+  text: string, id: string): Promise<boolean> {
   const member = await database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
     AND room_id IS NULL AND removed_at IS NULL`, [workspaceId, recipientId]);
   if (!member.rowCount) throw new Error('System DM recipient has no active Workspace');
   const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, recipientId);
-  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)
+  const inserted = await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)
     ON CONFLICT(id) DO NOTHING`, [id, roomId, SYSTEM_IDENTITY_ID, text]);
+  return Boolean(inserted.rowCount);
 }

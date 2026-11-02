@@ -307,7 +307,7 @@ jobs:
           bash scripts/npm-ci-timed.sh
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
           npm run build -w @beeline/body
           npm run build -w @beeline/auth
           npm run build -w @beeline/server
@@ -481,7 +481,7 @@ jobs:
           set -euo pipefail
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
           npm run build -w @beeline/body
           npm run build -w usebeeline
       - uses: ./.github/actions/daemon-leg
@@ -712,7 +712,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/npm-ci-timed.sh
-          npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
       - uses: ./.github/actions/eas-cli
       - uses: ./.github/actions/pages-leg
         if: needs.initialize.outputs.run_helper != 'true'

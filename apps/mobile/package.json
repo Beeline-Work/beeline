@@ -24,7 +24,7 @@
     "prebuild": "rm -rf android ios && expo prebuild",
     "typecheck": "node scripts/generate-typed-routes.cjs && tsc --noEmit",
     "postinstall": "(patch-package || true) && node scripts/patch-livekit-abort.cjs && ((command -v setup-skia-web >/dev/null && setup-skia-web public) || true)",
-    "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
+    "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json && tsc -p scripts/tsconfig.eas-net.json",
     "identity-mark:proof": "node scripts/render-identity-axis-proof.mjs",
     "turn-band:proof": "node scripts/turn-band-hold-proof.mjs",
     "corner-grouping:proof": "node scripts/corner-grouping-status-proof.mjs",

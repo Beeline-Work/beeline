@@ -277,7 +277,7 @@ jobs:
       - run: bash scripts/npm-ci-timed.sh
       # Metro resolves @beeline/* from built dist, exactly as the phone build
       # does, so the web export needs those dists to exist first.
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
       # The mobile app is isolated from the root workspaces and carries its own
       # node_modules, including the Tauri CLI.
       - name: Install mobile dependencies

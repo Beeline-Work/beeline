@@ -1,3 +1,5 @@
+import { AGENT_BEHAVIORS } from './agent-command.js';
+
 /** The hook runs inside the native harness, before its result reaches the model. */
 export const NATIVE_SHELL_OUTPUT_CAP = 16_384;
 
@@ -33,7 +35,8 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', () => {
   const event = JSON.parse(input);
-  const harness = process.argv[2];
+  const outputFormats = ${JSON.stringify(Object.fromEntries(Object.entries(AGENT_BEHAVIORS).map(([kind, behavior]) => [kind, behavior.nativeShellHook?.output])))};
+  const outputFormat = outputFormats[process.argv[2]];
   if (!['Bash', 'Shell'].includes(event.tool_name) || typeof event.tool_input?.command !== 'string') { console.log('{}'); return; }
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-shell-output-'));
   fs.chmodSync(directory, 0o700);
@@ -45,7 +48,7 @@ process.stdin.on('end', () => {
     '\n) 2>&1 | ' + quote(process.execPath) + ' ' + quote(__filename) + ' stream ' + quote(output) +
     '\nexit "$(' + '/bin/cat ' + quote(status) + ')"';
   const updated = { ...event.tool_input, command };
-  console.log(JSON.stringify(harness === 'cursor' ? { updated_input: updated } : {
+  console.log(JSON.stringify(outputFormat === 'updated-input' ? { updated_input: updated } : {
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: updated }
   }));
   return;

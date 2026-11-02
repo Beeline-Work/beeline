@@ -673,7 +673,7 @@ export async function prepareRoomAgentHome(
   const codexHookCommand = nativeShellHookCommand(resolve(root, 'codex', 'beeline-shell-output.cjs'), 'codex');
   return {
     ...env,
-    ...(input.agentKind === 'codex' && process.platform !== 'win32' ? {
+    ...(agentBehavior(input.agentKind).nativeShellHook?.config === 'launch-config' && process.platform !== 'win32' ? {
       CODEX_CONFIG: JSON.stringify(nativeShellHookConfig(codexHookCommand, 'PreToolUse')),
       BEELINE_CODEX_SHELL_HOOK_COMMAND: codexHookCommand,
     } : {}),
@@ -827,10 +827,10 @@ async function provisionAgentSkillsAndMcp(
     console.warn('[body] claude web-search settings provisioning failed:', error);
   }
 
-  if (agentKind === 'codex' && process.platform !== 'win32')
+  if (agentBehavior(agentKind).nativeShellHook?.config === 'launch-config' && process.platform !== 'win32')
     await writeIsolatedHarnessFile(resolve(root, 'codex', 'beeline-shell-output.cjs'), NATIVE_SHELL_OUTPUT_SCRIPT);
 
-  if (agentKind === 'cursor' && process.platform !== 'win32') {
+  if (agentBehavior(agentKind).nativeShellHook?.config === 'hooks-file' && process.platform !== 'win32') {
     const shellHook = resolve(root, 'cursor', 'beeline-shell-output.cjs');
     await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
     const config = resolve(root, 'user', '.cursor');

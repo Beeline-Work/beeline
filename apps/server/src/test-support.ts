@@ -30,8 +30,8 @@ export class PgliteDatabase implements SqlDatabase {
   static fromSnapshot(snapshot: Blob | File): PgliteDatabase {
     return new PgliteDatabase(new PGlite({ loadDataDir: snapshot, extensions: { vector } }));
   }
-  snapshot(): Promise<Blob | File> {
-    return this.client.dumpDataDir();
+  snapshot(compression?: Parameters<PGliteInterface['dumpDataDir']>[0]): Promise<Blob | File> {
+    return this.client.dumpDataDir(compression);
   }
   async query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
@@ -89,6 +89,7 @@ export class PgliteDatabase implements SqlDatabase {
 // a coverage map is recorded, the first call in each file migrates, so the map
 // still sees every test run migrate().
 let migratedSnapshot: Promise<Blob> | undefined;
+const sharedSnapshotKey = Symbol.for('beeline.server-test-database-snapshot');
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -100,11 +101,23 @@ async function loadMigratedSnapshot(): Promise<Blob> {
   // Proof scripts also import this file outside Vitest.
   const shared = process.env.VITEST && !process.env.SERVER_COVERAGE_MAP_DIR
     ? (await import('vitest')).inject('serverTestDatabaseSnapshot') : undefined;
-  if (shared) return new Blob([await readFile(shared)]);
+  if (shared) {
+    // An immutable template can survive Vitest's per-file module resets.
+    // Each PGlite instance still gets its own filesystem and mutable database.
+    // Keep only the current run's path so watch reruns cannot accumulate images.
+    const state = globalThis as typeof globalThis & {
+      [sharedSnapshotKey]?: { path: string; image: Promise<Blob> };
+    };
+    if (state[sharedSnapshotKey]?.path !== shared) state[sharedSnapshotKey] = {
+      path: shared,
+      image: readFile(shared).then(bytes => new Blob([bytes])),
+    };
+    return state[sharedSnapshotKey]!.image;
+  }
   const template = new PgliteDatabase();
   try {
     await migrate(template);
-    return await template.snapshot();
+    return await template.snapshot('none');
   } finally {
     await template.close();
   }

@@ -1,4 +1,5 @@
 import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
+import { cornerRunStateSql } from './corner-run.js';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
@@ -75,7 +76,7 @@ export async function closeCornerPullRequestBestEffort(
     `SELECT 1 FROM corner_facts WHERE corner_id=$1
        AND lifecycle->'pr'->>'number' IS NOT NULL
        AND lifecycle->'pr'->>'mergedAt' IS NULL
-       AND workflow_state IS DISTINCT FROM 'landed'`,
+       AND ${cornerRunStateSql('$1::uuid')} IS DISTINCT FROM 'landed'`,
     [cornerId],
   );
   if (!pending.rowCount) return;
@@ -126,7 +127,7 @@ export async function enqueueCornerPullRequestClosure(database: SqlDatabase, cor
      SELECT fact.corner_id FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
      WHERE corner.archived_at IS NOT NULL AND corner.parent_id IS NOT NULL
        AND ($1::uuid IS NULL OR corner.id=$1)
-       AND fact.workflow_state IS DISTINCT FROM 'landed'
+       AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'landed'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
      ON CONFLICT (corner_id) DO NOTHING`, [cornerId ?? null]);
@@ -149,7 +150,7 @@ export async function retryCornerPullRequestClosures(
       const pending = await database.query(
         `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
          WHERE corner.id=$1 AND corner.archived_at IS NOT NULL
-           AND fact.workflow_state IS DISTINCT FROM 'landed'
+           AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'landed'
            AND fact.lifecycle->'pr'->>'number' IS NOT NULL
            AND fact.lifecycle->'pr'->>'mergedAt' IS NULL`, [cornerId]);
       if (pending.rowCount) {

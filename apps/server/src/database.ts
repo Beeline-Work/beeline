@@ -3472,6 +3472,12 @@ export async function migrate(
        WHERE state='active' AND embedding IS NULL`,
     ));
   await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
+  // A corner's run state is its newest handoff card (corner-run.ts).
+  await retryMigrationStep('corner run card index', () => createIndexConcurrently(
+    database, 'messages_corner_run_card_idx',
+    `CREATE INDEX CONCURRENTLY messages_corner_run_card_idx
+     ON messages (room_id, ((card->>'seq')::int) DESC) WHERE card_type='corner-workflow-handoff'`,
+  ));
   await createIndexConcurrently(
     database, 'messages_corner_fact_idx',
     `CREATE INDEX CONCURRENTLY messages_corner_fact_idx

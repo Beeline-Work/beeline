@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
@@ -432,7 +433,7 @@ describe('the end of a fallback reviewer\'s review', () => {
     );
     expect(await commands(OWNER_AGENT)).toEqual([]);
     const state = await db.query<{ workflow_state: string; workflow_outcome: string }>(
-      `SELECT workflow_state,workflow_outcome FROM corner_facts WHERE corner_id=$1`,
+      `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state,${cornerRunOutcomeSql('$1::uuid')} workflow_outcome`,
       [C],
     );
     expect(state.rows[0]).toEqual({ workflow_state: 'review', workflow_outcome: 'passing' });

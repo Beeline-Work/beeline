@@ -1,4 +1,5 @@
 import { GitHubHttpError, type GitHubAppClient } from '@beeline/auth/github';
+import { cornerRunStateSql } from './corner-run.js';
 import type { SqlDatabase } from './database.js';
 
 const MAX_ATTEMPTS = 8;
@@ -48,7 +49,7 @@ export async function retryCornerBranchDeletions(database: SqlDatabase, app: Git
         repository_id: string; installation_id: string; full_name: string; archived_at: unknown; merged: boolean;
       }>(
         `SELECT job.repository_id,job.installation_id,job.repository full_name,corner.archived_at,
-           fact.workflow_state='landed' merged
+           ${cornerRunStateSql('corner.id')}='landed' merged
          FROM corner_branch_deletions job JOIN rooms corner ON corner.id=job.corner_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
          JOIN github_repositories repository ON repository.repository_id=job.repository_id

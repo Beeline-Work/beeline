@@ -19,6 +19,7 @@ import {
 } from './agent-command.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cornerImplementerSql } from './corner-worker.js';
+import { cornerRunStateSql } from './corner-run.js';
 import {
   firstHealthyAgent,
   isCornerReviewer,
@@ -71,9 +72,8 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * Workspace workflow saved with the slug `corner` has no effect on corners.
  * Its schema is separate from saved workflows. A
  * corner's run id is its own room id — one run for its whole life — and its
- * current state is the newest card citing that run, projected onto
- * `corner_facts.workflow_state`/`workflow_outcome` in the same transaction
- * for the phone badge and the merge gate.
+ * current state is the newest card citing that run (`corner-run.ts`); nothing
+ * copies it onto the corner row.
  */
 export const CORNER_LIFECYCLE_SLUG = 'corner';
 
@@ -343,19 +343,6 @@ async function writeStartCard(
         : {}),
     },
   });
-  await projectRunState(db, input.cornerId, input.toState, input.backfilled?.outcome);
-}
-
-async function projectRunState(
-  db: SqlDatabase,
-  cornerId: string,
-  state: string,
-  outcome: string | undefined,
-): Promise<void> {
-  await db.query(
-    `UPDATE corner_facts SET workflow_state=$2,workflow_outcome=$3,updated_at=now() WHERE corner_id=$1`,
-    [cornerId, state, outcome ?? null],
-  );
 }
 
 /**
@@ -421,7 +408,6 @@ class Transition {
         ...(status ? { status } : {}),
       },
     });
-    await projectRunState(this.db, this.cornerId, toState, outcome);
     this.lastCardId = card.id;
     this.run = {
       ...this.run,
@@ -1577,7 +1563,7 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
     `SELECT fact.corner_id,(fact.lifecycle->'pr'->>'number')::int number,
             fact.merge_attempt_head head_sha
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE fact.workflow_state IN ('implement','checks','review','ask_human') AND corner.archived_at IS NULL
+     WHERE ${cornerRunStateSql('fact.corner_id')} IN ('implement','checks','review','ask_human') AND corner.archived_at IS NULL
        AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
        AND NOT (fact.lifecycle ? 'mergeQueue')
        AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
@@ -1614,39 +1600,24 @@ export async function clearUnfinishedCornerMergeClaim(
 }
 
 /**
- * Repairs the run projection from its authoritative newest card, including
- * non-null projections drifted by older schema migrations. The newest card
- * supplies corners opened since #1918, or a run is derived from lifecycle for
- * corners opened before it. Run once from `migrateData()`.
+ * Gives a run to corners opened before the workflow run existed (#1918),
+ * derived from their lifecycle. Run once from `migrateData()`.
  */
 export async function backfillCornerLifecycleRuns(database: SqlDatabase): Promise<number> {
   const missing = await database.query<{ corner_id: string }>(
     `SELECT fact.corner_id FROM corner_facts fact
-     LEFT JOIN LATERAL (
-       SELECT card->>'toState' state,card->>'outcome' outcome
-       FROM messages WHERE room_id=fact.corner_id AND card_type=$1
-         AND card->>'runId'=fact.corner_id::text
-       ORDER BY (card->>'seq')::int DESC LIMIT 1
-     ) latest ON true
-     WHERE fact.workflow_state IS NULL OR (latest.state IS NOT NULL AND
-       (fact.workflow_state IS DISTINCT FROM latest.state OR
-        fact.workflow_outcome IS DISTINCT FROM latest.outcome))`,
-    [CORNER_LIFECYCLE_CARD_TYPE],
+     WHERE ${cornerRunStateSql('fact.corner_id')} IS NULL`,
   );
   for (const row of missing.rows) {
     await database.transaction(async (db) => {
       await lockCornerLifecycle(db, row.corner_id);
-      const run = await loadCornerLifecycleState(db, row.corner_id);
-      if (run) {
-        await projectRunState(db, row.corner_id, run.toState, run.outcome);
-        return;
-      }
+      if (await loadCornerLifecycleState(db, row.corner_id)) return;
       const corner = await loadCorner(db, row.corner_id);
       if (corner) await backfillRun(db, row.corner_id, corner);
     });
   }
   if (missing.rowCount)
-    console.log(`backfillCornerLifecycleRuns: projected ${missing.rowCount} corner run(s)`);
+    console.log(`backfillCornerLifecycleRuns: started ${missing.rowCount} corner run(s)`);
   return missing.rowCount;
 }
 

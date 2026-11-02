@@ -16,7 +16,7 @@ import {
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, recordCornerRun } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
@@ -1070,11 +1070,9 @@ describe('Postgres live fanout', () => {
       VALUES($1,$2,'owner')`, [corner,reader]));
     await expectNudge(() => database.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2
       WHERE corner_id=$1`, [corner,reader]));
-    // A review verdict or ask_human moves only the workflow columns.
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET workflow_state='review' WHERE corner_id=$1`, [corner]));
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET workflow_outcome='ask_human' WHERE corner_id=$1`, [corner]));
+    // A review verdict or ask_human writes only a run card.
+    await expectNudge(() => recordCornerRun(database, corner, 'review'));
+    await expectNudge(() => recordCornerRun(database, corner, 'ask_human'));
     await expectNudge(() => database.query(
       `INSERT INTO corner_follows(corner_id,identity_id) VALUES($1,$2)`, [corner, reader]));
     await expectNudge(() => database.query(

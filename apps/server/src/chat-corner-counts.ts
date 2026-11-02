@@ -1,4 +1,5 @@
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -20,7 +21,7 @@ export type CornerStateRow = {
   archived_at: Date | null;
   locked?: boolean;
   lifecycle: CornerLifecycleView | null;
-  /** The corner lifecycle's projected state (`corner_facts.workflow_state`). */
+  /** The corner run's state: its newest handoff card (`corner-run.ts`). */
   workflow_state?: string | null;
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
@@ -98,7 +99,7 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `f.locked,f.lifecycle,f.workflow_state,f.workflow_outcome,
+    columns: `f.locked,f.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
       activity.worker_active,activity.reviewer_active,
       span.last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,

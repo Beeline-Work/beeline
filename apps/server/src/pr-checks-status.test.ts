@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, recordCornerRun } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -715,10 +715,7 @@ describe('PR-scoped check gate', () => {
   it('reports dispatched after the green transition consumed the reviewer wake', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
-    await db.query(
-      `UPDATE corner_facts SET workflow_state='review',workflow_outcome='passing' WHERE corner_id=$1`,
-      [AUTHOR],
-    );
+    await recordCornerRun(db, AUTHOR, 'review', 'passing');
     expect(await gate(AUTHOR)).toMatchObject({
       reviewerWake: {
         status: 'dispatched',

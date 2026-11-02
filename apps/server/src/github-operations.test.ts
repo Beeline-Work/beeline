@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cornerRunStateSql } from './corner-run.js';
 import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient, retryGitHubRead } from '@beeline/auth/github';
 import { type QueryResult, type SqlDatabase } from './database.js';
@@ -74,8 +75,8 @@ describe('GitHub phone operations', () => {
       corners.push(corner);
       await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
         VALUES($1,$2,$3,$4,'Checks')`, [corner, workspace, room, HUMAN]);
-      await database.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle,workflow_state)
-        VALUES($1,'Fix checks',$2,$3,$4::jsonb,'land')`,
+      await database.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle)
+        VALUES($1,'Fix checks',$2,$3,$4::jsonb)`,
       [corner, REVIEWER, `feature/checks-${number}`, JSON.stringify({ checks: 'passing',
         pr: { number, headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' } })]);
     }
@@ -124,7 +125,7 @@ describe('GitHub phone operations', () => {
       app as unknown as GitHubAppClient, 'secret');
     if (trigger === 'checks event') await operations.processWebhook('check_run', payload);
     else expect(await operations.prChecksStatus({cornerId: corner})).toMatchObject({stage:'merged',mergeAllowed:false});
-    const state = (await database.query(`SELECT fact.lifecycle, fact.workflow_state,
+    const state = (await database.query(`SELECT fact.lifecycle, ${cornerRunStateSql('fact.corner_id')} workflow_state,
       room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
       WHERE fact.corner_id=$1`, [corner])).rows[0]!;
     expect(state.lifecycle).toMatchObject({ outcome: 'landed',
@@ -143,7 +144,7 @@ describe('GitHub phone operations', () => {
     await operations.processWebhook('check_run', payload);
     expect((await outcomes()).rows).toEqual(committedOutcomes);
     expect((await terminalCards()).rows).toEqual(committedCards);
-    expect((await database.query(`SELECT fact.lifecycle, fact.workflow_state,
+    expect((await database.query(`SELECT fact.lifecycle, ${cornerRunStateSql('fact.corner_id')} workflow_state,
       room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
       WHERE fact.corner_id=$1`, [corner])).rows[0]).toEqual(state);
     expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1
@@ -502,7 +503,7 @@ describe('GitHub phone operations', () => {
 
   it('Reproduction stale-green: a pending webhook that reads a green rollup sends a passing review wake', async () => {
     const {corners,app,payload}=await checksFixture();
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"'),workflow_state='checks' WHERE corner_id=$1`,[corners[0]]);
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,[corners[0]]);
     app.readCommitCheckRollup.mockResolvedValue({state:'passed',total:1,failing:[],checks:[{name:'SERVER INTEGRATION',status:'passed'}]} as never);
     const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
     await operations.processWebhook('check_run',{...payload,action:'in_progress',check_run:{...payload.check_run,status:'in_progress',conclusion:null}});

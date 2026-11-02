@@ -1,6 +1,6 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, recordCornerRun } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -119,7 +119,7 @@ it.each(['non-member', 'self', 'room', 'invalid kind', 'closed kind'])(
 
 it('returns all merged PR snapshot fields from corner facts', async () => {
   await db.query(
-    `UPDATE corner_facts SET workflow_state='done',lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       B,
       JSON.stringify({
@@ -134,6 +134,7 @@ it('returns all merged PR snapshot fields from corner facts', async () => {
       }),
     ],
   );
+  await recordCornerRun(db, B, 'done');
   expect(await watch()).toEqual({
     kinds: ['merged'],
     state: 'active',

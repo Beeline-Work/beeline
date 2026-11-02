@@ -209,7 +209,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM rooms WHERE parent_id IS NOT NULL`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`, [R]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
   await db.query(`DELETE FROM live_outputs`);
   await db.query(`UPDATE agents SET yolo_mode=true,wake_batch_minutes=0`);
   githubRollupState = 'pending';
@@ -710,8 +710,6 @@ describe('a person-opened corner in a repository Room', () => {
       commits: [{}],
       pusher: { name: 'goosy' },
     });
-    expect((await db.query(`SELECT feature_branch FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toEqual({ feature_branch: null });
     expect(await currentState(cornerId)).toBe('checks');
   });
 });
@@ -1234,7 +1232,6 @@ async function fallback(cornerId: string, online = true) {
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [F, H]);
   for (const roomId of [null, R])
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [W, roomId, F]);
-  await db.query(`UPDATE rooms SET reviewer_fallback_ids=$2 WHERE id=$1`, [R, [F]]);
   await repairReviewerCornerMembership(db, cornerId, F);
   if (online) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, F]);
 }
@@ -1567,8 +1564,8 @@ describe('RUN-FROM-CARDS: the run state is the newest handoff card, never a corn
   it('the badge input moves with cards while corner_facts keeps no state', async () => {
     const cornerId = await inReview();
     expect(await projected(cornerId)).toBe('review');
-    expect((await db.query(`SELECT workflow_state,workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toEqual({ workflow_state: null, workflow_outcome: null });
+    expect((await db.query(`SELECT column_name FROM information_schema.columns
+      WHERE table_name='corner_facts' AND column_name IN ('workflow_state','workflow_outcome')`)).rows).toEqual([]);
     const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
     expect(visible).toBeDefined();
     console.log('RUN-FROM-CARDS Demonstrated: run state review came from the newest card; corner_facts workflow columns stayed NULL.');
@@ -3844,92 +3841,6 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
   });
 });
 
-/**
- * Puts a corner back the way a no-code corner sat before the lane was removed:
- * a `lane` column of 'no_code', the owed trigger watching it, and its run in
- * no_code_work.
- */
-async function asLegacyNoCodeCorner(cornerId: string) {
-  await db.query(`ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code'`);
-  await db.query(`DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts`);
-  await db.query(
-    `CREATE TRIGGER corner_owed_facts_update
-       AFTER UPDATE OF commissioned_by,owner_agent_id,lane ON corner_facts
-       FOR EACH ROW WHEN ((OLD.commissioned_by,OLD.owner_agent_id,OLD.lane) IS DISTINCT FROM
-         (NEW.commissioned_by,NEW.owner_agent_id,NEW.lane))
-       EXECUTE FUNCTION corner_owed_facts_changed()`,
-  );
-  await db.query(
-    `UPDATE corner_facts SET lane='no_code',workflow_state='no_code_work',workflow_outcome=NULL WHERE corner_id=$1`,
-    [cornerId],
-  );
-  await db.query(
-    `UPDATE messages SET card=card || '{"outcome":"no_code","toState":"no_code_work"}'::jsonb
-     WHERE room_id=$1 AND card_type=$2 AND card->>'fromState'='opened'`,
-    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
-  );
-}
-
-async function laneColumn(): Promise<number> {
-  return (
-    await db.query(
-      `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
-    )
-  ).rowCount;
-}
-
-describe('migrating a no-code corner onto implement', () => {
-  it('moves its run and newest card to implement, drops the lane, and the server merges it after the reviewer passes it', async () => {
-    const cornerId = await open('owner/widgets');
-    await asLegacyNoCodeCorner(cornerId);
-    expect(await currentState(cornerId)).toBe('no_code_work');
-    expect(await laneColumn()).toBe(1);
-
-    await migrate(db);
-    // Idempotent: a second boot finds nothing to move and no column to drop.
-    await migrate(db);
-
-    expect(await laneColumn()).toBe(0);
-    expect(await currentState(cornerId)).toBe('implement');
-    expect(await projected(cornerId)).toBe('implement');
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(cornerId, 7, SHA);
-    expect(await currentState(cornerId)).toBe('review');
-    const [review] = await commands(B, cornerId);
-    await claim(review!);
-    await approve(cornerId);
-    await result(review!, `approved ${SHA}`);
-    expect(await currentState(cornerId)).toBe('review');
-    githubHead = SHA;
-    githubRollupState = 'passed';
-    expect((await github.prChecksStatus({ cornerId, pullRequest: 7 })).held).toBe(false);
-    expect(await implementersMerge()).toBe(1);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
-  });
-
-  it('keeps a migrated corner held while a stored hold stands', async () => {
-    const cornerId = await open('owner/widgets');
-    await phone.execute('setCornerHold', { cornerId }, H);
-    await say(cornerId, "don't merge this yet");
-    await asLegacyNoCodeCorner(cornerId);
-
-    await migrate(db);
-
-    expect(await currentState(cornerId)).toBe('implement');
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(cornerId, 7, SHA);
-    const [review] = await commands(B, cornerId);
-    await claim(review!);
-    await approve(cornerId);
-    await result(review!, `approved ${SHA}`);
-    githubHead = SHA;
-    githubRollupState = 'passed';
-    const status = await github.prChecksStatus({ cornerId, pullRequest: 7 });
-    expect(status).toMatchObject({ held: true, mergeAllowed: false });
-    expect(await implementersMerge()).toBe(0);
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-  });
-});
 
 describe('Reproduction IDLE-1: corner status says whether its agent runs or waits', () => {
   it('restores the current implementer so legacy work goes to the assigned agent', async () => {
@@ -4068,8 +3979,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     await daemon.execute('postCornerRemoteState', {
       cornerId, state: 'working', branch: 'feature/old-helper', checks: 'unknown',
     }, A);
-    expect((await db.query(`SELECT feature_branch,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ feature_branch: null, close_requested: false });
     expect((await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle)
       .not.toHaveProperty('branch');
     expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({
@@ -4078,8 +3987,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     await daemon.execute('archiveCorner', { cornerId }, A);
     expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ closeRequested: true });
     expect(await daemon.execute('getCornerCloseRequests', { cornerId }, A)).toMatchObject({ closeRequested: true });
-    expect((await db.query(`SELECT close_requested FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toEqual({ close_requested: false });
   });
 
   it('BRANCH-DERIVED: closes and deletes once after commit, without a queue or repeat on duplicate close', async () => {
@@ -4092,7 +3999,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
-    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
   });
 
   it('keeps the branch after close_corner_pr and deletes after the corner closes', async () => {
@@ -4132,7 +4038,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     const cornerId = await closeAndClean();
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).not.toBeNull();
-    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('offline'));
     log.mockRestore();
@@ -4142,7 +4047,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     githubApp.deleteBranch.mockRejectedValueOnce(new GitHubHttpError('delete', status));
     const cornerId = await closeAndClean();
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
   });
 
   it('BRANCH-DERIVED: deletes a merged branch once with no queue', async () => {
@@ -4151,7 +4055,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     await mergedWebhook(cornerId, 7, SHA);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
-    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
   });
 
   it('cleans the derived branch after a person closes the corner', async () => {
@@ -4175,7 +4078,6 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     expect(results).toEqual([{ cornerId: archived, branch: branchOf(archived), status: 'deleted_or_already_absent' }]);
     expect(githubApp.deleteBranch).not.toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(live));
     await backfillArchivedCornerCleanup(db, app);
-    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
   });
 

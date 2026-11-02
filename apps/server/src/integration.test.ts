@@ -20,8 +20,8 @@ import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-acces
 import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
-import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
-import { cornerImplementerSql } from './corner-worker.js';
+import { MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
+import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
@@ -349,11 +349,7 @@ describe('monolith integration', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Steer target')`,
       [steerCorner, WORKSPACE, ROOM],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-       VALUES($1,$2,'Steer target','{}')`,
-      [steerCorner, AGENT],
-    );
+    await insertCornerFacts(database, { cornerId: steerCorner, ownerAgentId: AGENT, lifecycle: '{}' });
     const messageId = createHash('sha256').update('steer-outage').digest('hex');
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
       messageId,
@@ -7224,7 +7220,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ owner_agent_id: string | null }>(
-          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          `SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`,
           [cornerId],
         )
       ).rows,
@@ -8027,16 +8023,13 @@ describe('monolith integration', () => {
     ).toEqual({ count: '0' });
   });
 
-  it('reads a legacy corner owner from its stored column when no assignment survives', async () => {
+  it('reads a corner owner from its opening order', async () => {
     const legacyCornerId = '33333333-3333-4333-8333-333333333333';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Legacy corner')`,
       [legacyCornerId, WORKSPACE, ROOM, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,owner_agent_id) VALUES($1,'Legacy objective',$2)`,
-      [legacyCornerId, AGENT],
-    );
+    await insertCornerFacts(database, { cornerId: legacyCornerId, ownerAgentId: AGENT });
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Legacy objective','message')`,
       ['f'.repeat(64), legacyCornerId, AGENT],
@@ -8052,7 +8045,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ owner_agent_id: string }>(
-          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          `SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`,
           [legacyCornerId],
         )
       ).rows[0],

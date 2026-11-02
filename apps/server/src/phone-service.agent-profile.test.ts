@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
 
 const workspace = '11111111-1111-4111-8111-111111111111';
 const parent = '22222222-2222-4222-8222-222222222222';
@@ -40,12 +40,7 @@ describe('agent profile recent work', () => {
         `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES ($1,$2,$3,$4)`,
         [id, workspace, index === 1 ? privateParent : parent, title],
       );
-      await database.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES ($1,$2,$3::jsonb)`,
-        [
-          id,
-          index === 3 ? other : agent,
-          JSON.stringify({
+      await insertCornerFacts(database, { cornerId: id, ownerAgentId: index === 3 ? other : agent, lifecycle: JSON.stringify({
             lifecycle: 'done',
             checks: 'passing',
             pr: {
@@ -56,10 +51,9 @@ describe('agent profile recent work', () => {
                   : `https://github.com/acme/repo/pull/${index + 1}`,
               ...(index === 2 ? {} : { mergedAt: '2026-09-24T00:00:00Z' }),
             },
-          }),
-        ],
-      );
-
+          }) });
+      // Each corner was opened by its owner agent.
+      await seedCornerOpening(database, { cornerId: id, agentId: index === 3 ? other : agent });
     }
     const phone = new PhoneService(database, 'https://server.example');
     expect((await phone.readAgent(workspace, agent, viewer))?.recentWork).toEqual([
@@ -72,12 +66,15 @@ describe('agent profile recent work', () => {
       [workspace, parent],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle)
-      SELECT id,$2,jsonb_build_object('pr', jsonb_build_object('title',name,
+      `INSERT INTO corner_facts(corner_id,lifecycle)
+      SELECT id,jsonb_build_object('pr', jsonb_build_object('title',name,
         'url','https://github.com/acme/repo/pull/'||right(id::text,12),
         'mergedAt','2026-09-23T00:00:00Z')) FROM rooms WHERE workspace_id=$1 AND name LIKE 'Older %'`,
-      [workspace, agent],
+      [workspace],
     );
+    for (const { id } of (await database.query<{ id: string }>(
+      `SELECT id FROM rooms WHERE workspace_id=$1 AND name LIKE 'Older %' ORDER BY id`, [workspace])).rows)
+      await seedCornerOpening(database, { cornerId: id, agentId: agent });
     const first = await phone.readAgent(workspace, agent, viewer);
     expect(first?.recentWork).toHaveLength(5);
     expect(first?.recentWorkCursor).toBeTruthy();

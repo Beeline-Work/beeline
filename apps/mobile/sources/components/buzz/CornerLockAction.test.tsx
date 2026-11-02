@@ -111,7 +111,7 @@ beforeAll(async () => {
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`, [W,H,R]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`, [C,W,R,H]);
-  await db.query(`INSERT INTO corner_facts(corner_id,kind) VALUES($1,'human')`, [C]);
+  await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [C]);
   phone = new PhoneService(db, 'http://test');
 }, 30_000);
 afterAll(async () => { await db?.close(); });

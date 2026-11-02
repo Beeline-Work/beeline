@@ -9,7 +9,7 @@ import {
   type HotReadName,
   type HotReadResult,
 } from './production-corpus-performance.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000101';
 const VIEWER = 'c'.repeat(64);
@@ -69,11 +69,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
         [cornerId, WORKSPACE, WIDE_ROOM, VIEWER, `Corner ${i}`],
       );
 
-      await database.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-         VALUES($1,$2,$3,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId, AGENT, `Width corner ${i}`],
-      );
+      await insertCornerFacts(database, { cornerId: cornerId, ownerAgentId: AGENT, lifecycle: '{"lifecycle":"working","checks":"unknown"}' });
       await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,created_at)
          VALUES($1,$2,$3,$4,now()-($5::integer * interval '1 second'))`,

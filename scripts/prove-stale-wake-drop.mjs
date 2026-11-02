@@ -1,6 +1,6 @@
 // Isolated built HTTP service proof; no production daemon or external provider.
 import assert from 'node:assert/strict';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { createAgentCommand } from '../apps/server/dist/agent-command.js';
 import { systemLine } from '../apps/server/dist/system-line.js';
@@ -24,7 +24,7 @@ try {
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Parent')`, [parent, workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`, [corner, workspace, parent, agent]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace, parent, agent]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{}')`, [corner, agent]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, lifecycle: '{}' });
   const live = new LiveHub();
   const daemon = new DaemonService(db, live);
   daemon.warmConnectorIndex = async () => {};

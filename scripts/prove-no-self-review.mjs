@@ -1,6 +1,6 @@
 /** Reproduction SR-1: isolated service path, with no production check delivery. */
 import assert from 'node:assert/strict';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { PhoneService } from '../apps/server/dist/phone-service.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
@@ -22,7 +22,7 @@ try {
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Proof')`, [workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Room'),($2,$3,'Corner')`, [room, corner, workspace]);
   await db.query(`UPDATE rooms SET parent_id=$1,created_by=$3 WHERE id=$2`, [room, corner, worker]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Proof',$3::jsonb)`, [corner, worker, JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 1, headSha: '1'.repeat(40), url: 'https://github.com/example/proof/pull/1' } })]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, lifecycle: JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 1, headSha: '1'.repeat(40), url: 'https://github.com/example/proof/pull/1' } }) });
   for (const who of [human, worker, fallback]) {
     for (const address of [null, room]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [workspace, address, who]);
     if (who !== human) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online","held":true}')`, [room, who]);

@@ -8,7 +8,7 @@ import { DurableLiveReplay, LIVE_REPLAY_LIMIT } from './durable-live.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, insertCornerFacts } from './test-support.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 const VIEWER = 'a'.repeat(64);
@@ -194,8 +194,7 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
     const corner = '44444444-4444-4444-8444-444444444444';
     await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
       VALUES($1,$2,$3,$4,'Corner')`, [corner, WORKSPACE, ROOM, VIEWER]);
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective)
-      VALUES($1,$2,'Catch up')`, [corner, VIEWER]);
+    await insertCornerFacts(database, { cornerId: corner, ownerAgentId: VIEWER });
     const resumed = await connect(instance.port);
     resumed.send({ type: 'subscribe', roomId: ROOM, cursors: { [ROOM]: cursor } });
     await resumed.wait(frames => frames.some(f => f.type === 'cursor'));

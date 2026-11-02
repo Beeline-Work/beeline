@@ -8260,9 +8260,8 @@ export class PhoneService {
       // wake sources and corner state end with the archival.
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await database.query(
-        `UPDATE corner_facts SET owner_agent_id=NULL,
-           lifecycle=lifecycle||$2::jsonb
-         WHERE owner_agent_id=ANY($1)`,
+        `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb
+         WHERE ${cornerOwnerSql('corner_facts.corner_id')}=ANY($1)`,
         [
           gone,
           JSON.stringify({
@@ -8271,21 +8270,6 @@ export class PhoneService {
             reason: `${account.name} deleted their account`,
           }),
         ],
-      );
-      // A corner the account's agent currently implements — but that another
-      // agent opened — is not caught by the update above, and a surviving
-      // `worker_agent_id` would block `DELETE FROM identities` on its foreign
-      // key. Clearing it falls back to the opener, exactly as the column reads.
-      await database.query(
-        `UPDATE corner_facts SET worker_agent_id=NULL
-         WHERE worker_agent_id=ANY($1)`,
-        [gone],
-      );
-      // Clear the retired column's legacy FK until the drop release removes it.
-      await database.query(
-        `UPDATE corner_facts SET commissioned_by=NULL
-         WHERE commissioned_by=ANY($1)`,
-        [gone],
       );
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
@@ -8342,8 +8326,6 @@ export class PhoneService {
         ['corner_app_installations', 'developer_agent_id'],
         ['corner_app_bindings', 'bound_by'],
         ['corner_brief_revisions', 'author_id'],
-        // Retired and dropped in a later release; absent tables are skipped.
-        ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
         ['corner_merge_holds', 'set_by_agent_id'],

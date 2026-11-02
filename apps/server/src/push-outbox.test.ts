@@ -1,3 +1,5 @@
+import { cornerCommissionerSql } from './corner-opening.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { readFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
@@ -357,7 +359,10 @@ it('preserves the old selector delivery set and retires only rows it would never
       VALUES('retry','proof-device','retryable',now()+interval '5 minutes')`);
     await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status)
       VALUES('claimed','proof-device','claimed')`);
-    const legacySql = await readFile(new URL('./test-fixtures/push-selection-before-backlog.sql',import.meta.url),'utf8');
+    // The frozen selection read two corner columns that are now derived from the opening order.
+    const legacySql = (await readFile(new URL('./test-fixtures/push-selection-before-backlog.sql',import.meta.url),'utf8'))
+      .replaceAll('finished.commissioned_by', cornerCommissionerSql('finished.corner_id'))
+      .replaceAll('finished.owner_agent_id', cornerOwnerSql('finished.corner_id'));
     const before = await queued();
     const eligible = async (rows: typeof before) => new Set((await db.query<{message_id:string;token:string}>(legacySql,
       [JSON.stringify(rows)])).rows.map(row=>key(row.message_id,row.token)));

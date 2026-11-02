@@ -78,9 +78,9 @@ try {
   await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
     SELECT corner_id::uuid,$1,$2,$3,name FROM unnest($4::text[],$5::text[]) AS c(corner_id,name)
     ON CONFLICT(id) DO NOTHING`, [busy.workspaceId, busy.roomId, reviewId, cornerIds, cornerNames]);
-  await database.query(`INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind)
-    SELECT corner_id::uuid,$1,'Latency rig corner','human'
-    FROM unnest($2::text[]) AS c(corner_id) ON CONFLICT(corner_id) DO NOTHING`, [reviewId, cornerIds]);
+  // Person-opened corners: the creator is their commissioner.
+  await database.query(`INSERT INTO corner_facts(corner_id)
+    SELECT corner_id::uuid FROM unnest($1::text[]) AS c(corner_id) ON CONFLICT(corner_id) DO NOTHING`, [cornerIds]);
   await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,started_at,created_at)
     VALUES($1,$2,$3,'working',now()-interval '90 days',now()-interval '90 days')
     ON CONFLICT(room_id,request_id,agent_id) DO NOTHING`,

@@ -1,8 +1,14 @@
 // SENTRY-22: frozen loadCorners/cornerRowsSql templates from release
 // 2e6951beb1c06174a9adf4c6af6dbfd27d3f94c6, open list with deck=false.
 // Shared corner fact projections stay current; retired app references are frozen.
+// The objective, commissioner and owner reads follow the switch release
+// (#3341): the [drops data] PR lands only after every replica runs it, so that
+// release, not 2e6951be, is the prior image these columns must still serve.
 import { cornerFactsSql } from '../chat-corner-counts.js';
 import { cornerRoomColumnsSql } from '../corner-row-projection.js';
+import { cornerObjectiveSql } from '../corner-objective.js';
+import { cornerCommissionerSql } from '../corner-opening.js';
+import { cornerOwnerSql } from '../corner-worker.js';
 
 export function priorReleaseCornerListSql(): string {
   const facts = cornerFactsSql('$2');
@@ -13,7 +19,7 @@ export function priorReleaseCornerListSql(): string {
   const order = 'ORDER BY c.created_at DESC,c.id DESC';
   const limit = 'LIMIT 31';
   const cornerQuery = `
-      SELECT ${cornerRoomColumnsSql},${facts.columns},f.objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
+      SELECT ${cornerRoomColumnsSql},${facts.columns},${cornerObjectiveSql('c')} objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,
@@ -26,7 +32,7 @@ export function priorReleaseCornerListSql(): string {
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c ${facts.joins}
       LEFT JOIN identities initiator
-        ON initiator.id=f.commissioned_by AND initiator.kind='human'
+        ON initiator.id=${cornerCommissionerSql('c.id')} AND initiator.kind='human'
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
@@ -34,7 +40,7 @@ export function priorReleaseCornerListSql(): string {
         FROM identities i
         LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
           AND member.removed_at IS NULL
-        WHERE i.id=f.owner_agent_id
+        WHERE i.id=${cornerOwnerSql('c.id')}
           AND i.kind='agent' LIMIT 1
       ) agent ON true
       LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id

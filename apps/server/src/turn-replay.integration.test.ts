@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/daemon-service.js' : './daemon-service.js');
 const { PhoneService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../dist/phone-service.js' : './phone-service.js');
 import { LiveHub } from './live.js';
@@ -42,7 +42,7 @@ it.each([
   const roomId = scope === 'room' ? ROOM : randomUUID();
   if (scope === 'corner') {
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Trace corner',$4)`, [roomId,WS,ROOM,HUMAN]);
-    await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Trace proof')`,[roomId,AGENT]);
+    await insertCornerFacts(db, { cornerId: roomId, ownerAgentId: AGENT, workerAgentId: AGENT });
   }
   if (limited) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys) VALUES($1,$2,$3,'running','fixture')`, [AGENT,WS,HUMAN]);
   const trigger = randomUUID();

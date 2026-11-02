@@ -1,4 +1,3 @@
-import { backfillCornerObjectives } from './corner-objective.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
@@ -868,8 +867,6 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
--- Retired reviewer fallbacks: nothing reads them; a later release drops the column.
-ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_fallback_ids text[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
 
@@ -1935,98 +1932,44 @@ CREATE TABLE IF NOT EXISTS agent_mandates (
 );
 CREATE INDEX IF NOT EXISTS agent_mandates_room_idx ON agent_mandates(room_id);
 
+-- A corner stores only what nothing else can derive: whether people locked
+-- it, its reviewer override, and a display cache of GitHub facts
+-- (lifecycle). Everything else is read from its commands, cards and Room.
 CREATE TABLE IF NOT EXISTS corner_facts (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  owner_agent_id text REFERENCES identities(id),
-  commissioned_by text REFERENCES identities(id),
-  objective text NOT NULL DEFAULT '',
-  lifecycle jsonb NOT NULL DEFAULT '{"lifecycle":"unknown","checks":"unknown"}'::jsonb,
-  plan jsonb,
-  request_id text,
-  open_idempotency_key text,
-  feature_branch text,
-  close_requested boolean NOT NULL DEFAULT false,
-  kind text NOT NULL DEFAULT 'agent' CHECK (kind IN ('agent', 'human')),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  lifecycle jsonb NOT NULL DEFAULT '{"lifecycle":"unknown","checks":"unknown"}'::jsonb
 );
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false;
--- The corner's CURRENT implementer: the agent a person last addressed in the
--- corner (routeHumanMessage). NULL means "the opener", which is every
--- corner until a person redirects one; owner_agent_id stays the historical
--- opener, brief author and close authority.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS worker_agent_id text REFERENCES identities(id);
--- Explicit opening provenance; existing corners remain NULL. Never infer a backfill.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS opened_from_corner_id uuid REFERENCES rooms(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS corner_facts_opened_from_idx ON corner_facts(opened_from_corner_id);
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
-ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
-ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
-  CHECK (kind IN ('agent', 'human'));
--- Retired: the per-corner Feedback triage switch. Feedback triage is now the
--- saved feedback-triage workflow; the previous release already stopped reading this column.
-ALTER TABLE corner_facts DROP COLUMN IF EXISTS feedback_triage;
-CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
--- The corner lifecycle's current state, projected from its newest handoff
--- card in the same transaction (corner-lifecycle.ts), and the one head the
--- server has tried to merge.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_outcome text;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS merge_attempt_head text;
--- The corner lane is gone: a corner is repository work exactly when its
--- parent Room has a repository. A run waiting in the removed no-code states
--- (no_code_work, upgrade_to_code) moves to implement. Its newest handoff card
--- is the run's state (corner-lifecycle.ts), so that card moves with it.
-UPDATE messages SET card=card || '{"toState":"implement"}'::jsonb
-  WHERE id IN (
-    SELECT DISTINCT ON (room_id) id FROM messages
-    WHERE card_type='corner-workflow-handoff' AND card->>'runId'=room_id::text
-      AND room_id IN (SELECT corner_id FROM corner_facts
-        WHERE workflow_state IN ('no_code_work','upgrade_to_code'))
-    ORDER BY room_id,(card->>'seq')::int DESC
-  ) AND card->>'toState' IN ('no_code_work','upgrade_to_code');
-UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL
-  WHERE workflow_state IN ('no_code_work','upgrade_to_code');
--- The owed trigger watched the lane column; it is recreated without it by
--- cornerOwedSchemaSql, so drop it first or the column cannot be dropped.
-DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
-ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
-ALTER TABLE corner_facts DROP COLUMN IF EXISTS lane;
--- The land state is gone: a yes keeps the run in review, and the merge gate
--- (corner-lifecycle.ts) no longer reads the run state. A run in land moves to
--- review with the same outcome; its newest handoff card is its state.
-UPDATE messages SET card=card || '{"toState":"review"}'::jsonb
-  WHERE card_type='corner-workflow-handoff' AND card->>'toState'='land'
-    AND room_id IN (SELECT corner_id FROM corner_facts WHERE workflow_state='land');
-UPDATE corner_facts SET workflow_state='review' WHERE workflow_state='land';
-DROP INDEX IF EXISTS corner_facts_workflow_land_idx;
-CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
 CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(reviewer_agent_id);
--- True while a human corner still carries the name the phone generated for it;
--- any rename clears it (corner-title.ts).
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
-
--- Cleanup intents survive archival and provider failures.
-CREATE TABLE IF NOT EXISTS corner_branch_deletions (
-  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  installation_id bigint,
-  repository_id bigint,
-  repository text,
-  branch text NOT NULL,
-  attempts integer NOT NULL DEFAULT 0,
-  next_attempt_at timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz,
-  last_error text
-);
-CREATE INDEX IF NOT EXISTS corner_branch_deletions_due_idx
-  ON corner_branch_deletions(next_attempt_at) WHERE finished_at IS NULL;
-ALTER TABLE corner_branch_deletions ADD COLUMN IF NOT EXISTS require_containment boolean NOT NULL DEFAULT false;
-ALTER TABLE corner_branch_deletions ALTER COLUMN installation_id DROP NOT NULL;
-ALTER TABLE corner_branch_deletions ALTER COLUMN repository_id DROP NOT NULL;
-ALTER TABLE corner_branch_deletions ALTER COLUMN repository DROP NOT NULL;
+-- Smallest corner state (owner order 2026-11-02; [drops data], each item
+-- approved by the owner). Derived storage and its retired tables are dropped
+-- once, after the release that stopped every replica touching them.
+DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
+DROP TRIGGER IF EXISTS corner_owed_input_facts ON corner_facts;
+-- Older releases' triggers that watched dropped columns; later schemas drop them too.
+DROP TRIGGER IF EXISTS corner_follows_facts_insert ON corner_facts;
+DROP TRIGGER IF EXISTS corner_follows_facts_update ON corner_facts;
+DROP TRIGGER IF EXISTS corner_attention_head ON corner_facts;
+DROP TRIGGER IF EXISTS corner_attention_open ON corner_facts;
+DROP TRIGGER IF EXISTS corner_state_facts ON corner_facts;
+DROP TABLE IF EXISTS corner_validation_stages, corner_attention_flags, corner_pr_closures,
+  corner_branch_deletions, corner_report_blockers, corner_attention_spans, automatic_report_wakes;
+DROP INDEX IF EXISTS corner_facts_opened_from_idx;
+DROP INDEX IF EXISTS corner_facts_owner_agent_idx;
+DROP INDEX IF EXISTS corner_facts_commissioned_by_idx;
+DROP INDEX IF EXISTS corner_facts_workflow_land_idx;
+ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
+ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
+ALTER TABLE corner_facts
+  DROP COLUMN IF EXISTS plan, DROP COLUMN IF EXISTS review_handback_head, DROP COLUMN IF EXISTS review_handback_count,
+  DROP COLUMN IF EXISTS command_check_state, DROP COLUMN IF EXISTS worker_agent_id, DROP COLUMN IF EXISTS owner_agent_id,
+  DROP COLUMN IF EXISTS merge_attempt_head, DROP COLUMN IF EXISTS workflow_state, DROP COLUMN IF EXISTS workflow_outcome,
+  DROP COLUMN IF EXISTS feature_branch, DROP COLUMN IF EXISTS close_requested, DROP COLUMN IF EXISTS kind,
+  DROP COLUMN IF EXISTS commissioned_by, DROP COLUMN IF EXISTS opened_from_corner_id, DROP COLUMN IF EXISTS request_id,
+  DROP COLUMN IF EXISTS open_idempotency_key, DROP COLUMN IF EXISTS title_generated, DROP COLUMN IF EXISTS objective,
+  DROP COLUMN IF EXISTS updated_at, DROP COLUMN IF EXISTS feedback_triage, DROP COLUMN IF EXISTS lane;
+ALTER TABLE rooms DROP COLUMN IF EXISTS reviewer_class, DROP COLUMN IF EXISTS reviewer_fallback_ids;
 
 CREATE TABLE IF NOT EXISTS corner_watches (
   watcher_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -2073,19 +2016,6 @@ UPDATE corner_brief_revisions SET build_spec=content
 -- columns above NULL; older rows keep them and are folded into a spec on read.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
 ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
--- Retired: nothing reads or writes this table; drop it in a later release.
-CREATE TABLE IF NOT EXISTS corner_validation_stages (
-  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  brief_revision integer NOT NULL,
-  head_sha text NOT NULL,
-  stage text NOT NULL CHECK (stage IN ('intent','base','review','tests','docs','lint_types','publication','ci','final_authorization')),
-  status text NOT NULL CHECK (status IN ('pending','running','passed','failed','skipped','not_applicable')),
-  evidence text NOT NULL DEFAULT '',
-  actor_id text NOT NULL REFERENCES identities(id),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (corner_id,brief_revision,head_sha,stage)
-);
-
 -- Retired storage only (SENTRY-22). Older images still join these tables on
 -- ordinary corner reads during rolling deployment and rollback. Preserve rows;
 -- CREATE IF NOT EXISTS also repairs databases where #3221 already dropped them.
@@ -2129,15 +2059,14 @@ DROP TABLE IF EXISTS corner_check_facts;
 CREATE TABLE IF NOT EXISTS corner_merge_approvals (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   approved_by text NOT NULL REFERENCES identities(id),
-  force boolean NOT NULL DEFAULT false,
   pull_request_number integer,
   head_sha text,
   approved_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS pull_request_number integer;
 ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS head_sha text;
-ALTER TABLE corner_merge_approvals ADD COLUMN IF NOT EXISTS brief_revision integer;
 ALTER TABLE corner_merge_approvals DROP COLUMN IF EXISTS patch_id;
+ALTER TABLE corner_merge_approvals DROP COLUMN IF EXISTS force, DROP COLUMN IF EXISTS brief_revision;
 
 CREATE TABLE IF NOT EXISTS invites (
   token_hash text PRIMARY KEY,
@@ -3602,8 +3531,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
-  await dataStep('corner objectives', () => workflowBackfillOnce(
-    database, 'corner-objectives-brief-v1', backfillCornerObjectives));
   await dataStep('push outbox cutover', () => workflowBackfillOnce(
     database, 'push-outbox-v1', backfillPushOutbox));
   await dataStep('free agent connection guide', () =>

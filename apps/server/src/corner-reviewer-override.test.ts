@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
-import { PgliteDatabase, migratedDatabase, seedCornerOpening } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -40,18 +40,11 @@ beforeEach(async () => {
     W,
   ]);
   await db.query(`UPDATE rooms SET parent_id=$1,created_by=$3 WHERE id=$2`, [R, C, OWNER_AGENT]);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work',$3::jsonb)`,
-    [
-      C,
-      OWNER_AGENT,
-      JSON.stringify({
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: OWNER_AGENT, lifecycle: JSON.stringify({
         checks: 'passing',
         lifecycle: 'in-review',
         pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: '1'.repeat(40) },
-      }),
-    ],
-  );
+      }) });
   // The owner agent opened this corner: its opening order makes it an agent corner.
   await seedCornerOpening(db, { cornerId: C, agentId: OWNER_AGENT });
 

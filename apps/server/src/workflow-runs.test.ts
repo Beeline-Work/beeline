@@ -6,7 +6,7 @@ import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
 import { activeWorkflowRunIds } from './workflow-admin.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { describedWorkflow, migratedDatabase } from './test-support.js';
+import { describedWorkflow, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { CHOICE_LABEL_MAX_LENGTH } from '@beeline/api-contract/phone';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -3049,7 +3049,7 @@ describe('run owner', () => {
     await database.query(`UPDATE memberships SET room_id=$1 WHERE room_id=$2`, [parent, ROOM]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
     await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [parent, ROOM]);
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Scheduled gate proof')`, [ROOM, WORKER_A]);
+    await insertCornerFacts(database, { cornerId: ROOM, ownerAgentId: WORKER_A, workerAgentId: WORKER_A });
     const asked = await rootMessage(OWNER, '@wa run gated every day');
     const creating = await commandFor(WORKER_A, asked);
     const { DaemonService } = await import('./daemon-service.js');

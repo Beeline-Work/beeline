@@ -202,11 +202,7 @@ describe('isCornerReviewer', () => {
   });
 
   it('refuses a stored fallback reviewer', async () => {
-    await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [
-      PARENT,
-      AGENT_ONE,
-      [AGENT_TWO],
-    ]);
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [PARENT, AGENT_ONE]);
     expect(await isCornerReviewer(database, CORNER, AGENT_TWO)).toBe(false);
   });
 });

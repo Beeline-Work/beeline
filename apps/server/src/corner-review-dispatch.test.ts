@@ -7,7 +7,7 @@ import { AcpClient } from '../../body/src/acp.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { announceAgentLifecycle } from './connection-presence.js';
@@ -76,10 +76,7 @@ beforeAll(async () => {
     `UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository' WHERE id=$1`,
     [R],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work','{"checks":"unknown"}')`,
-    [C, A],
-  );
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: A, lifecycle: '{"checks":"unknown"}' });
   for (const who of [H, A, B])
     for (const room of [null, R])
       await db.query(
@@ -95,7 +92,6 @@ beforeEach(async () => {
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   // Each case starts a fresh failure episode despite reusing the same corner.
-  await db.query(`DELETE FROM automatic_report_wakes`);
   await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM corner_merge_approvals`);
@@ -106,9 +102,9 @@ beforeEach(async () => {
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}'::text[]`);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,worker_agent_id=NULL`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb`,
   );
   await seedCornerOpening(db, { cornerId: C, commissionedBy: H });
 });
@@ -396,7 +392,6 @@ describe('corner message attribution', () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
     await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   // Each case starts a fresh failure episode despite reusing the same corner.
-  await db.query(`DELETE FROM automatic_report_wakes`);
   await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);

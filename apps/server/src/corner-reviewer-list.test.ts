@@ -4,7 +4,7 @@ import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { workflowRunLockKey } from './workflow-runs.js';
-import { PgliteDatabase, assignCornerWorker } from './test-support.js';
+import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -103,18 +103,11 @@ beforeEach(async () => {
     W,
   ]);
   await db.query(`UPDATE rooms SET parent_id=$1,created_by=$3 WHERE id=$2`, [R, C, OWNER_AGENT]);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work',$3::jsonb)`,
-    [
-      C,
-      OWNER_AGENT,
-      JSON.stringify({
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: OWNER_AGENT, lifecycle: JSON.stringify({
         checks: 'passing',
         lifecycle: 'in-review',
         pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: '1'.repeat(40) },
-      }),
-    ],
-  );
+      }) });
   for (const who of [H, OWNER_AGENT, REVIEWER_A, REVIEWER_B, OUTSIDER])
     for (const room of [null, R])
       await db.query(
@@ -162,12 +155,11 @@ describe('FALLBACK-GONE: a Room has one reviewer', () => {
   it('ignores fallback reviewers an older phone still sends', async () => {
     await phone.execute('updateRoom',
       { roomId: R, reviewerAgentId: REVIEWER_A, reviewerFallbackIds: [REVIEWER_B] } as never, H);
-    expect((await db.query(`SELECT reviewer_agent_id,reviewer_fallback_ids FROM rooms WHERE id=$1`, [R])).rows[0])
-      .toEqual({ reviewer_agent_id: REVIEWER_A, reviewer_fallback_ids: [] });
+    expect((await db.query(`SELECT reviewer_agent_id FROM rooms WHERE id=$1`, [R])).rows[0])
+      .toEqual({ reviewer_agent_id: REVIEWER_A });
   });
 
   it('wakes the Room reviewer, and a failed review hands nothing to another agent', async () => {
-    await db.query(`UPDATE rooms SET reviewer_fallback_ids=$2 WHERE id=$1`, [R, [REVIEWER_B]]);
     await setReviewer(REVIEWER_A);
     await greenCheck();
     const [review] = await reviews(REVIEWER_A);
@@ -187,7 +179,6 @@ describe('FALLBACK-GONE: a Room has one reviewer', () => {
   });
 
   it('accepts a PASS only from the configured reviewer, never a stored fallback', async () => {
-    await db.query(`UPDATE rooms SET reviewer_fallback_ids=$2 WHERE id=$1`, [R, [REVIEWER_B]]);
     await setReviewer(REVIEWER_A);
     for (const agent of [REVIEWER_B, OUTSIDER])
       await expect(daemon.execute('approveCornerMerge', { cornerId: C, headSha: '1'.repeat(40) }, agent))

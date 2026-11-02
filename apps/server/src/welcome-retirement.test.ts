@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { TokenAuth } from './auth.js';
 import {
   WELCOME_RETIREMENT_STEP,
@@ -49,10 +49,7 @@ async function seed(database: PgliteDatabase) {
     `INSERT INTO rooms(id,workspace_id,parent_id,name,visibility) VALUES($1,$2,$3,'greeter corner','public')`,
     [GREETER_CORNER, CREW, CREW_ROOM],
   );
-  await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'keep this open')`,
-    [GREETER_CORNER, GREETER],
-  );
+  await insertCornerFacts(database, { cornerId: GREETER_CORNER, ownerAgentId: GREETER });
   for (const identity of [OWNER, WELCOME_ONLY, TWO_HOMES, GREETER, STRAY_AGENT, HOMED_AGENT]) {
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,$3),($1,$4,$2,$3)`,

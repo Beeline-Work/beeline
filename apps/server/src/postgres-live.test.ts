@@ -16,7 +16,7 @@ import {
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
@@ -131,10 +131,8 @@ describe('Postgres live fanout', () => {
     await eventually(() => client.listenerCount('notification') === 1);
     await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
     await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:rooms' && event.closeRequested === true));
-    await database.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [corner]);
+    await database.query(`UPDATE corner_facts SET locked=locked WHERE corner_id=$1`, [corner]);
     await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:corner_facts' && event.closeRequested === true));
-    expect((await database.query(`SELECT close_requested FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0])
-      .toEqual({ close_requested: false });
   });
 
   it('re-arms Sentry batching on every server without publishing a Room message', async () => {
@@ -797,10 +795,7 @@ describe('Postgres live fanout', () => {
     // Preference invalidations retain the current corner metadata.
     const opener = 'b'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'fix it')`,
-      [corner, opener],
-    );
+    await insertCornerFacts(database, { cornerId: corner, ownerAgentId: opener });
     received.length = 0;
     await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,opener]);
     await eventually(() =>
@@ -942,10 +937,7 @@ describe('Postgres live fanout', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
       [corner, WORKSPACE, ROOM, AUTHOR],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'fix it')`,
-      [corner, agent],
-    );
+    await insertCornerFacts(database, { cornerId: corner, ownerAgentId: agent });
     const nudges = () =>
       parent.filter((event) => event.type === 'invalidate' && event.reason === 'corner-status');
     await settle(parent);
@@ -1068,10 +1060,7 @@ describe('Postgres live fanout', () => {
       [corner, WORKSPACE, ROOM, AUTHOR],
     );
     await eventually(() => nudges().length >= 1);
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'fix it')`,
-      [corner, agent],
-    );
+    await insertCornerFacts(database, { cornerId: corner, ownerAgentId: agent });
     await settle(parent);
 
     const expectNudge = async (write: () => Promise<unknown>) => {
@@ -1145,7 +1134,7 @@ describe('Postgres live fanout', () => {
 
     // A write that changes no corner-row column stays off the parent.
     await settle(parent);
-    await database.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [corner]);
+    await database.query(`UPDATE corner_facts SET locked=locked WHERE corner_id=$1`, [corner]);
     await database.query(
       `UPDATE rooms SET repository_updated_at=now() WHERE id=$1`, [corner]);
     await database.query(

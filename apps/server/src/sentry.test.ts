@@ -121,7 +121,7 @@ it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks 
       await db.query("INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')");
       await db.query("INSERT INTO rooms(id,workspace_id,created_by,name,repository_key,repository_remote,repository_resolution,github_installation_id) VALUES($1,$2,$3,'Fixture','owner/widgets','https://github.com/owner/widgets.git','repository',77)",[room,workspace,human]);
       await db.query("INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Checks')",[corner,workspace,room,human]);
-      await db.query("INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Check refusal',$2::jsonb)",[corner,JSON.stringify({checks:'passing',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
+      await db.query("INSERT INTO corner_facts(corner_id,lifecycle) VALUES($1,$2::jsonb)",[corner,JSON.stringify({checks:'passing',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
       await db.query("INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id) VALUES($1,1,'Fixture','Fixture',$2,$3)",[corner,human,room]);
       const client = new GitHubAppClient({appId:'42',privateKey:'unused',slug:'beeline'});
       client.installationToken = async () => ({token:'fixture',expiresAt:'2030-01-01T00:00:00Z'});

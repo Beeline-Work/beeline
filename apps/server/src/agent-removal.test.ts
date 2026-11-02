@@ -31,9 +31,9 @@ describe('PhoneService agent removal', () => {
       [OWNER, AGENT],
     );
     await database.query(
-      `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog,commands,schedule_ids,yolo_mode,yolo_set_by,yolo_set_at)
-       VALUES($1,$2,$3::jsonb,'gpt-5.6-codex','high','[{"category":"model"}]'::jsonb,'["npm test"]'::jsonb,$4::jsonb,true,$2,now())`,
-      [AGENT, OWNER, JSON.stringify({ name: 'Foxy', instructions: 'Be sly.' }), JSON.stringify([SCHEDULE])],
+      `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog,commands,yolo_mode,yolo_set_by,yolo_set_at)
+       VALUES($1,$2,$3::jsonb,'gpt-5.6-codex','high','[{"category":"model"}]'::jsonb,'["npm test"]'::jsonb,true,$2,now())`,
+      [AGENT, OWNER, JSON.stringify({ name: 'Foxy', instructions: 'Be sly.' })],
     );
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
@@ -129,13 +129,12 @@ describe('PhoneService agent removal', () => {
         selected_effort: string | null;
         model_catalog: unknown;
         commands: unknown;
-        schedule_ids: unknown;
         yolo_mode: boolean;
         yolo_set_by: string | null;
         yolo_set_at: Date | null;
         owner_id: string;
       }>(
-        `SELECT soul,selected_model,selected_effort,model_catalog,commands,schedule_ids,
+        `SELECT soul,selected_model,selected_effort,model_catalog,commands,
                 yolo_mode,yolo_set_by,yolo_set_at,owner_id FROM agents WHERE agent_id=$1`,
         [AGENT],
       )
@@ -146,7 +145,6 @@ describe('PhoneService agent removal', () => {
       selected_effort: null,
       model_catalog: [],
       commands: [],
-      schedule_ids: [],
       yolo_mode: false,
       yolo_set_by: null,
       yolo_set_at: null,
@@ -315,11 +313,10 @@ describe('PhoneService agent removal', () => {
         selected_effort: string | null;
         model_catalog: unknown;
         commands: unknown;
-        schedule_ids: unknown;
         yolo_mode: boolean;
         yolo_set_by: string | null;
       }>(
-        `SELECT soul,selected_model,selected_effort,model_catalog,commands,schedule_ids,yolo_mode,yolo_set_by
+        `SELECT soul,selected_model,selected_effort,model_catalog,commands,yolo_mode,yolo_set_by
          FROM agents WHERE agent_id=$1`,
         [AGENT],
       )
@@ -331,7 +328,6 @@ describe('PhoneService agent removal', () => {
       selected_effort: null,
       model_catalog: [],
       commands: [],
-      schedule_ids: [],
       yolo_mode: false,
       yolo_set_by: null,
     });

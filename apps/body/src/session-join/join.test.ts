@@ -6,7 +6,7 @@ import { createServer as createSocketServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { deliver, pollOnce, renderMention, serveOutboxes, toolViaOutbox } from './bridge.js';
+import { WAKE_REDELIVERY_MINUTES, deliver, pollOnce, renderMention, renderWake, serveOutboxes, toolViaOutbox } from './bridge.js';
 import { runSessionCommand } from './command.js';
 import { readState, stateDir, takeInbox, updateState } from './store.js';
 
@@ -14,6 +14,7 @@ const scratch = () => mkdtempSync(join(process.env.HOME ?? '/var/tmp', 'sj-'));
 let server: Server, origin = '';
 const calls: { name: string; args: Record<string, unknown> }[] = [];
 let mentions: object[] = [];
+let wakes: object[] = [];
 let allowed = false;
 let cancelled = false;
 
@@ -33,7 +34,7 @@ beforeAll(async () => {
     if (request.url === '/mcp' && request.headers.authorization === 'Bearer access') {
       const { name, arguments: args } = input.params;
       calls.push({ name, args });
-      const data = name === 'list_mentions' ? { mentions, nextCursor: String(mentions.length), wakes: [] }
+      const data = name === 'list_mentions' ? { mentions, nextCursor: String(mentions.length), wakes }
         : name === 'list_rooms' ? { rooms: [{ id: 'r1', name: 'general' }], you: { id: 'm', name: 'repo-hermes', handle: 'repohermes' } }
         : name === 'send_message' ? { messageId: 'f'.repeat(64), woken: [] } : { updated: true };
       return json(200, { jsonrpc: '2.0', id: input.id, result: { content: [{ type: 'text', text: JSON.stringify({ data }) }] } });
@@ -186,11 +187,78 @@ describe('a tag reaches the joined session', () => {
     expect(readdirSync(join(cwd, '.beeline', 'outbox'))).toEqual([]);
   });
 
+  // Reproduction (SESSION-JOIN-STRANDED-1): the bridge handed each wake over once and then suppressed it while it
+  // stayed pending, and orders get no server re-wake, so an order a session lost was never shown again.
+  it('SESSION-JOIN-STRANDED-1 hands a still-waiting order over again at 5, 15 and 45 minutes, then stops', async () => {
+    const home = scratch();
+    const dir = stateDir({ HOME: home, XDG_STATE_HOME: home });
+    await updateState(dir, state => { state.sessions = [{ key: 'pi:/w', agent: 'pi', cwd: '/w', name: 'p', server: origin, clientId: 'c',
+      refreshToken: 'r', accessToken: 'access', accessExpiresAt: Date.now() + 3_600_000, cursor: '0', deliveredWakes: [], joinedAt: '' }]; });
+    const tags = mentions;
+    mentions = [];
+    wakes = [{ id: 'w1', address: 'r1', reason: 'order', kind: 'order', text: 'Ship the fix', createdAt: '2026-11-02T00:00:00.000Z', next: 'Do the work, then call report with this address.' }];
+    const runner = { node: '/n', bundle: '/b' };
+    const t0 = Date.parse('2026-11-02T01:00:00.000Z');
+    const at = (minutes: number) => pollOnce(dir, 'pi:/w', runner, 0, t0 + minutes * 60_000);
+    try {
+      expect(await at(0)).toBe(1);
+      expect(takeInbox(dir, 'pi:/w')).toContain('> Ship the fix');
+      expect(await at(1)).toBe(0);
+      for (const minutes of WAKE_REDELIVERY_MINUTES) {
+        expect(await at(minutes)).toBe(1);
+        const text = takeInbox(dir, 'pi:/w');
+        expect(text).toContain('this is still waiting for you');
+        expect(text).toContain('> Ship the fix');
+        expect(await at(minutes + 0.5)).toBe(0);
+      }
+      expect(await at(600)).toBe(0);
+      // A handled wake leaves the list, and its history with it.
+      wakes = [];
+      await at(601);
+      expect(readState(dir).sessions[0]!.wakeDeliveries).toEqual({});
+    } finally { wakes = []; mentions = tags; }
+  });
+
+  // Reproduction (SESSION-JOIN-REJOIN-1): a joined Codex that dropped --as was told "Run: npx -y usebeeline join",
+  // obeyed, and registered a new connection on the default production server.
+  it('SESSION-JOIN-REJOIN-1 never tells a session to join on its own', async () => {
+    const home = scratch();
+    const env = { HOME: home, XDG_STATE_HOME: join(home, 'state'), PATH: process.env.PATH ?? '' };
+    // An unknown --as key reaches the refusal in every environment.
+    const refusal = runSessionCommand(['session', 'tool', 'report', '{}', '--as', 'codex:/nowhere'], env);
+    await expect(refusal).rejects.toThrow('including its --as <member> flag');
+    await expect(refusal).rejects.not.toThrow(/Run:? (npx -y )?usebeeline join|join again/);
+    // Without --as the session is looked up from the process tree; whichever refusal that gives, it never says to join.
+    await expect(runSessionCommand(['session', 'tool', 'report', '{}'], env)).rejects.not.toThrow(/Run:? (npx -y )?usebeeline join|join again/);
+  });
+
   it('C3 prefixes helper-injected Room messages with the Beeline header', () => {
     const text = renderMention({ id: 'm', room_id: 'r', author_handle: null, author_name: 'Ana', text: 'hi' },
       { key: 'k', agent: 'pi', cwd: '/', name: 'p', server: '', clientId: '', refreshToken: '', cursor: '0', deliveredWakes: [], joinedAt: '' }, { node: 'node', bundle: '/b' });
     expect(text.startsWith('[Beeline · Room r · message m · from Ana]')).toBe(true);
     expect(text).toContain('member ID');
     expect(text).toContain('answer in this Room with replyTo m');
+  });
+
+  // Reproduction (SESSION-JOIN-ORDER-1): a real Codex given the old order text posted nothing useful until it had
+  // guessed report's arguments four times, because the only concrete command was a plain reply.
+  it('SESSION-JOIN-ORDER-1 names the exact report call for an order, and no plain reply', () => {
+    const joined = { key: 'codex:/w', agent: 'codex' as const, cwd: '/w', name: 'c', handle: 'c', server: '', clientId: '', refreshToken: '', cursor: '0', deliveredWakes: [], joinedAt: '' };
+    const runner = { node: 'node', bundle: '/b' };
+    const address = '22222222-2222-4222-8222-222222222222';
+    const order = renderWake({ id: 'w1', address, reason: 'order', kind: 'order', text: 'Compute 7 times 8', createdAt: '', next: 'Do the work, then call report with this address.' }, joined, runner);
+    expect(order).not.toContain(' reply --room');
+    expect(order).toContain('It is not a tag');
+    const call = /session tool report '(\{[^']*\})' --as codex:\/w/.exec(order);
+    expect(call).not.toBeNull();
+    const args = JSON.parse(call![1]!) as Record<string, string>;
+    expect(Object.keys(args).sort()).toEqual(['address', 'status', 'text']);
+    expect(args).toMatchObject({ address, status: 'done' });
+    expect(args.text!.startsWith('done:')).toBe(true);
+    const lifecycle = renderWake({ id: 'w2', address, reason: 'corner_lifecycle', kind: 'lifecycle', createdAt: '' }, joined, runner);
+    expect(lifecycle).toContain(`reply --room ${address} "<text>" --as codex:/w`);
+    // The silent close names this one wake, as the server's hint says, so it never clears other wakes at the address.
+    expect(lifecycle).toContain(`tool no_reply_needed '{"address":"${address}","commandId":"w2"}' --as codex:/w`);
+    expect(lifecycle).not.toContain('tool report');
   });
 });

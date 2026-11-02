@@ -1,3 +1,4 @@
+import { cornerObjectiveSql } from './corner-objective.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
@@ -6490,7 +6491,7 @@ describe('monolith integration', () => {
         kind: string;
         commands: number;
       }>(
-        `SELECT room.name,room.created_by,fact.commissioned_by,fact.objective,fact.kind,
+        `SELECT room.name,room.created_by,fact.commissioned_by,${cornerObjectiveSql('room')} objective,fact.kind,
           (SELECT count(*)::integer FROM agent_commands WHERE room_id=room.id) commands
          FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
         [cornerId],
@@ -9170,7 +9171,7 @@ describe('monolith integration', () => {
       objective: string;
       commissioned_by: string;
     }>(
-      `SELECT r.name,cf.objective,cf.commissioned_by
+      `SELECT r.name,${cornerObjectiveSql('r')} objective,cf.commissioned_by
        FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
       [cornerId],
     );
@@ -10390,7 +10391,7 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
     const corner = await database.query<{ name: string; objective: string }>(
-      `SELECT r.name,cf.objective FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
+      `SELECT r.name,${cornerObjectiveSql('r')} objective FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
       [cornerId],
     );
     expect(corner.rows[0]).toEqual({

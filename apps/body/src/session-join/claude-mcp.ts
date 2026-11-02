@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ancestors } from './agents.js';
 import { postToClaude, scanClaude, type ClaudeSession } from './claude.js';
-import { pidAlive, queueInbox, readState, takeInbox } from './store.js';
+import { pidAlive, queueInbox, readState, takeInbox, type JoinedSession } from './store.js';
 
 interface InSession { pid: number; claudePid: number }
 
@@ -31,8 +31,19 @@ export async function flushClaudeMcp(dir: string, session: ClaudeSession, token:
   catch { queueInbox(dir, joined.key, text); }
 }
 
-/** Claude starts this stdio server inside each session and supplies that session's messaging token. */
-export async function runClaudeMcp(dir: string, env: NodeJS.ProcessEnv): Promise<void> {
+/** The joined record of the Claude Code session this process runs inside, if it joined. */
+function joinedClaude(dir: string, env: NodeJS.ProcessEnv, chain: number[]): JoinedSession | undefined {
+  const live = scanClaude(env);
+  const session = chain.map(pid => live.find(s => s.pid === pid)).find(Boolean);
+  if (!session) return undefined;
+  return readState(dir).sessions.find(s => s.agent === 'claude-code' && (s.pid === session.pid || s.sessionId === session.sessionId));
+}
+
+/**
+ * Claude starts this stdio server inside each session and supplies that session's messaging token. Its
+ * initialize answer carries the session's Beeline rules as server instructions, which Claude shows the model.
+ */
+export async function runClaudeMcp(dir: string, env: NodeJS.ProcessEnv, rulesFor?: (joined: JoinedSession) => string): Promise<void> {
   const chain = ancestors(process.pid);
   let registration: string | undefined;
   let flushing = false;
@@ -59,8 +70,9 @@ export async function runClaudeMcp(dir: string, env: NodeJS.ProcessEnv): Promise
       let request: { id?: unknown; method?: string; params?: { protocolVersion?: string } };
       try { request = JSON.parse(line); } catch { continue; }
       if (request.id === undefined) continue;
+      const joined = request.method === 'initialize' && rulesFor ? joinedClaude(dir, env, chain) : undefined;
       const result = request.method === 'initialize' ? { protocolVersion: request.params?.protocolVersion ?? '2025-06-18',
-        capabilities: { tools: {} }, serverInfo: { name: 'beeline', version: '1.0.0' } }
+        capabilities: { tools: {} }, serverInfo: { name: 'beeline', version: '1.0.0' }, ...(joined && rulesFor ? { instructions: rulesFor(joined) } : {}) }
         : request.method === 'tools/list' ? { tools: [] } : request.method === 'ping' ? {} : undefined;
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...(result ? { result } : { error: { code: -32601, message: 'Method not found' } }) }) + '\n');
     }

@@ -1,3 +1,4 @@
+import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
@@ -225,8 +226,6 @@ import {
   saveInstitutionalMemory,
   searchInstitutionalMemory,
   updateInstitutionalMemory,
-  recordInstitutionalMemoryTurnOutcome,
-  recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 import { AUTHORIZED_ROOMS_CTE, searchInstitutionalHistory } from './institutional-history.js';
@@ -1005,13 +1004,6 @@ export class DaemonService {
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
             ]);
-            await recordInstitutionalMemoryTurnOutcome(
-              db,
-              scopedRoom!,
-              command.turn_request_id,
-              candidate.status === 'complete',
-              String(candidate.status),
-            );
           }
         }
         return result;
@@ -1341,7 +1333,7 @@ export class DaemonService {
           input as Input<'getPermissionAuthority'>,
         )) as Output<Name>;
       case 'getMissionAuthority':
-        return (await this.missionAuthority(input as Input<'getMissionAuthority'>)) as Output<Name>;
+        return (await this.missionAuthority()) as Output<Name>;
       case 'listWorkSchedules':
       case 'listAgentToolSchedules':
         return (await this.schedules(
@@ -3759,19 +3751,9 @@ export class DaemonService {
         }
       : { status: 'unavailable' as const };
   }
-  private async missionAuthority(input: Input<'getMissionAuthority'>) {
-    const row = (
-      await this.database.query<{
-        status: 'authorized' | 'denied' | 'unavailable';
-        generation: string;
-      }>(
-        `SELECT status,generation FROM mission_authority WHERE mission_id=$1 AND room_id=$2 AND principal_id=$3 AND exercise=$4`,
-        [input.missionId, input.roomId, input.principalId, input.exercise],
-      )
-    ).rows[0];
-    return row
-      ? { status: row.status, generation: Number(row.generation) }
-      : { status: 'unavailable' as const };
+  private async missionAuthority() {
+    // Nothing has ever written mission authority; this is the answer an absent row gave.
+    return { status: 'unavailable' as const };
   }
   private async schedules(input: Input<'listAgentToolSchedules'>, agentId: string) {
     const roomId = (input as { roomId?: string }).roomId;
@@ -3859,7 +3841,7 @@ export class DaemonService {
       name: string;
       objective: string;
     }>(
-      `SELECT r.id,r.parent_id,r.name,r.archived_at closed_at,f.objective,f.lifecycle,
+      `SELECT r.id,r.parent_id,r.name,r.archived_at closed_at,${cornerObjectiveSql('r')} objective,f.lifecycle,
               COALESCE(f.owner_agent_id,r.created_by) created_by,
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
@@ -3911,7 +3893,7 @@ export class DaemonService {
         last_excerpt: string | null;
       }>(
         `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
-           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
+           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,${cornerObjectiveSql('c')} objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
            approval.pull_request_number,approval.head_sha approval_head_sha,
            lm.author_id last_author_id,lm.created_at last_created_at,
            lm.presentation last_type,left(lm.text,280) last_excerpt
@@ -5058,18 +5040,6 @@ export class DaemonService {
         if (!written.rowCount) return;
         committedTurn = written.rows[0];
       }
-      // The turn's real cost belongs to the serve it answered, and it is written
-      // here — the same transaction as the receipt — so a serve row can never
-      // carry a measurement for a turn that was refused or never ended.
-      if (!input.heartbeat && input.status !== 'working') {
-        await recordInstitutionalServeUsage(database, {
-          roomId: input.roomId,
-          requestId: input.requestId,
-          agentId,
-          ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
-          ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
-        });
-      }
       await this.persistTurnTrace(database, input, agentId);
       if (!input.heartbeat) await recordStartupWakeOutcome(database, input, agentId);
       if (input.status === 'failed') {
@@ -6165,10 +6135,8 @@ export class DaemonService {
       [input.workspaceId, agentId],
     );
     if (!member.rowCount) throw new Error('daemon workspace access denied');
-    await this.database.query(
-      `UPDATE agents SET schedule_ids=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
-      [agentId, JSON.stringify(input.scheduleIds)],
-    );
+    // Old helpers still post their schedule index; nothing has read it since
+    // schedules moved to the server, so it is acknowledged without storing.
     return this.writeResult();
   }
   private async postMandate(input: Input<'postAgentToolMandate'>, agentId: string) {
@@ -6560,10 +6528,14 @@ export class DaemonService {
   private async cornerPlan(input: Input<'postCornerPlan'>, agentId: string) {
     await this.access(input.cornerId, agentId);
     const plan = { ...(input.objective ? { objective: input.objective } : {}), items: input.items };
-    await this.database.query(
-      `INSERT INTO corner_facts(corner_id,objective,plan) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(corner_facts.objective,''),NULLIF(EXCLUDED.objective,''),''),plan=EXCLUDED.plan,updated_at=now()`,
-      [input.cornerId, input.objective ?? '', JSON.stringify(plan)],
-    );
+    await this.database.transaction(async db => {
+      await lockCornerLifecycle(db, input.cornerId);
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,plan) VALUES($1,$2::jsonb) ON CONFLICT(corner_id) DO UPDATE SET plan=EXCLUDED.plan,updated_at=now()`,
+        [input.cornerId, JSON.stringify(plan)],
+      );
+      if (input.objective) await writeCornerObjective(db, input.cornerId, input.objective, true);
+    });
     return this.writeResult();
   }
   /** Closed-corner evidence follows the same audience checks as message reads.
@@ -6606,7 +6578,7 @@ export class DaemonService {
       await lockCornerLifecycle(db, input.cornerId);
       const corner = (
         await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string; name: string }>(
-          `SELECT room.name,room.parent_id,room.archived_at,fact.kind,fact.objective
+          `SELECT room.name,room.parent_id,room.archived_at,fact.kind,${cornerObjectiveSql('room')} objective
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 FOR UPDATE OF room`,
           [input.cornerId],
@@ -6633,10 +6605,8 @@ export class DaemonService {
               current.repositoryWork !== input.brief.repositoryWork ||
               current.approval?.sourceMessageId !== input.brief.approval?.sourceMessageId))
             throw new Error('corner brief already exists; revise the current brief instead');
-          if (objective !== undefined) await db.query(
-            `UPDATE corner_facts SET objective=$2,updated_at=now() WHERE corner_id=$1`,
-            [input.cornerId, objective],
-          );
+          // The objective is navigation only, not authority; keep the brief and review fences.
+          if (objective !== undefined) await writeCornerObjective(db, input.cornerId, objective);
         } else {
           const sourceRoomIds = [corner.parent_id, input.cornerId, input.roomId ?? input.cornerId];
           const brief = input.brief!;
@@ -6662,15 +6632,11 @@ export class DaemonService {
           await db.query(
             `INSERT INTO corner_brief_revisions(
                corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
-               source_room_id,source_message_id,attachments
-             ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+               source_room_id,source_message_id,attachments,objective
+             ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
             [input.cornerId, brief.spec.trim(), JSON.stringify(authority.approvalBasis),
               authority.revisionHash, brief.change ?? null, agentId, authority.sourceRoomId,
-              brief.approval?.sourceMessageId, JSON.stringify(attachments)],
-          );
-          await db.query(
-            `UPDATE corner_facts SET objective=$2,updated_at=now() WHERE corner_id=$1`,
-            [input.cornerId, objective],
+              brief.approval?.sourceMessageId, JSON.stringify(attachments), objective ?? corner.objective],
           );
         }
       }
@@ -8553,7 +8519,7 @@ export class DaemonService {
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
-          `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,child.created_by,
+          `SELECT child.id::text corner_id,child.name,${cornerObjectiveSql('child')} objective,fact.owner_agent_id,child.created_by,
                   fact.request_id,child.repository_key,child.repository_target_branch,
                   (SELECT handle FROM identities WHERE id=fact.reviewer_agent_id) reviewer_handle,
                   initial.revision brief_revision,
@@ -8665,13 +8631,12 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
+         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
         [
           cornerId,
           implementerAgentId,
           commissionedBy ?? null,
-          objective,
           input.requestId,
           idempotencyKey,
           host?.parent_id ? commandRoomId : null,
@@ -8715,8 +8680,8 @@ export class DaemonService {
         await db.query(
           `INSERT INTO corner_brief_revisions(
              corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
-             source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+             source_room_id,source_message_id,attachments,objective
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [
             cornerId,
             input.brief.spec.trim(),
@@ -8727,6 +8692,7 @@ export class DaemonService {
             authority.sourceRoomId,
             input.brief.approval?.sourceMessageId,
             JSON.stringify(attachments),
+            objective,
           ],
         );
       }
@@ -8735,7 +8701,7 @@ export class DaemonService {
         roomId: cornerId,
         agentId: implementerAgentId,
         sourceMessageId: null,
-        privatePayload: { text: input.brief?.spec ?? objective, authorId: agentId, fromRoomId: commandRoomId, kind: 'order' },
+        privatePayload: { objective, text: input.brief?.spec ?? objective, authorId: agentId, fromRoomId: commandRoomId, kind: 'order' },
         reason: 'corner_objective',
         parent: parentCommand,
         retainDepth: true,
@@ -8886,8 +8852,8 @@ export class DaemonService {
       await db.query(
         `INSERT INTO corner_brief_revisions(
            corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
-           source_room_id,source_message_id,attachments
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+           source_room_id,source_message_id,attachments,objective
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           input.cornerId,
           revision,
@@ -8899,6 +8865,7 @@ export class DaemonService {
           authority.sourceRoomId,
           draft.approval?.sourceMessageId,
           JSON.stringify(attachments),
+          await readCornerObjective(db, input.cornerId),
         ],
       );
       // The revision and worker wake commit together. A green reviewer will

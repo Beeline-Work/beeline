@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { join } from 'node:path';
+import { externalAgentRules } from '@beeline/api-contract/phone';
 import { accessToken, callTool } from './beeline-api.js';
 import { codexQueue, turnRunning } from './codex.js';
 import { postToClaude } from './claude.js';
@@ -35,11 +36,31 @@ export function renderMention(m: Mention, joined: JoinedSession, runner: Runner)
     `Read the Room first if you need context: ${command(runner, joined, `read --room ${m.room_id}`)}`].join('\n');
 }
 
+/**
+ * Who the session is on Beeline and the rules it works by, spelled with its own commands
+ * (`EXTERNAL_AGENT_RULES`, the same rules the connector serves as MCP instructions).
+ */
+export function renderRules(joined: JoinedSession, runner: Runner): string {
+  return [`Beeline: you are @${joined.handle ?? joined.name}, a member of your person's Beeline Rooms. How to work there:`,
+    externalAgentRules('session', command(runner, joined, `tool <name> '<json arguments>'`))].join('\n');
+}
+
+/**
+ * A private wake is not a tag. An order is answered with report, never a plain post, so its text names the
+ * exact report call with its arguments; any other wake names the post and the silent close. Every command
+ * carries --as, which the session must keep.
+ */
 export function renderWake(w: Wake, joined: JoinedSession, runner: Runner): string {
-  return [`Beeline: ${w.kind ?? w.reason} for you (@${joined.handle ?? joined.name}) at ${w.address}.`, ...(w.text ? [w.text.split('\n').map(l => `> ${l}`).join('\n')] : []),
-    w.next ?? 'Handle it.',
-    `Post there: ${command(runner, joined, `reply --room ${w.address} "<text>"`)}`,
-    `Other Beeline tools (report, no_reply_needed, …): ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
+  const header = [`Beeline: private ${w.kind ?? w.reason} for you (@${joined.handle ?? joined.name}) at ${w.address}. It is not a tag; do not reply with --reply-to.`,
+    ...(w.text ? [w.text.split('\n').map(l => `> ${l}`).join('\n')] : []), w.next ?? 'Handle it.'];
+  if (w.kind === 'order') return [...header,
+    `Report the outcome to whoever ordered you (a plain post does not report): ${command(runner, joined, `tool report '{"address":"${w.address}","status":"done","text":"done: <result>"}'`)}`,
+    'status is done, blocked, failed or needs_decision, and text starts with the matching done:, blocked:, failed: or needs-decision:.',
+    `Other Beeline tools: ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
+  return [...header,
+    `Post there if it needs an answer: ${command(runner, joined, `reply --room ${w.address} "<text>"`)}`,
+    `If nothing needs posting: ${command(runner, joined, `tool no_reply_needed '{"address":"${w.address}","commandId":"${w.id}"}'`)}`,
+    `Other Beeline tools: ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
 }
 
 export interface DeliverDeps {
@@ -81,16 +102,30 @@ export async function deliver(dir: string, joined: JoinedSession, session: LiveS
   }
 }
 
+/**
+ * Minutes after a wake was first handed to the session at which a wake still waiting is handed over again. A session
+ * that crashed, compacted or lost an order would otherwise never see it again: the bridge hands each wake over once,
+ * and the server re-wakes owed tags (5, 15 and 45 minutes) but not orders.
+ */
+export const WAKE_REDELIVERY_MINUTES = [5, 15, 45] as const;
+
 /** One long poll: new tags and wakes become inbox text; the cursor moves only after the text is saved. */
-export async function pollOnce(dir: string, key: string, runner: Runner, waitSeconds = 25): Promise<number> {
+export async function pollOnce(dir: string, key: string, runner: Runner, waitSeconds = 25, now = Date.now()): Promise<number> {
   const joined = readState(dir).sessions.find(s => s.key === key);
   if (!joined) return 0;
   const token = await accessToken(dir, key);
   // Wakes already handed over do not end the wait; a newer one does.
   const page = await callTool(joined, token, 'list_mentions', { cursor: joined.cursor, waitSeconds,
     ...(joined.wakesSeenAt ? { wakesAfter: joined.wakesSeenAt } : {}) }) as { mentions: Mention[]; nextCursor: string; wakes: Wake[] };
+  const history = joined.wakeDeliveries ?? {};
   const fresh = page.wakes.filter(w => !joined.deliveredWakes.includes(w.id));
-  const parts = [...page.mentions.map(m => renderMention(m, joined, runner)), ...fresh.map(w => renderWake(w, joined, runner))];
+  const again = page.wakes.filter(w => {
+    const seen = joined.deliveredWakes.includes(w.id) ? history[w.id] : undefined;
+    const minutes = seen ? WAKE_REDELIVERY_MINUTES[seen.redeliveries] : undefined;
+    return seen !== undefined && minutes !== undefined && now - Date.parse(seen.firstAt) >= minutes * 60_000;
+  });
+  const parts = [...page.mentions.map(m => renderMention(m, joined, runner)), ...fresh.map(w => renderWake(w, joined, runner)),
+    ...again.map(w => `Beeline: this is still waiting for you; handle it now.\n${renderWake(w, joined, runner)}`)];
   await updateState(dir, state => {
     const current = state.sessions.find(s => s.key === key);
     if (!current) return;
@@ -98,6 +133,12 @@ export async function pollOnce(dir: string, key: string, runner: Runner, waitSec
     current.cursor = page.nextCursor;
     // Remember only wakes still waiting, so the list stays as short as Beeline's.
     current.deliveredWakes = page.wakes.map(w => w.id);
+    // Keep the delivery history of wakes still waiting only, so it stays as short as Beeline's list.
+    const at = new Date(now).toISOString();
+    current.wakeDeliveries = Object.fromEntries(page.wakes.map(w => {
+      const seen = current.wakeDeliveries?.[w.id];
+      return [w.id, seen ? { ...seen, redeliveries: seen.redeliveries + (again.some(a => a.id === w.id) ? 1 : 0) } : { firstAt: at, redeliveries: 0 }];
+    }));
     const newest = page.wakes.map(w => w.createdAt).sort().at(-1);
     if (newest && (!current.wakesSeenAt || newest > current.wakesSeenAt)) current.wakesSeenAt = newest;
   });

@@ -111,10 +111,10 @@ export async function ensureReviewProofFixture(
     // deleteAccount clears commissioned_by before deleting the identity row, the
     // same FK-safety deal it already gives owner_agent_id and worker_agent_id.
     // DO UPDATE heals a corner seeded before this field was set.
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective)
-     VALUES($1,NULL,$2,$3)
+    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
+     VALUES($1,NULL,$2)
      ON CONFLICT(corner_id) DO UPDATE SET commissioned_by=EXCLUDED.commissioned_by`,
-    [REVIEW_PROOF_CORNER_ID, reviewerId, REVIEW_PROOF_OBJECTIVE],
+    [REVIEW_PROOF_CORNER_ID, reviewerId],
   );
 
 }

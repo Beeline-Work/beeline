@@ -1,3 +1,4 @@
+import { boundToolResponse } from './tool-output-budget.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { createRequire } from 'node:module';
@@ -957,7 +958,7 @@ export function runRegistryMcpBroker(env: NodeJS.ProcessEnv = process.env): void
           connectionId,
           ...(turn ? { turn } : {}),
         }))
-          process.stdout.write(`${message}\n`);
+          process.stdout.write(`${await boundToolResponse(JSON.parse(message) as Record<string, unknown>)}\n`);
       } catch (error) {
         if (request.id !== undefined) {
           process.stdout.write(

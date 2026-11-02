@@ -45,6 +45,18 @@ ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removed_at timestamptz;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removal_cleaned_at timestamptz;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS model text;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS starter_role text;
+ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS allowance_paused_until timestamptz;
+CREATE OR REPLACE FUNCTION defer_allowance_wake() RETURNS trigger LANGUAGE plpgsql AS $pause$
+BEGIN
+  IF NEW.state='pending' AND NEW.action IN ('input','resume') THEN
+    NEW.startup_wake_after := GREATEST(NEW.startup_wake_after,
+      (SELECT allowance_paused_until FROM free_agents WHERE agent_id=NEW.agent_id AND allowance_paused_until>now()));
+  END IF;
+  RETURN NEW;
+END $pause$;
+DROP TRIGGER IF EXISTS defer_allowance_wake ON agent_commands;
+CREATE TRIGGER defer_allowance_wake BEFORE INSERT OR UPDATE OF state ON agent_commands
+  FOR EACH ROW EXECUTE FUNCTION defer_allowance_wake();
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_bootstrap_hash ON free_agents(bootstrap_hash)
   WHERE bootstrap_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_model_token_hash ON free_agents(model_token_hash)
@@ -536,6 +548,7 @@ const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
           AND server.renewed_at>clock_timestamp()-interval '90 seconds')))
   AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
     WHERE command.agent_id=f.agent_id AND command.state='pending'
+             AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now())
       AND (command.wake_after IS NULL OR command.wake_after<=now())))`;
 
 /**
@@ -697,6 +710,7 @@ export class FreeAgentService {
    * serving. The row update is the fence: one instance per 20 seconds.
    */
   async #budgetPaused(agentId: string): Promise<boolean> {
+    if ((await this.database.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND allowance_paused_until>now()`, [agentId])).rowCount) return true;
     if (!await freeAgentBudgetReached(this.database, (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).dailyBudgetUsd)) return false;
     await recordFreeAgentEvent(this.database, agentId, 'budget_reached');
     return true;
@@ -820,7 +834,7 @@ export class FreeAgentService {
            AND NOT ${connectorWorkSql('f.agent_id')}
            AND NOT EXISTS (SELECT 1 FROM agent_commands command
              WHERE command.agent_id=f.agent_id AND command.state IN ('pending','claimed')
-               AND (command.state='claimed' OR command.wake_after IS NULL OR command.wake_after<=now()))
+               AND (command.state='claimed' OR ((command.wake_after IS NULL OR command.wake_after<=now()) AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now()))))
          RETURNING f.fly_machine_id`,
         [agentId],
       )
@@ -939,7 +953,7 @@ export class FreeAgentService {
       `SELECT agent_id FROM free_agents
        WHERE removed_at IS NULL AND fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5
          AND (${connectorWorkSql('free_agents.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command WHERE command.agent_id=free_agents.agent_id
-           AND command.state='pending' AND (command.wake_after IS NULL OR command.wake_after<=now())))
+           AND command.state='pending' AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now()) AND (command.wake_after IS NULL OR command.wake_after<=now())))
          AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
        ORDER BY created_at LIMIT 20`,
     );
@@ -954,6 +968,7 @@ export class FreeAgentService {
        WHERE (f.fly_machine_id IS NOT NULL OR f.state='destroyed') AND f.state<>'failed' AND f.removed_at IS NULL
          AND (${connectorWorkSql('f.agent_id')} OR EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id AND command.state='pending'
+             AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=now())
              AND (command.wake_after IS NULL OR command.wake_after<=now())
              AND command.created_at<clock_timestamp()-interval '5 seconds'))
          AND NOT EXISTS (SELECT 1 FROM agent_connections connection

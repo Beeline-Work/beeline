@@ -520,6 +520,21 @@ describe('start_workflow', () => {
     expect(messages.find(message => message.choice)?.presentation).toBe('card');
   });
 
+  it('Reproduction TOKEN-WORKFLOW: reports every invalid and missing binding in one input refusal', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await database.query(`UPDATE identities SET handle='impy' WHERE id=$1`, [IMPLEMENTER]);
+    await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT) });
+    const error = await startWorkflow(database, command, {
+      name: 'corner', roleBindings: { implementer: '@absent', reviewer: OWNER },
+    }).catch(error => error);
+    expect(error.status).toBe(400);
+    expect(error.message).toContain('implementer: given "@absent"');
+    expect(error.message).toContain(`reviewer: given "${OWNER}"`);
+    expect(error.message).toContain('approver: given missing');
+    expect(error.message.match(/allowed members:/g)).toHaveLength(3);
+    expect(error.message).toContain('@impy');
+  });
+
   it('rejects a role with no binding', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
@@ -528,7 +543,7 @@ describe('start_workflow', () => {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER },
       }),
-    ).rejects.toMatchObject({ constructor: ExpectedRefusalError, message: 'role binding is missing for approver' });
+    ).rejects.toMatchObject({ status: 400, message: expect.stringContaining('role binding is missing for approver') });
   });
 
   it('rejects a role bound to someone who is not a current agent member of this Room (a person or an outsider)', async () => {
@@ -539,7 +554,7 @@ describe('start_workflow', () => {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: 'f'.repeat(64) },
       }),
-    ).rejects.toThrow('is not a current agent member of this Room');
+    ).rejects.toThrow('current agent member');
   });
 
   it('binds an @handle role to the current Room member with that handle', async () => {
@@ -551,7 +566,7 @@ describe('start_workflow', () => {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: '@nobody', approver: APPROVER },
       }),
-    ).rejects.toThrow('@nobody is not a current member of this Room');
+    ).rejects.toThrow('given \"@nobody\"');
     const started = await startWorkflow(database, command, {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: '@ravi', approver: APPROVER },
@@ -1910,7 +1925,7 @@ describe('list roles', () => {
     await expect(start('heavy')).rejects.toThrow('must be an agent id or a member handle');
     await expect(start([WORKER_A, WORKER_A])).rejects.toThrow('must be an agent id or a member handle');
     await expect(start([])).rejects.toThrow('must be an agent id or a member handle');
-    await expect(start([WORKER_A, 'f'.repeat(64)])).rejects.toThrow('is not a current agent member of this Room');
+    await expect(start([WORKER_A, 'f'.repeat(64)])).rejects.toThrow('current agent member');
   });
 
   it('rejects a human Room member as a binding, alone or on a list, before any card is written', async () => {
@@ -1922,10 +1937,10 @@ describe('list roles', () => {
         name: 'list-flow',
         roleBindings: { worker: worker as string[], closer: APPROVER },
       });
-    await expect(start(OWNER)).rejects.toThrow('is not a current agent member of this Room');
-    await expect(start('owner')).rejects.toThrow('is not a current agent member of this Room');
-    await expect(start('@owner')).rejects.toThrow('is not a current agent member of this Room');
-    await expect(start([WORKER_A, '@owner'])).rejects.toThrow('is not a current agent member of this Room');
+    await expect(start(OWNER)).rejects.toThrow('current agent member');
+    await expect(start('owner')).rejects.toThrow('current agent member');
+    await expect(start('@owner')).rejects.toThrow('current agent member');
+    await expect(start([WORKER_A, '@owner'])).rejects.toThrow('current agent member');
     const cards = await database.query(
       `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
       [ROOM],
@@ -1935,7 +1950,7 @@ describe('list roles', () => {
 
   it('rejects a bare human handle in the member-handle path, before any card is written', async () => {
     await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
-    await expect(startedListRun('owner')).rejects.toThrow('is not a current agent member of this Room');
+    await expect(startedListRun('owner')).rejects.toThrow('current agent member');
     const cards = await database.query(
       `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
       [ROOM],

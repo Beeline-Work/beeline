@@ -22,7 +22,7 @@ import { delimiter, dirname, isAbsolute } from 'node:path';
 import { explainAgentProgramFailure } from './agent-command.js';
 import { harnessTurnTokens, type TurnTokenFigure } from './harness-turn-tokens.js';
 import { piStartupEnvironment } from './pi-startup.js';
-import { PiSessionInstructions } from './pi-session-instructions.js';
+import { PiSessionInstructions, piCompactionMarker } from './pi-session-instructions.js';
 import { McpLaunchFiles } from './mcp-launch-files.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
@@ -188,6 +188,7 @@ export interface SessionUpdate {
 
 export interface ToolCallEntry {
   id?: string;
+  name?: string;
   title?: string;
   kind?: string;
   status?: string;
@@ -748,6 +749,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
     calls.set(key, {
       ...previous,
       id: key,
+      ...(typeof update.name === 'string' ? { name: update.name } : {}),
       ...(typeof update.title === 'string' ? { title: update.title } : {}),
       ...(typeof update.kind === 'string' ? { kind: update.kind } : {}),
       ...(typeof update.status === 'string' ? { status: update.status } : {}),
@@ -811,7 +813,16 @@ export class AcpClient extends EventEmitter {
   private supportsImagePrompts = false;
   private supportsStructuredSystemPrompt = false;
   private codexBlockDelivery = false;
+  private piDeliveryMarkers = new Map<string, string>();
   private readonly promptDeliveries = new Map<string, CodexPromptDelivery>();
+
+  async preparePromptDelivery(sessionId: string | undefined): Promise<void> {
+    if (!sessionId || !isPiAcpHarness(this.agentLabel)) return;
+    const marker = await piCompactionMarker(sessionId, this.agentEnv);
+    if (marker === undefined || this.piDeliveryMarkers.get(sessionId) !== marker)
+      this.promptDeliveries.get(sessionId)?.invalidate();
+    if (marker !== undefined) this.piDeliveryMarkers.set(sessionId, marker);
+  }
 
   promptDelivery(sessionId: string | undefined): CodexPromptDelivery | undefined {
     return sessionId ? this.promptDeliveries.get(sessionId) : undefined;
@@ -937,6 +948,7 @@ export class AcpClient extends EventEmitter {
   async start(timeoutMs = 60_000): Promise<void> {
     if (this.alive) return;
     this.promptDeliveries.clear();
+    this.piDeliveryMarkers.clear();
     // Record the cgroup's OOM counter before this child can be its victim, so
     // an OOM kill later is measured against this run rather than the first
     // probe at exit time (which would miss it).
@@ -1036,7 +1048,7 @@ export class AcpClient extends EventEmitter {
         {
           protocolVersion: 1,
           clientCapabilities: {
-            ...(/(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(this.agentLabel)
+            ...(/(^|[/\\])(?:codex-acp|claude-(?:agent|code)-acp)(\.[a-z]+)?$/i.test(this.agentLabel)
               ? { session: { compaction: {} } } : {}),
             ...(this.backgroundTasks
               ? { _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } } } : {}),
@@ -1086,8 +1098,10 @@ export class AcpClient extends EventEmitter {
     // This adapter version was verified to emit all automatic and manual
     // compactions when the client advertises session.compaction. Unknown
     // adapters keep full delivery until their behavior is measured.
-    this.codexBlockDelivery = /(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(this.agentLabel) &&
-      this.supportsStructuredSystemPrompt && info?.version === '2.3.0';
+    this.codexBlockDelivery = (/(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(this.agentLabel) &&
+      this.supportsStructuredSystemPrompt && info?.version === '2.3.0') ||
+      (/(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(this.agentLabel) && info?.version === '0.97.0') ||
+      isPiAcpHarness(this.agentLabel);
     this.emit('initialized', initResult);
     // ACP defines no `initialized` notification; pi-acp answers it with -32601
     // and dumps the notification to stderr on every session. Do not send it to
@@ -1274,7 +1288,7 @@ export class AcpClient extends EventEmitter {
       this.piSessionInstructions.remember(sessionId, opts.systemPrompt);
     await this.applySessionMode(sessionId, raw, opts.mode);
     if (this.codexBlockDelivery)
-      this.promptDeliveries.set(sessionId, new CodexPromptDelivery(opts.systemPrompt));
+      this.promptDeliveries.set(sessionId, new CodexPromptDelivery(isPiAcpHarness(this.agentLabel) ? undefined : opts.systemPrompt));
     return { sessionId, raw };
   }
 
@@ -1808,6 +1822,7 @@ export class AcpClient extends EventEmitter {
             this.toolCallMetadata.set(metadataKey, {
               ...existing,
               toolCallId,
+              ...(typeof params.update.name === 'string' ? { name: params.update.name } : {}),
               ...(typeof params.update.title === 'string' ? { title: params.update.title } : {}),
               ...(typeof params.update.kind === 'string' ? { kind: params.update.kind } : {}),
               ...('rawInput' in params.update ? { rawInput: params.update.rawInput } : {}),

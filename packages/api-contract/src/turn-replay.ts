@@ -3,6 +3,7 @@ export interface ReplayToolCall {
   name: string;
   outcome: 'ok' | 'refused' | 'error' | 'unfinished';
   durationMs: number;
+  outputBytes?: number;
   error?: string;
 }
 export interface TurnReplay {
@@ -51,6 +52,8 @@ export function sanitizeTurnReplay(input: unknown): TurnReplay | undefined {
         name: replayToolName(tool?.name),
         outcome: (['ok', 'refused', 'error', 'unfinished'] as const).find(value => value === tool?.outcome) ?? 'unfinished',
         durationMs: duration(tool?.durationMs),
+        ...(typeof tool?.outputBytes === 'number' && Number.isSafeInteger(tool.outputBytes) && tool.outputBytes >= 0
+          ? { outputBytes: tool.outputBytes } : {}),
         ...(typeof tool?.error === 'string' ? { error: redactReplayError(tool.error) } : {}),
       })),
     })),

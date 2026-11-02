@@ -328,7 +328,10 @@ export class TurnTrace {
     calls.forEach((call, index) => {
       const id = call.id ?? `#${index}`;
       const title = replayToolName(call.title);
-      const name = title === 'unknown' ? replayToolName(call.kind) : title;
+      const input = call.rawInput && typeof call.rawInput === 'object'
+        ? call.rawInput as Record<string, unknown> : {};
+      const concrete = replayToolName(call.name ?? input.tool ?? input.name);
+      const name = concrete !== 'unknown' ? concrete : title === 'unknown' ? replayToolName(call.kind) : title;
       let tool = attempt.tools.get(id);
       if (!tool && attempt.tools.size < 2000) {
         tool = { started: this.now(), call: { name, outcome: 'unfinished', durationMs: 0 } };
@@ -336,6 +339,17 @@ export class TurnTrace {
       }
       if (tool) {
         if (name !== 'unknown') tool.call.name = name;
+        const output = call.rawOutput ?? call.content;
+        if (output !== undefined) {
+          try {
+            const meta = output && typeof output === 'object' && '_meta' in output
+              ? output._meta as { originalOutputBytes?: unknown } : undefined;
+            const original = meta?.originalOutputBytes;
+            tool.call.outputBytes = typeof original === 'number' && Number.isSafeInteger(original) && original >= 0
+              ? original : Buffer.byteLength(typeof output === 'string' ? output : JSON.stringify(output));
+          }
+          catch { /* A malformed diagnostic must not interrupt a turn. */ }
+        }
         const failed = isFailedToolCall(call);
         const error = failed ? toolCallText(call.content) || toolCallText(call.rawOutput) : '';
         if (!toolCallOutstanding(call) || isFailedToolCall(call)) {

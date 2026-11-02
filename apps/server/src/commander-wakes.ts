@@ -286,7 +286,8 @@ export class CommanderWakeDeadlines {
         `SELECT min(GREATEST(command.wake_after,command.startup_wake_after)) due FROM agent_commands command
          JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
          JOIN effective_memberships member ON member.room_id=command.room_id AND member.identity_id=command.agent_id AND member.removed_at IS NULL
-         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'`,
+         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'
+           AND isfinite(GREATEST(command.wake_after,command.startup_wake_after))`,
         [roomId, agentId],
       )
     ).rows[0];

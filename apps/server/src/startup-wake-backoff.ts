@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS agent_commands_startup_wakes ON agent_commands(startu
 CREATE OR REPLACE FUNCTION defer_startup_wake() RETURNS trigger LANGUAGE plpgsql AS $backoff$
 BEGIN
   IF NEW.state='pending' AND NOT ${startupWakeAllowedSql('NEW')} THEN
-    SELECT paused_until INTO NEW.startup_wake_after FROM agent_startup_backoff WHERE agent_id=NEW.agent_id;
+    NEW.startup_wake_after := GREATEST(NEW.startup_wake_after, (SELECT paused_until FROM agent_startup_backoff WHERE agent_id=NEW.agent_id));
   END IF;
   RETURN NEW;
 END $backoff$;
@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS automatic_report_wakes (
 
 /** Only the immediate human request bypasses a pause; inherited human roots do not. */
 export function startupWakeAllowedSql(command: string): string {
-  return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
+  return `((${command}.action NOT IN ('input','resume') OR NOT EXISTS (
+    SELECT 1 FROM free_agents allowance WHERE allowance.agent_id=${command}.agent_id AND allowance.allowance_paused_until>now()
+  )) AND (${command}.action NOT IN ('input','resume') OR NOT EXISTS (
     SELECT 1 FROM agent_startup_backoff pause WHERE pause.agent_id=${command}.agent_id AND pause.paused_until>now()
   ) OR EXISTS (SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
     WHERE source.id=${command}.source_message_id AND author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'
@@ -42,7 +44,7 @@ export function startupWakeAllowedSql(command: string): string {
       AND ${command}.reason<>'schedule' AND ${command}.private_payload IS NULL
   ) OR (${command}.private_payload->>'kind'='order' AND EXISTS (
     SELECT 1 FROM identities author WHERE author.id=${command}.private_payload->>'authorId' AND author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'
-  )))`;
+  ))))`;
 }
 
 /** The terminal receipt owns the breaker, across every Room and server instance. */
@@ -68,7 +70,7 @@ export async function recordStartupWakeOutcome(db: SqlDatabase, input: {
     await db.query(`UPDATE agent_startup_backoff SET failures=0,window_started_at=now(),
       paused_until=CASE WHEN $2='complete' THEN NULL ELSE paused_until END WHERE agent_id=$1`, [agentId,input.status]);
     if (input.status === 'complete') await db.query(`UPDATE agent_commands SET startup_wake_after=NULL
-      WHERE agent_id=$1 AND state='pending' AND startup_wake_after IS NOT NULL`, [agentId]);
+      WHERE agent_id=$1 AND state='pending' AND startup_wake_after IS NOT NULL AND NOT EXISTS (SELECT 1 FROM free_agents WHERE agent_id=$1 AND allowance_paused_until>now())`, [agentId]);
     return;
   }
   const paused = await db.query<{ paused_until: Date }>(`UPDATE agent_startup_backoff SET

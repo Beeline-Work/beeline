@@ -11,6 +11,20 @@ const ACCOUNT = 'ca_fixture';
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 describe('managed app provider boundary', () => {
+  it('Reproduction TOKEN-CATALOG: bounds a thousand-tool bare listing and reveals schemas by query', async () => {
+    const items = Array.from({ length: 1000 }, (_, i) => ({ slug: `GITHUB_TOOL_${i}`,
+      name: `Tool ${i}`, toolkit: { slug: 'github' }, description: 'A long description\n'.repeat(100),
+      input_parameters: { type: 'object', description: 'schema'.repeat(1000) } }));
+    const provider = new ComposioApps('fixture-only', vi.fn(async () => json({ items })) as typeof fetch);
+    const compact = await provider.listTools('github');
+    expect(Buffer.byteLength(JSON.stringify(compact))).toBeLessThanOrEqual(24_000);
+    expect(compact.length).toBeGreaterThan(0);
+    expect(JSON.stringify(compact)).not.toContain('inputParameters');
+    expect(compact[0]!.description).not.toContain('\n');
+    const matched = await provider.listTools('github', 'GITHUB_TOOL_0');
+    expect(matched).toHaveLength(1);
+    expect(matched[0]!.inputParameters).toBeDefined();
+  });
   it('registers one receiver and only webhook trigger types on an existing connected account', async () => {
     const calls: { path: string; body?: Record<string, unknown> }[] = [];
     let receiver = false;

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { boundToolResult } from './tool-output-budget.js';
 import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
@@ -3128,7 +3129,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
         }) });
         const operation = routes[String(args.tool)];
         if (!operation) throw new Error('unknown capability operation; discover its schema first');
-        const input = { ...asObject(args.args) };
+        const input = { ...asObject(args.args ?? args.arguments) };
         const definition = CAPABILITY_TOOLS[capability]![String(args.tool)]!;
         validateToolInput(definition, input);
         if (capability === 'workflow' && args.tool === 'rebind') { input.agentId = input.agent; delete input.agent; }
@@ -3136,7 +3137,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       }
       return args.tool === undefined
         ? execute('list_app_tools', { appId: app, query: args.query })
-        : execute('execute_app_tool', { appId: app, tool: args.tool, arguments: args.args });
+        : execute('execute_app_tool', { appId: app, tool: args.tool, arguments: args.args ?? args.arguments });
     }
     case 'scratch_io': {
       if (process.env.BEELINE_NATIVE_IO_PROVEN === '1') throw new Error('native IO is available');
@@ -4117,13 +4118,13 @@ async function handleLine(line: string): Promise<void> {
           ? await callAgentTool(params.name, asObject(params.arguments), toolCallId(params, request.id))
           : await callTool(params.name, asObject(params.arguments));
       } catch (error) {
-        success(request.id, {
+        success(request.id, await boundToolResult({
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
           isError: true,
-        });
+        }));
         return;
       }
-      success(request.id, { content: [{ type: 'text', text: output }] });
+      success(request.id, await boundToolResult({ content: [{ type: 'text', text: output }] }));
       return;
     }
     failure(request.id, -32601, `method not found: ${request.method ?? ''}`);

@@ -205,6 +205,23 @@ describe('server-mediated connected app tools', () => {
     expect(JSON.stringify(calls)).not.toMatch(/accessToken|refreshToken|composio|apiKey/i);
   });
 
+  it('advertises workflow roles through describe before start', async () => {
+    const catalog = JSON.parse(await callAgentTool('app_tool', { app: 'beeline:workflow' }, 'describe-discovery'));
+    expect(catalog.tools.find((tool: { name: string }) => tool.name === 'describe')).toMatchObject({ inputSchema: { required: ['slug'] } });
+    answer = () => Response.json({ slug: 'example', markdown: '<workflow-contract>\n{"roles":["maker","reviewer"]}\n</workflow-contract>' });
+    const described = JSON.parse(await callAgentTool('app_tool', {
+      app: 'beeline:workflow', tool: 'describe', args: { slug: 'example' },
+    }, 'describe-roles'));
+    expect(described.markdown).toContain('"roles":["maker","reviewer"]');
+    expect(calls[0]).toMatchObject({ name: 'loadWorkspaceSkill', input: { slug: 'example', roomId: 'room-1' } });
+  });
+
+  it('accepts arguments as an alias for args', async () => {
+    answer = () => Response.json({ status: 'executed' });
+    await callAgentTool('app_tool', { app: appId, tool: 'SLACK_POST_MESSAGE', arguments: { text: 'hello' } }, 'alias');
+    expect(calls[0]!.input).toMatchObject({ arguments: { text: 'hello' } });
+  });
+
   it('returns Squire API discovery guidance without executing a provider tool', async () => {
     const route = { tools: [], transport: 'squire-api', service: 'github',
       next: 'Call GitHub API with Trusty Squire use_credential.',

@@ -8024,7 +8024,7 @@ export class DaemonService {
     const tools = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
     if (!tools.length && !input.query)
       throw new Error('App provider returned no tools');
-    return { tools };
+    return { tools, next: 'Use app_tool with query set to a tool slug or search phrase for matching input schemas. The compact catalog is capped at 24000 bytes; query to find tools beyond this list.' };
   }
 
   private deferredAppTool?: (database: SqlDatabase) => Promise<Output<'executeAppTool'>>;

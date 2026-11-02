@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 
 // Task, transcript, resume, review and lifecycle instructions remain per-turn.
 const CACHED = new Set(['turn.session', 'turn.members', 'turn.memory', 'turn.corners',
-  'turn.objective', 'turn.rename', 'turn.brief', 'turn.checkout', 'turn.capabilities']);
+  'turn.workspace-core', 'turn.objective', 'turn.rename', 'turn.brief', 'turn.checkout', 'turn.capabilities']);
 export interface DeliveryEntry { readonly id: string; readonly text: string }
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex');
 
-/** One confirmed Codex conversation, never persisted across an uncertain load.
+/** One confirmed harness conversation, never persisted across an uncertain load.
  * Assembly stages hashes; only a successful delivery commits them. Compaction
  * invalidates even an in-flight stage, so the next turn restores every block. */
 export class CodexPromptDelivery {

@@ -1,6 +1,20 @@
 import { readFile } from 'node:fs/promises';
 import { piSessionFilePath } from './pi-turn-record.js';
 
+export async function piCompactionMarker(session: string, env: Record<string, string>): Promise<string | undefined> {
+  const file = await piSessionFilePath(env, session);
+  if (!file) return undefined;
+  try {
+    let marker = '';
+    for (const line of (await readFile(file, 'utf8')).split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const entry = JSON.parse(line);
+      if (entry.type === 'compaction') marker = entry.id ?? entry.timestamp;
+    }
+    return marker;
+  } catch { return undefined; }
+}
+
 /** Pi ignores ACP systemPrompt. Keep one copy in its conversation, and restore
  * it after a new/repaired conversation, changed rules, or Pi compaction.
  * A missing/unreadable journal never licenses omitting safety instructions. */
@@ -19,18 +33,7 @@ export class PiSessionInstructions {
   async prepare(session: string, text: string, env: Record<string, string>): Promise<string> {
     const state = this.sessions.get(session);
     if (!state?.instructions) return text;
-    const file = await piSessionFilePath(env, session);
-    let compaction: string | undefined;
-    if (file) {
-      try {
-        compaction = '';
-        for (const line of (await readFile(file, 'utf8')).split(/\r?\n/)) {
-          if (!line.trim()) continue;
-          const entry = JSON.parse(line);
-          if (entry.type === 'compaction') compaction = entry.id ?? entry.timestamp;
-        }
-      } catch { compaction = undefined; }
-    }
+    const compaction = await piCompactionMarker(session, env);
     const resend = !state.delivered || compaction === undefined ||
       (state.compaction ?? '') !== compaction;
     const prefix = state.instructions;

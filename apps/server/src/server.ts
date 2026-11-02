@@ -2341,13 +2341,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
              WHERE received_at<now()-interval '30 days'
              ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
         );
-        await options.database.query(
-          `UPDATE github_webhook_deliveries delivery SET payload=NULL,event_type=NULL,processed_at=NULL
-           WHERE delivery.delivery_id IN (
-             SELECT delivery_id FROM github_webhook_deliveries
-             WHERE payload IS NOT NULL
-             ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
-        );
       } catch (error) {
         console.warn('[github-webhook] retention prune failed', error);
       }

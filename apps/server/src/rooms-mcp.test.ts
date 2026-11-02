@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
-import { RoomsMcpEvents } from './rooms-mcp-events.js';
+import { MCP_REVIEW_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
 import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -459,6 +459,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await queued(revoked.id)).toEqual([]);
     await db.query(`UPDATE agent_commands SET state='complete', completed_at=now() WHERE id=$1`, [commander.id]);
     await db.query(`UPDATE agent_turns SET status='complete' WHERE agent_id=$1 AND generation_id='wake-proof'`, [AGENT]);
+    // Reproduction (MCP-REVIEW-WAKE-1): a reviewer dispatch carried the generic "no_reply_needed" hint.
+    await eventCall(token, 'events/subscribe', { ...params, name: 'wake', delivery: { ...params.delivery, url: wakeTooUrl, secret } });
+    const review = await createAgentCommand(db, {
+      roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'corner_review_dispatch',
+      privatePayload: { text: `Current handoff target: PR #7 at ${'a'.repeat(40)}.`, authorId: AGENT, fromRoomId: ROOM, kind: 'lifecycle' },
+    });
+    expect(JSON.parse((await queued(review!.id))[0]!.body).data).toMatchObject({ reason: 'corner_review_dispatch', next: MCP_REVIEW_WAKE_HINT });
+    expect((await pendingMcpWakes(db, member)).find(item => item.id === review!.id)).toMatchObject({ next: MCP_REVIEW_WAKE_HINT });
+    expect(MCP_REVIEW_WAKE_HINT).toContain('approve_merge with the head SHA');
   });
   it.each(['consent', 'profile'])('MCP-WAKE-SETUP: %s saves once, delivers tags and never reads the key back', async path => {
     vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-wake-test-key');

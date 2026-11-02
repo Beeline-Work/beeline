@@ -733,12 +733,6 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
   }
 }
 
-const wait = (milliseconds: number) =>
-  new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
-    timer.unref?.();
-  });
-
 /** One session-persistent LISTEN connection for one server machine. */
 export class PostgresLiveListener {
   private pushWake?: () => void;
@@ -754,6 +748,12 @@ export class PostgresLiveListener {
   /** A committed AI-client tag; the wake sends its webhook POST at once. */
   setMcpWebhookWake(wake: () => void): void { this.mcpWebhookWake = wake; }
   private stopped = false;
+  private running?: Promise<void>;
+  private reconnectPending = false;
+  private replacementAllowed = true;
+  private resumeConnection?: () => void;
+  private disconnectActive?: () => void;
+  private stopRecovery?: () => void;
   private active?: LivePgClient;
   private connected = false;
   private readonly projectionQueue: Array<{ raw: string; queuedAt: number; key?: string }> = [];
@@ -809,7 +809,6 @@ export class PostgresLiveListener {
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
     private readonly clientFactory: LivePgClientFactory,
-    private readonly retryDelayMs = 1_000,
   ) {}
 
   projectionHealth() {
@@ -841,6 +840,9 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
+    // A committed cause proves traffic on this incarnation; an opened socket
+    // alone never replenishes the one replacement allowance.
+    this.replacementAllowed = true;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
     if (payload.table === 'router_source' || payload.table === 'router_authority') return;
     if(payload.table===X_SIGNUP_DELIVERY_TABLE){this.xSignupDeliveryWake?.();return;}
@@ -957,21 +959,46 @@ export class PostgresLiveListener {
     );
   }
 
-  async run(): Promise<void> {
+  run(): Promise<void> {
+    if (this.stopped) return this.running ?? Promise.resolve();
+    if (!this.running) {
+      this.stopRecovery = this.database.onRecovery?.(() => {
+        if (this.stopped) return;
+        this.replacementAllowed = true;
+        if (!this.connected) this.requestConnection();
+      });
+      this.running = this.runConnections();
+    }
+    return this.running;
+  }
+
+  private requestConnection(): void {
+    this.reconnectPending = true;
+    this.resumeConnection?.();
+  }
+
+  private async runConnections(): Promise<void> {
     while (!this.stopped) {
+      this.reconnectPending = false;
       let disconnect!: () => void;
+      let released = false;
       const disconnected = new Promise<void>((resolve) => {
-        let released=false;
         disconnect = () => {
           if(released)return;released=true;
+          if (this.connected && this.replacementAllowed && !this.stopped) {
+            this.replacementAllowed = false;
+            this.requestConnection();
+          }
           this.connected=false;
           this.live.projectionUnavailable();
           resolve();
         };
       });
+      this.disconnectActive = disconnect;
       const client = this.clientFactory();
       this.active = client;
       client.on('notification', (message) => {
+        if (this.stopped || this.active !== client || released) return;
         if (message.channel === COMMAND_COMPLETION_CHANNEL) {
           if (message.payload) notifyCommandCompletion(message.payload);
           return;
@@ -986,8 +1013,14 @@ export class PostgresLiveListener {
       client.on('end', disconnect);
       try {
         await client.connect();
+        if (this.stopped || this.active !== client) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
+        if (this.stopped) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
         await client.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
+        if (this.stopped) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
         recoverCommandCompletions();
         this.xSignupDeliveryWake?.();
         this.connected = true;
@@ -995,9 +1028,13 @@ export class PostgresLiveListener {
         // A reconnect may have missed committed writes while LISTEN was down.
         this.pushWake?.();
         await this.restoreRegistryDue();
+        if (this.stopped) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
         this.live.resync();
         await disconnected;
       } catch (error) {
+        this.connected = false;
+        disconnect();
         console.error(
           '[live-listener] connect failed',
           error instanceof Error ? error.message : String(error),
@@ -1005,17 +1042,25 @@ export class PostgresLiveListener {
       } finally {
         this.connected = false;
         if (this.active === client) this.active = undefined;
+        this.disconnectActive = undefined;
         await client.end().catch(() => undefined);
       }
-      if (!this.stopped) await wait(this.retryDelayMs);
+      if (!this.stopped && !this.reconnectPending) {
+        await new Promise<void>(resolve => { this.resumeConnection = resolve; });
+        this.resumeConnection = undefined;
+      }
     }
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.stopRecovery?.();
+    this.disconnectActive?.();
+    this.resumeConnection?.();
     this.projectionQueue.length = 0;
     if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);
+    await this.running;
   }
 
   private async rebroadcast(raw: string | undefined): Promise<void> {

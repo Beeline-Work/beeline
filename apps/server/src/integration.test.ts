@@ -2228,7 +2228,7 @@ describe('monolith integration', () => {
       });
     };
     pgClient.end = async () => { await unlisten?.(); };
-    const listener = new PostgresLiveListener(database, live, () => pgClient, 1);
+    const listener = new PostgresLiveListener(database, live, () => pgClient);
     const sockets = [memberToken, outsiderToken].map((token) =>
       new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [`bearer.${token}`]));
     const opened = Promise.all(sockets.map((socket) => new Promise<void>((resolve, reject) => {

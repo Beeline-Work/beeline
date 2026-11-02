@@ -122,7 +122,7 @@ describe('Needs-you expiry sweep', () => {
     events = [];
     live.subscribeAll((event) => events.push(event));
     client = new PgliteListenClient(database);
-    listener = new PostgresLiveListener(database, live, () => client, 1);
+    listener = new PostgresLiveListener(database, live, () => client);
     void listener.run();
     await eventually(() => listener.projectionHealth().connected);
   });

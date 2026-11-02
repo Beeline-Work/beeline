@@ -176,7 +176,7 @@ describe('phone history and outline reads', () => {
     live.subscribeAll((event) => {
       if (event.type === 'invalidate' && event.reason === 'postgres:messages') messageEvents += 1;
     });
-    listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 1);
+    listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database));
     void listener.run();
     await eventually(() => listener.projectionHealth().connected);
 

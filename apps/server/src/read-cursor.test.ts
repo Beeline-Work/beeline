@@ -117,7 +117,7 @@ describe('the read cursor over the live phone surface', () => {
       daemon: new DaemonService(database, peerLive), live: peerLive, mediaMaximumBytes: 1024 * 1024,
     });
     listeners = [live, peerLive].map((hub) =>
-      new PostgresLiveListener(database, hub, () => new ListenClient(database), 1));
+      new PostgresLiveListener(database, hub, () => new ListenClient(database)));
     for (const listener of listeners) void listener.run();
     for (let attempt = 0; !listeners.every((listener) => listener.projectionHealth().connected); attempt++) {
       if (attempt > 100) throw new Error('listener did not connect');

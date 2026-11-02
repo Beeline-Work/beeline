@@ -53,7 +53,7 @@ beforeAll(async () => {
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, room, who]);
   const auth = new TokenAuth(db, async () => ({ subject: 'proof', login: 'proof' }));
   const live = new LiveHub();
-  listener = new PostgresLiveListener(db, live, () => new PgliteListenClient(db), 1);
+  listener = new PostgresLiveListener(db, live, () => new PgliteListenClient(db));
   void listener.run();
   await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
   server = createBeelineServer({ database: db, auth, live, phone: new PhoneService(db, 'http://placeholder'), daemon: new DaemonService(db, live) });

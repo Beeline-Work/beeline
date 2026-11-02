@@ -83,7 +83,7 @@ describe('live Workspace and identity changes across sessions', () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic reviewer')`,[REVIEW_AGENT]);
     await database.query(`INSERT INTO agents(agent_id,owner_id,harness,selected_model) VALUES($1,$2,'claude','default')`,[REVIEW_AGENT,VIEWER]);
     const live = new LiveHub();
-    listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 1);
+    listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database));
     void listener.run();
     await until(() => listener.projectionHealth().connected);
     expect(listener.projectionHealth().connected).toBe(true);

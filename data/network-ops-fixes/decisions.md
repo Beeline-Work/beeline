@@ -178,3 +178,9 @@ A failed read, process restart, pending verdict or absent webhook supplies no ad
 Delete the unaddressed `reconcileMergedCorners` provider sweep and its recurring repair registration. Actual merge/close webhooks retain their established paths. The existing exact-corner `prChecksStatus` command already reconciles a confirmed merge; it now also records an unmerged closed PR independently of whether its check summary changed. This preserves missed-event recovery without a new UI control or periodic discovery.
 
 Regression coverage routes prior sweep scenarios through explicit check commands, preserving locked corners, idempotent archival/branch cleanup, merge-queue clearing, and no additional merge API call. Missing webhooks alone do not admit work. Reviewer and other periodic jobs remain open.
+
+## D074 — LISTEN recovery uses connection evidence instead of a one-second loop
+
+Remove the listener retry delay and its configurable test override. A failed initial acquisition parks with no timer. An established connection loss consumes one immediate replacement, coalescing error/end; merely opening that replacement does not replenish admission. A committed live cause or independent database recovery provides new evidence. Stop unsubscribes recovery, interrupts parked waits and drains initialization. Late retired notifications and LISTEN completions cannot publish readiness.
+
+The restored-feed proof holds the replacement's actual connection promise while committing missed work, rather than relying on a 50ms retry gap. Existing session, source and command-completion recovery behavior remains; no extra connection or database probe is introduced. Full F18/source/cohort closure remains open.

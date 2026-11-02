@@ -119,7 +119,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
     );
     live = new LiveHub();
     const client = new PgliteListenClient(database);
-    listener = new PostgresLiveListener(database, live, () => client, 1);
+    listener = new PostgresLiveListener(database, live, () => client);
     void listener.run();
     await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
     phone = new PhoneService(database, 'https://server.example', undefined, undefined, live);

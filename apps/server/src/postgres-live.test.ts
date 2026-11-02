@@ -126,7 +126,7 @@ describe('Postgres live fanout', () => {
     const received: LiveEvent[] = [];
     live.subscribe(corner, event => received.push(event));
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     void listener.run();
     await eventually(() => client.listenerCount('notification') === 1);
@@ -143,7 +143,7 @@ describe('Postgres live fanout', () => {
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const wake = vi.fn();
     listener.setOwedWake(wake);
@@ -176,7 +176,7 @@ describe('Postgres live fanout', () => {
   it('publishes owner-scoped install, vault and agent commits without an idle read', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -205,7 +205,7 @@ describe('Postgres live fanout', () => {
   it('MCP-DISCOVERY-1: committed public discovery invalidates only the requesting owner Workbench', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
@@ -225,7 +225,7 @@ describe('Postgres live fanout', () => {
   it('wallet-2593: committed wallet revocation invalidates only the owner Workbench', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
@@ -241,7 +241,7 @@ describe('Postgres live fanout', () => {
 
   it('labels only isolated usage writes so negotiated clients can suppress broad agent reads',async()=>{
     const live=new LiveHub(),client=new PgliteListenClient(database);
-    const listener=new PostgresLiveListener(database,live,()=>client,1);listeners.push(listener);
+    const listener=new PostgresLiveListener(database,live,()=>client);listeners.push(listener);
     const received:LiveEvent[]=[];live.subscribeAll(event=>received.push(event));void listener.run();
     await eventually(()=>listener.projectionHealth().connected);
     const agent='b'.repeat(64);
@@ -258,7 +258,7 @@ describe('Postgres live fanout', () => {
 
   it('publishes account usage only to matching owner-bound agents and ignores metadata-only writes',async()=>{
     const live=new LiveHub(),client=new PgliteListenClient(database);
-    const listener=new PostgresLiveListener(database,live,()=>client,1);listeners.push(listener);
+    const listener=new PostgresLiveListener(database,live,()=>client);listeners.push(listener);
     const received:LiveEvent[]=[];live.subscribeAll(event=>received.push(event));void listener.run();
     await eventually(()=>listener.projectionHealth().connected);
     const first='b'.repeat(64),second='c'.repeat(64),foreign='d'.repeat(64),otherOwner='e'.repeat(64);
@@ -284,7 +284,7 @@ describe('Postgres live fanout', () => {
   it('publishes machine broker reports and sign-in progress to the owner surfaces', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -308,7 +308,7 @@ describe('Postgres live fanout', () => {
   it('names a Workspace header or identity change by id, and only to who shares it', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -365,7 +365,7 @@ describe('Postgres live fanout', () => {
   it('wakes push only after message and device writes commit', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const wake = vi.fn();
     listener.setPushWake(wake);
@@ -389,7 +389,7 @@ describe('Postgres live fanout', () => {
   it('wakes AI-client webhook delivery only when a tag commits', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const wake = vi.fn();
     listener.setMcpWebhookWake(wake);
@@ -406,7 +406,7 @@ describe('Postgres live fanout', () => {
   it('fans out one committed helper release without a follow-up read', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -426,7 +426,7 @@ describe('Postgres live fanout', () => {
   it('delivers read-mark changes to the listener with the reader identity', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     const release = live.subscribe(ROOM, (event) => events.push(event));
@@ -449,7 +449,7 @@ describe('Postgres live fanout', () => {
   it('routes a bookmark change to its owner without broadcasting its content', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -475,7 +475,7 @@ describe('Postgres live fanout', () => {
   it('coalesces a section clear into one Needs-you wake per Room', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -521,7 +521,7 @@ describe('Postgres live fanout', () => {
     client.end = async () => { client.emit('end'); };
     const live = new LiveHub();
     const listener = new PostgresLiveListener(
-      { query, transaction: vi.fn() }, live, () => client, 1,
+      { query, transaction: vi.fn() }, live, () => client,
     );
     listeners.push(listener);
     const running = listener.run();
@@ -574,7 +574,7 @@ describe('Postgres live fanout', () => {
     const resync = vi.fn();
     live.subscribeResync(resync);
     const listener = new PostgresLiveListener(
-      { query, transaction: vi.fn() }, live, () => client, 1,
+      { query, transaction: vi.fn() }, live, () => client,
     );
     listeners.push(listener);
     const running = listener.run();
@@ -609,7 +609,6 @@ describe('Postgres live fanout', () => {
         clientsA.push(client);
         return client;
       },
-      1,
     );
     const listenerB = new PostgresLiveListener(
       database,
@@ -619,7 +618,6 @@ describe('Postgres live fanout', () => {
         clientsB.push(client);
         return client;
       },
-      1,
     );
     listeners.push(listenerA, listenerB);
     void listenerA.run();
@@ -684,7 +682,6 @@ describe('Postgres live fanout', () => {
       { query, transaction: database.transaction.bind(database) },
       live,
       () => client,
-      1,
     );
     listeners.push(listener);
     const received: LiveEvent[] = [];
@@ -724,7 +721,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -745,7 +742,7 @@ describe('Postgres live fanout', () => {
   it('delivers a membership change as an agent-directed invalidation', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -778,7 +775,7 @@ describe('Postgres live fanout', () => {
     // Install this trigger revision explicitly; the root owns production markers.
     await database.query(POSTGRES_LIVE_SCHEMA);
     const live = new LiveHub(), client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener); const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event)); void listener.run();
     await eventually(() => client.listenerCount('notification') === 1);
@@ -812,7 +809,7 @@ describe('Postgres live fanout', () => {
     );
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -830,7 +827,7 @@ describe('Postgres live fanout', () => {
   it('names the parent Room and corner opener on a sparse corner preference invalidate', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -900,7 +897,7 @@ describe('Postgres live fanout', () => {
   it('names the parent Room and opener on a queued command for a corner this helper never watched', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -946,7 +943,7 @@ describe('Postgres live fanout', () => {
   it('marks a command released only when it leaves claimed', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -990,7 +987,7 @@ describe('Postgres live fanout', () => {
   it('nudges the parent Room only when a corner status input changes', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
@@ -1068,7 +1065,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
       VALUES($1,$2,$3,$4,'Goal')`,[corner,WORKSPACE,ROOM,AUTHOR]);
     const live = new LiveHub(), client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database,live,()=>client,1);
+    const listener = new PostgresLiveListener(database,live,()=>client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM,event=>parent.push(event));
@@ -1105,7 +1102,7 @@ describe('Postgres live fanout', () => {
   it('nudges the parent Room for every projected corner-row change', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
@@ -1216,7 +1213,7 @@ describe('Postgres live fanout', () => {
     const parents: LiveEvent[][] = [[], []];
     for (const [index, live] of machines.entries()) {
       const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      const listener = new PostgresLiveListener(database, live, () => client);
       listeners.push(listener);
       live.subscribe(ROOM, (event) => parents[index]!.push(event));
       void listener.run();
@@ -1239,7 +1236,7 @@ describe('Postgres live fanout', () => {
   it('delivers one parent nudge for an owed refresh that rewrites many rows', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     void listener.run();
     await eventually(() => client.listenerCount('notification') === 1);
@@ -1274,7 +1271,7 @@ describe('Postgres live fanout', () => {
     const wakes = [0, 0];
     for (const [index, live] of machines.entries()) {
       const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      const listener = new PostgresLiveListener(database, live, () => client);
       listener.setOwedWake(() => { wakes[index]! += 1; });
       listeners.push(listener);
       live.subscribe(ROOM, (event) => parents[index]!.push(event));
@@ -1307,7 +1304,7 @@ describe('Postgres live fanout', () => {
   it('decides an owed expiry by the database clock when the app clock runs ahead', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
@@ -1347,7 +1344,7 @@ describe('Postgres live fanout', () => {
   it('leaves a top-level Room membership without a corner opener', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1373,7 +1370,7 @@ describe('Postgres live fanout', () => {
   it('delivers a connector-assignment wake without a catalog', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1404,7 +1401,7 @@ describe('Postgres live fanout', () => {
     );
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1429,7 +1426,7 @@ describe('Postgres live fanout', () => {
   it('delivers a phone-side model/effort change as an agent-config invalidation', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1472,7 +1469,7 @@ describe('Postgres live fanout', () => {
     );
     const liveB = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, liveB, () => client, 1);
+    const listener = new PostgresLiveListener(database, liveB, () => client);
     listeners.push(listener);
     void listener.run();
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1541,13 +1538,11 @@ describe('Postgres live fanout', () => {
       { query: queryA, transaction: database.transaction.bind(database) },
       liveA,
       () => clientA,
-      1,
     );
     const listenerB = new PostgresLiveListener(
       { query: queryB, transaction: database.transaction.bind(database) },
       liveB,
       () => clientB,
-      1,
     );
     listeners.push(listenerA, listenerB);
     void listenerA.run();
@@ -1613,7 +1608,7 @@ describe('Postgres live fanout', () => {
         ['2'.repeat(64), ROOM, AUTHOR],
       );
       const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      const listener = new PostgresLiveListener(database, live, () => client);
       listeners.push(listener);
       void listener.run();
       await eventually(async () => {
@@ -1631,19 +1626,21 @@ describe('Postgres live fanout', () => {
   it('broadcasts resync after its listener connection is restored', async () => {
     const live = new LiveHub();
     const clients: PgliteListenClient[] = [];
+    let reconnect!: () => void;
+    const reconnectReady = new Promise<void>(resolve => { reconnect = resolve; });
     const listener = new PostgresLiveListener(
       database,
       live,
       () => {
         const client = new PgliteListenClient(database);
+        if (clients.length) client.connect = () => reconnectReady;
         clients.push(client);
         return client;
       },
-      50,
     );
     listeners.push(listener);
     void listener.run();
-    await eventually(() => clients.length === 1);
+    await eventually(() => listener.projectionHealth().connected);
 
     const received: LiveEvent[] = [];
     const recovered: string[] = [];
@@ -1661,6 +1658,7 @@ describe('Postgres live fanout', () => {
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'while down')`,
       [missedId, ROOM, AUTHOR],
     );
+    reconnect();
     await eventually(() => clients.length === 2);
     await eventually(() => received.some((event) => event.type === 'invalidate'));
     await eventually(() => recovered.includes(missedId));

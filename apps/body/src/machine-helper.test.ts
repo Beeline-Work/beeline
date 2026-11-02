@@ -4,6 +4,7 @@ import * as childProcess from 'node:child_process';
 import { FreeAgentIdle } from './free-agent-idle.js';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { promisify } from 'node:util';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -33,7 +34,12 @@ import { ThinDaemonCore } from './thin-core.js';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFile: vi.fn(actual.execFile) };
+  const execFile = vi.fn(actual.execFile);
+  // Node's promisified execFile returns { stdout, stderr }, not just stdout.
+  // Storage safety checks use that contract when /proc needs the sudo fallback.
+  const custom = Symbol.for('nodejs.util.promisify.custom');
+  Object.defineProperty(execFile, custom, Object.getOwnPropertyDescriptor(actual.execFile, custom)!);
+  return { ...actual, execFile };
 });
 
 const roots: string[] = [];
@@ -90,6 +96,12 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<AgentExi
 }
 
 describe('one helper process hosts every agent on the machine', () => {
+
+  it('preserves the execFile promise contract used by storage process inventory', async () => {
+    const result = await promisify(childProcess.execFile)(process.execPath, ['-e',
+      "process.stdout.write('inventory'); process.stderr.write('diagnostic');"]);
+    expect(result).toMatchObject({ stdout: 'inventory', stderr: 'diagnostic' });
+  });
 
   // Reproduction HELPER-7: ownership blocks agent startup and therefore its update socket.
   it('updates without starting an agent while a previous owner is draining', async () => {

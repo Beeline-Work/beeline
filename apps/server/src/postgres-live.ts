@@ -1,3 +1,4 @@
+import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
 import { Client } from 'pg';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
 import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
@@ -89,6 +90,9 @@ CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE
   payload jsonb;
   workspace text;
+  workspace_target text;
+  workspace_scopes text[];
+  previous_room text;
   source_room text;
   parent_room text;
   body jsonb;
@@ -366,11 +370,29 @@ BEGIN
     -- Draft text/presence is an overlay, restored by the existing snapshot.
     -- Durable Room state, including reactions and deletes, is ID-only here.
     IF TG_TABLE_NAME <> 'live_outputs' AND (source_room IS NOT NULL OR workspace IS NOT NULL) THEN
-      IF workspace IS NOT NULL THEN
-        PERFORM beeline_journal('workspace:' || workspace,jsonb_build_object(
-          'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room));
-        streams := array_append(streams,'workspace:' || workspace);
+      -- Capture both sides of moves before taking any legacy Room lock.
+      -- OLD retains the Workspace even after a Room has moved or been deleted.
+      previous_room := COALESCE(to_jsonb(OLD)->>'room_id',
+        CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(OLD)->>'id' END,
+        to_jsonb(OLD)->>'corner_id');
+      workspace_scopes := ARRAY[workspace,to_jsonb(NEW)->>'workspace_id',to_jsonb(OLD)->>'workspace_id'];
+      IF previous_room IS NOT NULL AND TG_TABLE_NAME<>'rooms' THEN
+        workspace_scopes := workspace_scopes || ARRAY(SELECT workspace_id::text FROM rooms WHERE id=previous_room::uuid);
       END IF;
+      FOR workspace_target IN SELECT DISTINCT value FROM unnest(workspace_scopes) value
+        WHERE value IS NOT NULL ORDER BY value LOOP
+        PERFORM beeline_journal('workspace:' || workspace_target,jsonb_build_object(
+          'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room,
+          'sourceTable',TG_TABLE_NAME,'operation',TG_OP,
+          'messageId',payload->>'messageId','identityId',payload->>'identityId',
+          'agentId',payload->>'agentId','parentRoomId',parent_room,
+          'oldRoomId',previous_room,'newRoomId',source_room,
+          'sourceRemoved',TG_TABLE_NAME='rooms' AND TG_OP='UPDATE'
+            AND to_jsonb(OLD)->>'workspace_id'=workspace_target
+            AND to_jsonb(NEW)->>'workspace_id' IS DISTINCT FROM to_jsonb(OLD)->>'workspace_id',
+          'needsYouCandidate',payload->'needsYouCandidate','removed',payload->'removed'));
+        streams := array_append(streams,'workspace:' || workspace_target);
+      END LOOP;
       IF source_room IS NOT NULL THEN
         body := jsonb_strip_nulls(jsonb_build_object(
           'type','invalidate','roomId',source_room,'reason','postgres:' || TG_TABLE_NAME,
@@ -381,6 +403,12 @@ BEGIN
           'readerId',CASE WHEN TG_TABLE_NAME='room_read_marks' THEN payload->>'identityId' END));
         PERFORM beeline_journal('room:' || source_room,body);
         streams := array_append(streams,'room:' || source_room);
+      END IF;
+      IF previous_room IS NOT NULL AND previous_room IS DISTINCT FROM source_room THEN
+        PERFORM beeline_journal('room:' || previous_room,jsonb_build_object(
+          'type','invalidate','roomId',previous_room,'reason','postgres:'||TG_TABLE_NAME,
+          'messageId',payload->>'messageId','operation',TG_OP));
+        streams := array_append(streams,'room:'||previous_room);
       END IF;
       IF parent_room IS NOT NULL AND parent_room IS DISTINCT FROM source_room THEN
         PERFORM beeline_journal('room:' || parent_room,jsonb_build_object(
@@ -683,6 +711,7 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
+    if (payload.table === 'router_source') return;
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
       return;
@@ -799,6 +828,10 @@ export class PostgresLiveListener {
       const client = this.clientFactory();
       this.active = client;
       client.on('notification', (message) => {
+        if (message.channel === COMMAND_COMPLETION_CHANNEL) {
+          if (message.payload) notifyCommandCompletion(message.payload);
+          return;
+        }
         if (message.channel !== POSTGRES_LIVE_CHANNEL) return;
         this.enqueueProjection(message.payload);
       });
@@ -810,6 +843,8 @@ export class PostgresLiveListener {
       try {
         await client.connect();
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
+        await client.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
+        recoverCommandCompletions();
         this.connected = true;
         console.log('[live-listener] connected');
         // A reconnect may have missed committed writes while LISTEN was down.

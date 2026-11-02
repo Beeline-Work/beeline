@@ -500,12 +500,12 @@ export async function needsYouItems(
     `${NEEDS_YOU_CANDIDATES},
      visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
      started AS (
-       INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+       ${markSeen ? `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
        SELECT $2,message_id,$1 FROM visible
        WHERE approval_kind IS NULL AND first_seen_at IS NULL AND $3::boolean
        ON CONFLICT(identity_id,message_id)
          DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
-       RETURNING message_id,first_seen_at
+       RETURNING message_id,first_seen_at` : `SELECT message_id,first_seen_at FROM visible WHERE false AND $3::boolean`}
      )
      SELECT visible.*,
        COALESCE(started.first_seen_at,visible.first_seen_at) painted_first_seen_at,

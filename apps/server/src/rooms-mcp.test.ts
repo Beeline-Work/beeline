@@ -1,3 +1,4 @@
+import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
@@ -38,9 +39,11 @@ const opaque = () => randomBytes(32).toString('base64url');
 describe('Rooms connector HTTP OAuth and MCP', () => {
   let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, origin: string, phone: PhoneService, daemon: DaemonService;
   const clients: Client[] = [];
+  let releaseCompletions: () => Promise<void>;
   let eventTransport: typeof postMcpWebhook = postMcpWebhook;
   beforeAll(async () => {
     db = new PgliteDatabase(); await migrate(db);
+    releaseCompletions = await db.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Demo','demo'),($2,'human','Other','other'),($3,'agent','Demo Agent','demo-agent')`, [USER, OTHER, AGENT]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [AGENT, USER]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'MCP Demo')`, [WORKSPACE]);
@@ -73,7 +76,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   afterAll(async () => {
     for (const client of clients) await client.close();
     server.closeAllConnections();
-    await new Promise<void>(resolve => server.close(() => resolve())); await db.close();
+    await new Promise<void>(resolve => server.close(() => resolve())); await releaseCompletions(); await db.close();
   });
   async function post(path: string, input: Record<string, unknown>, headers: Record<string, string> = {}) {
     return fetch(origin + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });

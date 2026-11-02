@@ -1,3 +1,6 @@
+import { buildRouterSnapshot } from './router-projections.js';
+import { CommandScopedDatabase } from './command-scoped-database.js';
+import type { RouterSnapshotInput, RouterValues, RouterFamily } from '@beeline/api-contract/router-protocol';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
@@ -1031,6 +1034,7 @@ export class PhoneService {
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
 
+  private pureProjection = false;
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
@@ -1059,7 +1063,7 @@ export class PhoneService {
   ) {
     this.starterOnboarding = new StarterOnboardingService(database);
     this.connectorDiscovery = new ConnectorDiscoveryCache(database, mcpRegistry);
-    this.database = new CornerAccessDatabase(database);
+    this.database = new CommandScopedDatabase(new CornerAccessDatabase(database));
     this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
     if (live) this.outlineCache = new HistoryOutlineCache(live);
   }
@@ -1067,6 +1071,7 @@ export class PhoneService {
   private readonly connectorDiscovery: ConnectorDiscoveryCache;
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
+    if (this.pureProjection) return work;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -1095,6 +1100,31 @@ export class PhoneService {
     } finally {
       if (deadline) clearTimeout(deadline);
     }
+  }
+
+  withCommandTransaction<T>(database: SqlDatabase, work: () => Promise<T>): Promise<T> {
+    return (this.database as CommandScopedDatabase).run(new CornerAccessDatabase(database), work);
+  }
+
+  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string) {
+    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer));
+  }
+
+  /** Pure router builders bind both core and enrichment to the caller's
+   * repeatable-read handle. No providers, live cache, onboarding or seen marks. */
+  async buildRouterValue(database: SqlDatabase, input: RouterSnapshotInput,
+    viewerId: string): Promise<RouterValues[RouterFamily] | null> {
+    const reader = new PhoneService(database, this.publicOrigin);
+    reader.pureProjection = true;
+    if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
+    if (input.family === 'room-head') {
+      if (!input.roomId) throw new Error('roomId is required for room-head');
+      return reader.readRoom(input.roomId, viewerId);
+    }
+    await reader.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
+      (row) => identity(row, reader.publicOrigin), false);
+    return input.family === 'needs-you-count' ? { count: items.length } : { count: items.length, items };
   }
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
@@ -2141,7 +2171,7 @@ export class PhoneService {
     };
     const rows = await measured('data', this.roomRows(roomId, viewerId));
     if (!rows) return null;
-    if (rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
+    if (!this.pureProjection && rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
     const room = rows.room;
     const corner = rows.corner;
     const parent = corner?.parent ?? undefined;
@@ -5291,7 +5321,7 @@ export class PhoneService {
   }
 
   async liveStarPrompt(viewerId: string) {
-    return readStarPrompt(this.database, viewerId, this.github);
+    return readStarPrompt(this.database, viewerId, (this.database as CommandScopedDatabase).active ? undefined : this.github);
   }
 
   private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<Output<'reactToMessage'>> {
@@ -9897,7 +9927,7 @@ export class PhoneService {
           [row.id, viewerId],
         )).rows[0];
         return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
-      }, 15_000);
+      }, 15_000, { principal: 'connector', operation: 'status', commandId: row.id });
       if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,

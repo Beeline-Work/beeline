@@ -7748,7 +7748,9 @@ export class DaemonService {
           if (value.status === 'connected' || value.status === 'error' || signIn?.url)
             return { status: value.status, signIn };
           return undefined;
-        });
+        }, 85_000, kind === 'trusty-squire'
+          ? { principal: 'connector', operation: 'machine', commandId: `${context.owner.pubkey}:${context.machine.machineId}` }
+          : { principal: 'connector', operation: 'status', commandId: connectorId });
         if (!status) return;
         if (status.status === 'connected') { Object.assign(result, { status: 'ready', next: `${name} is ready.` }); return; }
         if (!status.signIn?.url) { Object.assign(result, { status: 'error', next: `${name} could not connect. Reconnect to retry.` }); return; }
@@ -7810,7 +7812,7 @@ export class DaemonService {
           const row = (await database.query<{ status: string; sign_in: ConnectorStatus['signIn'] }>(
             'SELECT status,sign_in FROM workspace_connectors WHERE id=$1', [outcome.connectorId])).rows[0];
           return row && (row.status === 'connected' || row.status === 'error' || row.sign_in?.url) ? row : undefined;
-        });
+        }, 85_000, { principal: 'connector', operation: 'status', commandId: outcome.connectorId! });
         if (!connector) return;
         if (connector.status === 'connected') { Object.assign(result, { status: 'ready', next: `${outcome.app} is ready.` }); return; }
         if (!connector.sign_in?.url) { Object.assign(result, { status: 'error', next: 'The Registry tool could not connect. Reconnect to retry.' }); return; }

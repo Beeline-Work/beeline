@@ -1,3 +1,6 @@
+import { COMMAND_COMPLETION_SCHEMA } from './command-completion.js';
+import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
+import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
@@ -239,7 +242,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 45;
+export const REQUIRED_SCHEMA_VERSION = 46;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3301,6 +3304,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
   await ddlScript('starter onboarding schema', STARTER_ONBOARDING_SCHEMA);
@@ -3592,6 +3596,9 @@ export async function migrate(
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
+  await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);
+  await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
+  await ddlScript('command completion notifications', COMMAND_COMPLETION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }

@@ -1,3 +1,4 @@
+import type { RouterSnapshotInput, RouterSnapshot } from './router-protocol.js';
 import type { RepositoryOnboardingAction } from './repository-onboarding.js';
 import { PHONE_ROUTE_READ_OPERATIONS, type PhoneRouteOperationMap } from './phone-route-operations.js';
 import type { RoomSubscriptionListResult } from './subscriptions.js';
@@ -90,6 +91,7 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = PhoneRouteOperationMap & {
+  readRouterSnapshot: { input: RouterSnapshotInput; output: RouterSnapshot };
   /** A short-lived browser viewer token, issued only to people who may steer its agent. */
   openComputerSession: { input: { id: string }; output: { access: string } };
   /** Explicitly return a live browser to its agent; closing a viewer is not a handback. */
@@ -290,6 +292,7 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
  */
 export const PHONE_READ_OPERATIONS = [
   ...PHONE_ROUTE_READ_OPERATIONS,
+  'readRouterSnapshot',
   'openComputerSession',
   'revealWebhookToken',
   'listRoomSubscriptions',

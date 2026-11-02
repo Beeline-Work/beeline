@@ -1,3 +1,4 @@
+import { waitForConnection } from './connection-wait.js';
 import { mentionRouting, mentionReplyKey, mentionReplyId, owedMentions } from './owed-mentions.js';
 import { RoomsMcpEvents, McpEventError } from './rooms-mcp-events.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -326,18 +327,16 @@ export class RoomsMcp {
         const claim = await db.query(`INSERT INTO rooms_mcp_idempotency(member_id,idempotency_key,message_id) VALUES($1,$2,'')
           ON CONFLICT(member_id,idempotency_key) DO NOTHING RETURNING member_id`, [member, key]);
         if (!claim.rowCount) {
-          // A retry while the first call is still in flight waits for its answer.
-          for (let attempt = 0; attempt < 100; attempt++) {
-            const existing = (await db.query<{ message_id: string; result: unknown; stale: boolean }>(
+          // Install interest first; the durable completion fact closes the
+          // claim/read race without repeated status queries.
+          const existing = await waitForConnection(async () => {
+            const row = (await db.query<{ message_id: string; result: unknown; stale: boolean }>(
               `SELECT message_id,result,claimed_at<now()-interval '60 seconds' stale FROM rooms_mcp_idempotency
                WHERE member_id=$1 AND idempotency_key=$2`, [member, key])).rows[0];
-            if (existing?.message_id) {
-              if (existing.result && (existing.result as { routing?: string }).routing !== 'retrying') return existing.result;
-              break;
-            }
-            if (!existing || existing.stale) break;
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
+            return !row || row.stale || row.message_id ? { row } : undefined;
+          }, 10_000, { principal: member, operation: 'rooms-mcp-send', commandId: key });
+          if (existing?.row?.message_id && existing.row.result &&
+              (existing.row.result as { routing?: string }).routing !== 'retrying') return existing.row.result;
           const posted = (await db.query<{ room_id: string }>(
             'SELECT room_id FROM messages WHERE id=$1 AND author_id=$2', [messageId, member])).rows[0];
           if (posted) return this.finishPost(member, posted.room_id, messageId!, key);

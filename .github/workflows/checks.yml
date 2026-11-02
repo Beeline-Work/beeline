@@ -724,6 +724,13 @@ jobs:
         run: npm test -w @beeline/server -- --run src/push-outbox.test.ts --maxWorkers=1 --minWorkers=1
         env:
           BEELINE_PUSH_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - name: Prove router command identity and authority fences on isolated PostgreSQL
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+        run: |
+          npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
       # This file subtracts the measured synthetic 206 ms timer wait before
       # checking claim query overhead. It runs with one worker on its own host.
       - name: Run the claim latency budget alone

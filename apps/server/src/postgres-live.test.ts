@@ -1,3 +1,4 @@
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -35,7 +36,7 @@ const DATABASE_SNAPSHOT = await (async () => {
 })();
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
+  private releases: Array<() => Promise<void>> = [];
   readonly payloads: string[] = [];
 
   constructor(private readonly database: PgliteDatabase) {
@@ -45,17 +46,16 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
   async connect(): Promise<void> {}
 
   async query(sql: string): Promise<void> {
-    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => {
-      this.payloads.push(payload);
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload });
-    });
+    const channel = sql.slice(7);
+    if (![POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL].includes(channel)) throw new Error(`unexpected query: ${sql}`);
+    this.releases.push(await this.database.client.listen(channel, (payload) => {
+      if (channel === POSTGRES_LIVE_CHANNEL) this.payloads.push(payload);
+      this.emit('notification', { channel, payload });
+    }));
   }
 
   async end(): Promise<void> {
-    const release = this.release;
-    this.release = undefined;
-    await release?.();
+    for (const release of this.releases.splice(0)) await release();
   }
 
   async drop(): Promise<void> {

@@ -40,3 +40,6 @@ export { squireApprovalAction, type SquireApprovalDetails } from './approval-cop
 
 export * from './sidebar-preview.js';
 export * from './mcp-starter-routine.js';
+
+export * from './router-protocol.js';
+export * from './router-command.js';

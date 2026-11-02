@@ -2,6 +2,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 
 export const LIVE_REPLAY_LIMIT = 1024;
+export const LIVE_REPLAY_BYTE_LIMIT = 4 * 1024 * 1024;
 export type LiveCursor = { epoch: string; base: number; seen: readonly number[] };
 type Entry = { sequence: number; event: LiveEvent };
 
@@ -17,14 +18,33 @@ CREATE TABLE IF NOT EXISTS live_journal (
   sequence bigint NOT NULL, event jsonb NOT NULL,
   PRIMARY KEY(stream_id,sequence)
 );
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+    AND table_name='live_streams' AND column_name='byte_total') THEN
+    ALTER TABLE live_streams ADD COLUMN byte_total bigint NOT NULL DEFAULT 0;
+    ALTER TABLE live_journal ADD COLUMN byte_start bigint NOT NULL DEFAULT 0;
+    WITH positions AS (
+      SELECT stream_id,sequence,COALESCE(sum(octet_length(event::text)) OVER
+        (PARTITION BY stream_id ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS start
+      FROM live_journal)
+    UPDATE live_journal j SET byte_start=p.start FROM positions p
+      WHERE j.stream_id=p.stream_id AND j.sequence=p.sequence;
+    UPDATE live_streams s SET byte_total=totals.bytes FROM (
+      SELECT stream_id,max(byte_start+octet_length(event::text)) bytes FROM live_journal GROUP BY stream_id
+    ) totals WHERE s.id=totals.stream_id;
+    DELETE FROM live_journal j USING live_streams s WHERE j.stream_id=s.id AND j.byte_start<s.byte_total-${LIVE_REPLAY_BYTE_LIMIT};
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS live_journal_byte_start_idx ON live_journal(stream_id,byte_start);
 CREATE OR REPLACE FUNCTION beeline_journal(stream text, body jsonb) RETURNS void AS $$
-DECLARE position bigint;
+DECLARE position bigint; total bigint; bytes integer := octet_length(body::text);
 BEGIN
-  INSERT INTO live_streams(id,sequence) VALUES(stream,1)
-    ON CONFLICT(id) DO UPDATE SET sequence=live_streams.sequence+1
-    RETURNING sequence INTO position;
-  INSERT INTO live_journal(stream_id,sequence,event) VALUES(stream,position,body);
-  DELETE FROM live_journal WHERE stream_id=stream AND sequence<=position-${LIVE_REPLAY_LIMIT};
+  INSERT INTO live_streams(id,sequence,byte_total) VALUES(stream,1,bytes)
+    ON CONFLICT(id) DO UPDATE SET sequence=live_streams.sequence+1,byte_total=live_streams.byte_total+bytes
+    RETURNING sequence,byte_total INTO position,total;
+  INSERT INTO live_journal(stream_id,sequence,event,byte_start) VALUES(stream,position,body,total-bytes);
+  DELETE FROM live_journal WHERE stream_id=stream AND
+    (sequence<=position-${LIVE_REPLAY_LIMIT} OR byte_start<total-${LIVE_REPLAY_BYTE_LIMIT});
 END;
 $$ LANGUAGE plpgsql;
 `;

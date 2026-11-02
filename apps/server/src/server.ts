@@ -1,3 +1,6 @@
+import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
+import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
+import { routerSocketProtocol, type RouterProjectionPolicy } from './router-socket.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
@@ -140,6 +143,7 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
+  routerProjections?: RouterProjectionPolicy;
   replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
   sentryWakeSecret?: string;
@@ -1048,8 +1052,16 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (oldest) pendingPaintTraces.delete(oldest);
         }
       };
+      const routerProtocol = routerSocketProtocol(options.database, principal.identityId, sendLive, options.routerProjections,
+        { live: options.live, phone: options.phone, rooms: () => [...releases.keys()] });
+      client.once('close', () => routerProtocol.close());
+      let routerNegotiating = false;
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
-        dispatchPhoneOperation, sendLive, requestErrorStatus, principal.familyId);
+        async (name, args, ...rest) => {
+          if (name === 'readRouterSnapshot') routerProtocol.requireSnapshot(args);
+          return dispatchPhoneOperation(name, args, ...rest);
+        }, sendLive, requestErrorStatus, principal.familyId,
+        (name, args, result, enqueue) => routerProtocol.fenceReply(name, args, result, enqueue));
       client.on('message', (raw) => {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
@@ -1060,12 +1072,14 @@ export function createBeelineServer(options: ServerOptions): Server {
           sendLive(LIVE_PONG_FRAME);
           return;
         }
-        if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
+        if (!routerNegotiating && frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
           sendLive('{"type":"sync-ok"}');
           return;
         }
         try {
-          if (handlePhoneRequest(JSON.parse(raw.toString()))) return;
+          const parsed = JSON.parse(raw.toString());
+          if (parsed?.type === 'router-negotiate') routerNegotiating = true;
+          if (handlePhoneRequest(parsed)) return;
         } catch {
           liveErrors.invalid++;
           return;
@@ -1091,6 +1105,7 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (await routerProtocol.handle(item)) { routerNegotiating = false; return; }
           if (item.type === 'sync' && options.replay) {
             const workspaces = await options.database.query<{ workspace_id: string }>(
               `SELECT workspace_id FROM memberships WHERE identity_id=$1
@@ -2533,13 +2548,17 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
-    invokeLegacy?: () => Promise<unknown>) => {
+    invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
+    if (name === 'readRouterSnapshot') throw new PhoneOperationError(409, { error: 'router_socket_required' });
     const familyId = phoneFamilies.get(request);
-    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId);
-    if (result === undefined) {
-      response.writeHead(204, { 'cache-control': 'private, no-store' });
-      response.end();
-    } else json(response, 200, project ? project(result) : result);
+    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
+    await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {
+      if (safeResult === undefined) {
+        response.writeHead(204, { 'cache-control': 'private, no-store' });
+        response.end();
+      } else json(response, 200, project ? project(safeResult) : safeResult);
+      return undefined;
+    });
   };
 
   const profileVoiceMatch = url.pathname.match(
@@ -2704,9 +2723,13 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const name = match[1]!;
-    const input = await body(request);
+    const rawInput = await body(request);
+    const { command: commandValue, ...input } = rawInput;
+    let command;
+    try { command = commandValue === undefined ? undefined : parseRouterCommandIdentity(commandValue); }
+    catch { throw new PhoneOperationError(400, { error: 'invalid_command_identity' }); }
     await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)));
+      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)), command);
     return;
   }
 

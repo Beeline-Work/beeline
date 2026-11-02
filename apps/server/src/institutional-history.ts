@@ -38,7 +38,7 @@ export const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
            AND (source.id=$1 OR source.parent_id=$1
                 OR source.id=(SELECT output.parent_id FROM rooms output WHERE output.id=$1))
            AND EXISTS (
-             SELECT 1 FROM effective_memberships member
+             SELECT 1 FROM room_access member
              WHERE member.room_id=$1 AND member.identity_id=$4 AND member.removed_at IS NULL
            )
          UNION
@@ -46,23 +46,23 @@ export const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
          FROM rooms source
          WHERE source.workspace_id=$3
            AND EXISTS (
-             SELECT 1 FROM effective_memberships member
-             WHERE member.room_id=source.id AND member.identity_id=$4
+             SELECT 1 FROM room_access member
+             WHERE member.room_id=COALESCE(source.parent_id,source.id) AND member.identity_id=$4
                AND member.removed_at IS NULL
            )
            AND EXISTS (
-             SELECT 1 FROM effective_memberships member
-             WHERE member.room_id=source.id AND member.identity_id=$2
+             SELECT 1 FROM room_access member
+             WHERE member.room_id=COALESCE(source.parent_id,source.id) AND member.identity_id=$2
                AND member.removed_at IS NULL
            )
            AND NOT EXISTS (
              SELECT 1
-             FROM effective_memberships output_member
+             FROM room_access output_member
              JOIN identities human ON human.id=output_member.identity_id AND human.kind='human'
              WHERE output_member.room_id=$1 AND output_member.removed_at IS NULL
                AND NOT EXISTS (
-                 SELECT 1 FROM effective_memberships source_member
-                 WHERE source_member.room_id=source.id
+                 SELECT 1 FROM room_access source_member
+                 WHERE source_member.room_id=COALESCE(source.parent_id,source.id)
                    AND source_member.identity_id=output_member.identity_id
                    AND source_member.removed_at IS NULL
                )

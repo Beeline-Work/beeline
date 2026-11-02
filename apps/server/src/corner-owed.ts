@@ -295,7 +295,7 @@ JOIN LATERAL (SELECT command.* FROM agent_commands command
     AND command.private_payload->>'fromRoomId'=corner.id::text
     AND command.private_payload->>'authorId'=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
   ORDER BY command.created_at DESC,command.id DESC LIMIT 1) report ON true
-JOIN effective_memberships member ON member.room_id=corner.id AND member.removed_at IS NULL
+JOIN room_access member ON member.room_id=corner.id AND member.removed_at IS NULL
 JOIN identities person ON person.id=member.identity_id
 CROSS JOIN LATERAL (SELECT report.private_payload->>'text' text,'message'::text presentation,
   corner.id room_id,COALESCE(fact.worker_agent_id,fact.owner_agent_id) author_id) item
@@ -304,7 +304,7 @@ WHERE corner.archived_at IS NULL AND item.text ~ '^(needs-decision|blocked):'
   AND report.private_payload->>'waitingAnswered' IS DISTINCT FROM 'true'
   AND NOT EXISTS(SELECT 1 FROM messages answer WHERE answer.room_id IN (corner.id,report.room_id)
     AND (answer.author_id=report.agent_id OR EXISTS(SELECT 1 FROM identities author
-      JOIN effective_memberships member ON member.identity_id=author.id AND member.room_id=corner.id
+      JOIN room_access member ON member.identity_id=author.id AND member.room_id=corner.id
       WHERE author.id=answer.author_id AND author.kind='human' AND member.removed_at IS NULL))
     AND answer.presentation='message' AND answer.system_event IS NULL AND answer.deleted_at IS NULL
     AND answer.created_at>report.created_at)
@@ -323,7 +323,7 @@ BEGIN
       AND NEW.system_event IS NULL AND NEW.deleted_at IS NULL
       AND (blocker.corner_id=NEW.room_id OR blocker.return_room_id=NEW.room_id)
       AND blocker.created_at<NEW.created_at
-      AND (blocker.commander_id=NEW.author_id OR EXISTS(SELECT 1 FROM effective_memberships member JOIN identities author ON author.id=member.identity_id
+      AND (blocker.commander_id=NEW.author_id OR EXISTS(SELECT 1 FROM room_access member JOIN identities author ON author.id=member.identity_id
         WHERE member.room_id=blocker.corner_id AND member.removed_at IS NULL AND author.id=NEW.author_id
           AND author.kind='human'))
       RETURNING blocker.report_id,blocker.message_id)
@@ -550,7 +550,7 @@ CREATE OR REPLACE FUNCTION corner_owed_facts_changed() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
 BEGIN
   PERFORM corner_owed_refresh(NEW.corner_id, member.identity_id)
-  FROM effective_memberships member
+  FROM room_access member
   JOIN identities person ON person.id=member.identity_id AND person.kind='human'
   WHERE member.room_id=NEW.corner_id AND member.removed_at IS NULL;
   IF TG_OP='UPDATE' AND OLD.commissioned_by IS DISTINCT FROM NEW.commissioned_by
@@ -613,7 +613,7 @@ JOIN corner_facts fact ON fact.corner_id=owed.corner_id
 WHERE owed.blocking AND report.card->>'reportToId' IS NOT NULL
   AND report.card->>'waitingAnswered' IS DISTINCT FROM 'true'
   AND report.author_id=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
-  AND NOT EXISTS(SELECT 1 FROM messages answer JOIN effective_memberships member
+  AND NOT EXISTS(SELECT 1 FROM messages answer JOIN room_access member
     ON member.room_id=owed.corner_id AND member.identity_id=answer.author_id AND member.removed_at IS NULL
     JOIN identities person ON person.id=answer.author_id AND person.kind='human'
     WHERE answer.room_id IN (owed.corner_id,report.room_id) AND answer.presentation='message'

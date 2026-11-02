@@ -84,7 +84,7 @@ const TOOLS: Tool[] = [...ROOM_TOOLS, ...MCP_AGENT_TOOLS];
 /** Repeated in read results until set_profile, for hosts that drop server instructions. */
 const SETUP_NOTE = `Setup: call list_rooms first to verify you, owner and the intended Rooms. Preserve the approved @handle; use set_profile only for a profile change requested by the person. Your owner's Allow is standing approval to answer when a Room member tags your @handle. ${MCP_STARTER_ROUTINE} Repository writes go through a corner implementer. This note stops after set_profile.`;
 const READABLE = `SELECT r.id,r.name,r.parent_id,r.workspace_id FROM rooms r
-  JOIN effective_memberships rm ON rm.room_id=r.id AND rm.identity_id=$1 AND rm.removed_at IS NULL
+  JOIN room_access rm ON rm.room_id=r.id AND rm.identity_id=$1 AND rm.removed_at IS NULL
   JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=$1 AND wm.removed_at IS NULL`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function textArg(value: unknown, max: number): string {

@@ -16,6 +16,7 @@ import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
 import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
+import { CORNER_MEMBERSHIPS_SCHEMA, removeCornerMemberships } from './migrations/corner-memberships.js';
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
@@ -238,7 +239,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 44;
+export const REQUIRED_SCHEMA_VERSION = 45;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -909,9 +910,6 @@ ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_invited_by_fkey;
 ALTER TABLE memberships ADD CONSTRAINT memberships_invited_by_fkey
   FOREIGN KEY (invited_by) REFERENCES identities(id) ON DELETE SET NULL;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS push_muted boolean NOT NULL DEFAULT false;
--- Mute is a Room setting: a corner follows its Room's mute.
-UPDATE memberships member SET push_muted=false FROM rooms corner
-  WHERE corner.id=member.room_id AND corner.parent_id IS NOT NULL AND member.push_muted;
 -- What this member reacts to in THIS Room. An event happens in a Room, so the
 -- subscription lives on the Room membership row and not on the identity: an
 -- agent in several Rooms would otherwise inherit one Room's job everywhere.
@@ -3580,6 +3578,7 @@ export async function migrate(
        THEN (private_payload->>'originCornerId')::uuid ELSE room_id END))`,
   ));
   await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
+  await ddlScript('corner membership guard', CORNER_MEMBERSHIPS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
@@ -3640,6 +3639,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('corner person state migration', () => migrateCornerPersonState(database));
+  await dataStep('remove corner memberships', () => removeCornerMemberships(database));
   await dataStep('rooms MCP preregistered clients', () => seedPreregisteredMcpClients(database));
   const mcpMembers = await dataStep('rooms MCP members', () => backfillMcpMembers(database));
   if (mcpMembers) console.log(`backfillMcpMembers: created ${mcpMembers} member(s)`);

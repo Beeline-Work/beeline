@@ -1474,7 +1474,7 @@ describe('the top-level shared Room role migration', () => {
     await migrate(database);
 
     const roles = await database.query<{ room_id: string | null; role: string }>(
-      `SELECT room_id,role FROM effective_memberships WHERE workspace_id=$1 AND identity_id=$2
+      `SELECT room_id,role FROM room_access WHERE workspace_id=$1 AND identity_id=$2
        ORDER BY room_id NULLS FIRST`,
       [workspace, member],
     );

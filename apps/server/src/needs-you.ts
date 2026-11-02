@@ -207,7 +207,7 @@ type Row = {
 const ROW_COLUMNS = `
   m.id message_id,m.room_id,m.text,m.card,m.created_at,mark.first_seen_at,mark.cleared_at,
   CASE WHEN room.direct_participants IS NOT NULL THEN COALESCE((
-      SELECT peer.name FROM effective_memberships peer_member
+      SELECT peer.name FROM room_access peer_member
       JOIN identities peer ON peer.id=peer_member.identity_id
       WHERE peer_member.room_id=room.id AND peer_member.identity_id<>$2
         AND peer_member.removed_at IS NULL
@@ -229,7 +229,7 @@ const VIEWER_MEMBER = viewerMemberSql('$1', '$2');
 
 const VIEWER_ROOMS = `
   viewer_rooms AS (
-    SELECT room.* FROM effective_memberships room_member
+    SELECT room.* FROM room_access room_member
     JOIN rooms room ON room.id=room_member.room_id
     WHERE room_member.identity_id=$2 AND room_member.removed_at IS NULL
       AND room.workspace_id=$1 AND room.archived_at IS NULL

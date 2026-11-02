@@ -1003,7 +1003,7 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
   async function expectWakeSources(roomId: string, count: number) {
     for (const table of ['agent_schedules', 'agent_subscriptions', 'work_schedules'])
       expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1`, [roomId])).rowCount).toBe(count);
-    expect((await db.query(`SELECT 1 FROM effective_memberships WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
+    expect((await db.query(`SELECT 1 FROM room_access WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
       [roomId])).rowCount).toBe(count ? 3 : 0);
   }
 

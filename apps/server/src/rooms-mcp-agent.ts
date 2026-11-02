@@ -636,7 +636,7 @@ export async function pendingMcpWakes(db: SqlDatabase, member: string) {
      FROM agent_commands command LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.agent_id=$1 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
        AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
-       AND EXISTS(SELECT 1 FROM effective_memberships member WHERE member.room_id=command.room_id
+       AND EXISTS(SELECT 1 FROM room_access member WHERE member.room_id=command.room_id
          AND member.identity_id=$1 AND member.removed_at IS NULL)
      ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
     .map(row => ({ id: row.id, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),

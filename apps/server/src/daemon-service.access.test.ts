@@ -9,7 +9,7 @@ const AGENT = 'a'.repeat(64);
 describe('daemon room access', () => {
   it('offers active-only discovery without changing the historical listing', async () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
-      if (sql.includes('FROM effective_memberships WHERE room_id=$1'))
+      if (sql.includes('FROM room_access WHERE room_id=$1'))
         return { rows: [{ corner_reviewer: false, is_corner: false }] as Row[], rowCount: 1 };
       if (sql.includes('FROM rooms r JOIN corner_facts f')) {
         const rows = [
@@ -56,7 +56,7 @@ describe('daemon room access', () => {
 
   it('checks membership once when listing a Room\'s corners', async () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
-      if (sql.includes('FROM effective_memberships WHERE room_id=$1'))
+      if (sql.includes('FROM room_access WHERE room_id=$1'))
         return { rows: [{ corner_reviewer: false, is_corner: false }] as Row[], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     });
@@ -65,25 +65,25 @@ describe('daemon room access', () => {
 
     await expect(daemon.execute('listRoomCorners', { roomId: ROOM }, AGENT))
       .resolves.toEqual({ corners: [] });
-    expect(query.mock.calls.filter(([sql]) => sql.includes('FROM effective_memberships WHERE room_id=$1')))
+    expect(query.mock.calls.filter(([sql]) => sql.includes('FROM room_access WHERE room_id=$1')))
       .toHaveLength(1);
   });
 
   it('checks membership once when restoring a corner', async () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
-      if (sql.includes('FROM effective_memberships WHERE room_id=$1'))
+      if (sql.includes('FROM room_access WHERE room_id=$1'))
         return { rows: [{ corner_reviewer: false, is_corner: true }] as Row[], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     });
     const daemon = new DaemonService({ query } as unknown as SqlDatabase, new LiveHub());
 
     await daemon.execute('getCornerRestoreState', { cornerId: ROOM }, AGENT);
-    expect(query.mock.calls.filter(([sql]) => sql.includes('FROM effective_memberships WHERE room_id=$1')))
+    expect(query.mock.calls.filter(([sql]) => sql.includes('FROM room_access WHERE room_id=$1')))
       .toHaveLength(1);
   });
   it('reports an active human hold on the restore state', async () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
-      if (sql.includes('FROM effective_memberships WHERE room_id=$1'))
+      if (sql.includes('FROM room_access WHERE room_id=$1'))
         return { rows: [{ corner_reviewer: false, is_corner: true }] as Row[], rowCount: 1 };
       if (sql.includes('FROM corner_merge_holds WHERE corner_id=$1'))
         return {

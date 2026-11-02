@@ -512,7 +512,7 @@ export async function reportMessageIssue(
     throw new Error('the note contains a secret-shaped value; remove it and report again');
   const visible = await database.query(
     `SELECT 1 FROM messages message
-     JOIN effective_memberships membership ON membership.room_id=message.room_id
+     JOIN room_access membership ON membership.room_id=message.room_id
        AND membership.identity_id=$3 AND membership.removed_at IS NULL
      JOIN identities reporter ON reporter.id=$3 AND reporter.kind='human'
      WHERE message.id=$1 AND message.room_id=$2 AND message.deleted_at IS NULL`,

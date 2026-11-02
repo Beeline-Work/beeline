@@ -469,7 +469,13 @@ describe('corner_owed', () => {
     // indexed call-site cards. These scans do not recover owed facts.
     const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
     expect(callsiteScans).toHaveLength(2);
-    expect(messageScans.filter((scan) => scan.alias !== 'item' && !isDispatchSource(scan.alias) &&
-      !scan.alias.startsWith('callsite'))).toHaveLength(3);
+    // The run state is the newest handoff card (indexed by corner and seq),
+    // and a derived worker wait reads its report card by primary key and the
+    // worker's newest human report by its index. None recovers owed facts.
+    expect(messageScans.filter((scan) => scan.alias.startsWith('run_card'))).toHaveLength(2);
+    expect(messageScans.filter((scan) => scan.alias === 'visible')).toHaveLength(1);
+    expect(messageScans.filter((scan) => scan.alias !== 'item' && scan.alias !== 'visible' &&
+      !isDispatchSource(scan.alias) && !scan.alias.startsWith('callsite') &&
+      !scan.alias.startsWith('run_card'))).toHaveLength(4);
   });
 });

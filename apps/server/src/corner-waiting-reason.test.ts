@@ -6,9 +6,9 @@ import { cornerBlockerSql, cornerRowState, chatCornerCounts } from './chat-corne
 
 const db = new PGlite();
 beforeAll(async () => {
-  await db.exec(`CREATE TABLE rooms(id text,parent_id text,created_by text);
-    CREATE TABLE corner_facts(corner_id text,worker_agent_id text,owner_agent_id text);
-    CREATE TABLE agent_commands(id text,room_id text,agent_id text,private_payload jsonb,created_at timestamp);
+  await db.exec(`CREATE TABLE rooms(id text,parent_id text,created_by text,reviewer_agent_id text);
+    CREATE TABLE corner_facts(corner_id text,worker_agent_id text,owner_agent_id text,reviewer_agent_id text);
+    CREATE TABLE agent_commands(id text,room_id text,agent_id text,private_payload jsonb,created_at timestamp,reason text,inbox_sequence bigint);
     CREATE TABLE messages(id text,card_type text,room_id text,author_id text,text text,card jsonb,presentation text,system_event jsonb,deleted_at timestamp,request_id text,created_at timestamp);
     CREATE TABLE memberships(room_id text,identity_id text,removed_at timestamp);
     CREATE TABLE room_access(room_id text,identity_id text,removed_at timestamp);

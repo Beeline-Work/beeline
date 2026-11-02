@@ -16,7 +16,7 @@ import {
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
@@ -844,7 +844,7 @@ describe('Postgres live fanout', () => {
       `INSERT INTO agent_commands(
          id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
          root_command_id,root_source_message_id,agent_depth
-       ) VALUES($1,$2,$3,'tag-source',$4,'input','human_tag',$1,'tag-source',0)`,
+       ) VALUES($1,$2,$3,'tag-source',$4,'input','agent_tag',$1,'tag-source',0)`,
       ['command-1', corner, target, 'f'.repeat(64)],
     );
 
@@ -1065,7 +1065,8 @@ describe('Postgres live fanout', () => {
       reason: 'order', privatePayload: { text: 'Continue', kind: 'order', authorId: AUTHOR, fromRoomId: ROOM },
     }));
     await expectNudge(() => database.query(`UPDATE agent_commands SET state='complete' WHERE id='queued-state-proof'`));
-    await expectNudge(() => database.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [corner,agent]));
+    // A person's tag assigns the worker through its command, not a column.
+    await expectNudge(() => assignCornerWorker(database, corner, agent));
     await expectNudge(() => database.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing)
       VALUES($1,$2,'owner')`, [corner,reader]));
     await expectNudge(() => database.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2
@@ -1100,7 +1101,7 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
 
-    // Every other projected column: objective, initiator, owner, row stamp,
+    // Every other projected column: objective, initiator, row stamp,
     // brief revision and the newest chat message.
     const priorGoalNudges = textNudges().length;
     await expectNudge(() => database.query(
@@ -1113,8 +1114,6 @@ describe('Postgres live fanout', () => {
       `UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [corner, reader]));
     await expectNudge(() => database.query(
       `UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]));
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [corner]));
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     await expectNudge(() => database.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)

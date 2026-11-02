@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { cornerOwnerSql } from './corner-worker.js';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -83,7 +84,7 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
   const request = { ...draft, implementer: 'beta', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   const fact = (
-    await db.query(`SELECT owner_agent_id,commissioned_by FROM corner_facts WHERE corner_id=$1`, [
+    await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id,commissioned_by FROM corner_facts WHERE corner_id=$1`, [
       cornerId,
     ])
   ).rows[0];
@@ -216,7 +217,7 @@ it.each([undefined, 'alpha'])('keeps caller assignment for implementer %s', asyn
   const request = { ...(await input()), ...(implementer ? { implementer } : {}) };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   expect(
-    (await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows,
+    (await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows,
   ).toEqual([{ owner_agent_id: A }]);
   expect(
     (

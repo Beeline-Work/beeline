@@ -1,5 +1,6 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { NotificationWork } from './notification-work.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
@@ -1079,7 +1080,7 @@ export class GitHubOperations {
         corner_name: string;
       }>(
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
-                COALESCE(f.owner_agent_id,r.created_by,parent.created_by) author_id,r.name corner_name,
+                COALESCE(${cornerOwnerSql('r.id')},r.created_by,parent.created_by) author_id,r.name corner_name,
                 r.archived_at IS NOT NULL archived,
                 (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
                 ${cornerReviewerSql('r')} configured_reviewer_id,
@@ -1361,7 +1362,7 @@ export class GitHubOperations {
         `SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.feature_branch,
            repository.repository_id,repository.installation_id,repository.full_name,
            corner.id corner_id,parent.id parent_id,corner.name corner_name,
-           COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary
+           COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -1816,7 +1817,7 @@ export class GitHubOperations {
       `SELECT fact.corner_id,github.full_name repository,github.repository_id,
               github.installation_id,(fact.lifecycle->'pr'->>'number')::integer number,
               fact.lifecycle->'pr'->>'headSha' head_sha,
-              COALESCE(fact.owner_agent_id,corner.created_by) author_id,
+              COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) author_id,
               fact.lifecycle->'pr'->>'title' title,fact.lifecycle->'pr'->>'url' url,
               fact.lifecycle->'pr'->>'baseSha' base_sha,
               fact.lifecycle->'pr'->>'targetBranch' target_branch
@@ -1827,7 +1828,7 @@ export class GitHubOperations {
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
+         AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) IS NOT NULL
          AND ($1::uuid IS NOT NULL OR fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty','draft'))
          AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
          AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
@@ -1911,7 +1912,7 @@ export class GitHubOperations {
     const rows = (await this.database.query<CornerWebhookTarget & {
       repository: string; number: number; head_sha: string; combined_sha: string | null;
     }>(`SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-      COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
+      COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
       repository.repository_id,repository.installation_id,repository.full_name repository,
       (fact.lifecycle->'pr'->>'number')::int number,
       fact.lifecycle->'mergeQueue'->>'headSha' head_sha,
@@ -1968,7 +1969,7 @@ export class GitHubOperations {
       try {
         const target = (await this.database.query<CornerWebhookTarget & { repository: string; branch: string }>(
           `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-             COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
+             COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
              github.repository_id,github.installation_id,github.full_name repository,fact.feature_branch branch
            FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
            JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -2051,7 +2052,7 @@ export class GitHubOperations {
       }
     >(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-              COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,
+              COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,
               ${cornerObjectiveSql('corner')} summary,github.repository_id,github.installation_id,
               github.full_name repository,fact.feature_branch branch,
               (fact.lifecycle->'pr'->>'number')::integer number,
@@ -2065,7 +2066,7 @@ export class GitHubOperations {
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) IS NOT NULL
+         AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) IS NOT NULL
          AND fact.feature_branch IS NOT NULL
          AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
          AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
@@ -2289,7 +2290,7 @@ export class GitHubOperations {
       pr_number: string | null;
     }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-         COALESCE(fact.owner_agent_id,first_agent.author_id,corner.created_by,parent.created_by) author_id,
+         COALESCE(${cornerOwnerSql('corner.id')},first_agent.author_id,corner.created_by,parent.created_by) author_id,
          ${cornerObjectiveSql('corner')} summary,
          fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
          fact.lifecycle->'pr' IS NOT NULL has_pr,
@@ -2309,7 +2310,7 @@ export class GitHubOperations {
          JOIN identities identity ON identity.id=message.author_id AND identity.kind='agent'
          WHERE message.room_id=corner.id AND message.system_event IS NULL
          ORDER BY message.created_at,message.id LIMIT 1
-       )first_agent ON fact.owner_agent_id IS NULL
+       )first_agent ON ${cornerOwnerSql('corner.id')} IS NULL
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND (fact.feature_branch=$3 OR ($4::text IS NOT NULL
            AND left(replace(corner.id::text,'-',''),12)=$4))
@@ -2553,7 +2554,7 @@ export class GitHubOperations {
     const rows = await this.database.query<CornerWebhookTarget & {
       repository: string; pr_number: string; head_sha: string;
     }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
-        fact.owner_agent_id author_id,github.full_name repository,
+        ${cornerOwnerSql('corner.id')} author_id,github.full_name repository,
         github.repository_id,github.installation_id,
         fact.lifecycle->'pr'->>'number' pr_number,
         fact.lifecycle->'checkRefreshRetry'->>'headSha' head_sha
@@ -2605,7 +2606,7 @@ export class GitHubOperations {
     const rows = await this.database.query<CornerWebhookTarget & {
       repository: string; pr_number: string; head_sha: string;
     }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
-        '' AS summary,fact.owner_agent_id author_id,github.full_name repository,
+        '' AS summary,${cornerOwnerSql('corner.id')} author_id,github.full_name repository,
         github.repository_id,github.installation_id,
         fact.lifecycle->'pr'->>'number' pr_number,
         fact.lifecycle->'pr'->>'headSha' head_sha
@@ -2621,7 +2622,7 @@ export class GitHubOperations {
           IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
         AND COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)
           < extract(epoch FROM clock_timestamp())-60
-        AND fact.owner_agent_id IS NOT NULL
+        AND ${cornerOwnerSql('corner.id')} IS NOT NULL
         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
         AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
       ORDER BY fact.updated_at LIMIT 100`);

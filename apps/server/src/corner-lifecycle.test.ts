@@ -36,7 +36,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
-import { cornerImplementerSql } from './corner-worker.js';
+import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
@@ -690,16 +690,16 @@ describe('a person-opened corner in a repository Room', () => {
       `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
     );
     expect(columns.rowCount).toBe(0);
-    expect((await db.query(`SELECT owner_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: null, kind: 'human' });
 
     // The first agent a person tags owns the corner; a later tag moves only the implementer.
     await say(cornerId, '@hoots fix the widget');
-    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: A });
     expect(await derivedWorker(cornerId)).toBe(A);
     await say(cornerId, '@goosy take this over');
-    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: A });
     expect(await derivedWorker(cornerId)).toBe(B);
 
@@ -2187,7 +2187,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     expect(
       (
         await db.query<{ owner_agent_id: string }>(
-          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          `SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`,
           [cornerId],
         )
       ).rows[0]!.owner_agent_id,

@@ -1,4 +1,4 @@
-import { cornerImplementerSql } from './corner-worker.js';
+import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -97,7 +97,7 @@ export function addressedToPersonSql(
         SELECT 1 FROM corner_facts finished
         WHERE finished.corner_id=${m}.room_id
           AND ${commissionedBySql('finished', personIdExpr)}
-          AND ${m}.author_id=finished.owner_agent_id
+          AND ${m}.author_id=${cornerOwnerSql('finished.corner_id')}
           -- A corner without a pull request path: its parent Room has no repository.
           AND NOT EXISTS (
             SELECT 1 FROM rooms finished_corner

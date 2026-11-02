@@ -1,5 +1,6 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
@@ -2954,7 +2955,7 @@ export class PhoneService {
              'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
                jsonb_build_object('github_installation_id',parent.github_installation_id::text)
                FROM rooms parent WHERE parent.id=authorized_room.parent_id),
-             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')},'owner_agent_id',${cornerOwnerSql('f.corner_id')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
              'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
@@ -3221,7 +3222,7 @@ export class PhoneService {
         FROM identities i
         LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
           AND member.removed_at IS NULL
-        WHERE i.id=f.owner_agent_id
+        WHERE i.id=${cornerOwnerSql('c.id')}
           AND i.kind='agent' LIMIT 1
       ) agent ON true
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND ${facts.member}
@@ -3357,7 +3358,7 @@ export class PhoneService {
           SELECT max(f.lifecycle->'pr'->>'title') title,
             f.lifecycle->'pr'->>'url' url,max(f.lifecycle->'pr'->>'mergedAt') merged_at
           FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
-          WHERE r.workspace_id=$2 AND f.owner_agent_id=$1
+          WHERE r.workspace_id=$2 AND ${cornerOwnerSql('r.id')}=$1
             AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
             AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
             AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
@@ -8352,7 +8353,7 @@ export class PhoneService {
       ]);
       const closingCorners = await database.query<{ id: string }>(
         `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))
+           AND id IN (SELECT corner_id FROM corner_facts WHERE ${cornerOwnerSql('corner_facts.corner_id')}=ANY($1))
          ORDER BY id FOR KEY SHARE`,
         [gone],
       );

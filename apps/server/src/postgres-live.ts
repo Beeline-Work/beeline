@@ -1,4 +1,5 @@
 import { Client } from 'pg';
+import { cornerOwnerSql } from './corner-worker.js';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
 import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
 import type { SqlDatabase } from './database.js';
@@ -163,7 +164,7 @@ BEGIN
           SELECT jsonb_build_object(
             'parentRoomId', room.parent_id,
             'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
-              (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+              ${cornerOwnerSql('room.id')},
               room.created_by
             ) END
           )
@@ -247,7 +248,7 @@ BEGIN
         'identityId',COALESCE(NEW.identity_id,OLD.identity_id),'removed',false)
         || COALESCE((SELECT jsonb_build_object('parentRoomId',room.parent_id,
           'cornerParentId',room.parent_id,'archived',room.archived_at IS NOT NULL,
-          'openedBy',COALESCE((SELECT owner_agent_id FROM corner_facts WHERE corner_id=room.id),room.created_by))
+          'openedBy',COALESCE(${cornerOwnerSql('room.id')},room.created_by))
           FROM rooms room WHERE room.id=COALESCE(NEW.corner_id,OLD.corner_id)),'{}'::jsonb);
     WHEN 'memberships' THEN
       -- Removing legacy copied rows changes no inherited authority or live session.
@@ -269,7 +270,7 @@ BEGIN
             THEN room.parent_id END,
           'archived', room.archived_at IS NOT NULL,
           'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
-            (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+            ${cornerOwnerSql('room.id')},
             room.created_by
           ) END
         )

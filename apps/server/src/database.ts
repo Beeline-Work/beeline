@@ -3631,7 +3631,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
-  await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('continuous corner names', () =>
     workflowBackfillOnce(database, 'corner-names-continuous-v1', hyphenateCornerNames));
@@ -4127,24 +4126,6 @@ export async function backfillCornerOwed(database: SqlDatabase): Promise<void> {
     if ((current.rows[0]?.version ?? 0) >= 26) return;
   }
   await database.query(cornerOwedBackfillSql());
-}
-
-export async function backfillCornerOwners(database: SqlDatabase): Promise<void> {
-  await database.query(`
-    UPDATE corner_facts fact
-    SET owner_agent_id=COALESCE(
-      (
-        SELECT room.created_by FROM rooms room JOIN identities agent ON agent.id=room.created_by
-        WHERE room.id=fact.corner_id AND agent.kind='agent'
-      ),
-      (
-        SELECT message.author_id FROM messages message JOIN identities agent ON agent.id=message.author_id
-        WHERE message.room_id=fact.corner_id AND agent.kind='agent'
-        ORDER BY message.created_at,message.id LIMIT 1
-      )
-    )
-    WHERE fact.owner_agent_id IS NULL
-  `);
 }
 
 export async function measureDatabase(database: SqlDatabase): Promise<{

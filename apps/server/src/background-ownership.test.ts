@@ -1,18 +1,18 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
-import type { LeaderConnection } from './background-leader.js';
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundEffectConflict,
   BackgroundOwnershipLost, BackgroundEnqueueContractError, type BackgroundEpoch,
   type BackgroundAttempt, type BackgroundEffectRequest } from './background-ownership.js';
 
 const database=new PgliteDatabase();
 const cores:Array<{owner:BackgroundOwnership;epoch:BackgroundEpoch}>=[];
-const lock=(held=true)=>({query:vi.fn(async()=>({rows:[{held}]}))}) as unknown as Pick<LeaderConnection,'query'>;
+const lock=(held=true)=>backgroundOwnerTestLock(database,held);
 const request=(effectId='delivery'):BackgroundEffectRequest<'push.deliver'>=>({job:'push.deliver',effectId,
   sourceClaimId:'source-delivery',sourceClaimVersion:'revision-1',provider:'fcm',canonicalRequest:'{"message":"synthetic"}'});
 async function owner(){
   await database.query("INSERT INTO live_server_instances VALUES('instance',clock_timestamp()) ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at");
-  const core=new BackgroundOwnership(database,'instance'),epoch=await core.claim(lock());cores.push({owner:core,epoch});return {core,epoch};
+  const core=new BackgroundOwnership(database,'instance'),epoch=await core.claim(await lock());cores.push({owner:core,epoch});return {core,epoch};
 }
 async function prepare(core:BackgroundOwnership,epoch:BackgroundEpoch,effectId='delivery'){
   const result=await core.prepareEffect(epoch,request(effectId));if(result.kind!=='new')throw new Error('Expected fresh synthetic attempt');return result.attempt;
@@ -20,16 +20,17 @@ async function prepare(core:BackgroundOwnership,epoch:BackgroundEpoch,effectId='
 beforeAll(async()=>{
   await database.query(`CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz NOT NULL);
     CREATE TABLE effects(id text PRIMARY KEY);${BACKGROUND_OWNERSHIP_SCHEMA}`);
+  await installBackgroundOwnerTestProof(database);
 });
-beforeEach(async()=>{await database.query('DELETE FROM background_effect_attempts;DELETE FROM background_leader_owners;DELETE FROM live_server_instances;DELETE FROM effects');});
+beforeEach(async()=>{await database.query('DELETE FROM background_effect_attempts;DELETE FROM background_leader_owners;DELETE FROM live_server_instances;DELETE FROM effects;DELETE FROM background_owner_test_backends');});
 afterEach(()=>{for(const {owner,epoch}of cores.splice(0))owner.revoke(epoch);vi.restoreAllMocks();vi.useRealTimers();});
 afterAll(()=>database.close());
 
 describe('private background owner epochs and immutable effect admission',()=>{
   it('requires an actual lock proof and live aggregate lease, never caller readiness flags',async()=>{
     const core=new BackgroundOwnership(database,'instance');
-    await expect(core.claim(lock(false))).rejects.toBeInstanceOf(BackgroundOwnershipLost);
-    await expect(core.claim(lock())).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+    await expect(core.claim(await lock(false))).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+    await expect(core.claim(await lock())).rejects.toBeInstanceOf(BackgroundOwnershipLost);
     expect((await database.query('SELECT * FROM background_leader_owners')).rowCount).toBe(0);
   });
   it('mints monotone generations, rejects cloned epochs and fences the previous generation',async()=>{
@@ -39,6 +40,21 @@ describe('private background owner epochs and immutable effect admission',()=>{
     expect(first.epoch.signal.aborted).toBe(true);
     await expect(second.core.withTransaction({...second.epoch},'schedule.fire',async()=>{})).rejects.toBeInstanceOf(BackgroundOwnershipLost);
     expect((await database.query('SELECT id FROM effects')).rows).toEqual([{id:'one'}]);
+  });
+  it.each([{backend_pid:0,backend_start:'2000-01-01'}, {backend_pid:2147483648,backend_start:'2000-01-01'},
+    {backend_pid:1.5,backend_start:'2000-01-01'}, {backend_pid:123}, {backend_pid:123,backend_start:''},
+    {backend_pid:123,backend_start:'x'.repeat(129)}])('refuses an unbounded/missing dedicated backend proof %j before any epoch row',async proof=>{
+    const core=new BackgroundOwnership(database,'instance');
+    const invalid={query:async<Row>()=>({rows:[{held:true,...proof} as unknown as Row]})};
+    await expect(core.claim(invalid)).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+    expect((await database.query('SELECT * FROM background_leader_owners')).rowCount).toBe(0);
+  });
+  it('rejects a lost exact backend even with fresh aggregate evidence and no replacement generation',async()=>{
+    await database.query(`INSERT INTO live_server_instances VALUES('instance',clock_timestamp())`);
+    const backend=await lock(),core=new BackgroundOwnership(database,'instance'),epoch=await core.claim(backend);cores.push({owner:core,epoch});
+    await backend.lose();const effect=vi.fn(async()=>{});
+    await expect(core.withTransaction(epoch,'systemDm.deliver',effect)).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+    expect(effect).not.toHaveBeenCalled();expect(epoch.signal.aborted).toBe(true);
   });
   it('rolls back database work when ownership is revoked before the commit boundary',async()=>{
     const {core,epoch}=await owner();let finish!:()=>void,entered!:()=>void;

@@ -82,4 +82,29 @@ describe('source and deadline owned background leadership',()=>{
     await vi.advanceTimersByTimeAsync(2_147_483_647);expect(cycle).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(852_516_353);expect(cycle).toHaveBeenCalledTimes(2);await leader.stop();
   });
+  it('passes only the actual lock-owning backend to awaited acquisition and aborts/losses before draining a stop',async()=>{
+    const lock=new Ownership();let initialize!:()=>void;const ready=new Promise<void>(resolve=>{initialize=resolve;});let signal!:AbortSignal;
+    const acquired=vi.fn(async(client:LeaderConnection,current:AbortSignal)=>{expect(client).toBe(lock.owner);signal=current;await ready;}),lost=vi.fn(),cycle=vi.fn(async()=>Infinity);
+    const leader=new BackgroundLeader({connectDedicated:lock.connect},cycle,{acquired,lost});void leader.run();await settle();
+    expect(acquired).toHaveBeenCalledOnce();expect(cycle).not.toHaveBeenCalled();expect(signal.aborted).toBe(false);
+    const stopped=leader.stop();expect(signal.aborted).toBe(true);expect(lost).toHaveBeenCalledOnce();expect(lock.clients[0]!.destroyed).toBe(false);
+    initialize();await stopped;expect(cycle).not.toHaveBeenCalled();expect(lock.clients[0]!.destroyed).toBe(true);expect(lost).toHaveBeenCalledOnce();
+  });
+  it('synchronously retires the old ownership on connection loss before a delayed cycle can finish',async()=>{
+    const lock=new Ownership();let finish!:()=>void;const work=new Promise<void>(resolve=>{finish=resolve;}),signals:AbortSignal[]=[];
+    const acquired=vi.fn(async(_client:LeaderConnection,signal:AbortSignal)=>{signals.push(signal);}),lost=vi.fn();
+    const cycle=vi.fn().mockImplementationOnce(()=>work).mockResolvedValue(Infinity);
+    const leader=new BackgroundLeader({connectDedicated:lock.connect},cycle,{acquired,lost});void leader.run();await settle();
+    lock.clients[0]!.lose();expect(signals[0]!.aborted).toBe(true);expect(lost).toHaveBeenCalledOnce();
+    await settle();expect(acquired).toHaveBeenCalledOnce();finish();await settle();
+    expect(acquired).toHaveBeenCalledTimes(2);expect(signals[1]!.aborted).toBe(false);await leader.stop();expect(lost).toHaveBeenCalledTimes(2);
+  });
+  it('parks an acquisition-hook failure without a cycle/retry timer until actual database recovery',async()=>{
+    vi.useFakeTimers();const lock=new Ownership();let recovery!:()=>void;
+    const acquired=vi.fn().mockRejectedValueOnce(new Error('source unavailable')).mockResolvedValue(undefined),lost=vi.fn(),cycle=vi.fn(async()=>Infinity);
+    const leader=new BackgroundLeader({connectDedicated:lock.connect,onRecovery:listener=>{recovery=listener;return()=>{};}},cycle,{acquired,lost});
+    void leader.run();await settle();await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(acquired).toHaveBeenCalledOnce();expect(lost).toHaveBeenCalledOnce();expect(cycle).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
+    recovery();await settle();expect(acquired).toHaveBeenCalledTimes(2);expect(cycle).toHaveBeenCalledOnce();await leader.stop();
+  });
 });

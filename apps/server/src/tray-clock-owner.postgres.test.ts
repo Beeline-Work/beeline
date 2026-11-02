@@ -52,7 +52,7 @@ async function fixture(){
 }
 
 describe.skipIf(!url)('real aggregate-owner fenced Tray expiry at PostgreSQL COMMIT',()=>{
-  it.each(['question','agent-sign-in','squire-approval'] as const)('holds %s owner/source through COMMIT and consumes once across owners',async(kind)=>{
+  it.each(['question','agent-sign-in','squire-approval'] as const)('rolls back %s when the bound backend dies after final SELECT; the new owner then consumes once',async(kind)=>{
     const f=await fixture(),entered=deferred(),release=deferred();let pause=false;
     const observed:SqlDatabase={query:(sql,args)=>f.first.query(semanticSql(sql),args),transaction:work=>f.first.transaction(async tx=>{
       const result=await work(semanticDb(tx));if(pause){entered.resolve();await release.promise;}return result;
@@ -68,6 +68,11 @@ describe.skipIf(!url)('real aggregate-owner fenced Tray expiry at PostgreSQL COM
         await f.first.query(`UPDATE clock_fixture SET now_at='2000-01-16'`);
       }
       const lockA=await f.acquire(),coreA=new BackgroundOwnership(observed,'first'),epochA=await coreA.claim(lockA);f.scopes.push({owner:coreA,epoch:epochA});
+      const sourceBefore=(await f.second.query(`SELECT id,kind,incarnation,revision::text,state FROM tray_clock_deadlines
+        WHERE source_id='question' ORDER BY id`)).rows;
+      expect(sourceBefore.filter(row=>row.state==='pending')).toEqual([expect.objectContaining({
+        kind:kind==='question'?'question-age':kind,incarnation:expect.any(String),revision:expect.any(String),state:'pending',
+      })]);
       pause=true;flight=new TrayClockOwner(coreA).drain(epochA);await entered.promise;
       // The work callback and its final SELECT have returned. SQL COMMIT has
       // not happened and a second pool cannot see any partial state/cut.
@@ -76,10 +81,20 @@ describe.skipIf(!url)('real aggregate-owner fenced Tray expiry at PostgreSQL COM
       f.drop(lockA);const lockB=await f.acquire(),coreB=new BackgroundOwnership(semanticDb(f.second),'second');
       await expect(coreB.claim(lockB)).rejects.toMatchObject({code:'55P03'});
       await expect(f.second.transaction(async tx=>{await tx.query(`UPDATE messages SET created_at=created_at+interval '1 day' WHERE id='question'`);})).rejects.toMatchObject({code:'55P03'});
-      release.resolve();expect(await flight).toMatchObject({attempted:1,consumed:1,next:null,continuation:false});pause=false;
+      // Acquiring B proves A's actual advisory-lock backend is gone. Keep A's
+      // aggregate lease fresh: backend identity, not lease expiry/takeover,
+      // must reject A's deferred COMMIT after its last JS check returned.
+      expect((await f.second.query(`SELECT renewed_at>clock_timestamp()-interval '90 seconds' fresh
+        FROM live_server_instances WHERE instance_id='first'`)).rows).toEqual([{fresh:true}]);
+      const rejected=expect(flight).rejects.toMatchObject({code:'23514'});release.resolve();await rejected;pause=false;
+      expect((await f.second.query(`SELECT revision::text FROM tray_clock_state`)).rows).toEqual([{revision:'0'}]);
+      expect((await f.second.query(`SELECT id,kind,incarnation,revision::text,state FROM tray_clock_deadlines
+        WHERE source_id='question' ORDER BY id`)).rows).toEqual(sourceBefore);
+      expect((await f.second.query(`SELECT event FROM live_journal WHERE event->>'sourceTable'='tray-clock'`)).rows).toEqual([]);
       const epochB=await coreB.claim(lockB);f.scopes.push({owner:coreB,epoch:epochB});expect(BigInt(epochB.generation)).toBeGreaterThan(BigInt(epochA.generation));
       // Deliberately withheld old connection-loss signal cannot grant work.
       await expect(new TrayClockOwner(coreA).drain(epochA)).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+      expect(await new TrayClockOwner(coreB).drain(epochB)).toEqual({attempted:1,consumed:1,next:null,continuation:false});
       expect(await new TrayClockOwner(coreB).drain(epochB)).toEqual({attempted:0,consumed:0,next:null,continuation:false});
       expect((await f.second.query(`SELECT revision::text FROM tray_clock_state`)).rows).toEqual([{revision:'1'}]);
       expect((await f.second.query(`SELECT event FROM live_journal WHERE event->>'sourceTable'='tray-clock'`)).rows).toHaveLength(1);

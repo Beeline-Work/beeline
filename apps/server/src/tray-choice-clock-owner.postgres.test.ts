@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
+import { Pool,type PoolClient } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BACKGROUND_LEADER_LOCK_KEY } from './background-ownership.js';
@@ -19,6 +19,7 @@ async function fixture(){
   const config={connectionString:url,options:`-c search_path=${schema},public -c lock_timeout=150ms`,max:2};
   const first=new PostgresDatabase('',2,{pool:new Pool(config)}),second=new PostgresDatabase('',2,{pool:new Pool(config)});
   const locks=new Pool({connectionString:url,max:1}),connection=await locks.connect();
+  const held=new Set<PoolClient>([connection]);
   try{
     await connection.query('SELECT pg_advisory_lock($1)',[BACKGROUND_LEADER_LOCK_KEY]);
     await first.query(`CREATE TABLE identities(id text PRIMARY KEY,kind text,name text,handle text,avatar text,face_id text);
@@ -43,7 +44,10 @@ async function fixture(){
       VALUES($1,$2,$3,$4,'card','poll','Synthetic?',$5::jsonb,$6::text[],'open',clock_timestamp()-interval '1 second')`,
     [choice,workspace,room,person,JSON.stringify([{optionId:'A',letter:'A',label:'One',consequence:'One'},{optionId:'B',letter:'B',label:'Two',consequence:'Two'}]),[person,'b'.repeat(64)]]);
   }catch(error){connection.release(true);await Promise.all([first.close(),second.close(),locks.end()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();throw error;}
-  return{first,second,connection,close:async()=>{connection.release(true);await Promise.all([first.close(),second.close(),locks.end()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();}};
+  return{first,second,connection,
+    drop:(client:PoolClient)=>{if(held.delete(client))client.release(true);},
+    acquire:async()=>{const client=await locks.connect();held.add(client);await client.query('SELECT pg_advisory_lock($1)',[BACKGROUND_LEADER_LOCK_KEY]);return client;},
+    close:async()=>{for(const client of held)client.release(true);held.clear();await Promise.all([first.close(),second.close(),locks.end()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();}};
 }
 
 describe.skipIf(!url)('real PostgreSQL owned choice expiry races',()=>{
@@ -81,5 +85,33 @@ describe.skipIf(!url)('real PostgreSQL owned choice expiry races',()=>{
       expect((await f.second.query('SELECT revision::text FROM tray_clock_state')).rows).toEqual([{revision:'0'}]);
       expect((await f.second.query('SELECT * FROM tray_clock_owner_fences')).rows).toEqual([]);
     }finally{commit.resolve();await flight?.catch(()=>{});core.revoke(epoch);await f.close();}
+  });
+  it('rejects actual COMMIT after the bound lock backend disappears with a fresh aggregate lease, preserving domain/card/source/clock',async()=>{
+    const f=await fixture(),returned=deferred(),commit=deferred();let delay=false;
+    const observed:SqlDatabase={query:(sql,args)=>f.first.query(sql,args),transaction:work=>f.first.transaction(async tx=>{
+      const result=await work(tx);if(delay){returned.resolve();await commit.promise;}return result;
+    })};
+    const core=new BackgroundOwnership(observed,'owner'),epoch=await core.claim(f.connection);let flight:Promise<unknown>|undefined;
+    let replacement:BackgroundOwnership|undefined,replacementEpoch:Awaited<ReturnType<BackgroundOwnership['claim']>>|undefined;
+    try{
+      delay=true;flight=new TrayChoiceClockOwner(core).drain(epoch);const rejected=expect(flight).rejects.toMatchObject({code:'23514'});
+      await returned.promise;
+      expect((await f.second.query(`SELECT beeline_background_backend_holds(lock_backend_pid,lock_backend_start) held
+        FROM background_leader_owners`)).rows).toEqual([{held:true}]);
+      f.drop(f.connection);const next=await f.acquire();
+      expect((await f.second.query(`SELECT beeline_background_backend_holds(owner.lock_backend_pid,owner.lock_backend_start) held,
+        server.renewed_at>clock_timestamp()-interval '90 seconds' fresh FROM background_leader_owners owner
+        JOIN live_server_instances server ON server.instance_id=owner.instance_id`)).rows).toEqual([{held:false,fresh:true}]);
+      commit.resolve();await rejected;
+      expect((await f.second.query('SELECT status FROM room_choices')).rows).toEqual([{status:'open'}]);
+      expect((await f.second.query(`SELECT card->>'status' status FROM messages WHERE id='card'`)).rows).toEqual([{status:'open'}]);
+      expect((await f.second.query('SELECT state FROM tray_clock_deadlines')).rows).toEqual([{state:'pending'}]);
+      expect((await f.second.query('SELECT revision::text FROM tray_clock_state')).rows).toEqual([{revision:'0'}]);
+      expect((await f.second.query('SELECT * FROM tray_clock_owner_fences')).rows).toEqual([]);
+      replacement=new BackgroundOwnership(f.second,'owner');replacementEpoch=await replacement.claim(next);
+      expect((await new TrayChoiceClockOwner(replacement).drain(replacementEpoch)).consumed).toBe(true);
+      expect((await new TrayChoiceClockOwner(replacement).drain(replacementEpoch)).consumed).toBe(false);
+      expect((await f.second.query('SELECT revision::text FROM tray_clock_state')).rows).toEqual([{revision:'1'}]);
+    }finally{commit.resolve();await flight?.catch(()=>{});core.revoke(epoch);if(replacement&&replacementEpoch)replacement.revoke(replacementEpoch);await f.close();}
   });
 });

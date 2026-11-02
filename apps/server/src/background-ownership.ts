@@ -50,9 +50,28 @@ CREATE TABLE IF NOT EXISTS background_leader_owners (
   instance_id text NOT NULL,
   generation bigint NOT NULL CHECK(generation>0),
   claim_nonce uuid NOT NULL,
+  lock_backend_pid integer NOT NULL,
+  lock_backend_start timestamptz NOT NULL,
   acquired_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   released_at timestamptz
 );
+-- Prior private-schema rows have no valid backend proof until a new claim.
+ALTER TABLE background_leader_owners ADD COLUMN IF NOT EXISTS lock_backend_pid integer;
+ALTER TABLE background_leader_owners ADD COLUMN IF NOT EXISTS lock_backend_start timestamptz;
+CREATE OR REPLACE FUNCTION beeline_background_backend_holds(owner_pid integer,owner_started timestamptz)
+RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  IF owner_pid IS NULL OR owner_started IS NULL THEN RETURN false;END IF;
+  -- A transaction may have inspected this backend before the final callback.
+  -- Never let a cached activity snapshot turn PID reuse into valid ownership.
+  PERFORM pg_catalog.pg_stat_clear_snapshot();
+  RETURN EXISTS(SELECT 1 FROM pg_catalog.pg_locks held JOIN pg_catalog.pg_stat_activity backend ON backend.pid=held.pid
+    WHERE held.locktype='advisory' AND held.pid=owner_pid AND backend.backend_start=owner_started
+      AND held.granted AND held.mode='ExclusiveLock' AND held.classid=0
+      AND held.database=(SELECT oid FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database()) AND backend.datid=held.database
+      AND held.objid=${BACKGROUND_LEADER_LOCK_KEY}::oid AND held.objsubid=1);
+END;
+$$;
 CREATE TABLE IF NOT EXISTS background_effect_attempts (
   id uuid PRIMARY KEY,
   job_id text NOT NULL CHECK(job_id IN ('push.deliver','checkin.deliver')),
@@ -77,6 +96,7 @@ CREATE TABLE IF NOT EXISTS background_effect_attempts (
 
 type LeaseRow = { renewed_ms: number | string; remaining_ms: number | string };
 type EpochState = { epoch: BackgroundEpoch; controller: AbortController; nonce: string;
+  backendPid:number;backendStart:string;
   until: number; renewedAt: number; timer?: ReturnType<typeof setTimeout>; pending: number };
 type AttemptState = { epoch: EpochState; request: BackgroundEffectRequest; digest: string; spent: boolean; entered: boolean };
 type AttemptRow = { id: string; job_id: BackgroundProviderJob; effect_id: string; state: BackgroundEffectReceipt['state'];
@@ -102,19 +122,25 @@ export class BackgroundOwnership {
   /** The actual dedicated backend must hold the existing advisory lock. A
    * caller-provided readiness flag or a request ID cannot mint an epoch. */
   async claim(lockConnection: Pick<LeaderConnection, 'query'>): Promise<BackgroundEpoch> {
-    const proof = await lockConnection.query<{ held: boolean }>(`SELECT EXISTS(
-      SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()
-        AND granted AND classid=0 AND objid=$1::oid AND objsubid=1) held`, [BACKGROUND_LEADER_LOCK_KEY]);
-    if (proof.rows[0]?.held !== true) throw new BackgroundOwnershipLost();
+    const proof = await lockConnection.query<{ held: boolean;backend_pid:number;backend_start:string }>(`SELECT pg_backend_pid() backend_pid,backend.backend_start::text backend_start,EXISTS(
+      SELECT 1 FROM pg_catalog.pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()
+        AND granted AND mode='ExclusiveLock' AND classid=0 AND objid=$1::oid AND objsubid=1) held
+      FROM pg_catalog.pg_stat_activity backend WHERE backend.pid=pg_backend_pid()`, [BACKGROUND_LEADER_LOCK_KEY]);
+    const backend=proof.rows[0];
+    if (backend?.held !== true||!Number.isInteger(backend.backend_pid)||backend.backend_pid<=0||backend.backend_pid>2_147_483_647||
+      typeof backend.backend_start!=='string'||!backend.backend_start||backend.backend_start.length>128) throw new BackgroundOwnershipLost();
     if (this.active) this.revoke(this.active.epoch);
     const nonce = randomUUID(), started = this.monotonicNow();
     const claimed = await this.database.transaction(async db => {
       const lease = await this.serverLease(db);
-      const row = await db.query<{ generation: string }>(`INSERT INTO background_leader_owners(name,instance_id,generation,claim_nonce)
-        VALUES('background',$1,1,$2) ON CONFLICT(name) DO UPDATE SET
+      const row = await db.query<{ generation: string }>(`INSERT INTO background_leader_owners(name,instance_id,generation,claim_nonce,lock_backend_pid,lock_backend_start)
+        SELECT 'background',$1,1,$2,$3,$4::timestamptz WHERE beeline_background_backend_holds($3,$4::timestamptz)
+        ON CONFLICT(name) DO UPDATE SET
           instance_id=EXCLUDED.instance_id,generation=background_leader_owners.generation+1,
-          claim_nonce=EXCLUDED.claim_nonce,acquired_at=clock_timestamp(),released_at=NULL
-        RETURNING generation::text`, [this.instanceId, nonce]);
+          claim_nonce=EXCLUDED.claim_nonce,lock_backend_pid=EXCLUDED.lock_backend_pid,lock_backend_start=EXCLUDED.lock_backend_start,
+          acquired_at=clock_timestamp(),released_at=NULL
+        RETURNING generation::text`, [this.instanceId, nonce,backend.backend_pid,backend.backend_start]);
+      if(!row.rows[0])throw new BackgroundOwnershipLost();
       await this.serverLease(db);
       return { generation: row.rows[0]!.generation, lease };
     });
@@ -122,7 +148,7 @@ export class BackgroundOwnership {
     const controller = new AbortController();
     const epoch: BackgroundEpoch = Object.freeze({ instanceId: this.instanceId, generation: claimed.generation,
       signal: controller.signal, [epochBrand]: true as const });
-    const state: EpochState = { epoch, controller, nonce, until: 0, renewedAt: 0, pending: 0 };
+    const state: EpochState = { epoch, controller, nonce,backendPid:backend.backend_pid,backendStart:backend.backend_start,until: 0, renewedAt: 0, pending: 0 };
     this.epochs.set(epoch, state); this.active = state;
     this.acceptDatabaseLease(state, claimed.lease, started);
     this.requireCurrent(state);
@@ -292,8 +318,10 @@ export class BackgroundOwnership {
       extract(epoch FROM server.renewed_at+interval '90 seconds'-clock_timestamp())*1000 remaining_ms
       FROM background_leader_owners owner JOIN live_server_instances server ON server.instance_id=owner.instance_id
       WHERE owner.name='background' AND owner.instance_id=$1 AND owner.generation=$2 AND owner.claim_nonce=$3
+        AND owner.lock_backend_pid=$4 AND owner.lock_backend_start=$5::timestamptz
+        AND beeline_background_backend_holds(owner.lock_backend_pid,owner.lock_backend_start)
         AND owner.released_at IS NULL AND server.renewed_at>clock_timestamp()-interval '90 seconds'
-      FOR SHARE OF owner,server`, [this.instanceId, state.epoch.generation, state.nonce])).rows[0];
+      FOR SHARE OF owner,server`, [this.instanceId, state.epoch.generation, state.nonce,state.backendPid,state.backendStart])).rows[0];
     if (!lease) { this.revoke(state.epoch); throw new BackgroundOwnershipLost(); }
     this.acceptDatabaseLease(state, lease, started); this.requireCurrent(state);
   }

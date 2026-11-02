@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundOwnershipLost, type BackgroundEpoch } from './background-ownership.js';
-import type { LeaderConnection } from './background-leader.js';
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
 import type { SqlDatabase } from './database.js';
 import { postRoomChoice } from './room-choice.js';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
@@ -9,13 +9,13 @@ import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
 
 const human='a'.repeat(64),room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
-const lock=()=>({query:vi.fn(async()=>({rows:[{held:true}]}))}) as unknown as Pick<LeaderConnection,'query'>;
 describe('unselected owned choice deadline domain adapter',()=>{
   let db:PgliteDatabase;
   const scopes:Array<{owner:BackgroundOwnership;epoch:BackgroundEpoch}>=[];
   beforeEach(async()=>{
     db=await migratedDatabase();await db.query(BACKGROUND_OWNERSHIP_SCHEMA);
     await db.query(TRAY_CLOCK_SOURCE_SCHEMA);await db.query(TRAY_CLOCK_OWNER_SCHEMA);
+    await installBackgroundOwnerTestProof(db);
     await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('synthetic-choice-owner');
       INSERT INTO identities(id,kind,name) VALUES('${human}','human','Synthetic owner');
       INSERT INTO workspaces(id,name) VALUES('${workspace}','Synthetic choices');
@@ -25,7 +25,7 @@ describe('unselected owned choice deadline domain adapter',()=>{
   });
   afterEach(async()=>{for(const{owner,epoch}of scopes.splice(0))owner.revoke(epoch);await db.close();});
   const owned=async(database:SqlDatabase=db)=>{
-    const owner=new BackgroundOwnership(database,'synthetic-choice-owner'),epoch=await owner.claim(lock());
+    const owner=new BackgroundOwnership(database,'synthetic-choice-owner'),epoch=await owner.claim(await backgroundOwnerTestLock(db));
     scopes.push({owner,epoch});return{owner,epoch,adapter:new TrayChoiceClockOwner(owner)};
   };
   const create=(mode:'question'|'poll'='question')=>db.transaction(tx=>postRoomChoice(tx,{roomId:room,agentId:human,mode,

@@ -30,6 +30,19 @@ async function fixture(){
 }
 
 describe.skipIf(!url)('F16 private final epoch fences, real PostgreSQL',()=>{
+  it('binds the actual backend start identity and rejects a shared-only advisory lock',async()=>{
+    const f=await fixture();
+    try{
+      const lock=await f.acquire(),core=new BackgroundOwnership(f.first,'first'),epoch=await core.claim(lock);f.scopes.push({owner:core,epoch});
+      expect((await f.first.query(`SELECT beeline_background_backend_holds(lock_backend_pid,lock_backend_start) exact,
+        beeline_background_backend_holds(lock_backend_pid,lock_backend_start+interval '1 microsecond') reused
+        FROM background_leader_owners`)).rows).toEqual([{exact:true,reused:false}]);
+      await lock.query('SELECT pg_advisory_unlock($1)',[BACKGROUND_LEADER_LOCK_KEY]);
+      await lock.query('SELECT pg_advisory_lock_shared($1)',[BACKGROUND_LEADER_LOCK_KEY]);
+      await expect(new BackgroundOwnership(f.first,'first').claim(lock)).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+      expect((await f.first.query(`SELECT beeline_background_backend_holds(lock_backend_pid,lock_backend_start) exact FROM background_leader_owners`)).rows).toEqual([{exact:false}]);
+    }finally{await f.close();}
+  });
   it('blocks an old delayed effect after lock transfer even when its local connection-loss signal was withheld',async()=>{
     const f=await fixture();
     try{

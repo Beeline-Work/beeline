@@ -41,6 +41,7 @@ BEGIN
  PERFORM 1 FROM background_leader_owners owner JOIN live_server_instances server ON server.instance_id=owner.instance_id
  WHERE owner.name='background' AND owner.instance_id=NEW.instance_id AND owner.generation=NEW.generation
    AND owner.claim_nonce=NEW.claim_nonce AND owner.released_at IS NULL
+   AND beeline_background_backend_holds(owner.lock_backend_pid,owner.lock_backend_start)
    AND server.renewed_at>clock_timestamp()-interval '90 seconds' FOR SHARE OF owner,server;
  IF NOT FOUND THEN RAISE EXCEPTION 'Tray expiry owner expired before commit' USING ERRCODE='23514'; END IF;
  DELETE FROM tray_clock_owner_fences WHERE transaction_id=NEW.transaction_id;

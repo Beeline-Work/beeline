@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
 import type { SqlDatabase } from './database.js';
-import type { LeaderConnection } from './background-leader.js';
+import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundOwnershipLost, type BackgroundEpoch } from './background-ownership.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
@@ -28,12 +28,11 @@ const observed=(db:SqlDatabase,after?:Observe):SqlDatabase=>({
     const result=await db.query(wire,args);await after?.(sql,db);return result;
   },transaction:work=>db.transaction(tx=>work(observed(tx,after))),
 });
-const lock=()=>({query:vi.fn(async()=>({rows:[{held:true}]}))}) as unknown as Pick<LeaderConnection,'query'>;
 
 describe('unselected background-owned display expiry adapter',()=>{
   let db:PgliteDatabase;const owners:Array<{core:BackgroundOwnership;epoch:BackgroundEpoch}>=[];
   const makeOwner=async(after?:Observe)=>{
-    const core=new BackgroundOwnership(observed(db,after),'instance'),epoch=await core.claim(lock());
+    const core=new BackgroundOwnership(observed(db,after),'instance'),epoch=await core.claim(await backgroundOwnerTestLock(db));
     owners.push({core,epoch});return{core,epoch,adapter:new TrayClockOwner(core)};
   };
   const question=(id='question')=>db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'@reader please?','2000-01-07')`,[id,room,author]);
@@ -42,6 +41,7 @@ describe('unselected background-owned display expiry adapter',()=>{
   beforeEach(async()=>{
     db=new PgliteDatabase();await db.query(sourceSchema);await db.query(DURABLE_LIVE_SCHEMA);await db.query(BACKGROUND_OWNERSHIP_SCHEMA);
     await db.query(TRAY_CLOCK_SOURCE_SCHEMA.replaceAll('clock_timestamp()','tray_clock_test_now()'));await db.query(TRAY_CLOCK_OWNER_SCHEMA);
+    await installBackgroundOwnerTestProof(db);
     await db.query(`INSERT INTO live_server_instances VALUES('instance',clock_timestamp());
       INSERT INTO identities VALUES('${viewer}','human','reader'),('${author}','agent','writer');
       INSERT INTO rooms(id,workspace_id) VALUES('${room}','${workspace}');

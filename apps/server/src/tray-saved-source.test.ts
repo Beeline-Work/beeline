@@ -50,6 +50,19 @@ describe('uninstalled precise Saved source and sealed-row projection',()=>{
       bookmarkId:window.rows[0]!.bookmarkId,messageId:window.rows[0]!.value.messageId});
   });
 
+  it('uses the same bounded explicit excerpt for head and held-row edits and clears the marker on a short edit',async()=>{
+    await save('large');await reset();await db.query(`UPDATE messages SET text=$1 WHERE id='large'`,['😀'.repeat(20000)]);
+    const changed=await facts();expect(changed).toHaveLength(1);
+    const payload=changed[0]!.payload;expect(payload.kind).toBe('saved-row-replace');
+    if(payload.kind!=='saved-row-replace')throw new Error('Expected exact row');
+    expect(payload.row.value).toMatchObject({messageId:'large',roomId:r1,text:'😀'.repeat(254)+'…',textTruncated:true});
+    expect(payload.row).toEqual((await readTraySavedWindow(db,{workspaceId:w1},a,format)).rows[0]);
+    await reset();await db.query(`UPDATE messages SET text='Short' WHERE id='large'`);
+    const next=(await facts())[0]!.payload;
+    if(next.kind!=='saved-row-replace')throw new Error('Expected exact row');
+    expect(next.row.value.text).toBe('Short');expect(next.row.value).not.toHaveProperty('textTruncated');
+  });
+
   it('rebuilds only the bounded canonical head for a new incarnation, never an anchored page',async()=>{
     for(let i=0;i<31;i++)await save(`m-${String(i).padStart(2,'0')}`);
     const before=await readTraySavedWindow(db,{workspaceId:w1},a,format);await reset();

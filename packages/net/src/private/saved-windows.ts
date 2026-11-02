@@ -13,7 +13,8 @@ function row(value:unknown,workspace:string):value is SavedRow{
   const pair=value.order.split(',');
   if(pair.length!==2||pair[1]!==value.value.messageId||!/^(-?[1-9][0-9]{0,18}|0)$/.test(pair[0]!)||
       BigInt(pair[0]!)< -9223372036854775808n||BigInt(pair[0]!)>9223372036854775807n)return false;
-  return !(value.value.available===false&&(value.value.text!==undefined||value.value.author!==undefined));
+  if(value.value.textTruncated!==undefined&&typeof value.value.text!=='string')return false;
+  return !(value.value.available===false&&(value.value.text!==undefined||value.value.author!==undefined||value.value.textTruncated!==undefined));
 }
 
 /** Window membership and cursor metadata are server-authored query results.

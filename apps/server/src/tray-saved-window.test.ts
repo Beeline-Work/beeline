@@ -143,7 +143,28 @@ describe('uninstalled stable Saved window identity and pure query',()=>{
     expect((await read()).rows[0]).toEqual(initial);expect(await causes()).toEqual([]);
   });
 
-  it('fails closed on oversize content without silently slicing text or adding a read',async()=>{
-    await bookmark();await db.query(`UPDATE messages SET text=$1`,['x'.repeat(64*1024)]);await expect(read()).rejects.toThrow('saved_window_budget');
+  it.each([{label:'Unicode',glyph:'😀',kept:254},{label:'escaped controls',glyph:'\u0001',kept:169}])('bounds a full $label preview page in SQL and retains explicit source targets without another read',async({glyph,kept})=>{
+    for(let n=0;n<31;n++)await bookmark(`long-${n}`);
+    await db.query(`UPDATE messages SET text=$1`,[glyph.repeat(4096)]);
+    const query=vi.fn(db.query.bind(db));
+    const value=await readTraySavedWindow({query,transaction:work=>db.transaction(work)},{workspaceId:w1},viewer,format);
+    expect(query).toHaveBeenCalledOnce();expect(value.rows).toHaveLength(30);expect(value.next).toBeTruthy();
+    expect(Buffer.byteLength(JSON.stringify(value))).toBeLessThanOrEqual(64*1024);
+    for(const entry of value.rows){
+      expect(entry.value).toMatchObject({text:glyph.repeat(kept)+'…',textTruncated:true,roomId:r1,workspaceId:w1,available:true});
+      expect(entry.value.messageId).toMatch(/^long-/);
+      expect(Buffer.byteLength(JSON.stringify(entry.value.text))).toBeLessThanOrEqual(1024);
+    }
+    const result=await query.mock.results[0]!.value;
+    for(const record of result.rows[0]!.bookmarks)expect(Buffer.byteLength(record.text)).toBeLessThanOrEqual(1024);
+  });
+  it.each([255,256,257])('marks truncation only past the %s-codepoint boundary',async length=>{
+    await bookmark();await db.query(`UPDATE messages SET text=$1`,['x'.repeat(length)]);
+    const value=(await read()).rows[0]!.value;
+    expect(value.text).toBe('x'.repeat(Math.min(length,256))+(length>256?'…':''));
+    expect(value.textTruncated).toBe(length>256?true:undefined);
+  });
+  it('still refuses oversized non-preview metadata instead of returning a partial window',async()=>{
+    await bookmark();await db.query(`UPDATE rooms SET name=$1`,['x'.repeat(64*1024)]);await expect(read()).rejects.toThrow('saved_window_budget');
   });
 });

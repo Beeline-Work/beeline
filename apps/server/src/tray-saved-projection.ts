@@ -1,6 +1,6 @@
 import type { RouterFact, SavedRowPayload } from '@beeline/api-contract/router-protocol';
 import type { SqlDatabase } from './database.js';
-import { projectTraySavedRow, type BookmarkRow, type IdentityFormatter } from './tray-saved-window.js';
+import { SAVED_TEXT_COLUMNS_SQL, projectTraySavedRow, type BookmarkRow, type IdentityFormatter } from './tray-saved-window.js';
 import { readRouterAuthority, routerAtomicGroup, RouterProjectionUnavailable } from './router-projections.js';
 
 export type TraySavedTarget=Readonly<{bookmarkId:string;messageId:string}>;
@@ -29,7 +29,7 @@ export async function buildTraySavedFacts(db:SqlDatabase,workspaceId:string,read
     bookmark.source_room_kind room_kind,bookmark.message_created_at,bookmark.created_at bookmarked_at,
     (extract(epoch FROM bookmark.created_at)*1000000)::bigint::text bookmarked_us,
     (message.id IS NOT NULL AND message.deleted_at IS NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
-    CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
+    ${SAVED_TEXT_COLUMNS_SQL},
     CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
     CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.kind END author_kind,
     CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.name END author_name,

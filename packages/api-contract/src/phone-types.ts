@@ -415,6 +415,8 @@ export type MessageBookmarkView = {
   readonly available: boolean;
   readonly author?: RoomViewIdentity;
   readonly text?: string;
+  /** Server-authored preview; the existing Room/message target opens the source. */
+  readonly textTruncated?: true;
 };
 
 /**

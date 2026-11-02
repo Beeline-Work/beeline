@@ -45,6 +45,22 @@ async function fixture(run:(reader:SqlDatabase,writer:SqlDatabase)=>Promise<void
 }
 
 describe.skipIf(!url)('real two-pool PostgreSQL stable Saved query and incarnations',()=>{
+  it('returns explicit bounded Unicode previews without changing legacy text or leaking preview metadata after revocation',async()=>{
+    await fixture(async(reader,writer)=>{
+      const original='😀'.repeat(20000);await writer.query(`UPDATE messages SET text=$1 WHERE id='a'`,[original]);
+      await reader.transaction(async tx=>{
+        await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        const value=(await read(tx)).rows.find(row=>row.value.messageId==='a')!.value;
+        expect(value).toMatchObject({text:'😀'.repeat(254)+'…',textTruncated:true,roomId:r1});
+        expect(Buffer.byteLength(JSON.stringify(value.text))).toBeLessThanOrEqual(1024);
+      });
+      expect((await readMessageBookmarks(reader,{workspaceId:w1},viewer,format)).bookmarks.find(row=>row.messageId==='a')!.text).toBe(original);
+      await writer.query(`UPDATE memberships SET removed_at=clock_timestamp() WHERE room_id=$1 AND identity_id=$2`,[r1,viewer]);
+      const hidden=(await read(reader)).rows.find(row=>row.value.messageId==='a')!.value;
+      expect(hidden.available).toBe(false);expect(hidden).not.toHaveProperty('text');expect(hidden).not.toHaveProperty('textTruncated');
+    });
+  });
+
   it('builds one pure repeatable-read window with coherent precise metadata while another pool changes the source',async()=>{
     await fixture(async(reader,writer)=>{
       await reader.transaction(async tx=>{

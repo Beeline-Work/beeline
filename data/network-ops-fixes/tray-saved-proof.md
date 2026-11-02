@@ -39,3 +39,19 @@ Server and mobile typechecks, generated codec freshness, the phone network
 scanner and router boundary gate pass. The full phone consumer remains inside
 the owner-approved 90112 raw / 24576 gzip hard limit. These checks do not replace
 physical native40, release/rollback, full server fanout or all-consumer proofs.
+
+## Bounded source previews
+
+Large source text previously made the entire window refuse with
+`saved_window_budget`. Both the head and exact-row source query now return a
+bounded SQL prefix (at most256 Unicode characters). The common server projection
+limits text to1024 encoded JSON bytes, including escaping and an ellipsis, and
+marks it with `textTruncated: true`. Existing Room/message targets still open
+the source; no new control, request or client clipping is needed. The unchanged
+legacy bookmark operation retains full text. Oversized non-preview metadata
+still fails the window bound rather than silently dropping data.
+
+Window19/source13/core11 and real PostgreSQL window4/source3 pass. The full-page
+cases include emoji and JSON-escaped controls; row edits match head previews,
+short edits clear the marker, and inaccessible rows carry no preview residue.
+This supplies Saved-specific F07/P8 evidence, not whole-finding closure.

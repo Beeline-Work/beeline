@@ -22,6 +22,14 @@ describe('mechanical sealed Saved windows',()=>{
     const {text:_text,...pointer}=hidden.value;hidden.value=pointer;
     expect(validateSavedWindow(window([hidden]),workspace)).toBe(true);
   });
+  it('accepts explicit source excerpts, replaces their marker with the complete row and rejects private preview residue',()=>{
+    const excerpt=row(1);excerpt.value={...excerpt.value,text:'Preview…',textTruncated:true};
+    expect(validateSavedWindow(window([excerpt]),workspace)).toBe(true);
+    const result=replaceSavedWindowRows(window([excerpt]),workspace,[replace(row(1))]);
+    expect(result.rows[0]!.value).not.toHaveProperty('textTruncated');
+    const {text:_text,...withoutText}=excerpt.value;excerpt.value={...withoutText,available:false};
+    expect(validateSavedWindow(window([excerpt]),workspace)).toBe(false);
+  });
   it('replaces only complete held rows without changing membership, order, boundaries or the original window',()=>{
     const held=window(),updated=row(2);updated.value={...updated.value,text:'new',roomName:'Renamed'};
     const result=replaceSavedWindowRows(held,workspace,[replace(updated),replace(row(3))]);

@@ -510,7 +510,7 @@ export const wireShapes: readonly WireShape[] = [
   shape({"kind":"object","properties":{"before":{"node":5,"optional":true}}}),
   shape({"kind":"object","properties":{"bookmarks":{"node":507,"optional":false},"next":{"node":5,"optional":true}}}),
   shape({"kind":"array","item":508}),
-  shape({"kind":"object","properties":{"messageId":{"node":1,"optional":false},"workspaceId":{"node":1,"optional":false},"roomId":{"node":1,"optional":false},"roomName":{"node":1,"optional":false},"roomKind":{"node":509,"optional":false},"messageCreatedAt":{"node":18,"optional":false},"bookmarkedAt":{"node":18,"optional":false},"available":{"node":32,"optional":false},"author":{"node":298,"optional":true},"text":{"node":5,"optional":true}}}),
+  shape({"kind":"object","properties":{"messageId":{"node":1,"optional":false},"workspaceId":{"node":1,"optional":false},"roomId":{"node":1,"optional":false},"roomName":{"node":1,"optional":false},"roomKind":{"node":509,"optional":false},"messageCreatedAt":{"node":18,"optional":false},"bookmarkedAt":{"node":18,"optional":false},"available":{"node":32,"optional":false},"author":{"node":298,"optional":true},"text":{"node":5,"optional":true},"textTruncated":{"node":489,"optional":true}}}),
   shape({"kind":"union","choices":[510,511]}),
   shape({"kind":"literal","value":"corner"}),
   shape({"kind":"literal","value":"room"}),

@@ -153,8 +153,9 @@ export const ownerInputShapes: readonly WireShape[] = expandWireShapes([
   [8,[11,149]],
   [12,{"bookmarks":150,"next":-17}],
   [10,151],
-  [12,{"messageId":1,"workspaceId":1,"roomId":1,"roomName":1,"roomKind":152,"messageCreatedAt":34,"bookmarkedAt":34,"available":44,"author":-113,"text":-17}],
-  [8,[110,76]]
+  [12,{"messageId":1,"workspaceId":1,"roomId":1,"roomName":1,"roomKind":152,"messageCreatedAt":34,"bookmarkedAt":34,"available":44,"author":-113,"text":-17,"textTruncated":-154}],
+  [8,[110,76]],
+  [8,[11,33]]
 ]);
 export const ownerInputs = {
   "phone.countNeedsYou": 0,

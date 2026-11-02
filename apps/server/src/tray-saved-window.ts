@@ -5,6 +5,14 @@ import type { SqlDatabase } from './database.js';
 import { liveControlNotificationSchema } from './postgres-live-notifications.js';
 
 const VERSION=1, PAGE=30, MAX_BYTES=64*1024;
+/** Bound DB result bytes before assembling a 30-row page or exact-row facts.
+ * PostgreSQL left counts Unicode characters, never splitting a codepoint.
+ * Each SQL text is at most 1024 UTF-8 bytes; previewText additionally bounds
+ * JSON escaping and the visible ellipsis to 1024 encoded bytes. */
+export const SAVED_TEXT_COLUMNS_SQL=`
+  CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN left(message.text,256) END text,
+  CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL
+    THEN char_length(left(message.text,257))>256 ELSE false END text_truncated`;
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
 const scalar=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=128;
 const message=(value:unknown):value is string=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,128}$/.test(value);
@@ -126,9 +134,22 @@ CREATE TRIGGER beeline_saved_window_capture AFTER INSERT OR UPDATE OR DELETE ON 
 `;
 
 export type BookmarkRow={bookmark_id:string;message_id:string;workspace_id:string;room_id:string;room_name:string;room_kind:'room'|'corner';
-  message_created_at:Date|string;bookmarked_at:Date|string;bookmarked_us:string;available:boolean;text:string|null;
+  message_created_at:Date|string;bookmarked_at:Date|string;bookmarked_us:string;available:boolean;text:string|null;text_truncated?:boolean|null;
   author_id:string|null;author_kind:'human'|'agent'|null;author_name:string|null;author_handle:string|null;author_avatar:string|null;author_face:string|null};
 const unix=(value:Date|string)=>Math.floor((typeof value==='string'?new Date(value):value).getTime()/1000);
+/** The SQL prefix is bounded already. Only escaped/multibyte previews need
+ * this bounded binary search; no full message or extra read reaches it. */
+function previewText(text:string,truncated:boolean):{text:string;textTruncated?:true}{
+  const displayed=text+(truncated?'…':'');
+  if(Buffer.byteLength(JSON.stringify(displayed))<=1024)return{text:displayed,...(truncated?{textTruncated:true as const}:{})};
+  const points=[...text];let low=0,high=points.length;
+  while(low<high){
+    const middle=Math.ceil((low+high)/2);
+    if(Buffer.byteLength(JSON.stringify(points.slice(0,middle).join('')+'…'))<=1024)low=middle;
+    else high=middle-1;
+  }
+  return{text:points.slice(0,low).join('')+'…',textTruncated:true};
+}
 /** Shared complete server DTO projection for a window and source-key row facts. */
 export function projectTraySavedRow(row:BookmarkRow,scope:TraySavedScope,toIdentity:IdentityFormatter):SavedRow{
   if(!uuid(row.bookmark_id)||!micros(row.bookmarked_us)||!message(row.message_id))throw new Error('invalid_saved_row');
@@ -136,7 +157,7 @@ export function projectTraySavedRow(row:BookmarkRow,scope:TraySavedScope,toIdent
   return{bookmarkId:row.bookmark_id,order:`${row.bookmarked_us},${row.message_id}`,before,value:{
     messageId:row.message_id,workspaceId:row.workspace_id,roomId:row.room_id,roomName:row.room_name,roomKind:row.room_kind,
     messageCreatedAt:unix(row.message_created_at),bookmarkedAt:unix(row.bookmarked_at),available:row.available,
-    ...(row.available&&row.text!==null?{text:row.text}:{}),
+    ...(row.available&&row.text!==null?previewText(row.text,row.text_truncated===true):{}),
     ...(row.available&&row.author_id&&row.author_kind&&row.author_name?{author:toIdentity({id:row.author_id,kind:row.author_kind,name:row.author_name,
       handle:row.author_handle,avatar:row.author_avatar,face_id:row.author_face})}:{}),
   }};
@@ -158,7 +179,7 @@ export async function readTraySavedWindow(db:SqlDatabase,input:Readonly<{workspa
       bookmark.message_created_at,bookmark.created_at bookmarked_at,
       (extract(epoch FROM bookmark.created_at)*1000000)::bigint::text bookmarked_us,
       (message.id IS NOT NULL AND message.deleted_at IS NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
-      CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
+      ${SAVED_TEXT_COLUMNS_SQL},
       CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
       CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.kind END author_kind,
       CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.name END author_name,

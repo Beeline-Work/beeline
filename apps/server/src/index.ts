@@ -4,7 +4,7 @@ import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { deliverXSignups, nextXSignupDeliveryAt } from './x-ads.js';
-import { flushOperatorSystemDms } from './operator-system-dm.js';
+import { deliverOperatorSystemDmBatch,subscribeOperatorSystemDmDeliveries } from './operator-system-dm.js';
 import { captureServerError, flushServerErrors } from './sentry.js';
 
 // Expected voice failures are handled at their task boundary. Report any escape.
@@ -500,6 +500,10 @@ async function main() {
     const due=await backgroundJobs.run('x-signup-next-due',()=>nextXSignupDeliveryAt(jobsDatabase));
     if(due.ok && due.value)return Math.max(0,due.value.getTime()-Date.now());
   });
+  work.addDeadline('operator-system-dms',async()=>{
+    const delivered=await backgroundJobs.run('operator-system-dms',()=>deliverOperatorSystemDmBatch(jobsDatabase));
+    if(delivered.ok)return delivered.value;
+  });
   work.add('repair', reconciliationMs, async (newLeader) => {
     if (newLeader) {
       repairedPromotedCorners = false;
@@ -511,7 +515,6 @@ async function main() {
       repairedPromotedCorners = repair.ok;
     }
     if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
-    await backgroundJobs.run('operator-system-dms', () => flushOperatorSystemDms(jobsDatabase));
     // Repair lost reviewer wakes on the reconciliation cadence;
     // existing head-scoped dispatch and report keys keep replays quiet.
     await backgroundJobs.run('corner-reviewers', () =>
@@ -554,6 +557,9 @@ async function main() {
   });
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader), reconciliationMs);
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
+  const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
+  const stopSystemDmWake=subscribeOperatorSystemDmDeliveries(wakeSystemDms);
+  const stopSystemDmRecovery=jobsDatabase.onRecovery(wakeSystemDms);
   if (push) liveListener.setPushWake(() => wakeWork('push'));
   liveListener.setXSignupDeliveryWake(()=>wakeWork('x-conversions','signup-delivery'));
   liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
@@ -591,6 +597,7 @@ async function main() {
   const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
+    stopSystemDmWake();stopSystemDmRecovery();
     await leader.stop();
     stopComputerExpiry();
     stopBackgroundWake();

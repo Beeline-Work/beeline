@@ -178,7 +178,7 @@ export class VoiceRoomRuntime {
   private lastWorkFinishedAt = 0;
   private endingDeadline: number | null = null;
   private endingTonePlayed = false;
-  private quietCheck?: ReturnType<typeof setInterval>;
+  private quietCheck?: ReturnType<typeof setTimeout>;
   private checkingInactivity = false;
   private lastTouch = 0;
   private touching = false;
@@ -298,8 +298,6 @@ export class VoiceRoomRuntime {
       });
     }, 5000);
     this.leaseRenewal.unref();
-    this.quietCheck = setInterval(() => this.task(() => this.checkInactivity()), 1000);
-    this.quietCheck.unref();
     this.touch();
     await this.countHumans(true).catch(() => {});
     await this.refresh();
@@ -604,6 +602,7 @@ export class VoiceRoomRuntime {
   private async checkInactivity() {
     if (this.closed || this.checkingInactivity) return;
     this.checkingInactivity = true;
+    clearTimeout(this.quietCheck); this.quietCheck = undefined;
     try {
       const { pending: work, finishedAt } = await this.retry(() => this.service.callWorkState(this.callId));
       if (work) this.markCallActivity();
@@ -633,11 +632,29 @@ export class VoiceRoomRuntime {
       }
       const inactive = () => !this.closed && !work && performance.now() - this.lastActivity >= 60_000;
       if (inactive()) await this.service.endInactive(this.callId, this.leaseOwner, inactive);
+      // Only the actual warning/tone/end boundaries own a wake. Pending work
+      // waits for its committed completion; protected multi-human idle does
+      // not repeatedly ask the database whether it can end.
+      clearTimeout(this.quietCheck); this.quietCheck = undefined;
+      const currentQuiet = performance.now() - this.lastActivity;
+      if (!work && !this.closed && currentQuiet < 60_000)
+        this.armInactivity(currentQuiet < 45_000 ? 45_000 : currentQuiet < 50_000 ? 50_000 : 60_000);
     } finally { this.checkingInactivity = false; }
+  }
+
+  private armInactivity(afterMs = 45_000) {
+    clearTimeout(this.quietCheck); this.quietCheck = undefined;
+    if (this.closed) return;
+    this.quietCheck = setTimeout(() => {
+      this.quietCheck = undefined;
+      this.task(() => this.checkInactivity());
+    }, Math.max(0, this.lastActivity + afterMs - performance.now()));
+    this.quietCheck.unref();
   }
 
   private markCallActivity() {
     this.lastActivity = performance.now();
+    this.armInactivity();
     this.endingTonePlayed = false;
     if (this.endingDeadline !== null) {
       this.endingDeadline = null;
@@ -1176,7 +1193,7 @@ export class VoiceRoomRuntime {
     this.quietWaiters.clear();
     clearInterval(this.leaseRenewal);
     clearTimeout(this.leaseExpiry);
-    clearInterval(this.quietCheck);
+    clearTimeout(this.quietCheck);
     this.shutdown.abort();
     for (const human of this.eager.keys()) this.cancelEager(human);
     this.assembler.close();

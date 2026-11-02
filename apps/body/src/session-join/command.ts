@@ -1,11 +1,11 @@
 // `usebeeline join` and `usebeeline session …`: a coding session that is already running joins a person's Beeline
 // Rooms as its own member, from one pasted line and one sign-in on any device.
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentLabel, defaultName, detectAgent, isAgentId, pickName, type AgentId } from './agents.js';
-import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, registerClient, signInLink, type SignIn } from './beeline-api.js';
+import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, registerClient, signInLink, SignInEndedError, type SignIn } from './beeline-api.js';
 import { ensureBridge, renderMention, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
 import { chosenName, claudeTranscript, heldBy, inboundSetting, permissionMode, postToClaude, scanClaude } from './claude.js';
 import { acceptClaudeInbound, assertClaudePolicy, restoreClaudeInbound } from './claude-inbound.js';
@@ -16,11 +16,38 @@ import { runHook } from './hook.js';
 import { runAntigravitySidecar, runZcodeMcp } from './pull-apps.js';
 import { setupAgent } from './setup.js';
 import { hookSessions, queueInbox, readState, sessionKey, stateDir, updateState, type JoinedSession } from './store.js';
+import { tryWithKernelLock } from '../kernel-lock.js';
 
 interface Pending {
   server: string; clientId: string; signIn: SignIn; agent: AgentId; cwd: string; name: string;
   sessionId?: string; pid?: number; agentBin?: string; startedAt: number;
   claudeInboundFallback?: boolean;
+}
+
+function writePending(file:string,pending:Pending):void{
+  const temporary=file+'.'+randomUUID()+'.tmp';
+  try{
+    const descriptor=openSync(temporary,'wx',0o600);
+    try{writeFileSync(descriptor,JSON.stringify(pending));fsyncSync(descriptor);}finally{closeSync(descriptor);}
+    renameSync(temporary,file);
+    if(process.platform!=='win32'){
+      const directory=openSync(dirname(file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}
+    }
+  }finally{rmSync(temporary,{force:true});}
+}
+
+const finisherKey=(file:string)=>'beeline-session-sign-in:'+resolve(file);
+
+function existingPending(dir:string,own:Found,server:string):{file:string;pending:Pending}|undefined{
+  let names:string[];try{names=readdirSync(join(dir,'pending'));}catch{return;}
+  if(names.length>256)throw new Error('Too many pending Beeline sign-ins');
+  return names.filter(name=>/^[a-f0-9]{24}\.json$/.test(name)).flatMap(name=>{
+    const file=join(dir,'pending',name);
+    try{const pending=JSON.parse(readFileSync(file,'utf8')) as Pending;
+      return pending.agent===own.agent&&pending.cwd===own.cwd&&pending.server===server&&
+        (!pending.sessionId||!own.sessionId||pending.sessionId===own.sessionId)?[{file,pending}]:[];
+    }catch{return [];}
+  }).sort((a,b)=>b.pending.startedAt-a.pending.startedAt)[0];
 }
 
 function flag(args: string[], name: string): string | undefined {
@@ -116,13 +143,22 @@ async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void
   }
   const taken = new Set(readState(dir).sessions.filter(s => s.key !== key).map(s => s.name));
   const name = pickName(flag(args, '--name') ?? own.chosen, defaultName(own.agent, own.cwd, gitRoot(own.cwd)), n => taken.has(n));
-  const clientId = await registerClient(server, agentLabel(own.agent));
-  const signIn = signInLink(server, clientId, name, own.claudeInboundFallback);
-  const pending: Pending = { server, clientId, signIn, agent: own.agent, cwd: own.cwd, name, sessionId: own.sessionId, pid: own.pid,
+  const previous=existingPending(dir,own,server);
+  const clientId = previous?.pending.clientId??await registerClient(server, agentLabel(own.agent));
+  const available=previous?await tryWithKernelLock(finisherKey(previous.file),async()=>true):true;
+  const known=previous?.pending.signIn.tokens,receivedAt=previous?.pending.signIn.tokensAt;
+  const knownUntil=known&&receivedAt!==undefined?receivedAt+known.expires_in*1000:NaN;
+  const resume=previous&&(available!==true||Number.isFinite(knownUntil)&&knownUntil>Date.now()||
+    !known&&!previous.pending.signIn.exchangeStarted&&previous.pending.startedAt+600_000>Date.now());
+  const signIn = resume?previous.pending.signIn:signInLink(server, clientId, name, own.claudeInboundFallback);
+  const pending: Pending = resume?previous.pending:{ server, clientId, signIn, agent: own.agent, cwd: own.cwd, name, sessionId: own.sessionId, pid: own.pid,
     agentBin: own.agent === 'codex' ? which('codex', env) : undefined, startedAt: Date.now(), claudeInboundFallback: own.claudeInboundFallback };
   mkdirSync(join(dir, 'pending'), { recursive: true, mode: 0o700 });
   const file = join(dir, 'pending', `${createHash('sha256').update(signIn.state).digest('hex').slice(0, 24)}.json`);
-  writeFileSync(file, JSON.stringify(pending), { mode: 0o600 });
+  // A running finisher owns its progress file. An explicit repeated join may
+  // display/reuse it but must never overwrite a newly persisted code/result.
+  if(!resume)writePending(file,pending);
+  if(!resume&&previous&&previous.file!==file)rmSync(previous.file,{force:true});
   // The app shows this command's output only when it ends, so the sign-in finishes in the background.
   const out = join(dir, 'bridge.log');
   const child = spawn(run.node, [run.bundle, 'session', 'finish-join', file], { detached: true, stdio: 'ignore', env: { ...env, BEELINE_SESSION_BUNDLE: run.bundle } });
@@ -139,11 +175,20 @@ async function joinCommand(args: string[], env: NodeJS.ProcessEnv): Promise<void
 }
 
 async function finishJoin(file: string, env: NodeJS.ProcessEnv): Promise<void> {
+  await tryWithKernelLock(finisherKey(file),()=>finishJoinOwned(file,env));
+}
+
+async function finishJoinOwned(file: string, env: NodeJS.ProcessEnv): Promise<void> {
   const dir = stateDir(env);
   const run = runner(dir, env);
-  const pending = JSON.parse(readFileSync(file, 'utf8')) as Pending;
+  let retain=false;
   try {
-    const tokens = await finishSignIn(pending.server, pending.clientId, pending.signIn, pending.startedAt + 10 * 60_000);
+    const pending = JSON.parse(readFileSync(file, 'utf8')) as Pending;
+    const tokens = await finishSignIn(pending.server, pending.clientId, pending.signIn, pending.startedAt + 10 * 60_000,signIn=>{
+      const current=JSON.parse(readFileSync(file,'utf8')) as Pending;
+      if(current.signIn.state!==signIn.state)throw new SignInEndedError('The sign-in was superseded');
+      pending.signIn=signIn;writePending(file,pending);
+    });
     if (pending.agent === 'claude-code') {
       assertClaudePolicy(env);
     }
@@ -184,7 +229,8 @@ async function finishJoin(file: string, env: NodeJS.ProcessEnv): Promise<void> {
     ensureBridge(dir, run, env);
     const rooms = me.rooms.map(r => r.name).slice(0, 5).join(', ');
     await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}`, dir);
-  } finally { rmSync(file, { force: true }); }
+  }catch(error){retain=!(error instanceof SignInEndedError);throw error;}
+  finally{if(!retain)rmSync(file,{force:true});}
 }
 
 /** Tells the session itself that it joined, through the same channel tags use. */

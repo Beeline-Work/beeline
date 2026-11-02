@@ -12,8 +12,19 @@ The page tells the agent to run `npx -y usebeeline@latest join` and show the lin
 
 1. `usebeeline join` finds its own app and conversation (`apps/body/src/session-join/agents.ts`, `claude.ts`, `codex.ts`). The nearest ancestor process an app owns beats inherited environment variables.
 2. It registers one OAuth client named after the app (the member's model label), and prints a sign-in link. The link proposes the member's name (`member_name`): the session's own `/rename` name, else `<folder>-<app>`. The Allow page shows it with a handle no one in the person's Workspaces holds, and the person can edit both.
-3. The link's redirect is Beeline's own page, `/mcp/oauth/handoff`. It keeps the code for ten minutes, keyed by the hash of the OAuth `state`. The session collects it with `POST /mcp/oauth/handoff {state}` and exchanges it with its PKCE verifier. So the person can finish on a phone; a VPS needs no browser and no public address. The code alone grants nothing.
+3. The link's redirect is Beeline's own page, `/mcp/oauth/handoff`. It keeps the code for ten minutes, keyed by the hash of the OAuth `state`. A current session collects it with one held `POST /mcp/oauth/handoff {state,completionV1:true,waitMs}` and exchanges it with its PKCE verifier. Real committed completion wakes the request; there is no two-second observation loop. So the person can finish on a phone; a VPS needs no browser and no public address. The code alone grants nothing.
 4. The app shows a command's output only when it ends, so the sign-in finishes in a background process. It records the member in `~/.local/state/beeline-sessions/state.json` (0600), wires the app (below), starts the machine's bridge, and tells the session it joined.
+
+The existing private Pending record persists the code, exchange uncertainty and
+known token result with file/directory sync and atomic rename before advancing.
+Concurrent finishers share the existing kernel-owned local IPC lock; process
+death releases it without stale PID unlinking or timed takeover. A repeated join
+does not overwrite an active finisher's progress. A lost token result remains
+UNKNOWN and is not exchanged again. A known persisted result resumes bootstrap
+without another OAuth call. An explicit new join reuses the same client; an
+uncertain prior exchange requires a new nonce and human authorization. An old
+server's immediate pending response leaves the attempt parked rather than
+selecting a polling fallback.
 
 ## Delivery
 
@@ -63,6 +74,7 @@ Codex's shared app server can hold several threads. Session discovery reads ever
 ## Server
 
 - `GET /mcp/oauth/handoff` and `POST /mcp/oauth/handoff` (`rooms-mcp-oauth.ts`, table `rooms_mcp_handoffs`, expired rows removed by maintenance).
+- Opt-in held handoff requires the existing completion listener to be ready; unavailable coverage returns pending/unavailable without a read. The server bounds waits to 128 total, two per state, and a terminal deadline of 600 seconds. Headers acknowledge immediately; only this exact handoff request and member stream use the owned dispatcher with no idle body timeout. Connect/header deadlines and caller cancellation remain active. Legacy handoff POST still consumes once; replayable opt-in codes still meet the token endpoint's one-use PKCE gate.
 - `member_name` on `/mcp/oauth/authorize` prefills the Allow page.
 - `list_mentions` takes `waitSeconds` and `wakesAfter`; it checks its own index once a second and never calls the client.
 - `list_rooms` returns `you`: the member's id, name and handle.

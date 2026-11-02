@@ -257,7 +257,8 @@ describe('a tag reaches the joined session', () => {
     expect(args.text!.startsWith('done:')).toBe(true);
     const lifecycle = renderWake({ id: 'w2', address, reason: 'corner_lifecycle', kind: 'lifecycle', createdAt: '' }, joined, runner);
     expect(lifecycle).toContain(`reply --room ${address} "<text>" --as codex:/w`);
-    expect(lifecycle).toContain(`tool no_reply_needed '{"address":"${address}"}' --as codex:/w`);
+    // The silent close names this one wake, as the server's hint says, so it never clears other wakes at the address.
+    expect(lifecycle).toContain(`tool no_reply_needed '{"address":"${address}","commandId":"w2"}' --as codex:/w`);
     expect(lifecycle).not.toContain('tool report');
   });
 });

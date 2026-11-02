@@ -1,5 +1,5 @@
 import { mentionRouting } from './owed-mentions.js';
-import { queueMcpMentionEvents, deliverMcpEvents, mcpWakeHint } from './rooms-mcp-events.js';
+import { queueMcpMentionEvents, deliverMcpEvents, mcpWakeNext } from './rooms-mcp-events.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -313,7 +313,7 @@ function routingInstruction(row: {member_id: string; room_id: string; message_id
  */
 function wakeBody(row: { member_id: string; room_id: string; command_id: string | null; command_reason: string | null;
   command_kind: string | null; command_text: string | null; body: string }) {
-  const next = mcpWakeHint(row.command_kind);
+  const next = mcpWakeNext(row.command_kind, row.command_reason);
   return { memberId: row.member_id, roomId: row.room_id, address: row.room_id, commandId: row.command_id, id: row.command_id,
     reason: row.command_reason, kind: row.command_kind, text: row.command_text ?? row.body, next, cursor: null,
     instruction: `Private ${row.command_kind ?? row.command_reason ?? 'wake'} for you at ${row.room_id}, not a tag: do not reply with replyTo. ${next}` };

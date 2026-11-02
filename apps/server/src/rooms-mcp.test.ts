@@ -2240,6 +2240,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         `SELECT private_payload FROM agent_commands WHERE agent_id=$1 AND reason='report' ORDER BY created_at DESC LIMIT 1`, [AGENT])).rows[0]!;
       expect(back.private_payload).toMatchObject({ kind: 'report', text: expect.stringContaining('three corners, all green') });
       expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+      // A reviewer dispatch by legacy webhook carries the same review hint as MCP Events and list_mentions.
+      const review = await createAgentCommand(db, {
+        roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'corner_review_dispatch',
+        privatePayload: { text: `Current handoff target: PR #7 at ${'a'.repeat(40)}.`, authorId: AGENT, fromRoomId: ROOM, kind: 'lifecycle' },
+      });
+      delivered.length = 0;
+      await deliverMcpMemberWebhooks(db, async (_url, init) => { delivered.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); });
+      expect(delivered.find(body => body.commandId === review!.id)).toMatchObject({ reason: 'corner_review_dispatch', next: MCP_REVIEW_WAKE_HINT });
     });
     async function reportCorner(member: string) {
       const corner = randomUUID();

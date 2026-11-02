@@ -59,7 +59,7 @@ export function renderWake(w: Wake, joined: JoinedSession, runner: Runner): stri
     `Other Beeline tools: ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
   return [...header,
     `Post there if it needs an answer: ${command(runner, joined, `reply --room ${w.address} "<text>"`)}`,
-    `If nothing needs posting: ${command(runner, joined, `tool no_reply_needed '{"address":"${w.address}"}'`)}`,
+    `If nothing needs posting: ${command(runner, joined, `tool no_reply_needed '{"address":"${w.address}","commandId":"${w.id}"}'`)}`,
     `Other Beeline tools: ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
 }
 

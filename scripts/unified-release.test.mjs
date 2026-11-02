@@ -1,5 +1,7 @@
+import { createServer } from 'node:http';
+import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -957,6 +959,68 @@ test('final manifest refuses absent artifacts and records outcome duration', () 
   assert.equal(state.delivery.unproven, 'mobile OTA promoted with skip_release_proof=true; the emulator release proof did not run');
 });
 
+test('R1: verified helper notification runs after failed or missing release state', async () => {
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const step = workflow.jobs.release_result.steps.find(step => step.id === 'notification');
+  for (const outcome of ['success', 'failure', '']) {
+    const context = { inputs: {}, needs: { initialize: { outputs: { no_op: 'false' } } },
+      steps: { result: { outputs: { outcome, no_op: 'false' } } } };
+    assert.equal(evaluateWorkflowCondition(step.if, context), true, `outcome=${outcome}`);
+    for (const delivered of [true, false]) {
+      const posts = [];
+      const result = await notifyRelease({
+        version: 'v0.0.9', sourceSha: NEW_SHA, repository: 'Beeline-Work/beeline', secret: 'secret',
+        fetchImpl: async (url, options) => {
+          if (options.method === 'POST') {
+            posts.push(JSON.parse(options.body));
+            return { ok: true, status: 200 };
+          }
+          assert.equal(options.headers?.authorization, undefined);
+          return { ok: true, json: async () => ({ version: delivered ? 'v0.0.9' : 'v0.0.8', sourceCommit: NEW_SHA }) };
+        },
+      });
+      assert.equal(posts.length, delivered ? 1 : 0);
+      assert.equal(result.state, delivered ? 'sent' : 'skipped');
+    }
+    assert.equal(context.steps.result.outputs.outcome, outcome);
+  }
+  assert.equal(evaluateWorkflowCondition(step.if, { inputs: {}, steps: {},
+    needs: { initialize: { outputs: { no_op: 'true' } } } }), false);
+});
+
+test('R1: notify CLI verifies Pages before sending an HTTP helper notice', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'release-notice-'));
+  const posts = [];
+  let manifest = { version: 'v0.0.9', sourceCommit: NEW_SHA };
+  const server = createServer((request, response) => {
+    if (request.method === 'GET') return response.end(JSON.stringify(manifest));
+    let body = '';
+    request.on('data', chunk => { body += chunk; });
+    request.on('end', () => { posts.push(JSON.parse(body)); response.end('{}'); });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const preload = join(dir, 'fetch.mjs');
+  writeFileSync(preload, `const real = globalThis.fetch;
+    globalThis.fetch = (url, options) => real(options?.method === 'POST' ? ${JSON.stringify(origin)} : url, options);`);
+  try {
+    for (const delivered of [true, false]) {
+      manifest = { version: 'v0.0.9', sourceCommit: delivered ? NEW_SHA : OLD_SHA };
+      await promisify(execFile)(process.execPath, ['--import', preload, RELEASE_SCRIPT, 'notify',
+        '--version', 'v0.0.9', '--sha', NEW_SHA, '--repository', 'Beeline-Work/beeline',
+        '--manifest-url', `${origin}/manifest.json`, '--output', join(dir, 'result.json')],
+        { env: { ...process.env, BEELINE_RELEASE_NOTIFY_SECRET: 'fixture-secret', GITHUB_OUTPUT: join(dir, 'outputs') } });
+      assert.equal(JSON.parse(readFileSync(join(dir, 'result.json'))).state, delivered ? 'sent' : 'skipped');
+      assert.equal(posts.length, 1, 'a mismatched helper never causes another POST');
+    }
+    assert.equal(posts[0].version, 'v0.0.9');
+    assert.equal(posts[0].sha, NEW_SHA);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('release notification timeout is a bounded warning', async () => {
   const result = await notifyRelease({
     version: 'v0.0.9',
@@ -981,7 +1045,9 @@ test('release notification timeout is a bounded warning', async () => {
 test('release notification non-2xx is a warning', async () => {
   const result = await notifyRelease({
     version: 'v0.0.9', sourceSha: NEW_SHA, repository: 'lunchboxfortwo/beeline', secret: 'secret',
-    fetchImpl: async () => ({ ok: false, status: 503 }),
+    fetchImpl: async (_url, options) => options.method === 'POST'
+      ? { ok: false, status: 503 }
+      : { ok: true, json: async () => ({ version: 'v0.0.9', sourceCommit: NEW_SHA }) },
   });
   assert.deepEqual(result, { state: 'warning', detail: 'server returned HTTP 503' });
 });
@@ -989,7 +1055,9 @@ test('release notification non-2xx is a warning', async () => {
 test('successful release notification is recorded', async () => {
   const result = await notifyRelease({
     version: 'v0.0.9', sourceSha: NEW_SHA, repository: 'lunchboxfortwo/beeline', secret: 'secret',
-    fetchImpl: async () => ({ ok: true, status: 204 }),
+    fetchImpl: async (_url, options) => options.method === 'POST'
+      ? { ok: true, status: 204 }
+      : { ok: true, json: async () => ({ version: 'v0.0.9', sourceCommit: NEW_SHA }) },
   });
   assert.deepEqual(result, { state: 'sent', detail: 'server returned HTTP 204' });
 });

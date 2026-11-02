@@ -7279,6 +7279,8 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    // A corner's branch is derived from its id; nothing stores it.
+    const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
     expect(
       (
         await daemonOperation('postCornerPlan', {
@@ -7292,7 +7294,7 @@ describe('monolith integration', () => {
       (
         await daemonOperation('postCornerRemoteState', {
           cornerId,
-          branch: 'fm/widget',
+          branch: branch,
           state: 'working',
           checks: 'unknown',
         })
@@ -7342,7 +7344,7 @@ describe('monolith integration', () => {
             number: 42,
             title: 'Ship the widget',
             html_url: 'https://github.com/owner/widgets/pull/42',
-            head: { ref: 'fm/widget', sha: '0'.repeat(40) },
+            head: { ref: branch, sha: '0'.repeat(40) },
             base: { ref: 'main' },
             mergeable_state: 'clean',
             merged: false,
@@ -7377,7 +7379,7 @@ describe('monolith integration', () => {
         title: 'Handle narrow screens',
       }),
       expect.objectContaining({
-        type: 'pull-request', action: 'opened', branch: 'fm/widget', cornerId,
+        type: 'pull-request', action: 'opened', branch: branch, cornerId,
       }),
     ]);
     // Room-level repository activity: issues and pull requests only. A
@@ -7421,7 +7423,7 @@ describe('monolith integration', () => {
     expect(mainlineCards.rows.some((row) => row.card.type === 'ci')).toBe(false);
     await webhook('push', 'corner-push', {
       ...base,
-      ref: 'refs/heads/fm/widget',
+      ref: `refs/heads/${branch}`,
       after: '1'.repeat(40),
       compare: 'https://github.com/owner/widgets/compare/a...b',
       commits: [{ id: '1' }, { id: '2' }],
@@ -7434,7 +7436,7 @@ describe('monolith integration', () => {
         name: 'typecheck',
         status: 'in_progress',
         html_url: 'https://github.com/owner/widgets/actions/runs/6',
-        check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
+        check_suite: { head_branch: branch, head_sha: '1'.repeat(40) },
       },
     });
     Object.assign(githubApp, {
@@ -7442,7 +7444,7 @@ describe('monolith integration', () => {
         number: 42,
         url: 'https://github.com/owner/widgets/pull/42',
         headSha: '1'.repeat(40),
-        headRef: 'fm/widget',
+        headRef: branch,
         merged: false,
         mergeability: 'clean',
       })),
@@ -7455,7 +7457,7 @@ describe('monolith integration', () => {
         id: 7,
         status: 'completed',
         conclusion: 'failure',
-        head_branch: 'fm/widget',
+        head_branch: branch,
         head_sha: '1'.repeat(40),
         app: { name: 'Beeline CI' },
         url: 'https://github.com/owner/widgets/actions/runs/7',
@@ -7502,7 +7504,7 @@ describe('monolith integration', () => {
         id: 7,
         status: 'completed',
         conclusion: 'success',
-        head_branch: 'fm/widget',
+        head_branch: branch,
         head_sha: '1'.repeat(40),
         app: { name: 'Beeline CI' },
         url: 'https://github.com/owner/widgets/actions/runs/8',
@@ -7517,7 +7519,7 @@ describe('monolith integration', () => {
         status: 'completed',
         conclusion: 'success',
         html_url: 'https://github.com/owner/widgets/actions/runs/6',
-        check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
+        check_suite: { head_branch: branch, head_sha: '1'.repeat(40) },
       },
     });
     await webhook('status', 'corner-checks-passed', {
@@ -7525,7 +7527,7 @@ describe('monolith integration', () => {
       state: 'success',
       sha: '1'.repeat(40),
       target_url: 'https://github.com/owner/widgets/actions/runs/8',
-      branches: [{ name: 'fm/widget' }],
+      branches: [{ name: branch }],
     });
     const cornerBeforeMerge = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
       messages: Array<{ text: string; presentation: string }>;
@@ -7547,7 +7549,7 @@ describe('monolith integration', () => {
           },
         }),
         expect.objectContaining({
-          text: expect.stringMatching(/^@GitHub pushed 2 commits to fm\/widget · at [0-9a-f]{12}$/),
+          text: expect.stringMatching(/^@GitHub pushed 2 commits to feature\/corner-[0-9a-f]{12} · at [0-9a-f]{12}$/),
         }),
         expect.objectContaining({
           text: '@GitHub started a check typecheck',
@@ -7587,7 +7589,7 @@ describe('monolith integration', () => {
       (
         await daemonOperation('postCornerRemoteState', {
           cornerId,
-          branch: 'fm/widget',
+          branch: branch,
           state: 'working',
           checks: 'unknown',
         })
@@ -7618,7 +7620,7 @@ describe('monolith integration', () => {
     // pull-request webhook must recover them by their durable feature branch.
     await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       cornerId,
-      JSON.stringify({ branch: 'fm/widget', checks: 'unknown', lifecycle: 'working' }),
+      JSON.stringify({ branch: branch, checks: 'unknown', lifecycle: 'working' }),
     ]);
     await webhook('pull_request', 'corner-pr-recovery', {
       ...base,
@@ -7627,7 +7629,7 @@ describe('monolith integration', () => {
         number: 42,
         title: 'Ship the widget',
         html_url: 'https://github.com/owner/widgets/pull/42',
-        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        head: { ref: branch, sha: '1'.repeat(40) },
         base: { ref: 'main' },
         mergeable_state: 'clean',
         merged: false,
@@ -7690,7 +7692,7 @@ describe('monolith integration', () => {
         number: 42,
         title: 'Ship the widget',
         html_url: 'https://github.com/owner/widgets/pull/42',
-        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        head: { ref: branch, sha: '1'.repeat(40) },
         base: { ref: 'main' },
         merged: true,
         merged_at: '2026-09-02T14:00:00Z',
@@ -7834,7 +7836,7 @@ describe('monolith integration', () => {
       status: 'already-merged',
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
     });
-    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
+    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branch);
   });
 
   it('serves a corner to every member agent, keeps archive with the opener, and refuses a non-member', async () => {

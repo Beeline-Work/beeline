@@ -1,3 +1,4 @@
+import { cornerCommissionerSql } from './corner-opening.js';
 import { dashboardXAds } from './x-ads.js';
 import { dashboardFinances } from './operator-finances.js';
 import { unavailableFinances } from './operator-finances-wire.js';
@@ -111,8 +112,8 @@ const FUNNEL_SQL = `WITH ${COHORT_SQL}, agent_replies AS MATERIALIZED (
     EXISTS(SELECT 1 FROM memberships m WHERE m.identity_id=e.id AND m.room_id IS NULL AND m.removed_at IS NULL AND m.workspace_id IN (SELECT id FROM production_workspaces)) workspace,
     EXISTS(SELECT 1 FROM agents a JOIN production_identities ai ON ai.id=a.agent_id JOIN daemon_tokens t ON t.agent_id=a.agent_id WHERE a.owner_id=e.id AND t.revoked_at IS NULL) paired,
     EXISTS(SELECT 1 FROM agents a JOIN production_identities ai ON ai.id=a.agent_id JOIN agent_replies m ON m.author_id=a.agent_id WHERE a.owner_id=e.id) reply,
-    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE f.commissioned_by=e.id) corner,
-    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE f.commissioned_by=e.id AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL) merged
+    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE ${cornerCommissionerSql('cr.id')}=e.id) corner,
+    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE ${cornerCommissionerSql('cr.id')}=e.id AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL) merged
   FROM eligible e
 ), agent_steps AS (
   SELECT a.agent_id,
@@ -181,7 +182,7 @@ const FUNNEL_TIME_SQL = `WITH ${COHORT_SQL}, eligible AS (
   JOIN production_workspaces w ON w.id=r.workspace_id
   WHERE presentation='message' AND deleted_at IS NULL GROUP BY author_id
 ), corner_times AS (
-  SELECT f.commissioned_by human_id, f.owner_agent_id agent_id,
+  SELECT ${cornerCommissionerSql('r.id')} human_id, f.owner_agent_id agent_id,
     r.created_at opened_at,
     CASE WHEN f.lifecycle->'pr'->>'mergedAt' ~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T'
       THEN (f.lifecycle->'pr'->>'mergedAt')::timestamptz ELSE NULL END merged_at

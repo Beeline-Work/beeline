@@ -1,4 +1,5 @@
 import { cornerObjectiveSql } from './corner-objective.js';
+import { cornerKindSql, cornerCommissionerSql } from './corner-opening.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
@@ -3218,7 +3219,7 @@ export class PhoneService {
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c ${facts.joins}
       LEFT JOIN identities initiator
-        ON initiator.id=f.commissioned_by AND initiator.kind='human'
+        ON initiator.id=${cornerCommissionerSql('c.id')} AND initiator.kind='human'
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
@@ -6249,7 +6250,7 @@ export class PhoneService {
       if (!access.rowCount) throw new Error('room access denied');
       const room = (
         await database.query<{ created_by: string | null; kind: string }>(
-          `SELECT room.created_by,fact.kind
+          `SELECT room.created_by,${cornerKindSql('room.id')} kind
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 AND room.parent_id IS NOT NULL
            FOR KEY SHARE OF room FOR UPDATE OF fact`,
@@ -6705,9 +6706,9 @@ export class PhoneService {
         return false;
       }
       await database.query(
-        `INSERT INTO corner_facts(corner_id,commissioned_by,kind,lifecycle,title_generated)
-         VALUES($1,$2,'human','{"lifecycle":"working","checks":"unknown"}',$3)`,
-        [id, viewerId, input.titleGenerated === true],
+        `INSERT INTO corner_facts(corner_id,lifecycle)
+         VALUES($1,'{"lifecycle":"working","checks":"unknown"}')`,
+        [id],
       );
       await advanceCorner(database, id, {
         kind: 'open',
@@ -8423,8 +8424,7 @@ export class PhoneService {
          WHERE worker_agent_id=ANY($1)`,
         [gone],
       );
-      // A corner this person commissioned keeps that attribution until here; a
-      // surviving `commissioned_by` would also trip the foreign key below.
+      // Clear the retired column's legacy FK until the drop release removes it.
       await database.query(
         `UPDATE corner_facts SET commissioned_by=NULL,updated_at=now()
          WHERE commissioned_by=ANY($1)`,
@@ -8564,7 +8564,11 @@ export class PhoneService {
 
       // Receipts, output streams and authority rows that point at the gone ids.
       await database.query(`DELETE FROM live_outputs WHERE agent_id=ANY($1)`, [gone]);
-      await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(
+        `UPDATE agent_commands SET agent_id=$2 WHERE agent_id=ANY($1) AND reason='corner_objective'`,
+        [gone, DELETED_ACCOUNT_IDENTITY_ID],
+      );
+      await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1) AND reason<>'corner_objective'`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);

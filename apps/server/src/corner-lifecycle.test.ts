@@ -1,3 +1,4 @@
+import { cornerKindSql } from './corner-opening.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -690,7 +691,7 @@ describe('a person-opened corner in a repository Room', () => {
       `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
     );
     expect(columns.rowCount).toBe(0);
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+    expect((await db.query(`SELECT owner_agent_id,worker_agent_id,${cornerKindSql('corner_id')} kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: null, worker_agent_id: null, kind: 'human' });
 
     // The first agent a person tags owns the corner; a later tag moves only the implementer.

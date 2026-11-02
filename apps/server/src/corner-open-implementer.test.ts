@@ -1,3 +1,4 @@
+import { cornerCommissionerSql } from './corner-opening.js';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
@@ -83,7 +84,7 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
   const request = { ...draft, implementer: 'beta', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   const fact = (
-    await db.query(`SELECT owner_agent_id,commissioned_by FROM corner_facts WHERE corner_id=$1`, [
+    await db.query(`SELECT owner_agent_id,${cornerCommissionerSql('corner_id')} commissioned_by FROM corner_facts WHERE corner_id=$1`, [
       cornerId,
     ])
   ).rows[0];

@@ -1,3 +1,4 @@
+import { cornerCommissionerSql } from './corner-opening.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import type { SqlDatabase } from './database.js';
 
@@ -35,19 +36,18 @@ CREATE TRIGGER corner_follows_room_insert AFTER INSERT ON rooms
 CREATE OR REPLACE FUNCTION corner_follows_commissioned() RETURNS trigger
 LANGUAGE plpgsql AS $corner_follows$
 BEGIN
-  IF NEW.commissioned_by IS NOT NULL THEN
-    INSERT INTO corner_follows(corner_id,identity_id) VALUES(NEW.corner_id,NEW.commissioned_by)
-    ON CONFLICT DO NOTHING;
-  END IF;
+  INSERT INTO corner_follows(corner_id,identity_id)
+  SELECT NEW.room_id,person.id FROM identities person
+  WHERE person.id=${cornerCommissionerSql('NEW.room_id')} AND person.kind='human'
+  ON CONFLICT DO NOTHING;
   RETURN NULL;
 END
 $corner_follows$;
 DROP TRIGGER IF EXISTS corner_follows_facts_insert ON corner_facts;
-CREATE TRIGGER corner_follows_facts_insert AFTER INSERT ON corner_facts
-  FOR EACH ROW EXECUTE FUNCTION corner_follows_commissioned();
 DROP TRIGGER IF EXISTS corner_follows_facts_update ON corner_facts;
-CREATE TRIGGER corner_follows_facts_update AFTER UPDATE OF commissioned_by ON corner_facts
-  FOR EACH ROW WHEN (OLD.commissioned_by IS DISTINCT FROM NEW.commissioned_by)
+DROP TRIGGER IF EXISTS corner_follows_opening_insert ON agent_commands;
+CREATE TRIGGER corner_follows_opening_insert AFTER INSERT ON agent_commands
+  FOR EACH ROW WHEN (NEW.reason='corner_objective')
   EXECUTE FUNCTION corner_follows_commissioned();
 
 -- The author follows the corner they post in; the people the message tags
@@ -107,8 +107,9 @@ export async function backfillCornerFollows(database: SqlDatabase): Promise<void
     JOIN identities person ON person.id=corner.created_by
     WHERE corner.parent_id IS NOT NULL
     UNION
-    SELECT fact.corner_id,fact.commissioned_by FROM corner_facts fact
-    JOIN identities person ON person.id=fact.commissioned_by
+    SELECT corner.id,person.id FROM rooms corner
+    JOIN identities person ON person.id=${cornerCommissionerSql('corner.id')} AND person.kind='human'
+    WHERE corner.parent_id IS NOT NULL
     UNION
     SELECT posted.room_id,posted.author_id FROM messages posted
     JOIN rooms corner ON corner.id=posted.room_id AND corner.parent_id IS NOT NULL

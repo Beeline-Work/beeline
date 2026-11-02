@@ -186,7 +186,6 @@ type CornerRow = {
   parent_id: string;
   workspace_id: string;
   worker_agent_id: string | null;
-  commissioned_by: string | null;
   lifecycle: CornerLifecycleView;
   archived: boolean;
   locked: boolean;
@@ -251,7 +250,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
     await db.query<CornerRow>(
       `SELECT corner.parent_id,parent.workspace_id,
               ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-              fact.commissioned_by,fact.lifecycle,fact.locked,
+              fact.lifecycle,fact.locked,
               corner.archived_at IS NOT NULL archived,
               ${cornerReviewerSql()} configured_reviewer_id,
               configured.kind configured_reviewer_kind,

@@ -1,4 +1,5 @@
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
+import { cornerOpeningSql, cornerKindSql, cornerOpenedFromSql, cornerRequestSql } from './corner-opening.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
@@ -3899,7 +3900,6 @@ export class DaemonService {
         objective: string;
         implementer_agent_id: string | null;
         title: string;
-        title_generated: boolean;
         kind: 'agent' | 'human';
         feature_branch: string | null;
         request_id: string | null;
@@ -3913,7 +3913,7 @@ export class DaemonService {
         last_excerpt: string | null;
       }>(
         `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
-           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,${cornerObjectiveSql('c')} objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
+           ${cornerOpenedFromSql('c.id')} opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,${cornerObjectiveSql('c')} objective,c.name title,${cornerKindSql('c.id')} kind,f.feature_branch,${cornerRequestSql('c.id')} request_id,f.close_requested,
            approval.pull_request_number,approval.head_sha approval_head_sha,
            lm.author_id last_author_id,lm.created_at last_created_at,
            lm.presentation last_type,left(lm.text,280) last_excerpt
@@ -3936,7 +3936,8 @@ export class DaemonService {
       holds,
       ...(brief ? { brief } : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
-      ...(row?.title_generated ? { titleGenerated: true } : {}),
+      // The phone's generated name stands until the agent writes its first brief.
+      ...(row?.kind === 'human' && !brief ? { titleGenerated: true } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
@@ -4352,7 +4353,7 @@ export class DaemonService {
     await this.access(input.roomId, agentId);
     const row = (
       await this.database.query<{ corner_id: string | null; status: 'complete' | 'failed' | null; failure_reason: string | null }>(
-        `SELECT (SELECT id::text FROM rooms WHERE parent_id=$1 AND EXISTS(SELECT 1 FROM corner_facts WHERE corner_id=rooms.id AND request_id=$2) LIMIT 1) corner_id,
+        `SELECT (SELECT id::text FROM rooms WHERE parent_id=$1 AND ${cornerRequestSql('rooms.id')}=$2 LIMIT 1) corner_id,
           ended.status,ended.failure_reason FROM (SELECT 1) anchor LEFT JOIN LATERAL (
             SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND status IN ('complete','failed')
             ORDER BY created_at DESC LIMIT 1) ended ON true`,
@@ -6614,7 +6615,7 @@ export class DaemonService {
       await lockCornerLifecycle(db, input.cornerId);
       const corner = (
         await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string; name: string }>(
-          `SELECT room.name,room.parent_id,room.archived_at,fact.kind,${cornerObjectiveSql('room')} objective
+          `SELECT room.name,room.parent_id,room.archived_at,${cornerKindSql('room.id')} kind,${cornerObjectiveSql('room')} objective
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 FOR UPDATE OF room`,
           [input.cornerId],
@@ -8500,9 +8501,9 @@ export class DaemonService {
     if (host?.parent_id && targetRoomId !== host.parent_id && targetRoomId !== commandRoomId) {
       const opened = await this.database.query(
         `WITH RECURSIVE descendants AS (
-           SELECT corner_id FROM corner_facts WHERE opened_from_corner_id=$1
-           UNION SELECT child.corner_id FROM corner_facts child JOIN descendants parent
-             ON child.opened_from_corner_id=parent.corner_id
+           SELECT child.id corner_id FROM rooms child WHERE ${cornerOpenedFromSql('child.id')}=$1
+           UNION SELECT child.id FROM rooms child JOIN descendants parent
+             ON ${cornerOpenedFromSql('child.id')}=parent.corner_id
          ) SELECT 1 FROM descendants WHERE corner_id::text=$2 AND corner_id<>$1 LIMIT 1`,
         [commandRoomId, targetRoomId],
       );
@@ -8556,17 +8557,22 @@ export class DaemonService {
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
           `SELECT child.id::text corner_id,child.name,${cornerObjectiveSql('child')} objective,fact.owner_agent_id,child.created_by,
-                  fact.request_id,child.repository_key,child.repository_target_branch,
+                  ${cornerRequestSql('child.id')} request_id,child.repository_key,child.repository_target_branch,
                   (SELECT handle FROM identities WHERE id=fact.reviewer_agent_id) reviewer_handle,
                   initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
            FROM rooms child
            JOIN corner_facts fact ON fact.corner_id=child.id
+           LEFT JOIN LATERAL (${cornerOpeningSql('child.id')}) opening ON true
            LEFT JOIN corner_brief_revisions initial
              ON initial.corner_id=child.id AND initial.revision=1
            WHERE child.parent_id=$1
-             AND COALESCE(fact.open_idempotency_key,fact.request_id)=$2
+             -- The drop release removes this legacy replay-only fallback.
+             AND COALESCE(opening.private_payload->>'openKey',
+               CASE WHEN opening.private_payload->>'openKey' IS NULL
+                 THEN COALESCE(fact.open_idempotency_key,fact.request_id) END,
+               opening.turn_request_id)=$2
              AND child.archived_at IS NULL
            ORDER BY child.created_at,child.id
            LIMIT 1`,
@@ -8667,16 +8673,9 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
-         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
-        [
-          cornerId,
-          implementerAgentId,
-          commissionedBy ?? null,
-          input.requestId,
-          idempotencyKey,
-          host?.parent_id ? commandRoomId : null,
-        ],
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle)
+         VALUES($1,$2,'{"lifecycle":"working","checks":"unknown"}')`,
+        [cornerId, implementerAgentId],
       );
       if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
         (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
@@ -8737,7 +8736,7 @@ export class DaemonService {
         roomId: cornerId,
         agentId: implementerAgentId,
         sourceMessageId: null,
-        privatePayload: { objective, text: input.brief?.spec ?? objective, authorId: agentId, fromRoomId: commandRoomId, kind: 'order' },
+        privatePayload: { objective, text: input.brief?.spec ?? objective, authorId: agentId, fromRoomId: commandRoomId, kind: 'order', openKey: idempotencyKey },
         reason: 'corner_objective',
         parent: parentCommand,
         retainDepth: true,
@@ -8808,7 +8807,7 @@ export class DaemonService {
           created_by: string;
         }>(
           `SELECT room.parent_id,fact.owner_agent_id,${cornerImplementerSql('fact', 'room')} implementer_agent_id,
-             fact.kind,room.created_by,EXISTS(SELECT 1 FROM rooms parent WHERE parent.id=room.parent_id
+             ${cornerKindSql('room.id')} kind,room.created_by,EXISTS(SELECT 1 FROM rooms parent WHERE parent.id=room.parent_id
                AND (parent.repository_resolution='repository' OR parent.repository_key IS NOT NULL)) repository_backed FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,

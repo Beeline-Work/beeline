@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerOwed, type SqlDatabase } from './database.js';
 import { addressedToPersonSql, cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -157,11 +157,29 @@ describe('corner_owed', () => {
          VALUES($1,NULL,$2,$3),($1,$4,$2,$3)`,
         [WORKSPACE, id, id === OWNER ? 'owner' : 'member', ROOM],
       );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
-       VALUES($1,$2,$3)`,
-      [CORNER, AGENT, OWNER],
-    );
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [CORNER, AGENT]);
+    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: OWNER });
+  });
+
+  it('refreshes existing deliverables when the opening order records their commissioner', async () => {
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [CORNER]);
+    await post('deliverable', AGENT, 'Here it is.', {
+      attachments: [{ name: 'finish.png', url: '/files/finish.png', mimeType: 'image/png' }],
+    });
+    await step(idle);
+    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: OWNER });
+    await step(owedToViewer);
+  });
+
+  it('keeps push commissioner probes on the opening-order index', async () => {
+    await database.transaction(async db => {
+      await db.query(`SET LOCAL enable_seqscan=off`);
+      const plan = await db.query(`EXPLAIN (FORMAT JSON)
+        SELECT ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}
+        FROM messages m JOIN identities person ON person.id=$1 WHERE m.id='push-message'`, [OWNER]);
+      expect(JSON.stringify(plan.rows)).toContain('agent_commands_corner_opening');
+      expect(JSON.stringify(plan.rows)).toContain('corner_facts_pkey');
+    });
   });
 
   it('reads a tag owed until the person posts, and attention only until they open the corner', async () => {
@@ -273,8 +291,8 @@ describe('corner_owed', () => {
     const otherCorner = '44444444-4444-4444-8444-444444444444';
     await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name)
       VALUES($1,$2,$3,'Other corner')`, [otherCorner, WORKSPACE, ROOM]);
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
-      VALUES($1,$2,$3)`, [otherCorner, AGENT, OTHER]);
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [otherCorner, AGENT]);
+    await seedCornerOpening(database, { cornerId: otherCorner, agentId: AGENT, commissionedBy: OTHER });
     await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
       VALUES
       ('own-complete',$1,$2,'Done','card','daemon-fact',$3::jsonb),

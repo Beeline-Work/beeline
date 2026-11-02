@@ -1,4 +1,5 @@
 import { cornerObjectiveSql } from './corner-objective.js';
+import { cornerKindSql } from './corner-opening.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
@@ -132,6 +133,7 @@ ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check
 ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
 CREATE INDEX IF NOT EXISTS agent_commands_turn ON agent_commands(room_id,agent_id,turn_request_id);
+CREATE INDEX IF NOT EXISTS agent_commands_corner_opening ON agent_commands(room_id) WHERE reason='corner_objective';
 -- source_message_id/result_message_id reference messages(id) with no index,
 -- so deleting a message (e.g. a room or workspace cascade) made Postgres
 -- sequentially scan all of agent_commands for the FK check, once per deleted
@@ -186,6 +188,8 @@ CREATE TRIGGER show_dispatched_agent_work AFTER INSERT OR UPDATE OF state,wake_a
 `;
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {
+  /** Stable tool-call key on the corner's opening order. */
+  openKey?: string;
   ask?: string;
   objective?: string;
   text: string;
@@ -1348,7 +1352,7 @@ async function setCornerImplementer(
      )
      UPDATE corner_facts fact
      SET worker_agent_id=$2,
-         owner_agent_id=CASE WHEN fact.kind='human'
+         owner_agent_id=CASE WHEN ${cornerKindSql('corner.id')}='human'
            THEN COALESCE(fact.owner_agent_id,$2) ELSE fact.owner_agent_id END,
          updated_at=now()
      FROM rooms corner
@@ -1358,7 +1362,7 @@ async function setCornerImplementer(
        AND $2<>COALESCE(${cornerReviewerSql()},'')
        AND NOT ($2=ANY(${cornerReviewerFallbacksSql()}))
        AND (fact.worker_agent_id IS DISTINCT FROM $2
-            OR (fact.kind='human' AND fact.owner_agent_id IS NULL))
+            OR (${cornerKindSql('corner.id')}='human' AND fact.owner_agent_id IS NULL))
      RETURNING prior.previous`,
     [cornerId, agentId],
   );

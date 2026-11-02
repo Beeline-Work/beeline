@@ -1,3 +1,4 @@
+import { cornerOpenedFromSql } from './corner-opening.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -84,8 +85,7 @@ export async function assertCornerCommandTarget(
        UNION
        SELECT parent.id FROM ancestors ancestor
        JOIN rooms room ON room.id=ancestor.id
-       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-       CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
+       CROSS JOIN LATERAL (VALUES (room.parent_id),(${cornerOpenedFromSql('room.id')})) parent(id)
        WHERE parent.id IS NOT NULL
      ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=lower($2)
        AND NOT ($3::boolean AND id=(SELECT parent_id FROM rooms WHERE id=$1)) LIMIT 1`,
@@ -688,8 +688,7 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
          UNION ALL
          SELECT ancestor.id,ancestor.archived_at,child.hop+1,child.path||ancestor.id
          FROM ancestry child JOIN rooms room ON room.id=child.id
-         LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-         JOIN rooms ancestor ON ancestor.id=COALESCE(fact.opened_from_corner_id,room.parent_id)
+         JOIN rooms ancestor ON ancestor.id=COALESCE(${cornerOpenedFromSql('room.id')},room.parent_id)
          WHERE NOT ancestor.id=ANY(child.path)
        ) SELECT ancestry.id FROM ancestry
        WHERE ancestry.archived_at IS NULL

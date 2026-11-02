@@ -1,3 +1,4 @@
+import { cornerCommissionerSql } from './corner-opening.js';
 import { randomUUID } from 'node:crypto';
 import {
   INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES,
@@ -526,10 +527,9 @@ type MemoryWriteAuthority = {
  * person who approved its current brief.
  */
 const CORNER_REQUESTER_SQL = (cornerId: string) => `COALESCE(
-  (SELECT fact.commissioned_by FROM corner_facts fact
-   JOIN identities person ON person.id=fact.commissioned_by AND person.kind='human'
-     AND person.id<>'${SYSTEM_IDENTITY_ID}'
-   WHERE fact.corner_id=${cornerId}),
+  (SELECT person.id FROM identities person
+   WHERE person.id=${cornerCommissionerSql(cornerId)} AND person.kind='human'
+     AND person.id<>'${SYSTEM_IDENTITY_ID}'),
   (SELECT person.id FROM corner_brief_revisions brief
    JOIN identities person ON person.id=brief.approval_basis->>'approvedBy' AND person.kind='human'
      AND person.id<>'${SYSTEM_IDENTITY_ID}'

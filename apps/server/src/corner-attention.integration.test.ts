@@ -6,7 +6,7 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -75,11 +75,8 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`,
     [C, WS, ROOM, COMMANDER],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective)
-    VALUES($1,$2,$2,$3,'Truthful corner states')`,
-    [C, WORKER, HUMAN],
-  );
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$3,'Truthful corner states')`, [C, WORKER, WORKER]);
+  await seedCornerOpening(db, { cornerId: C, agentId: WORKER, commissionedBy: HUMAN });
   await createAgentCommand(db, {
     id: 'opening-order',
     roomId: C,

@@ -13,7 +13,7 @@ import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { wakeLateCornerWatcher } from './system-line.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
 
 // Reproduction 2026-10-08: save_memory on a turn woken by a child corner's
 // report answered "503: institutional memory requester authority is
@@ -106,13 +106,10 @@ describe('save_memory requester authority on corner wakes', () => {
     // CORNER keeps its commissioned requester. WATCHED was opened by an
     // agent turn, so its requester link is missing and only its brief
     // approval names the person. UNLINKED has neither.
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle)
-       VALUES($1,$2,'Audit taps','agent','{"lifecycle":"working","checks":"unknown"}'),
-             ($3,NULL,'Store step','agent','{"lifecycle":"merged","checks":"passing"}'),
-             ($4,NULL,'Unlinked','agent','{"lifecycle":"working","checks":"unknown"}')`,
-      [CORNER, CAPTAIN, WATCHED, UNLINKED],
-    );
+    await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Audit taps','{"lifecycle":"working","checks":"unknown"}'),($2,'Store step','{"lifecycle":"merged","checks":"passing"}'),($3,'Unlinked','{"lifecycle":"working","checks":"unknown"}')`, [CORNER, WATCHED, UNLINKED]);
+    await seedCornerOpening(database, { cornerId: CORNER, commissionedBy: CAPTAIN });
+    await seedCornerOpening(database, { cornerId: WATCHED });
+    await seedCornerOpening(database, { cornerId: UNLINKED });
     await database.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id,
          source_message_id,approval_basis)

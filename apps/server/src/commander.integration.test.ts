@@ -1,4 +1,5 @@
 import { readCornerObjective, backfillCornerObjectives } from './corner-objective.js';
+import { cornerOpenedFromSql } from './corner-opening.js';
 import { activeCornerHolds } from './corner-holds.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { cornerMergeGate } from './corner-lifecycle.js';
@@ -82,6 +83,36 @@ it('opens in an unrelated member Room from a DM and records the caller as comman
     source: { authorId: RUBY, body: 'Build the widget' } });
   expect(opened.watch?.kinds).toEqual(['opened', 'merged']);
 });
+it.each(['opening key', 'request fallback', 'legacy open key', 'legacy request id'])(
+  'PROVENANCE-REPLAY reuses the active corner through %s', async provenance => {
+    const key = provenance === 'request fallback' ? order.turnRequestId : 'stable-open-key';
+    const input = { ...authority(order), targetRoomId: ROOM, idempotencyKey: key,
+      name: 'Widget', objective: 'Build the widget', implementer: 'worker',
+      brief: { spec: 'Build the widget', repositoryWork: false,
+        approval: { sourceMessageId: order.sourceMessageId } },
+    };
+    const first = await daemon.execute('createCorner', input, RUBY);
+    expect((await db.query(`SELECT private_payload->>'openKey' key FROM agent_commands
+      WHERE room_id=$1 AND reason='corner_objective'`, [first.cornerId])).rows[0]?.key).toBe(key);
+    if (provenance !== 'opening key') {
+      await db.query(`UPDATE agent_commands SET private_payload=private_payload-'openKey'
+        WHERE room_id=$1 AND reason='corner_objective'`, [first.cornerId]);
+      if (provenance.startsWith('legacy')) await db.query(
+        `UPDATE corner_facts SET open_idempotency_key=$2,request_id=$3 WHERE corner_id=$1`,
+        [first.cornerId, provenance === 'legacy open key' ? key : null,
+          provenance === 'legacy request id' ? key : order.turnRequestId],
+      );
+    }
+    expect(await daemon.execute('createCorner', input, RUBY)).toEqual(first);
+    await expect(daemon.execute('createCorner', { ...input, objective: 'Different work' }, RUBY))
+      .rejects.toThrow('different assignment');
+    expect(await daemon.execute('getRequestCompletion', { roomId: ROOM,
+      requestId: order.turnRequestId }, RUBY)).toMatchObject({ openedCornerId: first.cornerId });
+    expect((await db.query(`SELECT count(*)::int count FROM rooms WHERE parent_id=$1`, [ROOM])).rows[0]?.count)
+      .toBe(1);
+  },
+);
+
 it('delivers blocked privately to Ruby and Ruby orders the current worker privately', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await daemon.execute('report', { status: 'blocked', ...authority(turn), text: 'blocked: need an endpoint decision' }, WORKER);
@@ -1031,9 +1062,9 @@ it('migration leaves legacy opening provenance empty and preserves new provenanc
     brief: { spec: 'Child widget', repositoryWork: false, approval: { sourceMessageId: turn.sourceMessageId } },
   }, WORKER);
   await migrate(db);
-  expect((await db.query(`SELECT opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
+  expect((await db.query(`SELECT ${cornerOpenedFromSql('corner_id')} opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
     .toEqual({ opened_from_corner_id: null });
-  expect((await db.query(`SELECT opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [child.cornerId])).rows[0])
+  expect((await db.query(`SELECT ${cornerOpenedFromSql('corner_id')} opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [child.cornerId])).rows[0])
     .toEqual({ opened_from_corner_id: opened.cornerId });
 });
 
@@ -1372,7 +1403,7 @@ it('closed-corner reports do not wake even the nearest live opening ancestor', a
   const opened = await open(), turn = await worker(opened.cornerId), ancestor = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Live parent corner',$4)`, [ancestor, WS, ROOM, RUBY]);
   await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"implement"}')`, [ancestor, RUBY]);
-  await db.query(`UPDATE corner_facts SET opened_from_corner_id=$2 WHERE corner_id=$1`, [opened.cornerId, ancestor]);
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($2::text)) WHERE room_id=$1 AND reason='corner_objective'`, [opened.cornerId, ancestor]);
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($2::text)) WHERE id=$1`, [turn.id, opened.cornerId]);
   await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [opened.cornerId]);
   const { reportToCommander } = await import('./commander.js');

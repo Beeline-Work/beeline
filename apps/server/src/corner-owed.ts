@@ -1,3 +1,4 @@
+import { cornerCommissionerSql } from './corner-opening.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -32,7 +33,7 @@ const CANONICAL_UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 /** The person commissioned corner `finished`, or opened it. */
 function commissionedBySql(finished: string, personIdExpr: string): string {
-  return `(${finished}.commissioned_by=${personIdExpr} OR EXISTS (
+  return `(${cornerCommissionerSql(`${finished}.corner_id`)}=${personIdExpr} OR EXISTS (
     SELECT 1 FROM rooms opened WHERE opened.id=${finished}.corner_id AND opened.created_by=${personIdExpr}))`;
 }
 
@@ -558,10 +559,6 @@ BEGIN
   FROM room_access member
   JOIN identities person ON person.id=member.identity_id AND person.kind='human'
   WHERE member.room_id=NEW.corner_id AND member.removed_at IS NULL;
-  IF TG_OP='UPDATE' AND OLD.commissioned_by IS DISTINCT FROM NEW.commissioned_by
-    AND OLD.commissioned_by IS NOT NULL THEN
-    PERFORM corner_owed_refresh(NEW.corner_id, OLD.commissioned_by);
-  END IF;
   RETURN NULL;
 END
 $corner_owed$;
@@ -570,11 +567,26 @@ CREATE TRIGGER corner_owed_facts_insert AFTER INSERT ON corner_facts
   FOR EACH ROW EXECUTE FUNCTION corner_owed_facts_changed();
 DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
 CREATE TRIGGER corner_owed_facts_update
-  AFTER UPDATE OF commissioned_by,owner_agent_id ON corner_facts
+  AFTER UPDATE OF owner_agent_id ON corner_facts
   FOR EACH ROW WHEN (
-    (OLD.commissioned_by,OLD.owner_agent_id) IS DISTINCT FROM
-    (NEW.commissioned_by,NEW.owner_agent_id)
+    OLD.owner_agent_id IS DISTINCT FROM NEW.owner_agent_id
   ) EXECUTE FUNCTION corner_owed_facts_changed();
+
+-- Opening provenance becomes available only when the order is inserted.
+CREATE OR REPLACE FUNCTION corner_owed_opening_inserted() RETURNS trigger
+LANGUAGE plpgsql AS $corner_owed$
+BEGIN
+  PERFORM corner_owed_refresh(NEW.room_id, member.identity_id)
+  FROM room_access member
+  JOIN identities person ON person.id=member.identity_id AND person.kind='human'
+  WHERE member.room_id=NEW.room_id AND member.removed_at IS NULL;
+  RETURN NULL;
+END
+$corner_owed$;
+DROP TRIGGER IF EXISTS corner_owed_opening_insert ON agent_commands;
+CREATE TRIGGER corner_owed_opening_insert AFTER INSERT ON agent_commands
+  FOR EACH ROW WHEN (NEW.reason='corner_objective')
+  EXECUTE FUNCTION corner_owed_opening_inserted();
 
 -- A grant changing status recomputes the cards that ask it: the owed ones,
 -- and any in the grant's own Room. A card that gains a grant is an edit,

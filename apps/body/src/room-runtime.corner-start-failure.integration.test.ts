@@ -218,6 +218,11 @@ describe('corner-start transient clone against the real server', () => {
       sourceMessageId: REQUEST,
       reason: 'corner_objective',
     });
+    // Restore reads the opening command's objective, not legacy corner_facts.
+    await database.query(
+      `UPDATE agent_commands SET private_payload=$2::jsonb WHERE id=$1`,
+      [command!.id, JSON.stringify({ objective: 'Ship the importer dry-run flag' })],
+    );
     const daemon = new DaemonService(database, new LiveHub(), async () => ({
       token: 'gh-token',
       expiresAt: Math.floor(Date.now() / 1000) + 3600,

@@ -4,8 +4,8 @@
 // exceptions. The rules live in `architecture/invariants.json`.
 //
 // Tightening a rule (a lower total, a new rule) needs no review. Relaxing one
-// (a higher total, a removed rule, a changed pattern/scope/owners) needs the
-// owner's yes on the exact PR head; `check-architecture.mjs` reads that record.
+// (a higher total, a removed rule, a changed pattern/scope/owners) fails the
+// check. Only the owner merges a relaxing PR, by hand.
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -99,7 +99,7 @@ export function judgeTree(root, invariants) {
         `  Found ${sites.length} site(s) outside ${rule.owners.join(', ') || 'any owner file'}; at most ${rule.total} are allowed:`,
         ...sites.map((site) => `    ${site}`),
         `  Fix: ${rule.fix}`,
-        '  Moving an existing site between files is fine. Raising the total needs the owner\'s yes on this PR head.',
+        '  Moving an existing site between files is fine. Raising the total fails this check; only the owner merges it, by hand.',
       ].join('\n'));
     else if (sites.length < rule.total)
       errors.push(`[${rule.id}] only ${sites.length} site(s) remain outside the owner files. Lower "total" from ${rule.total} to ${sites.length} in ${INVARIANTS_PATH}; tightening needs no review.`);

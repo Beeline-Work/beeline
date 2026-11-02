@@ -15,6 +15,7 @@ import { phoneReadLimits } from './phone-read-limit.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
+import { OperationOutcomes } from './operation-outcomes.js';
 
 // Reproduction SOCKET-OPS-1: real HTTP and WebSocket boundaries against an isolated database.
 // This is a protocol feature, not a defect report; no production phone can issue it yet.
@@ -38,6 +39,7 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
   let db: PgliteDatabase, phone: PhoneService, live: LiveHub, server: Server, origin: string;
   const sockets: WebSocket[] = [];
   let sequence: number;
+  let outcomes: OperationOutcomes;
   let authenticatePhone: ReturnType<typeof vi.fn<(token: string) => Promise<string | null>>>;
   beforeEach(async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -49,8 +51,10 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'searchable fixture')`, [MESSAGE, ROOM, VIEWER]);
     live = new LiveHub();
     phone = new PhoneService(db, 'http://local.test', undefined, undefined, live);
+    outcomes = new OperationOutcomes('socket-test');
     authenticatePhone = vi.fn(async (token: string) => token === 'viewer'.repeat(8) ? VIEWER : token === 'outsider'.repeat(8) ? OUTSIDER : null);
     server = createBeelineServer({ database: db, phone, live,
+      operationOutcomes: outcomes,
       auth: { authenticatePhone } as unknown as TokenAuth,
       daemon: {} as DaemonService, mediaMaximumBytes: 1,
       phoneReadLimits: phoneReadLimits({ history: { maxRequestsPerWindow: 4 } }),
@@ -99,6 +103,29 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(await request(socket, 'readWorkspaces')).toMatchObject({ ok: true });
     expect(await request(socket, 'readRoom', { roomId: ROOM })).toMatchObject({ ok: true });
     expect(authenticatePhone).toHaveBeenCalledTimes(1);
+  });
+
+  it('C3 counts HTTP and socket refusals once each alongside successful operations', async () => {
+    const socket = await open('outsider');
+    const args = { roomId: ROOM };
+    expect(await request(socket, 'listRoomWorkflowRuns', args))
+      .toMatchObject({ ok: false, error: { code: 'access_denied', retryable: false } });
+    const refused = await http('/v1/phone/operations/listRoomWorkflowRuns', args, 'outsider');
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'room access denied' });
+    expect(await request(socket, 'readWorkspaces')).toMatchObject({ ok: true });
+    expect((await http('/v1/phone/operations/readWorkspaces', {})).status).toBe(200);
+    expect(await request(socket, 'notAnOperation'))
+      .toMatchObject({ ok: false, error: { code: 'unknown_phone_operation' } });
+    // Outcomes remain entirely in memory until the background flush.
+    expect((await db.query('SELECT * FROM operation_outcomes_hourly')).rows).toEqual([]);
+    await outcomes.flush(db);
+    expect((await db.query(`SELECT op,status,code,release,count::int FROM operation_outcomes_hourly ORDER BY op`)).rows)
+      .toEqual([
+        { op: 'listRoomWorkflowRuns', status: 403, code: 'Error', release: 'socket-test', count: 2 },
+        { op: 'notAnOperation', status: 404, code: 'unknown_phone_operation', release: 'socket-test', count: 1 },
+        { op: 'readWorkspaces', status: 200, code: '', release: 'socket-test', count: 2 },
+      ]);
   });
 
   it('returns the same authenticated operation result over HTTP and socket, with no read invalidations', async () => {

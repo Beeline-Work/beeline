@@ -30,6 +30,7 @@ const state = JSON.parse(fs.readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
 const flag = (name) => { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : undefined; };
 state.calls.push(args.filter((a) => !a.startsWith('--json') && a !== '--non-interactive').join(' '));
+if (args[0] === 'update' && process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL !== 'https://server.usebeeline.app') throw Error('OTA export inherited a non-production origin');
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const out = (value) => { save(); process.stdout.write(JSON.stringify(value)); process.exit(0); };
 const die = (message) => { save(); process.stderr.write(message + '\n'); process.exit(1); };
@@ -130,6 +131,7 @@ test('publish puts every live runtime on the release branch, then points beta at
     assert.equal(state.channels.beta, 'release-v0.2.31');
     // One JS export per platform; later runtimes reuse it.
     assert.equal(updateCalls(h).filter((call) => !call.includes('--skip-bundler')).length, 2);
+    assert.equal(updateCalls(h).filter((call) => call.includes('--clear-cache')).length, 2);
     const facts = JSON.parse(readFileSync(join(h.dir, 'published.json'), 'utf8'));
     assert.deepEqual(facts.published.sort(), LIVE.map(key).sort());
     assert.equal(facts.previousChannelBranch, 'beta');

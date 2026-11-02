@@ -18,6 +18,12 @@
     "evidence": "Play production available build 138; upload receipt in run 40028613502 at 2026-10-23T21:51:07Z; source 62a2695724540f2a300bb2f06fd9994fd72ab713 pins android@40"
   },
   {
+    "platform": "android",
+    "buildNumber": "144",
+    "runtimeVersion": "44",
+    "evidence": "Play production versionCode 144 installed by owner on 2026-11-02; supplied AAB e98b2f8dc6d8d00f1c1e12c12fb42262144c7cbe5bbb6a316cca9061f7bf4606, source 3b4e14017f6ffde43739625f5d5858aae2a4dd88, native Expo runtime 44 verified on device"
+  },
+  {
     "platform": "ios",
     "buildNumber": "81",
     "runtimeVersion": "31",

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { BackgroundWork } from './background-work.js';
 import { BackgroundJobRunner } from './background.js';
 import { BackgroundLeader, type LeaderConnection } from './background-leader.js';
 import { captureServerError } from './sentry.js';
@@ -123,6 +124,29 @@ describe('background shutdown', () => {
     expect(refreshDrain).toBeGreaterThan(shutdown.indexOf('server.close('));
     expect(refreshDrain).toBeLessThan(shutdown.indexOf('database.close()'));
     expect(shutdown.indexOf('await leader.stop();')).toBeLessThan(shutdown.indexOf('database.close()'));
+  });
+
+  it('spends startup repair once per leader epoch even when the provider fails', async () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const registration = source.slice(source.indexOf("if (githubJobs) work.addDeadline('repository.startupRepair'"),
+      source.indexOf("work.add('repair', reconciliationMs"));
+    expect(registration).toContain("await backgroundJobs.run('github-mergeability'");
+    expect(source).not.toContain('reconciledMergeability');
+    let now = 0;
+    const work = new BackgroundWork(() => now, () => {});
+    const runner = new BackgroundJobRunner();
+    const refresh = vi.fn(async () => { throw new Error('provider unavailable'); });
+    work.addDeadline('repository.startupRepair', async () => {
+      await runner.run('github-mergeability', refresh);
+    });
+    const unrelated = vi.fn(async () => {});
+    work.add('repair', 60_000, unrelated);
+    await work.run(true);
+    for (now = 60_000; now <= 24 * 60 * 60_000; now += 60_000) await work.run(false);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(unrelated.mock.calls.length).toBeGreaterThan(1000);
+    await work.run(true);
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it('Reproduction MA-1: merge recovery repeats after startup on the reconciliation interval', () => {

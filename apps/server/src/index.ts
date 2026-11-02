@@ -456,7 +456,6 @@ async function main() {
         : {}),
     },
   });
-  let reconciledMergeability = false;
   const reconciliationMs = 60_000;
   const work = new BackgroundWork();
   const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
@@ -505,10 +504,12 @@ async function main() {
     const delivered=await backgroundJobs.run('operator-system-dms',()=>deliverOperatorSystemDmBatch(jobsDatabase));
     if(delivered.ok)return delivered.value;
   });
+  // One startup observation per leader epoch, including when it fails.
+  // Later uncertainty needs an actual GitHub event or explicit review command.
+  if (githubJobs) work.addDeadline('repository.startupRepair', async () => {
+    await backgroundJobs.run('github-mergeability', () => githubJobs.refreshStaleMergeability());
+  });
   work.add('repair', reconciliationMs, async (newLeader) => {
-    if (newLeader) {
-      reconciledMergeability = false;
-    }
     if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
     // Repair lost reviewer wakes on the reconciliation cadence;
     // existing head-scoped dispatch and report keys keep replays quiet.
@@ -517,11 +518,6 @@ async function main() {
         githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
     if (githubJobs) {
       await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
-    }
-    if (githubJobs && !reconciledMergeability) {
-      const result = await backgroundJobs.run('github-mergeability', () =>
-        githubJobs.refreshStaleMergeability());
-      reconciledMergeability = result.ok;
     }
     if (githubJobs) await backgroundJobs.run('github-pending-checks', () =>
       githubJobs.refreshOpenPendingChecks());

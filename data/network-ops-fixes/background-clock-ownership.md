@@ -86,7 +86,22 @@ source17+PostgreSQL3 and readiness19+PostgreSQL3/traversal1 pass. The root stage
 scalar reader proof6 still uses one SELECT; its full Tray integration is not yet
 in this published slice.
 
-Durable propagation of local runner revocation, active remote-cache loss
-propagation, final enqueue checks, complete catalog/
+Failed durable retirement, active remote-cache loss propagation, final enqueue
+checks, complete catalog/
 source CPU/WAL/wire costs and cohort rollout remain OPEN. No production schema
 is installed or selected by these private proofs.
+
+## Durable retirement of the private runner
+
+Parking now calls the existing aggregate owner's release once: local authority
+ends synchronously, and its exact generation/nonce receives durable released_at
+evidence. Run completion and close drain the retirement. Acquisition waits for
+it before creating a new epoch. Routine journal hints and server lease renewal
+never retry retirement or recover the runner. Real PostgreSQL12 includes the
+actual runner and two application pools observing loss and real resync recovery;
+actual-schema runner9 and existing leader11 cover stop/rollback and no retries.
+
+A failed durable write is explicitly exposed as retirementFailed. This does not
+claim successful remote propagation; safely ending the retained advisory backend
+and notifying active remote caches on this failure remain activation gates. No
+new timer, lease, listener or general retry policy was added.

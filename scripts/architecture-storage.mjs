@@ -12,6 +12,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const BOOTSTRAP_REASON = 'existing before the registry; weekly audit reviews';
+const scheduledDrop = (entry) => typeof entry?.drop === 'string' && entry.drop.trim().length > 0;
 const SOURCE_FILE = /\.(ts|mjs|js)$/;
 const SKIP_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$|test-support\.ts$|-fixture\.ts$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '__tests__', 'test-fixtures']);
@@ -112,7 +113,8 @@ function unusedColumns(root, storage) {
   const evidence = columnEvidence(root, storage);
   const unused = [];
   for (const [table, entry] of Object.entries(storage.tables ?? {}))
-    for (const column of Object.keys(entry.columns)) {
+    for (const [column, definition] of Object.entries(entry.columns)) {
+      if (scheduledDrop(entry) || scheduledDrop(definition)) continue;
       const seen = evidence.get(`${table}.${column}`) ?? { writes: 0, defaults: 0, mentions: 0 };
       // A column default is a writer; its DDL is not a mention.
       if (!seen.writes && !seen.defaults) unused.push(`${table}.${column} has no writer`);
@@ -142,13 +144,16 @@ export function judgeStorage(root, storage) {
   let bootstrap = 0;
   const entries = [];
   for (const [table, entry] of Object.entries(storage.tables ?? {})) {
-    entries.push([`table ${table}`, entry.reason]);
+    entries.push([`table ${table}`, entry]);
     if (typeof entry.module !== 'string' || !entry.module) errors.push(`[storage] table ${table} needs an owner "module"`);
     for (const [column, reason] of Object.entries(entry.columns ?? {})) entries.push([`column ${table}.${column}`, reason]);
   }
   for (const [column, keys] of Object.entries(storage.jsonb ?? {}))
     for (const [key, reason] of Object.entries(keys)) entries.push([`jsonb key ${column}.${key}`, reason]);
-  for (const [name, reason] of entries) {
+  for (const [name, entry] of entries) {
+    const reason = typeof entry === 'string' ? entry : entry?.reason;
+    if (entry && typeof entry === 'object' && 'drop' in entry && !scheduledDrop(entry))
+      errors.push(`[storage] ${name} needs a non-empty "drop" reference to the PR or release that will delete it.`);
     if (reason === BOOTSTRAP_REASON) bootstrap += 1;
     else if (typeof reason !== 'string' || reason.trim().length < 10)
       errors.push(`[storage] ${name} needs a one-line reason it cannot be derived from other stored facts.`);

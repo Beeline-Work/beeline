@@ -15,7 +15,7 @@ import {
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
-  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_merge_holds',
+  'corner_owed', 'corner_follows', 'corner_merge_holds',
 ]);
 const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
 
@@ -148,7 +148,12 @@ BEGIN
       -- while this agent worked becomes deliverable with no write of its own.
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
+        'cornerTextChanged', COALESCE(NEW.reason,OLD.reason)='corner_objective'
+          AND NOT EXISTS(SELECT 1 FROM corner_brief_revisions WHERE corner_id=COALESCE(NEW.room_id,OLD.room_id))
+          AND CASE WHEN TG_OP='INSERT' THEN true WHEN TG_OP='UPDATE'
+            THEN NEW.private_payload->>'objective' IS DISTINCT FROM OLD.private_payload->>'objective' ELSE false END,
         'cornerParentId', CASE WHEN ${rowChangedSql(['state','agent_id','room_id','action'])}
+          OR (COALESCE(NEW.reason,OLD.reason)='corner_objective' AND ${rowChangedSql(['private_payload'])})
           THEN (SELECT parent_id FROM rooms WHERE id=COALESCE(NEW.room_id,OLD.room_id)) END,
         'released', CASE
           WHEN TG_OP = 'UPDATE' THEN OLD.state = 'claimed' AND NEW.state <> 'claimed'
@@ -276,9 +281,17 @@ BEGIN
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
         'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
-        'cornerTextChanged', CASE WHEN TG_OP = 'UPDATE' THEN NEW.objective IS DISTINCT FROM OLD.objective ELSE false END,
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
+      );
+    WHEN 'corner_brief_revisions' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
+        'cornerTextChanged', CASE WHEN TG_OP='DELETE' THEN false ELSE
+          NEW.revision=(SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=NEW.corner_id)
+          AND CASE WHEN TG_OP='INSERT' THEN true ELSE NEW.objective IS DISTINCT FROM OLD.objective END END,
+        'cornerParentId', (SELECT parent_id FROM rooms WHERE id=COALESCE(NEW.corner_id,OLD.corner_id))
       );
     WHEN ${PARENT_ONLY_SQL} THEN
       -- Equal payloads collapse an owed refresh into one transaction notification.
@@ -412,7 +425,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships', 'corner_person_state',
-    'corner_facts', ${PARENT_ONLY_SQL},
+    'corner_facts', 'corner_brief_revisions', ${PARENT_ONLY_SQL},
     'permission_authority', 'room_read_marks', 'message_bookmarks',
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',

@@ -159,14 +159,15 @@ describe('background shutdown', () => {
     expect(operations).not.toContain("'{checkRefreshRetry}',");
   });
 
-  it('Reproduction MA-1: merge recovery repeats after startup on the reconciliation interval', () => {
+  it('Reproduction MA-1: missed merge recovery is never admitted by the repair clock', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const repairStart = source.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
     expect(repairStart).toBeGreaterThan(-1);
     const recurring = source.slice(repairStart);
     const cycle = recurring.slice(0, recurring.indexOf('const leader = new BackgroundLeader'));
     expect(cycle).not.toContain('recoverUnfinishedMergeClaims');
-    expect(cycle).toContain('githubJobs.reconcileMergedCorners()');
+    expect(cycle).not.toContain('githubJobs.reconcileMergedCorners()');
+    expect(readFileSync(new URL('./github-operations.ts', import.meta.url), 'utf8')).not.toContain('async reconcileMergedCorners(');
     expect(source).not.toContain('retryBranchDeletions');
     expect(source).not.toContain('retryCornerBranchDeletions');
     expect(source).not.toContain('repairPromotedCornerBranches');

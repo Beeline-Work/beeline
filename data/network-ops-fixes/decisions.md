@@ -172,3 +172,9 @@ Register `repository.startupRepair` separately with `BackgroundWork.addDeadline`
 Delete `refreshQueuedChecks` and `refreshOpenPendingChecks` and their minute-job registrations. Transient failures still mark the current head pending, preventing stale green evidence from opening the merge gate, but no longer write `checkRefreshRetry` obligations. `Retry-After` remains caller-visible error metadata. Successful/head-change writes scrub legacy queue fields for rolling compatibility; new servers never consume them.
 
 A failed read, process restart, pending verdict or absent webhook supplies no admission. The existing explicit `prChecksStatus` operation or a real GitHub event can obtain fresh exact-head evidence and preserve review dispatch. The tests formerly asserting automatic recovery now exercise these admitted paths, including empty-suite semantics, permission/rate-limit classification, restart, and no obsolete-head restoration. An obsolete committed head is refused before provider access; the post-read transactional head/fetch fences remain. Other recurring merge/reviewer/background discovery and complete F16/F18/F22 closure remain open.
+
+## D073 — Missed merges and closes require explicit reconciliation
+
+Delete the unaddressed `reconcileMergedCorners` provider sweep and its recurring repair registration. Actual merge/close webhooks retain their established paths. The existing exact-corner `prChecksStatus` command already reconciles a confirmed merge; it now also records an unmerged closed PR independently of whether its check summary changed. This preserves missed-event recovery without a new UI control or periodic discovery.
+
+Regression coverage routes prior sweep scenarios through explicit check commands, preserving locked corners, idempotent archival/branch cleanup, merge-queue clearing, and no additional merge API call. Missing webhooks alone do not admit work. Reviewer and other periodic jobs remain open.

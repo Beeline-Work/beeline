@@ -1119,6 +1119,11 @@ export class GitHubOperations {
       `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
     )).rows[0]!.started_at;
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
+    // Explicit reconciliation also observes an unmerged close even when the
+    // check verdict is unchanged. No clock scans for missed close webhooks.
+    if (!corner.archived && pr.state === 'closed' && !pr.merged && corner.lifecycle.pr?.number === number) {
+      await this.recordClosedCornerPullRequest(input.cornerId, number);
+    }
     // A delayed landing wake may be the first observer of a missed merge webhook.
     // Reconcile the recorded PR through the same idempotent archival path.
     if (!corner.archived && pr.merged && pr.headRef && corner.author_id &&
@@ -1892,79 +1897,6 @@ export class GitHubOperations {
       ...(pr.mergedBy ? { mergedBy: pr.mergedBy } : {}),
       commits: 0, files: 0,
     }, this.database, number);
-  }
-
-  /** Recover merged or unmerged closed PRs when GitHub's close webhook was missed. */
-  async reconcileMergedCorners(): Promise<void> {
-    const candidates = await this.database.query<
-      CornerWebhookTarget & {
-        repository: string;
-        branch: string;
-        number: number;
-        title: string;
-        target_branch: string;
-      }
-    >(
-      `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-              COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,
-              ${cornerObjectiveSql('corner')} summary,github.repository_id,github.installation_id,
-              github.full_name repository,${cornerFeatureBranchSql('corner')} branch,
-              (fact.lifecycle->'pr'->>'number')::integer number,
-              fact.lifecycle->'pr'->>'title' title,
-              fact.lifecycle->'pr'->>'targetBranch' target_branch
-       FROM rooms corner
-       JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_github_cache fact ON fact.corner_id=corner.id
-       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-           COALESCE(parent.repository_remote,parent.repository_key,''),
-           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) IS NOT NULL
-         AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
-         AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
-    );
-    for (const candidate of candidates.rows) {
-      try {
-        const token = await this.app.installationToken(Number(candidate.installation_id), {
-          repositoryIds: [Number(candidate.repository_id)],
-        });
-        const pr = await this.app.readPullRequest(
-          token.token,
-          candidate.repository,
-          candidate.number,
-        );
-        if (pr.headRef !== candidate.branch) continue;
-        if (!pr.merged) {
-          if (pr.state === 'closed') await this.recordClosedCornerPullRequest(candidate.corner_id, candidate.number);
-          continue;
-        }
-        await this.mergeCorner(
-          candidate,
-          {
-            repository: candidate.repository,
-            branch: candidate.branch,
-            title: pr.title ?? candidate.title ?? `Pull request #${candidate.number}`,
-            url: pr.url,
-            number: candidate.number,
-            targetBranch: pr.baseRef ?? candidate.target_branch,
-            headSha: pr.headSha,
-            ...(pr.mergedAt ? { mergedAt: pr.mergedAt } : {}),
-            ...(pr.mergeCommitSha ? { mergeCommitSha: pr.mergeCommitSha } : {}),
-            ...(pr.mergedBy ? { mergedBy: pr.mergedBy } : {}),
-            commits: 0,
-            files: 0,
-          },
-          this.database,
-          candidate.number,
-        );
-      } catch (error) {
-        console.error(
-          `[server] merged corner reconciliation failed for ${candidate.corner_id}:`,
-          error,
-        );
-      }
-    }
   }
 
   private async processBaseBranchPush(body: GitHubRecord, installationId: number): Promise<void> {

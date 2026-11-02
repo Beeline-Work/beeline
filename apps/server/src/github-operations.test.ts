@@ -1711,7 +1711,7 @@ describe('GitHub phone operations', () => {
     // Checks on an associated PR need no branch-to-PR discovery.
     expect(app.openPullRequestsForBranch).not.toHaveBeenCalled();
   });
-  it('recovers a missed merge webhook and ignores branch deletion pushes', async () => {
+  it('an explicit check command recovers a missed merge webhook and ignores branch deletion pushes', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -1770,6 +1770,7 @@ describe('GitHub phone operations', () => {
         merged: false,
         mergeability: 'clean',
       })),
+      readCommitCheckRollup: vi.fn(async () => ({ state: 'failed', total: 1, failing: ['lint'], checks: [{ name: 'lint', status: 'failed' }] })),
       branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false })),
       openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
@@ -1806,7 +1807,7 @@ describe('GitHub phone operations', () => {
       (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [corner])).rowCount,
     ).toBe(0);
 
-    await operations.reconcileMergedCorners();
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 42 });
     expect(
       (await database.query(`SELECT archived_at FROM rooms WHERE id=$1`, [corner])).rows[0],
     ).toMatchObject({ archived_at: null });
@@ -1823,8 +1824,8 @@ describe('GitHub phone operations', () => {
       mergedBy: 'owner',
       mergeability: 'unknown',
     });
-    await operations.reconcileMergedCorners();
-    await operations.reconcileMergedCorners();
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 42 });
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 42 });
     expect(
       (
         await database.query<{ lifecycle: { outcome: string; pr: { mergeCommitSha: string } } }>(

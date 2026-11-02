@@ -1,4 +1,5 @@
 import { cornerObjectiveSql } from './corner-objective.js';
+import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
 import { cornerRunStateSql } from './corner-run.js';
 import * as approvalSources from './approval-card-source.js';
@@ -6493,7 +6494,7 @@ describe('monolith integration', () => {
         kind: string;
         commands: number;
       }>(
-        `SELECT room.name,room.created_by,fact.commissioned_by,${cornerObjectiveSql('room')} objective,fact.kind,
+        `SELECT room.name,room.created_by,${cornerCommissionerSql('room.id')} commissioned_by,${cornerObjectiveSql('room')} objective,${cornerKindSql('room.id')} kind,
           (SELECT count(*)::integer FROM agent_commands WHERE room_id=room.id) commands
          FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
         [cornerId],
@@ -9175,7 +9176,7 @@ describe('monolith integration', () => {
       objective: string;
       commissioned_by: string;
     }>(
-      `SELECT r.name,${cornerObjectiveSql('r')} objective,cf.commissioned_by
+      `SELECT r.name,${cornerObjectiveSql('r')} objective,${cornerCommissionerSql('r.id')} commissioned_by
        FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
       [cornerId],
     );
@@ -9208,7 +9209,7 @@ describe('monolith integration', () => {
     const { cornerId } = (await created.json()) as { cornerId: string };
     await settleCornerWorkPastGap(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
-    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
+    await database.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [
       cornerId,
     ]);
     await database.query(`DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [
@@ -9567,7 +9568,7 @@ describe('monolith integration', () => {
       briefs: number;
     }>(
       `SELECT
-         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM rooms corner WHERE corner.parent_id IS NOT NULL AND ${cornerRequestSql('corner.id')}=$1) corners,
          (SELECT count(*)::integer FROM messages
           WHERE room_id=$2 AND card_type='daemon-fact' AND card->>'cornerId'=$3) cards,
          (SELECT count(*)::integer FROM agent_commands
@@ -9834,7 +9835,7 @@ describe('monolith integration', () => {
     });
     expect(response.status).not.toBe(200);
     expect(
-      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-brief-file'`))
+      (await database.query(`SELECT 1 FROM rooms corner WHERE ${cornerRequestSql('corner.id')}='missing-brief-file'`))
         .rows,
     ).toEqual([]);
     expect(
@@ -9910,7 +9911,7 @@ describe('monolith integration', () => {
     expect(response.status).toBe(400);
     expect(await response.text()).toContain('a brief is required for repository corners');
     expect(
-      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-code-brief'`))
+      (await database.query(`SELECT 1 FROM rooms corner WHERE ${cornerRequestSql('corner.id')}='missing-code-brief'`))
         .rows,
     ).toEqual([]);
   });
@@ -10088,7 +10089,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query(
-          `SELECT 1 FROM corner_facts WHERE request_id='brief-persistence-failure'`,
+          `SELECT 1 FROM rooms corner WHERE ${cornerRequestSql('corner.id')}='brief-persistence-failure'`,
         )
       ).rows,
     ).toEqual([]);
@@ -10260,7 +10261,7 @@ describe('monolith integration', () => {
 
     const stored = await database.query<{ corners: number; cards: number; commands: number }>(
       `SELECT
-         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM rooms corner WHERE corner.parent_id IS NOT NULL AND ${cornerRequestSql('corner.id')}=$1) corners,
          (SELECT count(*)::integer FROM messages
           WHERE room_id=$2 AND card_type='daemon-fact'
             AND card->>'cornerId' IN ($3,$4)) cards,
@@ -10314,7 +10315,7 @@ describe('monolith integration', () => {
     const corners = await database.query<{ count: number }>(
       `SELECT count(*)::integer count FROM rooms child
        JOIN corner_facts fact ON fact.corner_id=child.id
-       WHERE child.parent_id=$1 AND fact.request_id=$2 AND child.archived_at IS NULL`,
+       WHERE child.parent_id=$1 AND ${cornerRequestSql('child.id')}=$2 AND child.archived_at IS NULL`,
       [ROOM, input.requestId],
     );
     expect(corners.rows[0]!.count).toBe(1);

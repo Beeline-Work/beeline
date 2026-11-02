@@ -16,7 +16,7 @@ import {
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
-import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
@@ -1128,10 +1128,9 @@ describe('Postgres live fanout', () => {
     await eventually(() => textNudges().length > priorGoalNudges);
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     expect(textNudges()).toHaveLength(0);
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [corner, reader]));
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => seedCornerOpening(database, {
+      cornerId: corner, agentId: agent, commissionedBy: reader,
+    }));
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     await expectNudge(() => database.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)

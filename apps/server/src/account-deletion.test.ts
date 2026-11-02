@@ -1,3 +1,4 @@
+import { cornerCommissionerSql, cornerKindSql, cornerOpenedFromSql, cornerRequestSql } from './corner-opening.js';
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +7,7 @@ import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -85,11 +86,8 @@ describe('deleteAccount', () => {
        WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,
       [OWNER, WORKSPACE, PARTNER],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective,lifecycle)
-       VALUES($1,$2,$2,$3,'ship it','{"lifecycle":"working"}'::jsonb)`,
-      [CORNER, AGENT, OWNER],
-    );
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective,lifecycle) VALUES($1,$2,$3,'ship it','{"lifecycle":"working"}'::jsonb)`, [CORNER, AGENT, AGENT]);
+    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: OWNER });
     // Authored content: the owner in the shared Room mentioning the partner,
     // the agent in the shared Room mentioning the owner, the owner in the
     // human DM.
@@ -236,6 +234,54 @@ describe('deleteAccount', () => {
       `SELECT workspace_id,workspace_name,deleted_by,deleted_at FROM workspace_deletions WHERE workspace_id=$1`,
       [workspaceId],
     )).rows).toEqual([{ ...before[0], deleted_by: DELETED_ACCOUNT_IDENTITY_ID }]);
+  });
+
+  it('PROVENANCE-ORDER derives provenance from the opening order and preserves it through deletion', async () => {
+    const origin = '77777777-7777-4777-8777-777777777777';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Origin',$4)`,
+      [origin, WORKSPACE, ROOM, AGENT],
+    );
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [origin]);
+    await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [CORNER, AGENT]);
+    await database.query(
+      `UPDATE agent_commands SET turn_request_id='provenance-request',
+         private_payload=private_payload||jsonb_build_object('fromRoomId',$2::text,'openKey','provenance-open')
+       WHERE room_id=$1 AND reason='corner_objective'`, [CORNER, origin],
+    );
+    // Nullable legacy provenance is empty; deliberately stale kind/title flags
+    // prove the nonnullable retired columns no longer influence reads either.
+    await database.query(`UPDATE corner_facts SET kind='human',title_generated=true WHERE corner_id=$1`, [CORNER]);
+    expect((await database.query(`SELECT commissioned_by,opened_from_corner_id,request_id,open_idempotency_key
+      FROM corner_facts WHERE corner_id=$1`, [CORNER])).rows[0]).toEqual({
+      commissioned_by: null, opened_from_corner_id: null, request_id: null, open_idempotency_key: null,
+    });
+    const provenance = async (id: string) => (await database.query(
+      `SELECT ${cornerKindSql('corner.id')} kind,${cornerCommissionerSql('corner.id')} commissioner,
+         ${cornerOpenedFromSql('corner.id')} opened_from,${cornerRequestSql('corner.id')} request
+       FROM rooms corner WHERE corner.id=$1`, [id],
+    )).rows[0];
+    expect(await provenance(CORNER)).toEqual({ kind: 'agent', commissioner: OWNER,
+      opened_from: origin, request: 'provenance-request' });
+    const daemon = new DaemonService(database, new LiveHub());
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: CORNER }, AGENT)).toMatchObject({
+      kind: 'agent', openedFromCornerId: origin, requestId: 'provenance-request',
+    });
+    const human = await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Phone' }, OWNER);
+    expect(await provenance(human.id)).toEqual({ kind: 'human', commissioner: OWNER, opened_from: null, request: null });
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: human.id }, AGENT)).toMatchObject({
+      kind: 'human', titleGenerated: true,
+    });
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id)
+      VALUES($1,1,'First brief',$2,$3)`, [human.id, AGENT, ROOM]);
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: human.id }, AGENT)).not.toHaveProperty('titleGenerated');
+    const before = (await database.query(`SELECT id,private_payload,root_source_message_id FROM agent_commands
+      WHERE room_id=$1 AND reason='corner_objective'`, [CORNER])).rows[0]!;
+    await phone.execute('deleteAccount', {}, OWNER);
+    expect((await database.query(`SELECT id,agent_id,private_payload,root_source_message_id FROM agent_commands
+      WHERE id=$1`, [before.id])).rows[0]).toEqual({ ...before, agent_id: DELETED_ACCOUNT_IDENTITY_ID });
+    expect(await provenance(CORNER)).toEqual({ kind: 'agent', commissioner: DELETED_ACCOUNT_IDENTITY_ID,
+      opened_from: origin, request: 'provenance-request' });
   });
 
   it('deletes an account with stored agent traces and preserves another account (R-ACCOUNT-TRACES)', async () => {

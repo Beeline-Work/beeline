@@ -1,4 +1,5 @@
 import { cornerObjectiveSql } from './corner-objective.js';
+import { cornerKindSql } from './corner-opening.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerRunStateSql } from './corner-run.js';
@@ -133,6 +134,7 @@ ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check
 ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
 CREATE INDEX IF NOT EXISTS agent_commands_turn ON agent_commands(room_id,agent_id,turn_request_id);
+CREATE INDEX IF NOT EXISTS agent_commands_corner_opening ON agent_commands(room_id) WHERE reason='corner_objective';
 -- source_message_id/result_message_id reference messages(id) with no index,
 -- so deleting a message (e.g. a room or workspace cascade) made Postgres
 -- sequentially scan all of agent_commands for the FK check, once per deleted
@@ -181,6 +183,8 @@ CREATE TRIGGER show_dispatched_agent_work AFTER INSERT OR UPDATE OF state,wake_a
 `;
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {
+  /** Stable tool-call key on the corner's opening order. */
+  openKey?: string;
   ask?: string;
   objective?: string;
   text: string;

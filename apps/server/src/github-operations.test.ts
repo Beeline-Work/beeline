@@ -4,7 +4,7 @@ import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient, retryGitHubRead } from '@beeline/auth/github';
 import { type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { captureServerError } from './sentry.js';
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 import { GitHubOperations } from './github-operations.js';
@@ -1343,11 +1343,7 @@ describe('GitHub phone operations', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Hidden river')`,
       [corner, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,kind,lifecycle)
-       VALUES($1,'Hidden river','human','{"checks":"unknown"}')`,
-      [corner],
-    );
+    await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Hidden river','{"checks":"unknown"}')`, [corner]);
     // An earlier system note carries the old fallback's author; it must not count.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,system_event,created_at)
@@ -1809,12 +1805,7 @@ describe('GitHub phone operations', () => {
        ($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
       [workspace, HUMAN, room],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lifecycle)
-       VALUES($1,$3,'Recover missed merge',$2::jsonb)`,
-      [
-        corner,
-        JSON.stringify({
+    await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Recover missed merge',$2::jsonb)`, [corner, JSON.stringify({
           lifecycle: 'in-review',
           checks: 'failing',
           pr: {
@@ -1825,10 +1816,8 @@ describe('GitHub phone operations', () => {
             headSha,
             mergeability: 'clean',
           },
-        }),
-        HUMAN,
-      ],
-    );
+        })]);
+    await seedCornerOpening(database, { cornerId: corner, commissionedBy: HUMAN });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readPullRequest: vi.fn(async () => ({

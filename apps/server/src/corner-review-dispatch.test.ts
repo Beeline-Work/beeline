@@ -7,7 +7,7 @@ import { AcpClient } from '../../body/src/acp.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { announceAgentLifecycle } from './connection-presence.js';
@@ -109,10 +109,9 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}'::text[]`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,
-      commissioned_by=$1,worker_agent_id=NULL`,
-    [H],
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,worker_agent_id=NULL`,
   );
+  await seedCornerOpening(db, { cornerId: C, commissionedBy: H });
 });
 
 /** Put the corner in the state a green transition leaves it in. */
@@ -1201,7 +1200,7 @@ describe('corner message attribution', () => {
         roomId: C,
         agentId: A,
         sourceMessageId: sourceId,
-        reason: 'corner_objective',
+        reason: 'human_tag',
       });
       const [worker] = await commands(A, C);
       await claim(worker!);
@@ -1285,7 +1284,7 @@ describe('corner message attribution', () => {
     });
     const routed = (
       await db.query<{ agent_id: string; reason: string }>(
-        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1`,
+        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND state IN ('pending','claimed')`,
         [C],
       )
     ).rows;
@@ -1320,7 +1319,7 @@ describe('corner message attribution', () => {
     });
     const routed = (
       await db.query<{ agent_id: string; reason: string }>(
-        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1`,
+        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND state IN ('pending','claimed')`,
         [C],
       )
     ).rows;

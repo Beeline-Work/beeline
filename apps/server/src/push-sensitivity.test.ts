@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
-import { PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase } from './test-support.js';
 import { postWalletNotice } from './wallet-notices.js';
 
 const person = 'a'.repeat(64),
@@ -36,10 +36,8 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$3,'Room',NULL,$4),($2,$3,'Corner',$1,$4)`,
     [room, corner, workspace, person],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES($1,$2,$3,'Work')`,
-    [corner, agent, person],
-  );
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Work')`, [corner, agent]);
+  await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: person });
   await db.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member')`,
     [workspace, person, teammate, agent],
@@ -331,7 +329,7 @@ it.each(['off', 'attention', 'full'] as const)(
 );
 
 it('keeps human DMs in Attention and respects the human burst timeout', async () => {
-  await db.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]);
+  await db.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [corner]);
   await post('Opened-corner update', agent, corner);
   expect(await loop.runOnce()).toBe(0);
   await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);

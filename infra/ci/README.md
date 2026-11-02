@@ -4,14 +4,13 @@ These drop-ins change resource accounting only. Preserve the existing
 credential-free `beeline-ci` user, mount namespace, runner labels and all
 release/production services. There is no new service or workflow gate.
 
-The pool has ten registered listeners, all ten active and one job per
-active listener. Test instances 02–10 have `CPUQuota=200%`; control instance 01
-has an additional `CPUQuota=100%` override. All have `MemoryMax=8G`; the slice
-has `CPUQuota=1000%` and `MemoryMax=60G`. The slice quota covers combined
-work even when several service quotas request more CPU. Limits cover all children, including test subprocesses.
-Ordinary server/mobile files share one fork with module isolation enabled;
-other tests use at most two workers and control work uses one. The CI workspace action
-serializes cache tar operations using a shared file lock; no service is added.
+The pool has ten active listeners and one job per listener. Instance 01 has
+one CPU for control work. Instances 02–09 have two CPUs / 8 GiB for server
+shards. Instance 10 has three CPUs / 12 GiB and CPUWeight 300 for the bounded
+workspace lanes. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
+listeners; individual maxima are not additive capacity. Limits cover every
+child process. Existing credential isolation and production/release services
+are preserved. The cache tar wrapper uses a shared file lock; no service is added.
 
 ## Activation order
 
@@ -20,18 +19,22 @@ serializes cache tar operations using a shared file lock; no service is added.
    leaking integration suite.
 2. With the CI listeners still stopped, install `beeline-ci@.service.d/50-budget.conf`
    `beeline-ci.slice.d/50-budget.conf`, and the instance-specific
-   `beeline-ci@01.service.d/60-control-budget.conf` beneath `/etc/systemd/system/`.
+   `beeline-ci@01.service.d/60-control-budget.conf` and
+   `beeline-ci@10.service.d/60-workspace-budget.conf` beneath `/etc/systemd/system/`.
    Run `systemctl daemon-reload`. Installation requires host-write authority;
    a worktree-only worker can prepare these files but cannot apply them.
 3. Verify `systemctl show beeline-ci.slice` reports a ten-CPU quota, 48 GiB
    MemoryHigh and 60 GiB MemoryMax. Verify every instance 01 through 10 has
-   a two-CPU quota (one CPU for 01), 6 GiB MemoryHigh, 8 GiB MemoryMax and the correct slice.
+   a two-CPU quota (one CPU for 01), 6 GiB MemoryHigh, 8 GiB MemoryMax and
+   the correct slice. Instance 10 overrides this to three CPUs, CPUWeight 300,
+   MemoryHigh 10 GiB / MemoryMax 12 GiB.
    Existing resource drop-ins must not override these values. Verify the
    parent slice does not impose an unexpected tighter limit.
 4. Enable/start `beeline-ci@01.service` through `beeline-ci@10.service`. Confirm
    names remain `beeline-ci-squire-01` through `-10`, with the `beeline-ci`
    label. Verify ten are online and the parent quota remains ten CPUs. Instance 01
-   also has `beeline-ci-control`; 02–10 have `beeline-ci-heavy`. PR gates select
+   also has `beeline-ci-control`; 02–09 have `beeline-ci-heavy`; 10 has
+   `beeline-ci-workspace` and must not also have the heavy role. PR gates select
    those roles explicitly so preparation cannot queue behind long suites.
 5. Run a monitored real-PR trial. Accept the first rollout only when required
    Linux checks pass within fifteen minutes while CI stays inside the pool.

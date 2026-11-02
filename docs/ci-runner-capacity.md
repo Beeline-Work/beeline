@@ -9,18 +9,21 @@ and runs the full suite. Required check names stay stable.
 ## Routing and resource budget
 
 All ten listeners are active. Instance `01` has one CPU and the
-`beeline-ci-control` role for detection, preparation, selection and verdicts.
-Instances `02`–`10` have the `beeline-ci-heavy` role and at most two CPUs each.
-The **parent slice shares a ten-CPU hard quota across every listener and PR**;
-per-service maxima are not additive capacity. Each listener has MemoryHigh
-6 GiB / MemoryMax 8 GiB. The parent has MemoryHigh 48 GiB / MemoryMax 60 GiB.
-Preserve and verify both levels before activation.
+`beeline-ci-control` role for detection, cache preparation, shared tests and
+verdicts. Instances `02`–`09` have the `beeline-ci-heavy` role for eight server
+shards, each capped at two CPUs / 8 GiB. Instance `10` has only the
+`beeline-ci-workspace` role, capped at three CPUs / 12 GiB with CPUWeight 300.
+It combines two mobile workers and one sequential check lane. The **parent
+slice shares a ten-CPU hard quota across every listener and PR**, with
+MemoryHigh 48 GiB / MemoryMax 60 GiB; per-service maxima are not additive
+capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
+10 GiB. Verify both service and parent limits before activation.
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| Eight server shards, TYPECHECK, MOBILE SUITE | `beeline-ci, beeline-ci-heavy` | `ubuntu-latest` |
-| DEAD CODE, MOBILE-EXPORT REACHABILITY, NATIVE FINGERPRINT | `beeline-ci, beeline-ci-heavy` | `ubuntu-latest` |
-| Detection, shared preparation/tests, selection, verdicts, README, app associations | `beeline-ci, beeline-ci-control` | `ubuntu-latest` |
+| Eight server shards | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
+| Typecheck, mobile, dead-code, fingerprint and export execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
+| Detection, preparation, shared tests, selection, required verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
 Each server shard runs its balanced file assignment and one of the existing
@@ -30,22 +33,35 @@ PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
 full suite. Main coverage remains full. No integration batch is removed or
 repeated.
 
-Ordinary server and mobile files use Vitest's single-fork mode with module
-isolation enabled. This retains module/mock resets between files while
-amortizing process startup and dependency loading; a regression checks both
-state isolation and process reuse. Eight smaller server shards recover
-parallelism within the shared budget. Other Vitest commands use at most two
+Ordinary server files use Vitest's single-fork mode with module isolation;
+eight smaller shards recover parallelism while amortizing process startup.
+A regression checks module/mock resets and process reuse. Mobile retains two
+separate per-file workers: grouping mobile files exposed state held by native
+storage mocks despite module resets. Other Vitest commands use at most two
 workers, control jobs use one, and timing/integration tests retain one.
-Node test-file concurrency, Turbo tasks, libuv and Metro export workers are
-also bounded. TYPECHECK already runs the isolated mobile typecheck, so the
-mobile suite does not repeat it.
+Node test-file concurrency, Turbo tasks, libuv and Metro are also bounded.
 
-Detection runs before shared preparation on the reserved control listener.
+The required TYPECHECK job executes two workspace lanes through
+`scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
+Mobile occupies one lane with two isolated workers; root typecheck and the
+conditional dead-code/fingerprint/export tasks run sequentially in the other.
+All previous policy checks, including the trusted-base architecture guard,
+remain in the task script. Required mobile/dead-code/fingerprint/export
+contexts keep their original conditions and take individual, fail-closed
+verdicts from the recorded task outputs. A failing task does not hide later
+checks. The job emits a timing artifact and forwards cancellation only to its
+own child process groups. The task script is included in workflow path lint.
+
+Detection precedes a cache-only producer on the reserved control listener.
 Preparation installs/builds once and publishes verified exact-commit builds
-before tests. Consumers require the prepared lockfile/manifest-keyed root,
-mobile and exact-commit build caches; a failed producer cannot fan out cold
-installs/builds. Compiled outputs never fall back to another commit. Build
-cache v2 uses explicit dist globs and checks compiled API exports.
+before shared tests start. Linux consumers wait for preparation rather than
+independent shared-test completion, and the workspace lane restores its
+root/mobile/build caches once for all five checks. Consumers require those
+lockfile/manifest-keyed root/mobile and exact-commit build caches; a failed
+producer cannot fan out cold installs/builds. Compiled outputs never fall back
+to another commit. Build cache v2 uses explicit dist globs and validates API
+exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
+not repeat it. Required check names and platform routes remain unchanged.
 
 All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.
 Its tar wrapper serializes only cache archives through the CI user's shared
@@ -72,9 +88,8 @@ The full per-job queue/setup/work breakdown is recorded in
 A bounded five-file server probe passed 40 tests in both fork modes. Grouping
 reduced CPU time from 71.6s to 60.7s (about 15%); one grouped worker took longer
 than two, motivating smaller parallel shards. This is a probe, not a passing
-end-to-end performance result. The ten-listener/eight-shard profile still
-requires a measured real-PR run within fifteen minutes and subsequent
-concurrent-PR validation. Do not infer acceptance from configured quotas.
+end-to-end performance result. The consolidation profile still requires a measured real-PR run within
+fifteen minutes and subsequent concurrent-PR validation. Do not infer acceptance from configured quotas.
 
 Whole-host load includes independent Beeline agents, Gradle and emulators;
 record it as context. Abort trials on CI budget violations, sustained memory

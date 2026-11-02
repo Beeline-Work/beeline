@@ -85,19 +85,17 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   const mobile = jobs['mobile-suite'];
   const isolated = jobs['native-fingerprint'];
   const file = 'sources/config/nativeFingerprint.test.ts';
-  const suiteStep = mobile.steps.find((step) => step.name === 'Run the mobile vitest suite');
-  assert.ok(suiteStep.run.endsWith(` --exclude ${file}`));
+  const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
+  assert.match(tasks, new RegExp(`--exclude ${file.replaceAll('.', '\\.')}`));
+  assert.ok(mobile.needs.includes('typecheck'));
+  assert.match(JSON.stringify(mobile.steps), /needs.typecheck.outputs/);
   assert.match(isolated['runs-on'], /beeline-ci/);
-  assert.equal(isolated['timeout-minutes'], 15);
-  assert.equal(mobile['timeout-minutes'], 20);
-  const regression = isolated.steps.find((step) => step.run ===
-    `npx vitest run ${file} --maxWorkers=1 --minWorkers=1`);
-  assert.ok(regression);
-  assert.equal(regression['working-directory'], 'apps/mobile');
-  assert.equal(regression.if, undefined);
-  assert.equal(regression['continue-on-error'], undefined);
+  assert.equal(isolated['timeout-minutes'], 5);
+  assert.equal(mobile['timeout-minutes'], 5);
+  assert.ok(tasks.includes(`npx vitest run ${file} --maxWorkers=1 --minWorkers=1`));
+  assert.match(JSON.stringify(isolated.steps), /needs.typecheck.outputs/);
   assert.equal(isolated['continue-on-error'], undefined);
-  assert.ok(isolated.steps.some((step) => step.run === 'npm run fingerprint:check'));
+  assert.match(tasks, /npm run fingerprint:check/);
 
   // Evaluate the workflow conditions over all routing combinations, including
   // string-valued path-filter outputs, so a future narrowing cannot drop coverage.
@@ -127,13 +125,14 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.ok(selected(isolated, 'workflow_dispatch', 'native-fingerprint', false, false, false));
 });
 
-const heavyJobs = ['server-suite-shard', 'typecheck', 'mobile-suite', 'dead-code',
-  'mobile-export-reachability', 'native-fingerprint'];
-const controlJobs = ['changes', 'shared-package-tests', 'server-test-selection',
+const heavyJobs = ['server-suite-shard'];
+const workspaceJobs = ['typecheck'];
+const controlJobs = ['changes', 'prepare-workspace', 'shared-package-tests', 'server-test-selection',
+  'mobile-suite', 'dead-code', 'mobile-export-reachability', 'native-fingerprint',
   'server-suite', 'server-integration', 'frame-budget', 'state-upgrade',
   'readme-parity', 'app-link-associations'];
-const squireJobs = [...heavyJobs, ...controlJobs];
-const preparedConsumers = [...heavyJobs, 'production-corpus-replay', 'app-link-associations'];
+const squireJobs = [...heavyJobs, ...workspaceJobs, ...controlJobs];
+const preparedConsumers = [...heavyJobs, ...workspaceJobs, 'shared-package-tests', 'production-corpus-replay', 'app-link-associations'];
 
 test('privileged setup and isolated PostgreSQL stay hosted', () => {
   for (const name of ['server-claim-latency', 'production-corpus-replay', 'body-suite', 'auth-image', 'actionlint']) {
@@ -147,20 +146,20 @@ test('only credential-free PR Linux jobs use the bounded CI-only pool', () => {
     const routing = jobs[name]['runs-on'];
     assert.match(routing, /github.event_name == 'pull_request'/, name);
     const labels = JSON.parse(routing.match(/fromJSON\('([^']+)'\)/)[1]);
-    assert.deepEqual(labels, ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${controlJobs.includes(name) ? 'control' : 'heavy'}`], name);
+    assert.deepEqual(labels, ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${controlJobs.includes(name) ? 'control' : workspaceJobs.includes(name) ? 'workspace' : 'heavy'}`], name);
     assert.match(routing, /\|\| 'ubuntu-latest'/, name);
   }
-  const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
-  assert.match(mobile.run, /--maxWorkers="\$CI_TEST_WORKERS" --minWorkers=1/);
+  const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
+  assert.match(tasks, /--maxWorkers=2 --minWorkers=1 --exclude sources\/config\/nativeFingerprint.test.ts/);
   const workflow = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'));
   assert.equal(workflow.env.CI_TEST_WORKERS, '2');
   assert.equal(workflow.env.UV_THREADPOOL_SIZE, '1');
   assert.equal(workflow.env.TURBO_CONCURRENCY, '1');
-  assert.match(JSON.stringify(jobs['mobile-export-reachability'].steps), /--max-workers 1/);
+  assert.match(tasks, /--max-workers 1/);
 });
 
 test('every PR Linux Vitest command bounds both worker limits', () => {
-  for (const [name, job] of Object.entries(jobs)) {
+  for (const [name, job] of [...Object.entries(jobs), ['workspace-tasks', {steps:[{run:readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8')}]}]]) {
     if (name === 'mac-helper-acceptance' || name.endsWith('-on-demand')) continue;
     for (const step of job.steps ?? []) {
       for (const command of (step.run ?? '').split(/\n| && /)) {
@@ -212,10 +211,10 @@ test('eight server shards retain all eight integration batches exactly once and 
 test('every PR Linux workspace consumer waits for the shared preparation job', () => {
   for (const [name, job] of Object.entries(jobs)) {
     // Other operating systems and dispatch-only host lanes populate separate caches.
-    if (name === 'shared-package-tests' || name.endsWith('-on-demand') || (job['runs-on'] !== 'ubuntu-latest' && !squireJobs.includes(name))) continue;
+    if (name === 'prepare-workspace' || name.endsWith('-on-demand') || (job['runs-on'] !== 'ubuntu-latest' && !squireJobs.includes(name))) continue;
     if (!job.steps?.some((step) => step.uses === './.github/actions/ci-workspace')) continue;
     const needs = Array.isArray(job.needs) ? job.needs : [job.needs];
-    assert.ok(needs.includes('shared-package-tests'), `${name} races cache preparation`);
+    assert.ok(needs.includes('prepare-workspace'), `${name} races cache preparation`);
   }
   const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
   const builds = action.runs.steps.find((step) => step.id === 'builds');

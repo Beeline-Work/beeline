@@ -50,7 +50,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       [workspace, corner, agent],
     );
     await db.query(
-      `UPDATE memberships SET push_muted=true,generation=7,joined_at='2020-01-01T00:00:00Z',identity_profile='{"fixture":true}' WHERE room_id=$1 AND identity_id=$2`,
+      `UPDATE memberships SET push_muted=true,joined_at='2020-01-01T00:00:00Z' WHERE room_id=$1 AND identity_id=$2`,
       [corner, agent],
     );
     await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, agent]);
@@ -74,8 +74,8 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
         corner_id: corner,
         identity_id: agent,
         event_subscriptions: ['joined'],
-        identity_profile: { fixture: true },
-        generation: 7,
+        identity_profile: null,
+        generation: 1,
         push_muted: true,
         created_at: new Date('2020-01-01T00:00:00Z'),
       },

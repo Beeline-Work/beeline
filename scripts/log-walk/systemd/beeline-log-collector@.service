@@ -1,0 +1,12 @@
+[Unit]
+Description=Beeline production log collector for Fly app %i
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/beeline-log-walk.env
+ExecStart=%h/.local/share/beeline-log-walk/checkout/scripts/log-walk/collect.sh %i ${LOG_WALK_RAW}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

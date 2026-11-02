@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
-import { MCP_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
+import { MCP_ORDER_WAKE_HINT, MCP_REVIEW_WAKE_HINT, MCP_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
 import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -459,6 +459,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await queued(revoked.id)).toEqual([]);
     await db.query(`UPDATE agent_commands SET state='complete', completed_at=now() WHERE id=$1`, [commander.id]);
     await db.query(`UPDATE agent_turns SET status='complete' WHERE agent_id=$1 AND generation_id='wake-proof'`, [AGENT]);
+    // Reproduction (MCP-REVIEW-WAKE-1): a reviewer dispatch carried the generic "no_reply_needed" hint.
+    await eventCall(token, 'events/subscribe', { ...params, name: 'wake', delivery: { ...params.delivery, url: wakeTooUrl, secret } });
+    const review = await createAgentCommand(db, {
+      roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'corner_review_dispatch',
+      privatePayload: { text: `Current handoff target: PR #7 at ${'a'.repeat(40)}.`, authorId: AGENT, fromRoomId: ROOM, kind: 'lifecycle' },
+    });
+    expect(JSON.parse((await queued(review!.id))[0]!.body).data).toMatchObject({ reason: 'corner_review_dispatch', next: MCP_REVIEW_WAKE_HINT });
+    expect((await pendingMcpWakes(db, member)).find(item => item.id === review!.id)).toMatchObject({ next: MCP_REVIEW_WAKE_HINT });
+    expect(MCP_REVIEW_WAKE_HINT).toContain('approve_merge with the head SHA');
   });
   it.each(['consent', 'profile'])('MCP-WAKE-SETUP: %s saves once, delivers tags and never reads the key back', async path => {
     vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-wake-test-key');
@@ -1703,7 +1712,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         body: { memberId: member, roomId: ROOM, messageId: sent.messageId, text: `@${handle} please answer` } });
       expect(String(posts[0]!.body.instruction)).toContain('send_message');
       expect(String(posts[0]!.body.instruction)).toContain('Start your reply with @demo-agent to wake the asking agent.');
-      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake it');
+      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake them');
       // Removing the webhook stops the push.
       await client.callTool({ name: 'set_webhook', arguments: { url: '' } });
       const quiet = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} again` }, USER);
@@ -2209,6 +2218,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       // The order reaches the app's webhook at once; no helper claims it.
       expect((await db.query<{ body: string }>('SELECT body FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2',
         [member, sent.id])).rows[0]?.body).toContain('Order (order): Audit the corner list.');
+      // Reproduction: the delivered body once named the command id as a message to reply to, under tag instructions.
+      const delivered: Record<string, unknown>[] = [];
+      await deliverMcpMemberWebhooks(db, async (_url, init) => { delivered.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); });
+      const orderBody = delivered.find(body => body.commandId === sent.id)!;
+      expect(orderBody).toMatchObject({ memberId: member, roomId: ROOM, address: ROOM, id: sent.id, kind: 'order', reason: 'order',
+        text: expect.stringContaining('Audit the corner list.'), next: MCP_ORDER_WAKE_HINT, cursor: null });
+      expect(orderBody).not.toHaveProperty('replyRule');
+      expect(orderBody).not.toHaveProperty('messageId');
+      expect(String(orderBody.instruction)).not.toMatch(/tagged you|replyTo [0-9a-f]{64}|send_message/);
+      expect(String(orderBody.instruction)).toContain('call report');
       const wakes = (await ok(client, 'list_mentions', {})).wakes as { address: string; kind?: string; text?: string }[];
       expect(wakes).toContainEqual(expect.objectContaining({ address: ROOM, kind: 'order', text: expect.stringContaining('Audit the corner list') }));
       // Another call in that Room leaves the order waiting for its report.
@@ -2221,6 +2240,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         `SELECT private_payload FROM agent_commands WHERE agent_id=$1 AND reason='report' ORDER BY created_at DESC LIMIT 1`, [AGENT])).rows[0]!;
       expect(back.private_payload).toMatchObject({ kind: 'report', text: expect.stringContaining('three corners, all green') });
       expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+      // A reviewer dispatch by legacy webhook carries the same review hint as MCP Events and list_mentions.
+      const review = await createAgentCommand(db, {
+        roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'corner_review_dispatch',
+        privatePayload: { text: `Current handoff target: PR #7 at ${'a'.repeat(40)}.`, authorId: AGENT, fromRoomId: ROOM, kind: 'lifecycle' },
+      });
+      delivered.length = 0;
+      await deliverMcpMemberWebhooks(db, async (_url, init) => { delivered.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); });
+      expect(delivered.find(body => body.commandId === review!.id)).toMatchObject({ reason: 'corner_review_dispatch', next: MCP_REVIEW_WAKE_HINT });
     });
     async function reportCorner(member: string) {
       const corner = randomUUID();

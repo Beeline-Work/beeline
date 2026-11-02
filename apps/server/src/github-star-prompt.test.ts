@@ -246,7 +246,7 @@ it('stays hidden mid-conversation and after a failed turn, and persists one star
   });
   starred = true;
   expect((await read()).prompt?.milestone).toBe(3);
-  await db.query(`UPDATE github_star_prompts SET reached_milestone=30 WHERE identity_id=$1`, [H]);
+  await db.query(`UPDATE github_star_prompts SET replies=30 WHERE identity_id=$1`, [H]);
   expect((await read()).prompt?.milestone).toBe(30);
   await vi.waitFor(async () => {
     expect((await db.query<{ closed: string | null }>(

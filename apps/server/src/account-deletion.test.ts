@@ -373,6 +373,13 @@ describe('deleteAccount', () => {
       [CORNER],
       1,
     );
+    // It closes through closeCornerState, as a human close does: the corner
+    // state machine reaches `closed` with the archival.
+    await expectRowCount(
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND workflow_state='closed'`,
+      [CORNER],
+      1,
+    );
     // R-1983-1: the current-implementer pointer clears with the identity it
     // named. A surviving `worker_agent_id` would trip its foreign key on the
     // `DELETE FROM identities` below and fail the whole deletion with a 503.
@@ -459,6 +466,8 @@ describe('deleteAccount', () => {
       'agent_schedules.creator_id', 'agent_schedules.owner_id', 'agent_schedules.updated_by',
       'agent_turn_traces.agent_id', 'agent_turns.agent_id', 'agents.owner_id',
       'computer_sessions.agent_id', 'connector_offers.accepted_by',
+      'corner_apps.author_agent_id', 'corner_app_bindings.bound_by',
+      'corner_app_installations.installed_by', 'corner_app_installations.developer_agent_id',
       'corner_brief_revisions.author_id', 'corner_facts.commissioned_by',
       'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
       'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',
@@ -495,6 +504,41 @@ describe('deleteAccount', () => {
          AND c.confrelid IN (SELECT tbl FROM reached)`,
     );
     expect(indirect.rows).toEqual([]);
+  });
+
+  it('anonymises retained app storage without blocking account deletion (SENTRY-22)', async () => {
+    const installation = '66666666-6666-4666-8666-666666666666';
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,developer_agent_id,manifest)
+       VALUES($1,$2,$3,$4,'{"name":"Legacy"}')`,
+      [installation, WORKSPACE, OWNER, AGENT],
+    );
+    await database.query(
+      `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
+       VALUES($1,$2,'77777777-7777-4777-8777-777777777777',$3)`,
+      [CORNER, installation, OWNER],
+    );
+    await database.query(
+      `INSERT INTO corner_apps(corner_id,slug,author_agent_id,definition)
+       VALUES($1,'legacy',$2,'{"command":"legacy"}')`, [CORNER, AGENT],
+    );
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(
+      `SELECT 1 FROM corner_app_installations WHERE id=$1 AND installed_by=$2 AND developer_agent_id=$2`,
+      [installation, DELETED_ACCOUNT_IDENTITY_ID], 1,
+    );
+    await expectRowCount(`SELECT 1 FROM corner_app_bindings WHERE corner_id=$1 AND bound_by=$2`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
+    await expectRowCount(`SELECT 1 FROM corner_apps WHERE corner_id=$1 AND author_agent_id=$2`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
   });
 
   it('keeps shared corner records under the tombstone and releases holds on the corners it archives', async () => {

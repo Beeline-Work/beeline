@@ -37,6 +37,8 @@ The hardware configuration and lease scheduling policy are unchanged.
 
 ## Reproduction SYSTEM-REFACTOR-2
 
+The former function/dependency fingerprint guard rejected these wording-neutral changes:
+
 The actual failed heads and their scanner failures were retrieved from GitHub:
 
 | PR | Failed Checks run | Incorrectly locked dependency |
@@ -46,61 +48,29 @@ The actual failed heads and their scanner failures were retrieved from GitHub:
 | [3034](https://github.com/Beeline-Work/beeline/pull/3034) | [40719296398](https://github.com/Beeline-Work/beeline/actions/runs/40719296398) | Moving member wake routing changed a query's transitive wrapper inventory |
 | [3050](https://github.com/Beeline-Work/beeline/pull/3050) | [40817788138](https://github.com/Beeline-Work/beeline/actions/runs/40817788138) | GitHub token caching changed repository-onboarding wording fingerprints |
 
-Replaying the archived source of the first head with the original scanner
-reproduced `DaemonService.execute:wrapper:696e6d583f900007`, matching its CI
-failure. The source fixtures retain all four head SHAs and the affected source
-or excerpts; they replay the refactors through the same scanner/enforcer CI uses.
-The current dependency graph supplies unchanged collaborators so the fixtures
-need no GitHub connection or repository history in CI.
+The original scanner reproduced `DaemonService.execute:wrapper:696e6d583f900007`
+on the first failed head. That inventory is now retired: code structure, producer
+counts, predicates and expression operators are no longer wording fingerprints.
+
+The current [System wording contract](agent-system-events.md) has two independent checks:
+
+- `system-message-wording.lock.json` maps each catalog key to the SHA-256 of its
+  exact template fragments. New keys, removed keys and wording edits require
+  lunchboxfortwo's approval. Variable descriptions, declaration order and source
+  formatting do not change the wording hash.
+- `system-message-catalog.test.ts` follows System sink values through aliases,
+  helpers, card serialization and SQL outputs, rejecting inline text outside the
+  catalog. Dynamic names, provider responses and ordinary conversation text stay
+  data; unrelated implementation edits do not need wording approval.
+
+The same test suite renders every catalog key against pre-catalog output fixtures,
+including whitespace, punctuation, Unicode and representative variable values.
+Its source-scan regression inserts an unrelated diagnostic into
+`DaemonService.postRoomMessage`, `PhoneService.sendMessage`, `PhoneService.sendReply`
+and `RoomsMcpAgentTools.call` and verifies that the guard passes. Separate negative
+cases change catalog wording, add a key and put inline text through System sinks;
+they verify the owner-approval and catalog-key error messages.
 
 ```sh
-npm test -w @beeline/server -- --run src/system-messages-lock.test.ts
+NODE_OPTIONS=--max-old-space-size=4096 npm test -w @beeline/server -- --run src/system-message-catalog.test.ts --maxWorkers=2 --minWorkers=1
 ```
-
-The lock compares ordered wording fingerprints and total producer counts,
-independent of filenames and enclosing function names. Type annotations are
-not displayed. SQL parameters used only to select rows do not make upstream
-callers into wording wrappers; projected phrase parameters remain tracked.
-Proven array selection predicates and GitHub request authentication are data
-selection/transport, while emitted literal phrases and formatter return values
-remain locked. An explicit ordinary conversation reply stays outside the System
-wrapper inventory; System/card writes inside its implementation stay scanned.
-
-The lock inventory is regenerated for the scanner change, with existing approval
-comments retained. Regression cases accept moved producers, local renames and
-reformatting, and reject changed literal wording, changed expression operators,
-reordered/repeated phrases, visible card changes and forwarded SQL phrase changes.
-
-The review follow-up for SYSTEM-REFACTOR-2 reproduced a false pass when
-`['hello','world'].find(word => word === 'hello')` changed its predicate to
-`word === 'world'`: the displayed verb changed from `hello` to `world`, but
-`enforce` accepted it. The same bypass reproduced for `filter` and `sort`.
-Selection callbacks are now retained for local literal arrays, including aliases,
-spreads and typed helper returns. Negative fixtures exercise those paths through
-the same scanner and enforcer, while the four archived refactor fixtures must
-continue to pass. The inventory is regenerated for the stricter callback dependencies
-from unchanged producer source. Opaque provider/row arrays retain their data-only
-treatment; request arguments do not become returned phrase-array dependencies.
-
-The next review follow-up reproduced the same false pass through typed forwarding
-parameters: `select(['hello','world'])` calls `forward(words).find(...)`,
-`filter(...)`, or `sort(...)`. Each new regression failed on the previous head
-because `enforce` did not throw for the changed callback. The scanner now follows
-parameter inputs from resolved callers, including forwarding chains, before
-classifying an array as opaque. These cases exercise the exact scanner/enforcer
-path used by CI; no running application is involved in this check.
-The stronger dependency tracking mechanically changes two wrapper fingerprints
-(`ensureReviewDispatch` and `DaemonService.report`); the regenerated inventory
-retains all producer source and visible wording unchanged.
-
-The destructuring follow-up for SYSTEM-REFACTOR-2 reproduced false passes for
-`forward({words})` with `find`, `filter` and `sort`. The new scanner/enforcer
-regressions failed on the previous head. Bindings now retain selection callbacks
-conservatively: a container's array type does not prove that a destructured
-projection is opaque. Unknown/computed bindings also retain their callbacks.
-The collector follows the binding's container and defaults at every nesting
-level, including parameter defaults. The regressions cover object and array
-patterns, renamed keys, nested patterns, defaults and rest elements in helpers
-and const declarations. An explicit unresolved-origin case checks fail-closed
-behavior. One workflow-gate wrapper fingerprint is regenerated from unchanged
-producer source to retain its destructured callback dependencies.

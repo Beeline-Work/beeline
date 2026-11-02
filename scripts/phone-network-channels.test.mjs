@@ -278,3 +278,13 @@ test('covering a new package lists its existing sites without growing the list; 
   narrowed.packageRoots = narrowed.packageRoots.filter((root) => root !== 'packages/nostr/src');
   assert.ok(judgeChannels(sites, narrowed, allowlist).some((error) => /no longer covers packages\/nostr\/src/.test(error)));
 });
+
+test('a new reference to a host already approved as a link is listed as a link, not a new channel', () => {
+  const sites = scanPhoneTree(repo);
+  const base = structuredClone(allowlist);
+  base.entries = base.entries.filter((entry) => entry.file !== 'packages/api-contract/src/system-message-catalog.ts');
+  assert.deepEqual(judgeChannels(sites, allowlist, base), []);
+  const asException = structuredClone(allowlist);
+  asException.entries.find((entry) => entry.file === 'packages/api-contract/src/system-message-catalog.ts').fate = 'exception';
+  assert.ok(judgeChannels(sites, asException, base).some((error) => /system-message-catalog\.ts::origin:github\.com is new/.test(error)));
+});

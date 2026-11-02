@@ -14,11 +14,18 @@ import { DatabaseBackgroundWork } from './database-background-work.js';
 
 export class PgliteDatabase implements SqlDatabase {
   readonly backgroundWork = new DatabaseBackgroundWork();
+  #client: PGliteInterface | undefined;
   // The vector extension is loaded unconditionally: institutional_memory_items
   // and workspace_skills declare `vector(...)` columns in the shared server
   // schema, so every test that runs `migrate()` needs it available, not only
   // the tests that exercise embeddings.
-  constructor(readonly client: PGliteInterface = new PGlite({ extensions: { vector } })) {}
+  constructor(client: PGliteInterface = new PGlite({ extensions: { vector } })) {
+    this.#client = client;
+  }
+  get client(): PGliteInterface {
+    if (!this.#client) throw new Error('Test database is closed');
+    return this.#client;
+  }
   static fromSnapshot(snapshot: Blob | File): PgliteDatabase {
     return new PgliteDatabase(new PGlite({ loadDataDir: snapshot, extensions: { vector } }));
   }
@@ -43,7 +50,17 @@ export class PgliteDatabase implements SqlDatabase {
   }
   async close() {
     await this.backgroundWork.drain();
-    await this.client.close();
+    const client = this.#client;
+    if (!client) return;
+    try {
+      await client.close();
+    } finally {
+      // Vitest 2 keeps instance spies in its registry, including restore closures
+      // that retain services and this wrapper. PGlite.close() stops PostgreSQL
+      // but leaves its WASM heap attached to the engine; release our ownership
+      // so every completed test does not retain another engine (~250 MB).
+      this.#client = undefined;
+    }
   }
   private executor(transaction: Transaction): SqlDatabase {
     return {

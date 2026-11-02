@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { SqlDatabase } from './database.js';
 import { systemLine, restateSystemLine } from './system-line.js';
 
@@ -56,10 +57,10 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
   const crashed = /runtime_exited|lease expired|crash/i.test(input.reason ?? '');
   const phrase = {
     subject: { kind: 'agent' as const, id: input.agentId, name: agent.name },
-    verb: allowance ? 'ran out of free allowance mid-task' : timeout ? 'hit the 15-minute limit' :
-      input.normal ? 'ended without a reply' : crashed ? 'stopped after a runtime failure' : 'stopped before replying',
-    consequence: allowance === 'lifetime' ? 'connect your own agent from Members to continue' : allowance ?
-      'it resets at midnight UTC; ask to continue then' : 'say "continue" to pick up where work stopped',
+    verb: allowance ? systemMessage("free-agent-turn-close.ran-out-of-free-allowance-mid-task") : timeout ? systemMessage("free-agent-turn-close.hit-the-15-minute-limit") :
+      input.normal ? systemMessage("free-agent-turn-close.ended-without-a-reply") : crashed ? systemMessage("free-agent-turn-close.stopped-after-a-runtime-failure") : systemMessage("free-agent-turn-close.stopped-before-replying"),
+    consequence: allowance === 'lifetime' ? systemMessage("free-agent-turn-close.connect-your-own-agent-from-members-to-continue") : allowance ?
+      systemMessage("free-agent-turn-close.it-resets-at-midnight-utc-ask-to-continue-then") : systemMessage("free-agent-turn-close.say-continue-to-pick-up-where-work-stopped"),
   };
   const card = { requestId: input.requestId, agentId: input.agentId, state: 'failed',
     silenceKind: allowance ? 'allowance-spent' : 'hiccup', freeAgentClosed: true };

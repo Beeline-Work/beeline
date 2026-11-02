@@ -2105,9 +2105,55 @@ UPDATE corner_brief_revisions SET build_spec=content
 -- columns above NULL; older rows keep them and are folded into a spec on read.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
 ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
-DROP TABLE IF EXISTS corner_apps;
-DROP TABLE IF EXISTS corner_app_bindings;
-DROP TABLE IF EXISTS corner_app_installations;
+-- Retired: nothing reads or writes this table; drop it in a later release.
+CREATE TABLE IF NOT EXISTS corner_validation_stages (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  brief_revision integer NOT NULL,
+  head_sha text NOT NULL,
+  stage text NOT NULL CHECK (stage IN ('intent','base','review','tests','docs','lint_types','publication','ci','final_authorization')),
+  status text NOT NULL CHECK (status IN ('pending','running','passed','failed','skipped','not_applicable')),
+  evidence text NOT NULL DEFAULT '',
+  actor_id text NOT NULL REFERENCES identities(id),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id,brief_revision,head_sha,stage)
+);
+
+-- Retired storage only (SENTRY-22). Older images still join these tables on
+-- ordinary corner reads during rolling deployment and rollback. Preserve rows;
+-- CREATE IF NOT EXISTS also repairs databases where #3221 already dropped them.
+-- No current tools/routes/UI use these tables. Remove only in a separate contract
+-- migration after all live AND rollback images no longer reference them.
+CREATE TABLE IF NOT EXISTS corner_apps (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  slug text NOT NULL,
+  author_agent_id text NOT NULL REFERENCES identities(id),
+  definition jsonb NOT NULL,
+  revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id, slug)
+);
+CREATE INDEX IF NOT EXISTS corner_apps_author_idx ON corner_apps(author_agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS corner_apps_command_idx
+  ON corner_apps(corner_id,(definition->>'command'));
+
+CREATE TABLE IF NOT EXISTS corner_app_installations (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  installed_by text NOT NULL REFERENCES identities(id),
+  developer_agent_id text REFERENCES identities(id),
+  manifest jsonb NOT NULL,
+  connected_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS corner_app_installations_workspace_idx
+  ON corner_app_installations(workspace_id,connected_at DESC);
+CREATE TABLE IF NOT EXISTS corner_app_bindings (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  installation_id uuid NOT NULL REFERENCES corner_app_installations(id) ON DELETE RESTRICT,
+  instance_id uuid NOT NULL UNIQUE,
+  bound_by text NOT NULL REFERENCES identities(id),
+  bound_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
 DROP TABLE IF EXISTS corner_check_facts;

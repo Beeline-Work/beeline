@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -48,8 +49,8 @@ export function connectorCatalog(): readonly ConnectorCatalogEntry[] {
 }
 
 export function connectorDisplayName(type: ConnectorKind): string {
-  if (type === 'link') return 'Link';
-  if (type === 'registry-mcp') return 'MCP Connector';
+  if (type === 'link') return systemMessage("workbench.link");
+  if (type === 'registry-mcp') return systemMessage("workbench.mcp-connector");
   return CONNECTOR_CATALOG.find((entry) => entry.connectorType === type)?.name ?? type;
 }
 
@@ -89,9 +90,9 @@ export function connectorLogo(type: string): string | undefined {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return systemMessage("workbench.b", bytes);
+  if (bytes < 1024 * 1024) return systemMessage("workbench.kb", (bytes / 1024).toFixed(1));
+  return systemMessage("workbench.mb", (bytes / (1024 * 1024)).toFixed(1));
 }
 
 /**
@@ -233,21 +234,21 @@ async function postUsageReceiptCard(
   const totalBytes = records.reduce((sum, record) => sum + Math.max(0, record.bytes ?? 0), 0);
   const consequence =
     records.length > 1
-      ? `${records.length} calls · ${formatBytes(totalBytes)}`
+      ? systemMessage("workbench.calls", records.length, formatBytes(totalBytes))
       : [
           records[0]!.operation,
           records[0]!.statusCode !== undefined ? String(records[0]!.statusCode) : undefined,
           records[0]!.bytes ? formatBytes(records[0]!.bytes) : undefined,
           (records[0]!.grantLabel ?? records[0]!.grantId)
-            ? `grant ${records[0]!.grantLabel ?? records[0]!.grantId}`
+            ? systemMessage("workbench.grant", records[0]!.grantLabel ?? records[0]!.grantId)
             : undefined,
         ]
           .filter(Boolean)
-          .join(' · ');
+          .join(systemMessage("workbench.separator"));
 
   const phrase: SystemPhrase = {
-    subject: { id: agentId, kind: 'agent', name: agent?.name ?? 'agent' },
-    verb: 'used',
+    subject: { id: agentId, kind: 'agent', name: agent?.name ?? systemMessage("workbench.agent") },
+    verb: systemMessage("workbench.used"),
     object: { id: undefined, text: connectionName },
     consequence,
   };
@@ -281,7 +282,7 @@ async function postUsageReceiptCard(
       existing.message_id,
       {
         ...phrase,
-        consequence: `${totals.calls} calls · ${formatBytes(Number(totals.total_bytes))}`,
+        consequence: systemMessage("workbench.calls", totals.calls, formatBytes(Number(totals.total_bytes))),
       },
       card,
     );

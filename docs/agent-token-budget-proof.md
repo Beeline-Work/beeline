@@ -44,6 +44,14 @@ The PR repair also runs `R-MCP-PARITY` and `R-MCP-PROCEDURE` in
 `rooms-mcp.test.ts`: the connected MCP catalog exposes `load_workspace_skill`,
 and both that name and `read(facet:procedure)` load the same saved procedure
 with the active turn's authority. The parity exclusions remain unchanged.
+TOKEN-WORKFLOW also covers membership removal between prevalidation and the
+legacy binding reads. The regression starts with a valid prefixed handle,
+bare handle, or identity id, then removes that agent before resolution. All
+three previously raised an unexpected error; they now refuse the caller with
+HTTP status (400) and write no workflow start card. The later membership check
+still rejects removed agents. PGlite serializes transactions, so the regression
+models the committed removal between statements on its transaction connection.
+
 Workflow input validation runs before the original start-card binding path,
 preserving the locked System-message fingerprints `bb92464a5effd869` and
 `2c5f68a0d84e5993`; the lock file is unchanged.

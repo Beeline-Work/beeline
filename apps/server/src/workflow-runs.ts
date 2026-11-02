@@ -2035,8 +2035,9 @@ export async function startWorkflow(
             : raw,
       );
       if (!agents) {
-        throw new Error(
+        throw new CommandRefusalError(
           `role binding for ${role} must be an agent id or a member handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`,
+          400,
         );
       }
       if (agents.length === 1) roleBindings[role] = agents[0]!;
@@ -2055,7 +2056,7 @@ export async function startWorkflow(
       const agentSet = new Set(agents.rows.map((row) => row.identity_id));
       const notAgent = boundIds.find((id) => !agentSet.has(id));
       if (notAgent) {
-        throw new Error(`${notAgent} is not a current agent member of this Room`);
+        throw new CommandRefusalError(`${notAgent} is not a current agent member of this Room`, 400);
       }
     }
     const starter = await loadIdentityRow(db, command.agent_id);
@@ -2197,7 +2198,7 @@ async function roomMemberIdForHandle(
 async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
   const handle = raw.replace(/^@/, '');
   const id = await roomMemberIdForHandle(db, roomId, handle);
-  if (!id) throw new Error(`@${handle} is not a current member of this Room`);
+  if (!id) throw new CommandRefusalError(`@${handle} is not a current member of this Room`, 400);
   return id;
 }
 

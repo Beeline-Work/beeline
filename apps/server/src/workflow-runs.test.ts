@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { ExpectedRefusalError } from './command-refusal.js';
+import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { normalizeLegacyWorkflowRuns, saveUnsavedWorkflowRunStatus } from './migrations/workflow-cleanup.js';
 import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -533,6 +533,33 @@ describe('start_workflow', () => {
     expect(error.message).toContain('approver: given missing');
     expect(error.message.match(/allowed members:/g)).toHaveLength(3);
     expect(error.message).toContain('@impy');
+  });
+
+  it.each(['@impy', 'impy', IMPLEMENTER])('TOKEN-WORKFLOW race: refuses a binding removed after prevalidation (%s)', async (binding) => {
+    const command = await commandFor(REVIEWER);
+    await database.query(`UPDATE identities SET handle='impy' WHERE id=$1`, [IMPLEMENTER]);
+    await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT) });
+    let removed = false;
+    const wrap = (inner: SqlDatabase): SqlDatabase => ({
+      async query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) {
+        const result = await inner.query<Row>(sql, values);
+        if (!removed && sql.includes('SELECT member.identity_id,identity.handle,identity.kind')) {
+          // Model a committed removal between READ COMMITTED statements. PGlite
+          // serializes transactions, so remove through the same connection.
+          removed = true;
+          await inner.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, IMPLEMENTER]);
+        }
+        return result;
+      },
+      transaction: work => inner.transaction(db => work(wrap(db))),
+    });
+    const error = await startWorkflow(wrap(database), command, {
+      name: 'corner', roleBindings: { implementer: binding, reviewer: REVIEWER, approver: APPROVER },
+    }).catch(error => error);
+    expect(removed).toBe(true);
+    expect(error).toBeInstanceOf(CommandRefusalError);
+    expect(error).toMatchObject({ status: 400 });
+    expect((await database.query(`SELECT id FROM messages WHERE card_type='workflow-handoff'`)).rows).toEqual([]);
   });
 
   it('rejects a role with no binding', async () => {

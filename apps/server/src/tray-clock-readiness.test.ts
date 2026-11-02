@@ -137,6 +137,66 @@ describe('unselected bounded committed Tray capture readiness',()=>{
     await db.query(`ALTER TABLE messages ENABLE TRIGGER beeline_tray_clock_message_insert`);await seed();await owner.step();
     await expect(owner.step()).rejects.toThrow('Unrepresentable');expect((await state()).ready).toBe(false);
   });
+  it('charges empty Room entries/completions against100 instead of scanning all empty Rooms in one lifecycle pass',async()=>{
+    await db.query(`INSERT INTO rooms(id,workspace_id,name)
+      SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,$1,'Empty' FROM generate_series(1,205)n`,[OTHER]);
+    await seed();
+    for(let n=0;n<20;n++){
+      const phase=(await db.query<{phase:string}>(`SELECT phase FROM tray_clock_readiness WHERE workspace_id=$1`,[OTHER])).rows[0]!.phase;
+      if(phase==='messages')break;await owner.step();
+    }
+    const result=await owner.step();expect(result).toMatchObject({workspaceId:OTHER,processed:100,ready:false,continuation:true});
+    const progress=(await db.query(`SELECT phase,room_cursor::text,current_room FROM tray_clock_readiness WHERE workspace_id=$1`,[OTHER])).rows;
+    expect(progress).toEqual([{phase:'messages',room_cursor:'00000000-0000-4000-8000-000000000050',current_room:null}]);
+    await finish();expect((await readTrayClockReadiness(db,OTHER))?.ready).toBe(true);
+  });
+  it('keeps the Room high watermark finite while actual capture covers Rooms inserted behind and beyond it',async()=>{
+    await db.query(`ALTER TABLE messages DISABLE TRIGGER beeline_tray_clock_message_insert`);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'old-'||lpad(n::text,3,'0'),$1,$2,'@reader please?' FROM generate_series(1,205)n`,[ROOM,AUTHOR]);
+    await db.query(`ALTER TABLE messages ENABLE TRIGGER beeline_tray_clock_message_insert`);await seed();await owner.step();await owner.step();
+    const bound=(await db.query<{room_bound:string}>(`SELECT room_bound::text FROM tray_clock_readiness WHERE workspace_id=$1`,[WS])).rows[0]!.room_bound;
+    const behind='00000000-0000-4000-8000-000000000001',beyond='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Behind'),($2,$3,'Beyond')`,[behind,beyond,WS]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('behind-room',$1,$3,'@reader please?'),('beyond-room',$2,$3,'@reader please?')`,[behind,beyond,AUTHOR]);
+    expect((await db.query(`SELECT room_bound::text FROM tray_clock_readiness WHERE workspace_id=$1`,[WS])).rows).toEqual([{room_bound:bound}]);
+    await finish();expect((await readTrayClockReadiness(db,WS))?.ready).toBe(true);
+    expect((await db.query(`SELECT source_id FROM tray_clock_deadlines WHERE source_id IN('behind-room','beyond-room') ORDER BY source_id`)).rows)
+      .toEqual([{source_id:'behind-room'},{source_id:'beyond-room'}]);
+  });
+  it('bounds per-message reader traversal while capture handles new marks on both sides of the reader cursor',async()=>{
+    await db.query(`INSERT INTO identities(id,kind,name,handle) SELECT lpad(to_hex(n+1000),64,'0'),'human','Synthetic','reader-'||n FROM generate_series(1,205)n`);
+    await db.query(`ALTER TABLE needs_you_marks DISABLE TRIGGER beeline_tray_clock_seen_insert`);
+    await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+      SELECT lpad(to_hex(n+1000),64,'0'),'q',$1 FROM generate_series(1,205)n`,[WS]);
+    await db.query(`ALTER TABLE needs_you_marks ENABLE TRIGGER beeline_tray_clock_seen_insert`);await seed();
+    for(let n=0;n<10;n++){
+      const phase=(await db.query<{phase:string}>(`SELECT phase FROM tray_clock_readiness WHERE workspace_id=$1`,[WS])).rows[0]!.phase;
+      if(phase==='seen')break;await owner.step();
+    }
+    expect(await owner.step()).toMatchObject({processed:100,ready:false,continuation:true});
+    expect((await db.query(`SELECT current_message FROM tray_clock_readiness WHERE workspace_id=$1`,[WS])).rows).toEqual([{current_message:'q'}]);
+    const behind='0'.repeat(63)+'1',beyond='f'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Behind','behind'),($2,'human','Beyond','beyond')`,[behind,beyond]);
+    await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id) VALUES($1,'q',$3),($2,'q',$3)`,[behind,beyond,WS]);
+    await finish();expect((await readTrayClockReadiness(db,WS))?.ready).toBe(true);
+    expect((await db.query(`SELECT count(*)::int n FROM tray_clock_deadlines WHERE source_kind='seen' AND source_id='q'`)).rows).toEqual([{n:208}]);
+  });
+  it('refuses a wrong-key traversal index and later index drift cannot preserve ready evidence',async()=>{
+    await db.query(`DROP INDEX tray_clock_readiness_messages_idx;CREATE INDEX tray_clock_readiness_messages_idx ON messages(id,room_id)`);
+    await expect(owner.initialize()).rejects.toThrow('traversal index unavailable');expect((await db.query(`SELECT * FROM tray_clock_readiness_floor`)).rows).toEqual([]);
+    await db.query(`DROP INDEX tray_clock_readiness_messages_idx`);await db.query(TRAY_CLOCK_SOURCE_SCHEMA);await seed();await finish();
+    expect((await readTrayClockReadiness(db,WS))?.ready).toBe(true);await db.query(`DROP INDEX tray_clock_readiness_messages_idx`);
+    expect((await readTrayClockReadiness(db,WS))?.ready).toBe(false);await expect(owner.step()).rejects.toThrow('floor unavailable');
+  });
+  it('invalidates mutable empty Room IDs and rolls all evidence back when a referenced ID mutation is refused',async()=>{
+    await seed();await finish();const original=await state(OTHER),fresh='55555555-5555-4555-8555-555555555555';
+    await db.query(`UPDATE rooms SET id=$1 WHERE id=$2`,[fresh,SECOND]);
+    expect((await state(OTHER)).generation).not.toBe(original.generation);expect((await readTrayClockReadiness(db,OTHER))?.ready).toBe(false);
+    await finish();expect((await readTrayClockReadiness(db,OTHER))?.ready).toBe(true);
+    const before=await heads(),prior=await state();
+    await expect(db.query(`UPDATE rooms SET id=$1 WHERE id=$2`,['66666666-6666-4666-8666-666666666666',ROOM])).rejects.toMatchObject({code:'23503'});
+    expect(await heads()).toEqual(before);expect(await state()).toEqual(prior);
+  });
   it('decodes only the exact closed six-member readiness/basis cause',()=>{
     const value={sourceTable:'tray-clock-basis',version:1,trayWorkspaceId:WS,generation:'a'.repeat(32),revision:'0',ready:false};
     expect(readTrayClockBasisCause(value)).toEqual(value);expect(readTrayClockBasisCause({...value,sourceTable:'tray-clock-readiness'})).toBeDefined();

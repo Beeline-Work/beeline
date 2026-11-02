@@ -295,8 +295,8 @@ BEGIN
 END;
 $$;
 DROP TRIGGER IF EXISTS beeline_tray_clock_room_move ON rooms;
-CREATE TRIGGER beeline_tray_clock_room_move BEFORE UPDATE OF workspace_id ON rooms FOR EACH ROW
- WHEN(OLD.workspace_id IS DISTINCT FROM NEW.workspace_id) EXECUTE FUNCTION beeline_tray_clock_room_move();
+CREATE TRIGGER beeline_tray_clock_room_move BEFORE UPDATE OF id,workspace_id ON rooms FOR EACH ROW
+ WHEN(ROW(OLD.id,OLD.workspace_id) IS DISTINCT FROM ROW(NEW.id,NEW.workspace_id)) EXECUTE FUNCTION beeline_tray_clock_room_move();
 `;
 
 /** SQL primitives for a future private adapter, never a production scheduler.

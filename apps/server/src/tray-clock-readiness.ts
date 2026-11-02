@@ -16,10 +16,24 @@ CREATE TABLE IF NOT EXISTS tray_clock_readiness(
  workspace_id uuid PRIMARY KEY,generation text NOT NULL CHECK(generation~'^[a-f0-9]{32}$'),
  phase text NOT NULL DEFAULT 'sources' CHECK(phase IN('sources','messages','seen','choices','publish','done')),
  cursor_one text,cursor_two text,cursor_three text,bounded boolean NOT NULL DEFAULT false,bound_one text,bound_two text,bound_three text,fingerprint text,
+ room_bounded boolean NOT NULL DEFAULT false,room_cursor uuid,room_bound uuid,current_room uuid,
+ message_bounded boolean NOT NULL DEFAULT false,message_cursor text,message_bound text,current_message text,
  source_epoch text,source_through bigint,workspace_epoch text,workspace_through bigint
 );
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS room_bounded boolean NOT NULL DEFAULT false;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS room_cursor uuid;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS room_bound uuid;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS current_room uuid;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS message_bounded boolean NOT NULL DEFAULT false;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS message_cursor text;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS message_bound text;
+ALTER TABLE tray_clock_readiness ADD COLUMN IF NOT EXISTS current_message text;
 CREATE INDEX IF NOT EXISTS tray_clock_readiness_pending_idx ON tray_clock_readiness(workspace_id) WHERE phase<>'done';
 CREATE INDEX IF NOT EXISTS tray_clock_readiness_source_idx ON tray_clock_deadlines(workspace_id,source_kind,source_id,reader_id);
+CREATE INDEX IF NOT EXISTS tray_clock_readiness_rooms_idx ON rooms(workspace_id,id);
+CREATE INDEX IF NOT EXISTS tray_clock_readiness_messages_idx ON messages(room_id,id);
+CREATE INDEX IF NOT EXISTS tray_clock_readiness_marks_idx ON needs_you_marks(message_id,identity_id);
+CREATE INDEX IF NOT EXISTS tray_clock_readiness_choices_idx ON room_choices(room_id,id);
 
 CREATE OR REPLACE FUNCTION beeline_tray_clock_lock_workspaces(target_workspaces uuid[])
 RETURNS void LANGUAGE plpgsql AS $$
@@ -69,6 +83,8 @@ BEGIN
   INSERT INTO tray_clock_readiness(workspace_id,generation) VALUES(target,next_generation)
   ON CONFLICT(workspace_id) DO UPDATE SET generation=EXCLUDED.generation,phase='sources',
    cursor_one=NULL,cursor_two=NULL,cursor_three=NULL,bounded=false,bound_one=NULL,bound_two=NULL,bound_three=NULL,
+   room_bounded=false,room_cursor=NULL,room_bound=NULL,current_room=NULL,
+   message_bounded=false,message_cursor=NULL,message_bound=NULL,current_message=NULL,
    fingerprint=NULL,source_epoch=NULL,source_through=NULL,workspace_epoch=NULL,workspace_through=NULL;
   INSERT INTO tray_clock_state(workspace_id,generation,ready) VALUES(target,next_generation,false)
   ON CONFLICT(workspace_id) DO UPDATE SET generation=EXCLUDED.generation,revision=tray_clock_state.revision+1,ready=false;
@@ -95,7 +111,9 @@ END $$;
 
 type Phase='sources'|'messages'|'seen'|'choices'|'publish'|'done';
 type Progress={workspace_id:string;generation:string;phase:Phase;cursor_one:string|null;cursor_two:string|null;cursor_three:string|null;
-  bounded:boolean;bound_one:string|null;bound_two:string|null;bound_three:string|null;fingerprint:string|null};
+  bounded:boolean;bound_one:string|null;bound_two:string|null;bound_three:string|null;fingerprint:string|null;
+  room_bounded:boolean;room_cursor:string|null;room_bound:string|null;current_room:string|null;
+  message_bounded:boolean;message_cursor:string|null;message_bound:string|null;current_message:string|null};
 type Key={kind:'message'|'seen'|'choice';source_id:string;reader_id:string};
 const PHASES:readonly Phase[]=['sources','messages','seen','choices','publish','done'];
 export class TrayClockReadinessUnavailable extends Error{}
@@ -110,7 +128,11 @@ const DESCRIPTORS=`SELECT jsonb_build_object(
  'triggers',(SELECT jsonb_agg(jsonb_build_object('name',t.tgname,'table',c.relname,'enabled',t.tgenabled,'type',t.tgtype,
   'attrs',t.tgattr::text,'args',encode(t.tgargs,'hex'),'function',p.proname,'functionId',t.tgfoid::text,'definition',pg_get_triggerdef(t.oid)) ORDER BY c.relname,t.tgname)
   FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace ns ON ns.oid=c.relnamespace JOIN pg_proc p ON p.oid=t.tgfoid
-  WHERE ns.nspname=current_schema() AND NOT t.tgisinternal AND t.tgname LIKE 'beeline_tray_clock_%')
+  WHERE ns.nspname=current_schema() AND NOT t.tgisinternal AND t.tgname LIKE 'beeline_tray_clock_%'),
+ 'indexes',(SELECT jsonb_agg(jsonb_build_object('name',c.relname,'valid',i.indisvalid,'ready',i.indisready,'definition',pg_get_indexdef(c.oid)) ORDER BY c.relname)
+  FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace ns ON ns.oid=c.relnamespace
+  WHERE ns.nspname=current_schema() AND c.relname IN('tray_clock_readiness_rooms_idx','tray_clock_readiness_messages_idx',
+    'tray_clock_readiness_marks_idx','tray_clock_readiness_choices_idx','tray_clock_readiness_source_idx','tray_clock_readiness_pending_idx'))
 ) value`;
 const fingerprint=async(db:SqlDatabase)=>(await db.query<{fingerprint:string}>(`SELECT md5(value::text) fingerprint FROM(${DESCRIPTORS}) observed`)).rows[0]!.fingerprint;
 
@@ -166,6 +188,32 @@ export class TrayClockReadiness{
         if(!installed||!['O','A'].includes(installed.enabled)||JSON.stringify(installed.descriptor)!==JSON.stringify(reference?.descriptor))
           throw new TrayClockReadinessUnavailable('Tray capture trigger differs from installed source');
       }
+      const indexes:Array<{name:string;table:string;columns:string[];predicate?:string}>=[
+        {name:'tray_clock_readiness_rooms_idx',table:'rooms',columns:['workspace_id','id']},
+        {name:'tray_clock_readiness_messages_idx',table:'messages',columns:['room_id','id']},
+        {name:'tray_clock_readiness_marks_idx',table:'needs_you_marks',columns:['message_id','identity_id']},
+        {name:'tray_clock_readiness_choices_idx',table:'room_choices',columns:['room_id','id']},
+        {name:'tray_clock_readiness_source_idx',table:'tray_clock_deadlines',columns:['workspace_id','source_kind','source_id','reader_id']},
+        {name:'tray_clock_readiness_pending_idx',table:'tray_clock_readiness',columns:['workspace_id'],predicate:"(phase <> 'done'::text)"},
+      ];
+      const installed=(await db.query<{name:string;table_name:string;key_columns:string[];predicate:string|null;usable:boolean}>(`SELECT index_class.relname name,table_class.relname table_name,
+        ARRAY(SELECT attribute.attname::text FROM unnest(idx.indkey::smallint[]) WITH ORDINALITY slot(attnum,ordinal)
+          JOIN pg_attribute attribute ON attribute.attrelid=idx.indrelid AND attribute.attnum=slot.attnum ORDER BY slot.ordinal) key_columns,
+        pg_get_expr(idx.indpred,idx.indrelid) predicate,
+        (idx.indisvalid AND idx.indisready AND NOT idx.indisunique AND idx.indnatts=idx.indnkeyatts
+          AND idx.indexprs IS NULL AND method.amname='btree'
+          AND NOT EXISTS(SELECT 1 FROM unnest(idx.indclass::oid[]) opclass(oid) JOIN pg_opclass op ON op.oid=opclass.oid WHERE NOT op.opcdefault)
+          AND NOT EXISTS(SELECT 1 FROM unnest(idx.indcollation::oid[]) WITH ORDINALITY coll(oid,ordinal)
+            JOIN unnest(idx.indkey::smallint[]) WITH ORDINALITY slot(attnum,ordinal) ON slot.ordinal=coll.ordinal
+            JOIN pg_attribute attribute ON attribute.attrelid=idx.indrelid AND attribute.attnum=slot.attnum
+            WHERE coll.oid<>attribute.attcollation)) usable
+        FROM pg_index idx JOIN pg_class index_class ON index_class.oid=idx.indexrelid JOIN pg_namespace namespace ON namespace.oid=index_class.relnamespace
+        JOIN pg_class table_class ON table_class.oid=idx.indrelid AND table_class.relnamespace=namespace.oid
+        JOIN pg_am method ON method.oid=index_class.relam
+        WHERE namespace.nspname=current_schema() AND index_class.relname=ANY($1::text[])`,[indexes.map(index=>index.name)])).rows;
+      if(indexes.some(expected=>!installed.some(index=>index.name===expected.name&&index.table_name===expected.table&&index.usable&&
+        JSON.stringify(index.key_columns)===JSON.stringify(expected.columns)&&index.predicate===(expected.predicate??null))))
+        throw new TrayClockReadinessUnavailable('Tray traversal index unavailable');
       await db.query(`INSERT INTO live_streams(id) VALUES('jobs:tray-clock') ON CONFLICT DO NOTHING`);
       await db.query(`INSERT INTO tray_clock_readiness_floor(id,contract_digest,fingerprint) VALUES(1,$1,$2)`,[contract,await fingerprint(db)]);
     });
@@ -176,7 +224,8 @@ export class TrayClockReadiness{
       const floor=(await db.query<{fingerprint:string;seed_cursor:string|null;seeding_done:boolean}>(`SELECT fingerprint,seed_cursor::text,seeding_done FROM tray_clock_readiness_floor WHERE id=1 FOR UPDATE`)).rows[0];
       if(!floor||floor.fingerprint!==await fingerprint(db))throw new TrayClockReadinessUnavailable('Tray capture floor unavailable');
       if(floor.seeding_done)return {processed:0,continuation:false};
-      const rows=(await db.query<{id:string}>(`SELECT id::text FROM workspaces WHERE($1::uuid IS NULL OR id>$1::uuid) ORDER BY id LIMIT 101`,[floor.seed_cursor])).rows;
+      const rows=(await db.query<{id:string}>(`SELECT id::text FROM workspaces ${floor.seed_cursor===null?'':'WHERE id>$1::uuid'} ORDER BY workspaces.id LIMIT 101`,
+        floor.seed_cursor===null?[]:[floor.seed_cursor])).rows;
       const keys=rows.slice(0,100).map(row=>row.id);await this.lockWorkspaces(db,keys);
       for(const id of keys)if(!(await db.query(`SELECT 1 FROM tray_clock_readiness WHERE workspace_id=$1`,[id])).rowCount)
         await db.query(`SELECT beeline_tray_clock_require_readiness(ARRAY[$1::uuid])`,[id]);
@@ -188,26 +237,85 @@ export class TrayClockReadiness{
   private async lockWorkspaces(db:SqlDatabase,ids:readonly string[]):Promise<void>{
     if(ids.length)await db.query(`SELECT beeline_tray_clock_lock_workspaces($1::uuid[])`,[ids]);
   }
-  private async keys(db:SqlDatabase,p:Progress,last=false):Promise<Key[]>{
+  private async keys(db:SqlDatabase,p:Progress,last=false,budget=100):Promise<Key[]>{
     if(p.bounded&&p.bound_one===null)return [];
-    const direction=last?'DESC':'ASC',limit=last?1:101;
-    if(p.phase==='sources')return (await db.query<Key>(`SELECT DISTINCT source_kind kind,source_id,reader_id FROM tray_clock_deadlines
-      WHERE workspace_id=$1 AND($2::text IS NULL OR(source_kind,source_id,reader_id)>($2,$3,$4))
-      AND($5::text IS NULL OR(source_kind,source_id,reader_id)<=($5,$6,$7))
-      ORDER BY source_kind ${direction},source_id ${direction},reader_id ${direction} LIMIT ${limit}`,
-      [p.workspace_id,p.cursor_one,p.cursor_two,p.cursor_three,p.bound_one,p.bound_two,p.bound_three])).rows;
-    if(p.phase==='messages')return (await db.query<Key>(`SELECT 'message' kind,m.id source_id,'' reader_id FROM messages m JOIN rooms r ON r.id=m.room_id
-      WHERE r.workspace_id=$1 AND($2::text IS NULL OR m.id>$2) AND($3::text IS NULL OR m.id<=$3)
-      ORDER BY m.id ${direction} LIMIT ${limit}`,[p.workspace_id,p.cursor_one,p.bound_one])).rows;
-    if(p.phase==='seen')return (await db.query<Key>(`SELECT 'seen' kind,mark.message_id source_id,mark.identity_id reader_id FROM needs_you_marks mark
-      JOIN messages m ON m.id=mark.message_id JOIN rooms r ON r.id=m.room_id WHERE r.workspace_id=$1
-      AND($2::text IS NULL OR(mark.identity_id,mark.message_id)>($2,$3)) AND($4::text IS NULL OR(mark.identity_id,mark.message_id)<=($4,$5))
-      ORDER BY mark.identity_id ${direction},mark.message_id ${direction} LIMIT ${limit}`,
-      [p.workspace_id,p.cursor_one,p.cursor_two,p.bound_one,p.bound_two])).rows;
-    if(p.phase==='choices')return (await db.query<Key>(`SELECT 'choice' kind,c.id::text source_id,'' reader_id FROM room_choices c JOIN rooms r ON r.id=c.room_id
-      WHERE r.workspace_id=$1 AND($2::uuid IS NULL OR c.id>$2::uuid) AND($3::uuid IS NULL OR c.id<=$3::uuid)
-      ORDER BY c.id ${direction} LIMIT ${limit}`,[p.workspace_id,p.cursor_one,p.bound_one])).rows;
+    const direction=last?'DESC':'ASC',limit=last?1:Math.min(100,budget)+1;
+    if(p.phase==='sources'){
+      const args:unknown[]=[p.workspace_id],where=['workspace_id=$1'];
+      for(const[values,operator]of [[[p.cursor_one,p.cursor_two,p.cursor_three],'>'],[[p.bound_one,p.bound_two,p.bound_three],'<=']] as const){
+        if(values[0]===null)continue;
+        if(values.some(value=>value===null))throw new TrayClockReadinessUnavailable('Tray migration cursor inconsistent');
+        const start=args.length+1;args.push(...values);
+        where.push(`(source_kind,source_id,reader_id)${operator}($${start}::text,$${start+1}::text,$${start+2}::text)`);
+      }
+      return(await db.query<Key>(`SELECT DISTINCT source_kind kind,source_id,reader_id FROM tray_clock_deadlines
+        WHERE ${where.join(' AND ')} ORDER BY source_kind ${direction},source_id ${direction},reader_id ${direction} LIMIT ${limit}`,args)).rows;
+    }
+    const args:unknown[]=[p.phase==='seen'?p.current_message:p.current_room];
+    const column=p.phase==='seen'?'mark.identity_id':'id',cast=p.phase==='choices'?'::uuid':'::text';
+    const where=[p.phase==='seen'?'mark.message_id=$1':'room_id=$1'];
+    for(const[value,operator]of [[p.cursor_one,'>'],[p.bound_one,'<=']] as const){
+      if(value!==null){args.push(value);where.push(`${column}${operator}$${args.length}${cast}`);}
+    }
+    // A cold planner can choose a bitmap scan + full source cohort sort
+    // for a batch. Seek one key at a time; the enclosing step still charges
+    // each reconciled source against its 100-item transaction budget.
+    if(p.phase==='messages')return(await db.query<Key>(`SELECT 'message' kind,id source_id,'' reader_id FROM messages
+      WHERE ${where.join(' AND ')} ORDER BY id ${direction} LIMIT 1`,args)).rows;
+    if(p.phase==='seen')return(await db.query<Key>(`SELECT 'seen' kind,mark.message_id source_id,mark.identity_id reader_id FROM needs_you_marks mark
+      WHERE ${where.join(' AND ')} ORDER BY mark.identity_id ${direction} LIMIT 1`,args)).rows;
+    if(p.phase==='choices')return(await db.query<Key>(`SELECT 'choice' kind,id::text source_id,'' reader_id FROM room_choices
+      WHERE ${where.join(' AND ')} ORDER BY id ${direction} LIMIT 1`,args)).rows;
     return [];
+  }
+  private resetSources(progress:Progress):void{
+    progress.cursor_one=null;progress.cursor_two=null;progress.cursor_three=null;
+    progress.bounded=false;progress.bound_one=null;progress.bound_two=null;progress.bound_three=null;
+  }
+  private resetMessages(progress:Progress):void{
+    progress.message_bounded=false;progress.message_cursor=null;progress.message_bound=null;progress.current_message=null;
+    this.resetSources(progress);
+  }
+  private nextPhase(progress:Progress):void{
+    progress.phase=PHASES[PHASES.indexOf(progress.phase)+1]!;
+    progress.room_bounded=false;progress.room_cursor=null;progress.room_bound=null;progress.current_room=null;
+    this.resetMessages(progress);
+  }
+  private async reconcile(db:SqlDatabase,key:Key):Promise<void>{
+    if(!key.source_id||key.source_id.length>128||key.reader_id.length>128||key.kind==='seen'&&!key.reader_id)
+      throw new TrayClockReadinessUnavailable('Unrepresentable Tray source key');
+    if(key.kind==='choice'){
+      const scope=(await db.query<{workspace_id:string;actual_workspace:string}>(`SELECT choice.workspace_id,room.workspace_id actual_workspace
+        FROM room_choices choice JOIN rooms room ON room.id=choice.room_id WHERE choice.id=$1::uuid FOR UPDATE OF choice NOWAIT`,[key.source_id])).rows[0];
+      if(scope&&scope.workspace_id!==scope.actual_workspace)throw new TrayClockReadinessUnavailable('Tray choice scope inconsistent');
+    }else{
+      if(key.kind==='seen'){
+        const scope=(await db.query<{workspace_id:string;actual_workspace:string}>(`SELECT mark.workspace_id,room.workspace_id actual_workspace FROM needs_you_marks mark
+          JOIN messages message ON message.id=mark.message_id JOIN rooms room ON room.id=message.room_id
+          WHERE mark.identity_id=$1 AND mark.message_id=$2 FOR UPDATE OF mark NOWAIT`,[key.reader_id,key.source_id])).rows[0];
+        if(scope&&scope.workspace_id!==scope.actual_workspace)throw new TrayClockReadinessUnavailable('Tray seen scope inconsistent');
+      }
+      await db.query(`SELECT id FROM messages WHERE id=$1 FOR UPDATE NOWAIT`,[key.source_id]);
+    }
+    const lock=(await db.query<{locked:boolean}>(`SELECT pg_try_advisory_xact_lock(hashtextextended('tray-clock:'||jsonb_build_array($1::text,$2::text,$3::text)::text,0)) locked`,
+      [key.kind,key.source_id,key.reader_id])).rows[0];
+    if(!lock?.locked)throw new TrayClockReadinessUnavailable('Tray migration source busy');
+    await db.query(`SELECT beeline_tray_clock_reconcile($1,$2,$3)`,[key.kind,key.source_id,key.reader_id]);
+    const audit=(await db.query<{complete:boolean}>(`WITH wanted AS(SELECT beeline_tray_clock_desired($1,$2,$3) value),
+      expected AS(SELECT entry FROM wanted CROSS JOIN LATERAL jsonb_array_elements(value)entry),
+      source AS(SELECT * FROM tray_clock_sources WHERE source_kind=$1 AND source_id=$2 AND reader_id=$3)
+      SELECT((SELECT value='[]'::jsonb FROM wanted) OR EXISTS(SELECT 1 FROM source,wanted WHERE NOT source.retired AND source.desired=wanted.value))
+      AND NOT EXISTS(SELECT 1 FROM expected LEFT JOIN tray_clock_deadlines deadline
+        ON deadline.source_kind=$1 AND deadline.source_id=$2 AND deadline.reader_id=$3 AND deadline.kind=entry->>'kind'
+        WHERE deadline.id IS NULL OR NOT EXISTS(SELECT 1 FROM source WHERE source.incarnation=deadline.incarnation AND source.revision=deadline.revision)
+          OR deadline.id<>md5(jsonb_build_array($1::text,$2::text,$3::text,entry->>'kind')::text)
+          OR deadline.workspace_id::text IS DISTINCT FROM entry->>'workspace' OR deadline.room_id::text IS DISTINCT FROM entry->>'room'
+          OR deadline.due_at IS DISTINCT FROM(entry->>'due')::timestamptz
+          OR NOT(deadline.state='pending' OR deadline.kind<>'choice-close' AND deadline.state='elapsed'))
+      AND NOT EXISTS(SELECT 1 FROM tray_clock_deadlines deadline WHERE deadline.source_kind=$1 AND deadline.source_id=$2 AND deadline.reader_id=$3
+        AND deadline.state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM expected WHERE entry->>'kind'=deadline.kind)) complete`,
+      [key.kind,key.source_id,key.reader_id])).rows[0];
+    if(!audit?.complete)throw new TrayClockReadinessUnavailable('Tray source reconciliation incomplete');
   }
   async step():Promise<{workspaceId:string;generation:string;processed:number;ready:boolean;continuation:boolean}|null>{
     return this.database.transaction(async db=>{
@@ -230,62 +338,74 @@ export class TrayClockReadiness{
           workspace_epoch=$5,workspace_through=$6 WHERE workspace_id=$1`,[progress.workspace_id,floor.fingerprint,source.epoch,source.sequence,cut.epoch,cut.sequence]);
         await db.query(`SELECT beeline_tray_clock_readiness_wake($1::uuid)`,[progress.workspace_id]);
         const more=(await db.query(`SELECT 1 FROM tray_clock_readiness WHERE phase<>'done' LIMIT 1`)).rowCount>0;
-        return {workspaceId:progress.workspace_id,generation:progress.generation,processed:0,ready:true,continuation:more};
+        return {workspaceId:progress.workspace_id,generation:progress.generation,processed:1,ready:true,continuation:more};
       }
-      if(!progress.bounded){
-        const bound=(await this.keys(db,{...progress,cursor_one:null,cursor_two:null,cursor_three:null},true))[0];
-        const values:[string|null,string|null,string|null]=bound?(progress.phase==='sources'?[bound.kind,bound.source_id,bound.reader_id]:progress.phase==='seen'?[bound.reader_id,bound.source_id,null]:[bound.source_id,null,null]):[null,null,null];
-        [progress.bound_one,progress.bound_two,progress.bound_three]=values;progress.bounded=true;
-        await db.query(`UPDATE tray_clock_readiness SET bounded=true,bound_one=$2,bound_two=$3,bound_three=$4 WHERE workspace_id=$1`,[progress.workspace_id,...values]);
-      }
-      const rows=await this.keys(db,progress),selected=rows.slice(0,100);
-      for(const key of selected){
-        if(!key.source_id||key.source_id.length>128||key.reader_id.length>128)throw new TrayClockReadinessUnavailable('Unrepresentable Tray source key');
-        // Source row first, no wait on a lifecycle writer holding the inverse
-        // row→Workspace order. The real reconcile retains its own ABA/version
-        // checks and transactional capture; no migration predicate rebuild.
-        if(key.kind==='choice'){
-          const scope=(await db.query<{workspace_id:string;actual_workspace:string}>(`SELECT choice.workspace_id,room.workspace_id actual_workspace
-            FROM room_choices choice JOIN rooms room ON room.id=choice.room_id WHERE choice.id=$1::uuid FOR UPDATE OF choice NOWAIT`,[key.source_id])).rows[0];
-          if(scope&&scope.workspace_id!==scope.actual_workspace)throw new TrayClockReadinessUnavailable('Tray choice scope inconsistent');
-        }
-        else{
-          if(key.kind==='seen'){
-            const scope=(await db.query<{workspace_id:string;actual_workspace:string}>(`SELECT mark.workspace_id,room.workspace_id actual_workspace FROM needs_you_marks mark
-              JOIN messages message ON message.id=mark.message_id JOIN rooms room ON room.id=message.room_id
-              WHERE mark.identity_id=$1 AND mark.message_id=$2 FOR UPDATE OF mark NOWAIT`,[key.reader_id,key.source_id])).rows[0];
-            if(scope&&scope.workspace_id!==scope.actual_workspace)throw new TrayClockReadinessUnavailable('Tray seen scope inconsistent');
+      let processed=0;
+      const originalPhase=progress.phase;
+      // Every source, Room/message entry/completion and phase advance spends
+      // one unit. Empty Rooms/readers cannot hide an unbounded scan/loop.
+      while(processed<100&&progress.phase===originalPhase){
+        if(progress.phase!=='sources'){
+          if(!progress.room_bounded){
+            progress.room_bound=(await db.query<{id:string}>(`SELECT id::text FROM rooms WHERE workspace_id=$1 ORDER BY rooms.id DESC LIMIT 1`,[progress.workspace_id])).rows[0]?.id??null;
+            progress.room_bounded=true;
           }
-          await db.query(`SELECT id FROM messages WHERE id=$1 FOR UPDATE NOWAIT`,[key.source_id]);
+          if(!progress.current_room){
+            const roomArgs=progress.room_cursor===null?[progress.workspace_id,progress.room_bound]:[progress.workspace_id,progress.room_bound,progress.room_cursor];
+            const room=progress.room_bound?(await db.query<{id:string}>(`SELECT id::text FROM rooms WHERE workspace_id=$1
+              AND id<=$2::uuid ${progress.room_cursor===null?'':'AND id>$3::uuid'} ORDER BY rooms.id LIMIT 1`,roomArgs)).rows[0]:undefined;
+            if(!room){this.nextPhase(progress);processed++;break;}
+            progress.current_room=room.id;this.resetMessages(progress);processed++;continue;
+          }
+          if(progress.phase==='seen'){
+            if(!progress.message_bounded){
+              progress.message_bound=(await db.query<{id:string}>(`SELECT id FROM messages WHERE room_id=$1 ORDER BY id DESC LIMIT 1`,[progress.current_room])).rows[0]?.id??null;
+              progress.message_bounded=true;
+            }
+            if(!progress.current_message){
+              const messageArgs=progress.message_cursor===null?[progress.current_room,progress.message_bound]:[progress.current_room,progress.message_bound,progress.message_cursor];
+              const message=progress.message_bound!==null?(await db.query<{id:string}>(`SELECT id FROM messages WHERE room_id=$1
+                AND id<=$2::text ${progress.message_cursor===null?'':'AND id>$3::text'} ORDER BY id LIMIT 1`,messageArgs)).rows[0]:undefined;
+              if(!message){
+                progress.room_cursor=progress.current_room;progress.current_room=null;this.resetMessages(progress);processed++;continue;
+              }
+              if(!message.id||message.id.length>128)throw new TrayClockReadinessUnavailable('Unrepresentable Tray message key');
+              progress.current_message=message.id;this.resetSources(progress);processed++;continue;
+            }
+          }
         }
-        const lock=(await db.query<{locked:boolean}>(`SELECT pg_try_advisory_xact_lock(hashtextextended('tray-clock:'||jsonb_build_array($1::text,$2::text,$3::text)::text,0)) locked`,
-          [key.kind,key.source_id,key.reader_id])).rows[0];
-        if(!lock?.locked)throw new TrayClockReadinessUnavailable('Tray migration source busy');
-        await db.query(`SELECT beeline_tray_clock_reconcile($1,$2,$3)`,[key.kind,key.source_id,key.reader_id]);
-        const audit=(await db.query<{complete:boolean}>(`WITH wanted AS(SELECT beeline_tray_clock_desired($1,$2,$3) value),
-          expected AS(SELECT entry FROM wanted CROSS JOIN LATERAL jsonb_array_elements(value)entry),
-          source AS(SELECT * FROM tray_clock_sources WHERE source_kind=$1 AND source_id=$2 AND reader_id=$3)
-          SELECT((SELECT value='[]'::jsonb FROM wanted) OR EXISTS(SELECT 1 FROM source,wanted WHERE NOT source.retired AND source.desired=wanted.value))
-          AND NOT EXISTS(SELECT 1 FROM expected LEFT JOIN tray_clock_deadlines deadline
-            ON deadline.source_kind=$1 AND deadline.source_id=$2 AND deadline.reader_id=$3 AND deadline.kind=entry->>'kind'
-            WHERE deadline.id IS NULL OR NOT EXISTS(SELECT 1 FROM source WHERE source.incarnation=deadline.incarnation AND source.revision=deadline.revision)
-              OR deadline.id<>md5(jsonb_build_array($1::text,$2::text,$3::text,entry->>'kind')::text)
-              OR deadline.workspace_id::text IS DISTINCT FROM entry->>'workspace' OR deadline.room_id::text IS DISTINCT FROM entry->>'room'
-              OR deadline.due_at IS DISTINCT FROM(entry->>'due')::timestamptz
-              OR NOT(deadline.state='pending' OR deadline.kind<>'choice-close' AND deadline.state='elapsed'))
-          AND NOT EXISTS(SELECT 1 FROM tray_clock_deadlines deadline WHERE deadline.source_kind=$1 AND deadline.source_id=$2 AND deadline.reader_id=$3
-            AND deadline.state<>'cancelled' AND NOT EXISTS(SELECT 1 FROM expected WHERE entry->>'kind'=deadline.kind)) complete`,
-          [key.kind,key.source_id,key.reader_id])).rows[0];
-        if(!audit?.complete)throw new TrayClockReadinessUnavailable('Tray source reconciliation incomplete');
+        if(!progress.bounded){
+          const bound=(await this.keys(db,{...progress,cursor_one:null,cursor_two:null,cursor_three:null,bound_one:null,bound_two:null,bound_three:null},true))[0];
+          const values:[string|null,string|null,string|null]=bound?(progress.phase==='sources'?[bound.kind,bound.source_id,bound.reader_id]:progress.phase==='seen'?[bound.reader_id,null,null]:[bound.source_id,null,null]):[null,null,null];
+          [progress.bound_one,progress.bound_two,progress.bound_three]=values;progress.bounded=true;
+        }
+        const rows=await this.keys(db,progress,false,100-processed),selected=rows.slice(0,100-processed);
+        if(!selected.length){
+          if(progress.phase==='sources'){this.nextPhase(progress);processed++;break;}
+          if(progress.phase==='seen'){
+            progress.message_cursor=progress.current_message;progress.current_message=null;this.resetSources(progress);
+          }else{
+            progress.room_cursor=progress.current_room;progress.current_room=null;this.resetMessages(progress);
+          }
+          processed++;continue;
+        }
+        for(const key of selected){
+          await this.reconcile(db,key);processed++;
+          [progress.cursor_one,progress.cursor_two,progress.cursor_three]=progress.phase==='sources'?[key.kind,key.source_id,key.reader_id]:
+            progress.phase==='seen'?[key.reader_id,null,null]:[key.source_id,null,null];
+        }
       }
-      const last=selected.at(-1),more=rows.length>100,phase=more?progress.phase:PHASES[PHASES.indexOf(progress.phase)+1]!;
       if(floor.fingerprint!==await fingerprint(db))throw new TrayClockReadinessUnavailable('Tray capture floor changed');
-      const cursor=more&&last?(progress.phase==='sources'?[last.kind,last.source_id,last.reader_id]:progress.phase==='seen'?[last.reader_id,last.source_id,null]:[last.source_id,null,null]):[null,null,null];
       await db.query(`UPDATE tray_clock_readiness SET phase=$2,cursor_one=$3,cursor_two=$4,cursor_three=$5,fingerprint=$6,
-        bounded=$7,bound_one=$8,bound_two=$9,bound_three=$10 WHERE workspace_id=$1`,
-        [progress.workspace_id,phase,...cursor,floor.fingerprint,more,more?progress.bound_one:null,more?progress.bound_two:null,more?progress.bound_three:null]);
+        bounded=$7,bound_one=$8,bound_two=$9,bound_three=$10,
+        room_bounded=$11,room_cursor=$12,room_bound=$13,current_room=$14,
+        message_bounded=$15,message_cursor=$16,message_bound=$17,current_message=$18 WHERE workspace_id=$1`,
+        [progress.workspace_id,progress.phase,progress.cursor_one,progress.cursor_two,progress.cursor_three,floor.fingerprint,
+          progress.bounded,progress.bound_one,progress.bound_two,progress.bound_three,
+          progress.room_bounded,progress.room_cursor,progress.room_bound,progress.current_room,
+          progress.message_bounded,progress.message_cursor,progress.message_bound,progress.current_message]);
       await db.query(`SELECT beeline_tray_clock_readiness_wake($1::uuid)`,[progress.workspace_id]);
-      return {workspaceId:progress.workspace_id,generation:progress.generation,processed:selected.length,ready:false,continuation:true};
+      return {workspaceId:progress.workspace_id,generation:progress.generation,processed,ready:false,continuation:true};
     });
   }
 }

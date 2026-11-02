@@ -65,6 +65,7 @@ const APP_ROUTES: Record<string, Record<string, Route | string>> = {
   },
   workflow: {
     save: { op: 'save_workflow', required: ['contract'], description: 'Save a versioned Workspace workflow from its whole JSON contract.' },
+    describe: { op: 'load_workspace_skill', required: ['slug'], description: 'Read a saved workflow by its slug before you start it.' },
     start: { op: 'start_workflow', required: ['name', 'roleBindings'], description: 'Start a saved workflow, binding each role to Room member agents.' },
     read: { op: 'get_workflow_run', required: ['runId'], description: 'Read a workflow run: state, role, outcomes and history.' },
     advance: { op: 'handoff', required: ['runId', 'outcome', 'contents'], description: 'Advance a run you hold, with an outcome its state declares.' },
@@ -591,6 +592,7 @@ export class RoomsMcpAgentTools {
         case 'post_repository_card': return exec('postRepositoryOnboarding', { ...context, kind: 'repository' });
         case 'post_starters_card': return exec('postRepositoryOnboarding', { ...context, kind: 'starters' });
         case 'save_workflow': return exec('saveWorkflow', { ...base, contract: input.contract });
+        case 'load_workspace_skill': return exec('loadWorkspaceSkill', { ...base, slug: input.slug });
         case 'start_workflow': return exec('startWorkflow', { ...base, name: input.name, roleBindings: input.roleBindings });
         case 'get_workflow_run': return exec('getWorkflowRun', { agentId: member, roomId: context.roomId, runId: input.runId });
         case 'handoff': return exec('handoff', { ...base, runId: input.runId, outcome: input.outcome, contents: input.contents,

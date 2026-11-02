@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 /**
  * `@agent /login`: an agent's harness login run from a Room, the way Claude
  * Code's own `/login` works. The owner sends `@agent /login`; a card at that
@@ -130,13 +131,13 @@ export type CompleteAgentSignInResult = { readonly signedIn: true };
 
 /** What each harness signs in to, as a person reads it. Key harnesses name their provider. */
 export const AGENT_SIGN_IN_SERVICE_LABELS: Record<AgentSignInHarness, string> = {
-  claude: 'Claude',
-  codex: 'ChatGPT',
-  grok: 'Grok',
-  cursor: 'Cursor',
-  opencode: 'its provider',
-  pi: 'its provider',
-  goose: 'its provider',
+  claude: systemMessage("agent-sign-in.claude"),
+  codex: systemMessage("agent-sign-in.chatgpt"),
+  grok: systemMessage("agent-sign-in.grok"),
+  cursor: systemMessage("agent-sign-in.cursor"),
+  opencode: systemMessage("agent-sign-in.its-provider"),
+  pi: systemMessage("agent-sign-in.its-provider"),
+  goose: systemMessage("agent-sign-in.its-provider"),
 };
 
 export const AGENT_SIGN_IN_PROVIDER_LABELS: Record<AgentSignInKeyProvider, string> = {

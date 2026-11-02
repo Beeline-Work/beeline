@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { ObjectService } from './object-service.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { voiceContextText, type VoiceContextRow } from './voice-context.js';
@@ -79,7 +80,7 @@ export class VoiceService {
         JOIN rooms r ON r.id=c.room_id WHERE r.workspace_id=$1 AND c.ended_at IS NULL FOR UPDATE OF c`, [workspaceId]);
       for (const call of calls.rows) {
         const ended = (await db.query<CallRow>(`UPDATE voice_calls SET ended_at=now(),end_reason=$2
-          WHERE id=$1 RETURNING *`, [call.id, "Today's 60 minutes are used"])).rows[0]!;
+          WHERE id=$1 RETURNING *`, [call.id, systemMessage("voice-service.today-s-60-minutes-are-used")])).rows[0]!;
         await db.query('UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND left_at IS NULL', [call.id]);
         await this.updateCard(ended, db);
       }
@@ -195,7 +196,7 @@ export class VoiceService {
         await ensureSystemIdentity(db);
         const id = randomUUID(); const messageId = randomBytes(32).toString('hex');
         await systemLine(db, { id: messageId, roomId, authorId: SYSTEM_IDENTITY_ID,
-          subject: { kind: 'system', name: 'Voice call' }, verb: 'started', presentation: 'card',
+          subject: { kind: 'system', name: systemMessage("voice-service.voice-call") }, verb: systemMessage("voice-service.started"), presentation: 'card',
           cardType: 'voice-call', card: { id, roomId, startedAt: Math.floor(Date.now() / 1000), participants: [] } });
         call = (await db.query<CallRow>(`INSERT INTO voice_calls(id,room_id,message_id) VALUES($1,$2,$3) RETURNING *`,
           [id, roomId, messageId])).rows[0]!;
@@ -291,9 +292,9 @@ export class VoiceService {
 
   async updateCard(row: CallRow, db = this.db) {
     const call = await this.view(row, db);
-    await restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: row.end_reason && row.end_reason !== 'silence' ? 'Call' : 'Voice call' },
-      verb: row.ended_at ? 'ended' : 'started',
-      ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : row.end_reason ? ` · ${row.end_reason}` : '') } : {}) },
+    await restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: row.end_reason && row.end_reason !== 'silence' ? systemMessage("voice-service.call") : systemMessage("voice-service.voice-call") },
+      verb: row.ended_at ? systemMessage("voice-service.ended") : systemMessage("voice-service.started"),
+      ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? systemMessage("voice-service.no-one-spoke-for-60s") : row.end_reason ? systemMessage("voice-service.separator", row.end_reason) : '') } : {}) },
       call as unknown as Record<string, unknown>);
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2,created_at=$3 WHERE id=$1`, [row.message_id, 'system', row.ended_at]);
   }
@@ -315,7 +316,7 @@ export class VoiceService {
         await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
       }
       if (!(await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND left_at IS NULL`, [callId])).rowCount) {
-        call.end_reason = inactivity ? 'silence' : null;
+        call.end_reason = inactivity ? systemMessage("voice-service.silence") : null;
         call.ended_at = (await db.query<{ ended_at: Date }>(`UPDATE voice_calls SET ended_at=now(),end_reason=$2 WHERE id=$1 RETURNING ended_at`, [callId, inactivity ? 'silence' : null])).rows[0]!.ended_at;
       }
       await this.updateCard(call, db);

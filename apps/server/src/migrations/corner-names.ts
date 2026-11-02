@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { SqlDatabase } from '../database.js';
 
 /**
@@ -26,10 +27,10 @@ export async function hyphenateCornerNames(database: SqlDatabase): Promise<numbe
       const names = taken.get(corner.parent_id) ?? new Set<string>();
       taken.set(corner.parent_id, names);
       const base =
-        corner.name.trim().split(/\s+/).filter(Boolean).slice(0, 3).join('-') ||
-        `corner-${corner.id.slice(0, 8)}`;
+        corner.name.trim().split(/\s+/).filter(Boolean).slice(0, 3).join(systemMessage("corner-names.separator")) ||
+        systemMessage("corner-names.corner", corner.id.slice(0, 8));
       let name = base;
-      for (let suffix = 2; names.has(name.toLowerCase()); suffix += 1) name = `${base}-${suffix}`;
+      for (let suffix = 2; names.has(name.toLowerCase()); suffix += 1) name = systemMessage("corner-names.suffixed-name", base, suffix);
       names.add(name.toLowerCase());
       await db.query(`UPDATE rooms SET name=$2 WHERE id=$1`, [corner.id, name]);
       await db.query(

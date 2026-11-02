@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomBytes } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { WalletChainId } from '@beeline/api-contract/wallet';
@@ -62,30 +63,30 @@ export async function postWalletNotice(
     };
     if (previous?.transfers || notice.transfers) {
       next.transfers = { ...previous?.transfers, ...notice.transfers };
-      if (!next.execution) next.amountText = Object.values(next.transfers).join('; ');
+      if (!next.execution) next.amountText = Object.values(next.transfers).join(systemMessage("wallet-notices.detail-separator"));
     }
     const verb =
       next.status === 'failed' || next.status === 'refused'
-        ? 'could not complete'
+        ? systemMessage("wallet-notices.could-not-complete")
         : next.status === 'confirmed'
-          ? 'confirmed'
-          : 'submitted';
-    const actor = next.agentName ?? (next.execution ? 'you' : 'initiator not known to Beeline');
+          ? systemMessage("wallet-notices.confirmed")
+          : systemMessage("wallet-notices.submitted");
+    const actor = next.agentName ?? (next.execution ? systemMessage("wallet-notices.you") : systemMessage("wallet-notices.initiator-not-known-to-beeline"));
     const phrase = {
-      subject: { kind: 'system' as const, name: 'Wallet' },
+      subject: { kind: 'system' as const, name: systemMessage("wallet-notices.wallet") },
       verb,
       object: {
-        text: `${next.operation} ${next.amountText} on ${next.chain} · ${next.counterparty}`,
+        text: systemMessage("wallet-notices.on", next.operation, next.amountText, next.chain, next.counterparty),
         ...(next.txUrl ? { url: next.txUrl } : {}),
       },
       consequence: [
         actor,
-        next.status === 'pending' ? 'confirmation pending' : '',
+        next.status === 'pending' ? systemMessage("wallet-notices.confirmation-pending") : '',
         next.reason,
-        next.balanceAfterUsd ? `${next.balanceAfterUsd} left` : '',
+        next.balanceAfterUsd ? systemMessage("wallet-notices.left", next.balanceAfterUsd) : '',
       ]
         .filter(Boolean)
-        .join(' · '),
+        .join(systemMessage("wallet-notices.separator")),
     };
     if (previous) {
       await restateSystemLine(tx, id, phrase, next);

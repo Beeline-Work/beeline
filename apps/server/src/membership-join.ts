@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { randomUUID } from 'node:crypto';
 import type { SystemEventKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -201,14 +202,14 @@ export async function joinRooms(
         id: input.identityId,
         name: joiningMention,
       },
-      verb: 'joined',
+      verb: systemMessage("membership-join.joined"),
       ...(context.inviter_id &&
       context.inviter_kind &&
       context.inviter_name &&
       context.inviter_handle
         ? {
             attribution: {
-              verb: 'invited by',
+              verb: systemMessage("membership-join.invited-by"),
               actor: {
                 kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),
                 id: context.inviter_id,

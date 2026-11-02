@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 /**
  * One grammar for every system notification the server phrases.
  *
@@ -44,7 +45,7 @@ export type SystemEvent = {
   readonly subscriptionWorkflowSlug?: string;
 };
 
-export const SYSTEM_LINE_SEPARATOR = ' · ';
+export const SYSTEM_LINE_SEPARATOR = systemMessage("system-events.separator");
 
 /**
  * The event kinds — the machine half of a system line.
@@ -243,7 +244,7 @@ export function shortRunId(id: string): string {
 /** "Candy" · "Candy and Terra" · "Candy, Terra and Codex". */
 export function joinSystemNames(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? '';
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return systemMessage("system-events.and", names.slice(0, -1).join(systemMessage("system-events.list-separator")), names[names.length - 1]);
 }
 
 /** The stored text for one event, or for a fold of several subjects sharing one verb. */
@@ -257,8 +258,8 @@ export function formatSystemLine(
     : [event.subject as SystemSubject];
   const head = [joinSystemNames(subjects.map((subject) => subject.name)), event.verb.trim()]
     .filter(Boolean)
-    .join(' ');
-  const line = event.object?.text ? `${head} ${event.object.text}` : head;
+    .join(systemMessage("system-events.space"));
+  const line = event.object?.text ? systemMessage("system-events.with-object", head, event.object.text) : head;
   return event.consequence ? `${line}${SYSTEM_LINE_SEPARATOR}${event.consequence}` : line;
 }
 

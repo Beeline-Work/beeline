@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { notifyConnectorHelper } from './postgres-live.js';
@@ -244,8 +245,8 @@ export async function ingestProviderWebhook(db: SqlDatabase, service: ProviderSe
           ? data.object as Record<string, unknown> : {};
       const line = await systemLine(tx, {
         id: messageId, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
-        verb: 'received', object: service === 'linear' ? 'a Linear issue' : 'a Stripe payment',
+        subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("provider-webhooks.beeline") },
+        verb: systemMessage("provider-webhooks.received"), object: service === 'linear' ? systemMessage("provider-webhooks.a-linear-issue") : systemMessage("provider-webhooks.a-stripe-payment"),
         kind: 'subscription-fired', wakes: [row.agent_id],
         payload: { source: 'service', service: service === 'linear' ? 'Linear' : 'Stripe',
           event: hook.event, id: typeof subject.id === 'string' ? subject.id : undefined,

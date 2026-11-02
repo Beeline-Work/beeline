@@ -1,17 +1,18 @@
+import { systemMessage } from './system-message-catalog.js';
 /** A plain, one-line decision or action for the Needs-you tray. */
 export const TRAY_ASK_MAX_LENGTH = 140;
 
 export function plainAsk(value: string): string {
   return value
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, systemMessage("tray-ask.1"))
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, systemMessage("tray-ask.1"))
     .replace(/<[^>]*>/g, '')
     .replace(/[*`~]/g, '')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/(^|\s)_([^_]+)_(?=\s|[.,;:!?]|$)/g, '$1$2')
+    .replace(/__([^_]+)__/g, systemMessage("tray-ask.1"))
+    .replace(/(^|\s)_([^_]+)_(?=\s|[.,;:!?]|$)/g, systemMessage("tray-ask.1-2"))
     .replace(/^\s*(?:#{1,6}|>|[-+]\s|\d+[.)]\s)\s*/gm, '')
     .replace(/\b[0-9a-f]{20,64}\b/gi, hash => hash.slice(0, 7))
-    .replace(/\s+/g, ' ')
+    .replace(/\s+/g, systemMessage("tray-ask.space"))
     .replace(/^(?:…|\.{3})\s*/, '')
     .trim();
 }
@@ -22,7 +23,7 @@ export function shortenAsk(value: string): string {
   if (chars.length <= TRAY_ASK_MAX_LENGTH) return text;
   const head = chars.slice(0, TRAY_ASK_MAX_LENGTH - 1).join('');
   const boundary = head.lastIndexOf(' ');
-  return `${head.slice(0, boundary > 100 ? boundary : head.length).trimEnd()}…`;
+  return systemMessage("tray-ask.clipped-ask", head.slice(0, boundary > 100 ? boundary : head.length).trimEnd());
 }
 
 export function normalizeTrayAsk(value: unknown): string {

@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 /**
  * Connector offers: the agent reaches for a Workbench tool it needs.
  *
@@ -44,7 +45,7 @@ export const CONNECTOR_OFFER_REASON_MAX_LENGTH = 200;
 export const CONNECTOR_OFFER_WINDOW_MS = 2 * 60_000;
 
 /** Fixed boundary clause the card always ends on. Never agent prose. */
-export const CONNECTOR_OFFER_KEY_BOUNDARY = 'still no raw key in chat';
+export const CONNECTOR_OFFER_KEY_BOUNDARY = systemMessage("connector-offers.still-no-raw-key-in-chat");
 
 /**
  * Connector kinds an agent may OFFER from a Room: everything the Workbench can
@@ -71,19 +72,19 @@ export function isOfferableConnectorKind(value: unknown): value is ConnectorKind
 export function connectorOfferConsequence(kind: ConnectorKind, reason?: string): string {
   const clause = reason?.trim().replace(/[.]+$/u, '');
   const boundary = connectorOfferBoundary(kind);
-  if (clause) return `This changes your Connectors. Once it is added, I can ${clause} — ${boundary}`;
+  if (clause) return systemMessage("connector-offers.this-changes-your-connectors-once-it-is-added-i-can", clause, boundary);
   switch (kind) {
     case 'trusty-squire':
-      return `This changes your Connectors. Once it is added, I can sign up and sign in to websites for you and use keys its vault holds — ${CONNECTOR_OFFER_KEY_BOUNDARY}`;
+      return systemMessage("connector-offers.this-changes-your-connectors-once-it-is-added-i-can-sign-up-and-s", CONNECTOR_OFFER_KEY_BOUNDARY);
     case 'google-gmail':
     case 'google-calendar':
     case 'google-drive':
     case 'google-youtube':
-      return 'This changes your Connectors. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password';
+      return systemMessage("connector-offers.this-changes-your-connectors-once-it-is-added-you-sign-in-to-goog");
     case 'wallet':
-      return `This changes your Connectors. Once it is added, I can pay from your wallet — ${boundary}`;
+      return systemMessage("connector-offers.this-changes-your-connectors-once-it-is-added-i-can-pay-from-your", boundary);
     default:
-      return `This changes your Connectors. Once it is added, I can use the tool from there — ${boundary}`;
+      return systemMessage("connector-offers.this-changes-your-connectors-once-it-is-added-i-can-use-the-tool", boundary);
   }
 }
 
@@ -94,7 +95,7 @@ export function connectorOfferConsequence(kind: ConnectorKind, reason?: string):
  * do not create reconnect offers.
  */
 export function squireLoginWallConsequence(_provider?: string): string {
-  return 'Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.';
+  return systemMessage("connector-offers.sign-in-to-google-once-so-trusty-squire-can-sign-in-to-websites-a");
 }
 
 /** The one connector whose bound account an agent may offer to switch. */
@@ -108,8 +109,8 @@ export const CONNECTOR_OFFER_SWITCH_KIND: ConnectorKind = 'trusty-squire';
 export function squireAccountSwitchConsequence(reason?: string): string {
   const clause = reason?.trim().replace(/[.]+$/u, '');
   const line =
-    "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine.";
-  return clause ? `${line} Then I can ${clause}` : line;
+    systemMessage("connector-offers.you-ll-sign-in-to-google-again-with-the-account-trusty-squire-sho");
+  return clause ? systemMessage("connector-offers.then-i-can", line, clause) : line;
 }
 
 function connectorOfferBoundary(kind: ConnectorKind): string {
@@ -120,11 +121,11 @@ function connectorOfferBoundary(kind: ConnectorKind): string {
     case 'google-calendar':
     case 'google-drive':
     case 'google-youtube':
-      return 'I never see your password';
+      return systemMessage("connector-offers.i-never-see-your-password");
     case 'wallet':
-      return 'you can revoke permission any time';
+      return systemMessage("connector-offers.you-can-revoke-permission-any-time");
     default:
-      return 'its credentials stay in the tool, never in chat';
+      return systemMessage("connector-offers.its-credentials-stay-in-the-tool-never-in-chat");
   }
 }
 

@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
@@ -228,9 +229,9 @@ async function resolveRoleBinding(
 }
 
 const HEALTH_LABEL: Record<AgentHealthReason, string> = {
-  offline: 'offline',
-  'recent-failure': 'recent failure',
-  'out-of-credit': 'out of credit',
+  offline: systemMessage("workflow-runs.offline"),
+  'recent-failure': systemMessage("workflow-runs.recent-failure"),
+  'out-of-credit': systemMessage("workflow-runs.out-of-credit"),
 };
 
 /** Every agent on a role list with why it cannot take the step now. */
@@ -248,15 +249,15 @@ async function roleReasons(
       const why = tried
         ? tried.reason
         : !status
-          ? 'not in this Room'
+          ? systemMessage("workflow-runs.not-in-this-room")
           : !status.healthy
             ? HEALTH_LABEL[status.reason!]
             : index < cursorIndex
-              ? 'earlier on the list'
-              : 'eligible';
-      return `${names.get(id)} ${why}`;
+              ? systemMessage("workflow-runs.earlier-on-the-list")
+              : systemMessage("workflow-runs.eligible");
+      return systemMessage("workflow-runs.agent-health", names.get(id), why);
     })
-    .join(', ');
+    .join(systemMessage("workflow-runs.list-separator"));
 }
 
 /**
@@ -290,9 +291,9 @@ async function noteWorkflowRoleExhausted(
     id,
     roomId: input.roomId,
     authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: `No agent on the ${input.role} role's list` },
-    verb: 'is healthy',
-    consequence: `${reasons ? `${reasons} in run ${shortRunId(input.runId)}; ` : `in run ${shortRunId(input.runId)}; `}ask an agent to call assign_workflow_role to bind another agent in this Room`.slice(0, 600),
+    subject: { kind: 'system', name: systemMessage("workflow-runs.no-agent-on-the-role-s-list", input.role) },
+    verb: systemMessage("workflow-runs.is-healthy"),
+    consequence: systemMessage("workflow-runs.ask-an-agent-to-call-assign-workflow-role-to-bind-another-agent-i", reasons ? systemMessage("workflow-runs.in-run", reasons, shortRunId(input.runId)) : systemMessage("workflow-runs.in-run-2", shortRunId(input.runId))).slice(0, 600),
     ...(starter.kind === 'agent'
       ? {
           kind: 'workflow-handoff' as const,
@@ -723,9 +724,9 @@ export function workflowGatePrompt(contract: Pick<WorkflowReadContract, 'name'>,
 }
 
 function durationText(seconds: number): string {
-  if (seconds % 3600 === 0) return `${seconds / 3600} h`;
-  if (seconds % 60 === 0) return `${seconds / 60} min`;
-  return `${seconds} s`;
+  if (seconds % 3600 === 0) return systemMessage("workflow-runs.h", seconds / 3600);
+  if (seconds % 60 === 0) return systemMessage("workflow-runs.min", seconds / 60);
+  return systemMessage("workflow-runs.s", seconds);
 }
 
 /**
@@ -756,15 +757,15 @@ async function postWorkflowGate(
     workflowRunId: input.runId,
     workflowOwnerId: (await loadRunStart(db, input.roomId, input.runId)).card.ownerId,
     mode: 'question',
-    prompt: (input.state.does?.replace(/\s+/g, ' ').trim() ||
-      `Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`).slice(0, 120),
+    prompt: (input.state.does?.replace(/\s+/g, systemMessage("workflow-runs.space")).trim() ||
+      systemMessage("workflow-runs.choose-the-next-step-for", input.contract.name.replace(/[-_]/g, systemMessage("workflow-runs.space")))).slice(0, 120),
     ...(input.state.default && input.state.timeoutSeconds
-      ? { constraint: `No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}` }
+      ? { constraint: systemMessage("workflow-runs.no-answer-in-applies", durationText(input.state.timeoutSeconds), input.state.default) }
       : {}),
     options: Object.entries(input.state.on).map(([outcome, target]) => ({
       label: outcome,
-      consequence: (input.contract.handoffs[target]?.does?.replace(/\s+/g, ' ').trim() ||
-        `Continue to ${target.replace(/[-_]/g, ' ')}`).slice(0, 80),
+      consequence: (input.contract.handoffs[target]?.does?.replace(/\s+/g, systemMessage("workflow-runs.space")).trim() ||
+        systemMessage("workflow-runs.continue-to", target.replace(/[-_]/g, systemMessage("workflow-runs.space")))).slice(0, 80),
     })),
   });
   await db.query(
@@ -1047,11 +1048,11 @@ async function moveRole(
     id: cardId,
     roomId,
     authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: 'the workflow' },
-    verb: 'moved',
+    subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
+    verb: systemMessage("workflow-runs.moved"),
     object: stateName,
     consequence:
-      `${from ? `from ${names.get(from)} ` : ''}to ${names.get(input.picked)} because ${input.why} in run ${shortRunId(runId)} of ${run.workflowSlug}`.slice(0, 600),
+      systemMessage("workflow-runs.to-because-in-run-of", from ? systemMessage("workflow-runs.from", names.get(from)) : '', names.get(input.picked), input.why, shortRunId(runId), run.workflowSlug).slice(0, 600),
     ...input.line,
     kind: 'workflow-handoff',
     ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
@@ -1185,11 +1186,11 @@ async function failOver(
       actorId: SYSTEM_IDENTITY_ID,
       line: (toState) => ({
         authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', name: 'the workflow' },
-        verb: 'applied',
-        object: 'timeout',
+        subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
+        verb: systemMessage("workflow-runs.applied"),
+        object: systemMessage("workflow-runs.timeout"),
         consequence:
-          `at ${scope.stateName} and went to ${toState} because nobody on the ${role} role is left${reasons ? ` (${reasons})` : ''} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`.slice(0, 600),
+          systemMessage("workflow-runs.at-and-went-to-because-nobody-on-the-role-is-left-in-run-of", scope.stateName, toState, role, reasons ? systemMessage("workflow-runs.health-reasons", reasons) : '', shortRunId(scope.runId), scope.run.workflowSlug).slice(0, 600),
       }),
     });
   }
@@ -1289,9 +1290,9 @@ export async function cancelWorkflowRun(
       line: {
         authorId: SYSTEM_IDENTITY_ID,
         subject: identitySubject(await loadIdentityRow(db, actorId)),
-        verb: 'cancelled workflow',
+        verb: systemMessage("workflow-runs.cancelled-workflow"),
         object: run.workflowSlug,
-        consequence: `run ${shortRunId(input.runId)}`,
+        consequence: systemMessage("workflow-runs.run", shortRunId(input.runId)),
       },
     });
     return { runId: input.runId, state: run.toState, status: 'abandoned', reason };
@@ -1518,9 +1519,9 @@ export async function handoff(
       line: (toState) => ({
         authorId: command.agent_id,
         subject: identitySubject(actor),
-        verb: 'handed off',
+        verb: systemMessage("workflow-runs.handed-off"),
         object: toState,
-        consequence: `run ${shortRunId(input.runId)} of ${run.workflowSlug}`,
+        consequence: systemMessage("workflow-runs.run-of", shortRunId(input.runId), run.workflowSlug),
       }),
     });
     return { runId: input.runId, ...result };
@@ -1628,21 +1629,21 @@ export async function settleWorkflowGate(
     line: (toState) => ({
       authorId: input.viewerId,
       subject: identitySubject(viewer),
-      verb: input.skip ? 'skipped' : input.sourceMessageId ? 'answered' : 'picked',
+      verb: input.skip ? systemMessage("workflow-runs.skipped") : input.sourceMessageId ? systemMessage("workflow-runs.answered") : systemMessage("workflow-runs.picked"),
       object: input.skip ? scope.stateName : label,
       consequence: input.skip
-        ? `so ${label} applied and run ${shortRunId(scope.runId)} went to ${toState}`
+        ? systemMessage("workflow-runs.so-applied-and-run-went-to", label, shortRunId(scope.runId), toState)
         : input.sourceMessageId
-          ? `by message at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`
-          : `at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`,
+          ? systemMessage("workflow-runs.by-message-at-so-run-went-to", scope.stateName, shortRunId(scope.runId), toState)
+          : systemMessage("workflow-runs.at-so-run-went-to", scope.stateName, shortRunId(scope.runId), toState),
     }),
   });
   if (input.skip) {
     await noticeRunOwner(db, scope, `gate-default:${attempt}`, {
-      subject: { kind: 'system', name: `The ${scope.stateName} gate of ${scope.run.workflowSlug}` },
-      verb: 'took its default',
+      subject: { kind: 'system', name: systemMessage("workflow-runs.the-gate-of", scope.stateName, scope.run.workflowSlug) },
+      verb: systemMessage("workflow-runs.took-its-default"),
       object: label,
-      consequence: `${systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name} skipped it in run ${shortRunId(scope.runId)}`,
+      consequence: systemMessage("workflow-runs.skipped-it-in-run", systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name, shortRunId(scope.runId)),
     });
   }
   return { choiceId: settled.choiceId, status: input.skip ? 'skipped' : 'answered', roomId: settled.roomId };
@@ -1659,17 +1660,17 @@ async function expireGate(db: SqlDatabase, scope: RunScope, state: WorkflowGateS
     actorId: SYSTEM_IDENTITY_ID,
     line: (toState) => ({
       authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: 'the workflow' },
-      verb: 'applied',
+      subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
+      verb: systemMessage("workflow-runs.applied"),
       object: label,
-      consequence: `at ${scope.stateName} and went to ${toState} because nobody answered in ${after} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
+      consequence: systemMessage("workflow-runs.at-and-went-to-because-nobody-answered-in-in-run-of", scope.stateName, toState, after, shortRunId(scope.runId), scope.run.workflowSlug),
     }),
   });
   await noticeRunOwner(db, scope, `gate-default:${attempt}`, {
-    subject: { kind: 'system', name: `The ${scope.stateName} gate of ${scope.run.workflowSlug}` },
-    verb: 'took its default',
+    subject: { kind: 'system', name: systemMessage("workflow-runs.the-gate-of", scope.stateName, scope.run.workflowSlug) },
+    verb: systemMessage("workflow-runs.took-its-default"),
     object: label,
-    consequence: `nobody answered in ${after} in run ${shortRunId(scope.runId)}`,
+    consequence: systemMessage("workflow-runs.nobody-answered-in-in-run", after, shortRunId(scope.runId)),
   });
 }
 
@@ -1697,17 +1698,17 @@ export async function fireWorkflowTimer(
     if (!scope || scope.ended || !scope.state) return false;
     if (timer.timer === 'deadline') {
       const seconds = (await loadRunStart(db, scope.roomId, scope.runId)).card.deadlineSeconds;
-      const after = seconds ? ` of ${durationText(seconds)}` : '';
+      const after = seconds ? systemMessage("workflow-runs.of", durationText(seconds)) : '';
       await closeRun(db, scope, {
         status: 'failed',
         outcome: 'deadline',
         reason: 'deadline',
         line: {
           authorId: SYSTEM_IDENTITY_ID,
-          subject: { kind: 'system', name: 'the workflow' },
-          verb: 'closed',
-          object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
-          consequence: `as failed at ${scope.stateName} because it passed its deadline${after}`,
+          subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
+          verb: systemMessage("workflow-runs.closed"),
+          object: systemMessage("workflow-runs.run-of", shortRunId(scope.runId), scope.run.workflowSlug),
+          consequence: systemMessage("workflow-runs.as-failed-at-because-it-passed-its-deadline", scope.stateName, after),
         },
       });
       return true;
@@ -1792,10 +1793,10 @@ export async function abandonCornerWorkflowRuns(db: SqlDatabase, cornerId: strin
       reason: 'corner closed',
       line: {
         authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', name: 'the workflow' },
-        verb: 'closed',
-        object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
-        consequence: `as abandoned at ${scope.stateName} because its corner closed`,
+        subject: { kind: 'system', name: systemMessage("workflow-runs.the-workflow") },
+        verb: systemMessage("workflow-runs.closed"),
+        object: systemMessage("workflow-runs.run-of", shortRunId(scope.runId), scope.run.workflowSlug),
+        consequence: systemMessage("workflow-runs.as-abandoned-at-because-its-corner-closed", scope.stateName),
       },
     });
     abandoned += 1;
@@ -1820,7 +1821,7 @@ export async function liveWorkflowRun(
   ).rows[0];
   if (!active) return undefined;
   const run = await loadRun(db, roomId, active.id);
-  return { runId: active.id, state: run?.toState ?? 'unknown', status: run?.status ?? 'live', startedAt: active.created_at };
+  return { runId: active.id, state: run?.toState ?? systemMessage("workflow-runs.unknown"), status: run?.status ?? systemMessage("workflow-runs.live"), startedAt: active.created_at };
 }
 
 /** Serializes starts of one workflow in one Room, so the live-run check and the start card commit together. */
@@ -2083,9 +2084,9 @@ export async function startWorkflow(
       roomId: command.room_id,
       authorId: command.agent_id,
       subject: identitySubject(starter),
-      verb: 'started workflow',
+      verb: systemMessage("workflow-runs.started-workflow"),
       object: contract.name,
-      consequence: `run ${shortRunId(runId)}`,
+      consequence: systemMessage("workflow-runs.run", shortRunId(runId)),
       kind: 'workflow-handoff',
       ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
       presentation: 'system',

@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   FEEDBACK_AGENT_CATEGORIES,
@@ -584,7 +585,7 @@ export async function notifyFeedbackFixed(
   if (!pull || pull[1]!.toLowerCase() !== config.repository.toLowerCase())
     throw new Error(`pr_url must be a pull request in ${config.repository}`);
   const number = Number(pull[2]);
-  const url = `https://github.com/${config.repository}/pull/${number}`;
+  const url = systemMessage("feedback.https-github-com-pull", config.repository, number);
   if (!pullRequests)
     throw new Error('Fixed DMs are unavailable: the Beeline GitHub App is not configured');
   // Only a merged fix closes the loop; the agent's word that it merged is not enough.
@@ -654,7 +655,7 @@ async function sendFixedMessage(
     .digest('hex');
   const inserted = await database.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`,
-    [id, roomId, SYSTEM_IDENTITY_ID, `Fixed: ${title} ${url}`],
+    [id, roomId, SYSTEM_IDENTITY_ID, systemMessage("feedback.fixed", title, url)],
   );
   return Boolean(inserted.rowCount);
 }

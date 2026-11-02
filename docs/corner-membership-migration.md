@@ -14,7 +14,7 @@ The former lazy compatibility writer is gone. Phone send/delete and voice answer
 
 There is no unarchive command. Clearing `archived_at` restores projected access for current parent participants automatically, with no membership writes and no revival of departed participants.
 
-The complete [reader and writer inventory](corner-access-audit.md) names every production query path, including schema-owned readers and the remaining top-level writers. Relevant regression coverage: `archived-corner-memberships.test.ts`, `corner-person-state.test.ts`, `corner-person-state.production.test.ts`, `corner-rollback.test.ts`, `phone-service.archived-corners.test.ts`, `corner-lifecycle.test.ts` and `system-messages-lock.test.ts`.
+The complete [reader and writer inventory](corner-access-audit.md) names every production query path, including schema-owned readers and the remaining top-level writers. Relevant regression coverage: `archived-corner-memberships.test.ts`, `corner-person-state.test.ts`, `corner-person-state.production.test.ts`, `corner-rollback.test.ts`, `phone-service.archived-corners.test.ts`, `corner-lifecycle.test.ts` and `system-message-catalog.test.ts`.
 
 ## Isolated owner-shaped proof
 

@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { failAppSignInCards } from './app-connections.js';
 import type { SqlDatabase } from './database.js';
 
@@ -20,7 +21,7 @@ export async function cleanupUnfinishedAppSignIns(database: SqlDatabase, apply =
     )).rows;
     for (const row of rows) {
       await failAppSignInCards(db, row.id,
-        row.sign_in_error ?? 'App sign-in timed out. Open the connection card and sign in again.');
+        row.sign_in_error ?? systemMessage("unfinished-app-sign-ins.app-sign-in-timed-out-open-the-connection-card-and-sign-in-again"));
       await db.query(`DELETE FROM workspace_apps WHERE id=$1 AND authorised_at IS NULL`, [row.id]);
     }
     return rows.length;

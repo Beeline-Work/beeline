@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { SqlDatabase } from './database.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerImplementerSql } from './corner-worker.js';
@@ -49,6 +50,6 @@ export async function setCornerReviewer(
   const actor = (await db.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [actorId])).rows[0]!;
   await systemLine(db, {
     roomId: cornerId, subject: { kind: 'agent', id: actorId, name: actor.name },
-    verb: 'set the corner reviewer', object: { id: reviewer.id, text: reviewer.name },
+    verb: systemMessage("corner-reviewer.set-the-corner-reviewer"), object: { id: reviewer.id, text: reviewer.name },
   });
 }

@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { randomBytes } from 'node:crypto';
 import type { RepositoryOnboardingCard, RepositoryStarter } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -96,8 +97,8 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
   }
   await systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,
     subject: { id: input.agentId, kind: 'agent', name: room.name },
-    verb: kind === 'starters' ? 'suggested work' : 'offered a repository',
-    object: room.repository_name ?? 'Choose or create a repository', presentation: 'card',
+    verb: kind === 'starters' ? systemMessage("repository-onboarding.suggested-work") : systemMessage("repository-onboarding.offered-a-repository"),
+    object: room.repository_name ?? systemMessage("repository-onboarding.choose-or-create-a-repository"), presentation: 'card',
     cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown> });
   return card;
 }

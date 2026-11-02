@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 /**
  * `@agent /login`: the server's relay between the agent owner's phone and the
  * agent's helper. Nothing secret is stored. Every step travels as one
@@ -312,7 +313,7 @@ export async function reportAgentSignIn(
   if (input.outcome === 'failed') {
     const error =
       (typeof input.error === 'string' ? input.error.trim().slice(0, 500) : '') ||
-      'Sign-in failed on the agent machine.';
+      systemMessage("agent-sign-in.sign-in-failed-on-the-agent-machine");
     await notify(database, { agentId, attemptId, step: 'result', outcome: 'failed', error });
     if (cardId)
       await settleCard(

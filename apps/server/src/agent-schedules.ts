@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { createAgentCommand } from './agent-command.js';
 import { randomBytes } from 'node:crypto';
@@ -177,9 +178,9 @@ export class AgentScheduleLoop {
                 id: messageId,
                 roomId: current.room_id,
                 authorId: SYSTEM_IDENTITY_ID,
-                subject: { kind: 'system', name: `The ${current.workflow_slug} schedule` },
-                verb: 'skipped a run',
-                consequence: `run ${live.runId} is active at step ${live.state} in state ${live.status} for ${elapsedMinutes} min`,
+                subject: { kind: 'system', name: systemMessage("agent-schedules.the-schedule", current.workflow_slug) },
+                verb: systemMessage("agent-schedules.skipped-a-run"),
+                consequence: systemMessage("agent-schedules.run-is-active-at-step-in-state-for-min", live.runId, live.state, live.status, elapsedMinutes),
               });
             }
             await this.advance(database, current, now, false);

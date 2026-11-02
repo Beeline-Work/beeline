@@ -278,3 +278,14 @@ test('covering a new package lists its existing sites without growing the list; 
   narrowed.packageRoots = narrowed.packageRoots.filter((root) => root !== 'packages/nostr/src');
   assert.ok(judgeChannels(sites, narrowed, allowlist).some((error) => /no longer covers packages\/nostr\/src/.test(error)));
 });
+
+
+test('constructor names are metadata while constructor values remain dynamic code', () => {
+  assert.deepEqual(scanSource('error.ts', "const code = error.constructor.name; const other = error['constructor'].name;"), []);
+  for (const text of [
+    'const ctor = error.constructor;',
+    "const ctor = error['constructor'];",
+    "error.constructor('return fetch')();",
+    "const { name, ...ctor } = error.constructor;",
+  ]) assert.ok(scanSource('error.ts', text).some(hit => hit.kind === 'dynamic-code'), text);
+});

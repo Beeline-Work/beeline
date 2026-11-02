@@ -186,9 +186,12 @@ function scanGlobals(file, text) {
     if (ts.isIdentifier(node) && Object.hasOwn(GLOBAL_KINDS, node.text) && readsGlobal(node)) add(node.text, node);
     if ((ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) && namesGlobalObject(node, getChecker) && globalObjectEscapes(node))
       hits.push({ kind: 'global-object', line: lineOf(node) });
-    // `(() => {}).constructor` is `Function`.
-    if ((ts.isPropertyAccessExpression(node) && node.name.text === 'constructor') ||
-      (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && node.argumentExpression.text === 'constructor'))
+    // `(() => {}).constructor` is `Function`. Reading only its name cannot
+    // execute it or hand the constructor on (for example error.constructor.name).
+    const constructorNameOnly = node.parent && ts.isPropertyAccessExpression(node.parent) &&
+      node.parent.expression === node && node.parent.name.text === 'name';
+    if (!constructorNameOnly && ((ts.isPropertyAccessExpression(node) && node.name.text === 'constructor') ||
+      (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && node.argumentExpression.text === 'constructor')))
       hits.push({ kind: 'dynamic-code', line: lineOf(node) });
     // `NativeModules.Networking`, `TurboModuleRegistry.get('WebSocketModule')`
     if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && NATIVE_NETWORK_MODULES.has(node.text))

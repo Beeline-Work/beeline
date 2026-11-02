@@ -1,7 +1,7 @@
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -24,6 +24,7 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [outcome, setOutcome] = useState<WalletSendOutcome | null>(null);
   const [sending, setSending] = useState(false);
+  const attemptHeld = useRef(false);
 
   useEffect(() => {
     void getWalletSource()
@@ -38,7 +39,9 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
   const defaultAsset = useMemo(() => wallet?.coins[0]?.symbol.toLowerCase() ?? 'usdc', [wallet]);
 
   const send = useCallback(async () => {
-    if (!chain || !amount || !to) return;
+    if (!chain || !amount || !to || attemptHeld.current) return;
+    attemptHeld.current = true;
+    let uncertain = false;
     const clearAmount = amountDraft.capture();
     const clearTo = toDraft.capture();
     setSending(true);
@@ -50,12 +53,17 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
         amount,
         to,
       });
+      uncertain = result.outcome === 'pending';
       setOutcome(result);
       if (result.outcome === 'sent') {
         clearAmount();
         clearTo();
       }
+    } catch {
+      uncertain = true;
+      setOutcome({ outcome: 'pending', reason: 'The result is unknown. Do not send again while it is unconfirmed.' });
     } finally {
+      attemptHeld.current = uncertain;
       setSending(false);
     }
   }, [workspaceId, chain, amount, to, defaultAsset, amountDraft, toDraft]);
@@ -103,19 +111,21 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
               ? `Not enough ${outcome.asset} — ${outcome.available} available`
               : outcome.outcome === 'delegation-expired'
                 ? 'Your permission to let agents sign has expired. Renew it on the wallet screen.'
-                : `Could not send · ${outcome.reason}`}
+                : outcome.outcome === 'pending'
+                  ? `Result pending · ${outcome.reason}`
+                  : `Could not send · ${outcome.reason}`}
         </Text>
       ) : null}
       <Button
         accessibilityRole="button"
-        disabled={sending || !amount || !to}
+        disabled={sending || outcome?.outcome === 'pending' || !amount || !to}
         onPress={send}
         testID="wallet-send-confirm"
         label={'Send'}
         variant="quiet"
         appearance={{
           control: styles.sendPress,
-          label: [styles.sendButton, (sending || !amount || !to) && styles.sendDisabled],
+          label: [styles.sendButton, (sending || outcome?.outcome === 'pending' || !amount || !to) && styles.sendDisabled],
         }}
       />
       <HullActionSheetModal

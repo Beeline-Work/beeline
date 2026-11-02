@@ -224,7 +224,7 @@ export const phoneInputShapes: readonly WireShape[] = [
   shape({"kind":"object","properties":{"workspaceId":{"node":1,"optional":false},"query":{"node":1,"optional":false},"before":{"node":13,"optional":true}}}),
   shape({"kind":"object","properties":{"query":{"node":1,"optional":false}}}),
   shape({"kind":"intersection","choices":[78,222]}),
-  shape({"kind":"object","properties":{"chain":{"node":223,"optional":false},"asset":{"node":1,"optional":false},"amount":{"node":1,"optional":false},"to":{"node":1,"optional":false}}}),
+  shape({"kind":"object","properties":{"completionV1":{"node":106,"optional":true},"chain":{"node":223,"optional":false},"asset":{"node":1,"optional":false},"amount":{"node":1,"optional":false},"to":{"node":1,"optional":false}}}),
   shape({"kind":"union","choices":[224,225,226,227,228,229,230,231]}),
   shape({"kind":"literal","value":"base"}),
   shape({"kind":"literal","value":"arbitrum"}),

@@ -7,7 +7,7 @@ import { ensureSystemDirectMessageRoom, restateSystemLine, systemLine } from './
 export type WalletNotice = {
   walletNotice: true;
   status: 'submitted' | 'pending' | 'confirmed' | 'failed' | 'refused';
-  operation: 'send' | 'swap' | 'contract' | 'transfer';
+  operation: 'send' | 'swap' | 'contract' | 'transfer' | 'approval';
   amountText: string;
   counterparty: string;
   chain: WalletChainId;
@@ -64,9 +64,15 @@ export async function postWalletNotice(
       next.transfers = { ...previous?.transfers, ...notice.transfers };
       if (!next.execution) next.amountText = Object.values(next.transfers).join('; ');
     }
+    // Settlement may precede execution attribution, or arrive as a token event.
+    // Neither order authorizes the dependent financial effect to resume.
+    if (next.operation === 'approval' && next.status === 'confirmed')
+      next.reason = 'Approval confirmed. The dependent transaction was not submitted; a new explicit action is required.';
     const verb =
       next.status === 'failed' || next.status === 'refused'
         ? 'could not complete'
+        : next.status === 'pending' && !next.txUrl
+          ? 'could not confirm'
         : next.status === 'confirmed'
           ? 'confirmed'
           : 'submitted';
@@ -80,7 +86,9 @@ export async function postWalletNotice(
       },
       consequence: [
         actor,
-        next.status === 'pending' ? 'confirmation pending' : '',
+        next.status === 'pending'
+          ? next.txUrl ? 'confirmation pending' : 'submission outcome unknown'
+          : '',
         next.reason,
         next.balanceAfterUsd ? `${next.balanceAfterUsd} left` : '',
       ]

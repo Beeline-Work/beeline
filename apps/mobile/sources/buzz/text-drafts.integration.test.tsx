@@ -292,6 +292,31 @@ describe('rendered draft state owners with file-backed durable storage', () => {
     expect(field(renderer, 'wallet-send-amount').props.value).toBe('7');
     expect(field(renderer, 'wallet-send-to').props.value).toBe('');
   });
+  it.each(['pending', 'lost'])('wallet %s outcomes preserve inputs and cannot dispatch a duplicate attempt', async mode => {
+    const renderer = await render(<WalletSendForm workspaceId="workspace" />);
+    await act(async () => {
+      field(renderer, 'wallet-send-amount').props.onChangeText('5');
+      field(renderer, 'wallet-send-to').props.onChangeText('0xrecipient');
+    });
+    let finish!: () => void;
+    harness.send.mockImplementation(() => new Promise((resolve, reject) => {
+      finish = () => mode === 'lost' ? reject(new Error('Synthetic result lost'))
+        : resolve({ outcome: 'pending', reason: 'Confirmation pending' });
+    }));
+    let first!: Promise<void>;
+    await act(async () => {
+      const send = field(renderer, 'wallet-send-confirm').props.onPress;
+      first = send(); await send();
+    });
+    expect(harness.send).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(); await first; });
+    expect(field(renderer, 'wallet-send-amount').props.value).toBe('5');
+    expect(field(renderer, 'wallet-send-to').props.value).toBe('0xrecipient');
+    expect(field(renderer, 'wallet-send-confirm').props.disabled).toBe(true);
+    expect(field(renderer, 'wallet-send-outcome').props.children).toContain('Result pending');
+    await act(async () => { await field(renderer, 'wallet-send-confirm').props.onPress(); });
+    expect(harness.send).toHaveBeenCalledTimes(1);
+  });
   it('secure prompts never write storage even when a draft context is supplied', async () => {
     const renderer = await render(
       <WebPromptModal

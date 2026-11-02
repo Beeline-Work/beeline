@@ -47,7 +47,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemLine } from './system-line.js';
 import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
-import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
+import { realCdpWalletSource, WalletTransactionPending, type CdpWalletSource } from './cdp-client.js';
 import { EVM_CHAINS, evmAsset, formatUnits, isEvmAddress, parseUnits } from './evm-chain.js';
 import { venueRefusal, type WalletTransfer } from './wallet-venues.js';
 
@@ -782,6 +782,7 @@ export async function agentWalletTool(
     | 'swap',
   agentId: string,
   input?: {
+    completionV1?: true;
     chain?: WalletChainId;
     limit?: number;
     asset?: string;
@@ -844,6 +845,7 @@ export async function agentWalletTool(
     }
     case 'pay': {
       return await agentSend(database, ctx, agentId, {
+        ...(input?.completionV1 === true ? { completionV1: true } : {}),
         chain: validChain(chain),
         asset: input?.asset ?? 'usdc',
         amount: input?.amount ?? '',
@@ -863,7 +865,10 @@ export async function agentWalletTool(
       let swapped: Awaited<ReturnType<CdpWalletSource['swap']>>;
       try {
         before = await holdings();
-        swapped = await source.swap(address, { chain: swapChain, fromAsset, toAsset, amount });
+        swapped = await source.swap(address, {
+          chain: swapChain, fromAsset, toAsset, amount,
+          ...(input?.completionV1 === true ? { completionV1: true } : {}),
+        });
       } catch (error) {
         return handleSendFailure(database, ctx, agentId, error, fromAsset, amount, swapChain, venue, 'swap');
       }
@@ -878,7 +883,9 @@ export async function agentWalletTool(
         return {
           outcome: 'pending',
           txUrl: walletExplorerTxUrl(swapChain, swapped.txId),
-          reason: 'Swap submitted; receipt confirmation timed out. Do not resubmit.',
+          reason: input?.completionV1 === true
+            ? 'Swap submitted; confirmation is pending. Do not resubmit this intent.'
+            : 'Swap submitted; receipt confirmation timed out. Do not resubmit.',
         };
       }
       await creditSnapshot(database, ctx.ownerIdentityId, swapChain, toAsset, swapped.toAmount);
@@ -1069,7 +1076,10 @@ export function contractCallSpends(input: WalletContractCall): {
       to: `0x${data.slice(34, 74)}`,
     });
   return {
-    call: { chain, contract, data, ...(value ? { value } : {}), ...(approve ? { approve } : {}) },
+    call: {
+      chain, contract, data, ...(value ? { value } : {}), ...(approve ? { approve } : {}),
+      ...(input.completionV1 === true ? { completionV1: true } : {}),
+    },
     spends,
   };
 }
@@ -1185,6 +1195,21 @@ async function handleSendFailure(
   counterparty = 'wallet operation',
   operation: WalletNotice['operation'] = 'send',
 ): Promise<WalletSendOutcome> {
+  if (error instanceof WalletTransactionPending) {
+    const txUrl = error.txId ? walletExplorerTxUrl(chain, error.txId) : undefined;
+    await postWalletNotice(database, ctx.workspaceId, ctx.ownerIdentityId, {
+      walletNotice: true, status: 'pending', execution: true,
+      operation: error.approval ? 'approval' : operation,
+      amountText: error.approval
+        ? `${error.approval.amount} ${error.approval.asset.toUpperCase()}`
+        : `${amount} ${asset.toUpperCase()}`,
+      counterparty: error.approval?.spender ?? counterparty,
+      chain, reason: error.message,
+      ...(txUrl ? { txUrl } : {}),
+      ...(agentId ? { agentId, agentName: await agentName(database, agentId) } : {}),
+    });
+    return { outcome: 'pending', reason: error.message, ...(txUrl ? { txUrl } : {}) };
+  }
   const reason = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
   // A reverted receipt already has a hash; link the failed on-chain attempt too.
   const hash = reason.match(/transaction (0x[0-9a-fA-F]{64}) (?:reverted|was not mined)/)?.[1];

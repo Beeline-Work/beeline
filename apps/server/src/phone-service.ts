@@ -378,7 +378,6 @@ interface RoomRow {
   created_by: string | null;
   name: string;
   about: string | null;
-  avatar: string | null;
   visibility: 'public' | 'invite-only';
   archived_at: Date | null;
   direct_participants: string[] | null;
@@ -682,7 +681,6 @@ function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
     ...(row.parent_id ? { parentId: row.parent_id } : {}),
     name: row.name,
     ...(row.about ? { about: row.about } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
     ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
@@ -1591,7 +1589,7 @@ export class PhoneService {
     }>(
       `WITH deleted AS (
          DELETE FROM workspace_deletion_notices WHERE identity_id=$1
-         RETURNING workspace_id,workspace_name
+         RETURNING workspace_id
        ), visible AS (
        SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
        FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
@@ -1617,8 +1615,9 @@ export class PhoneService {
        SELECT visible.*,viewer.id viewer_id,viewer.kind viewer_kind,
          viewer.name viewer_name,viewer.handle viewer_handle,
          viewer.avatar viewer_avatar,viewer.face_id viewer_face_id,
-         (SELECT jsonb_agg(jsonb_build_object('workspaceId',workspace_id,
-            'workspaceName',workspace_name)) FROM deleted) deleted_notices
+         (SELECT jsonb_agg(jsonb_build_object('workspaceId',deleted.workspace_id,
+            'workspaceName',deletion.workspace_name))
+          FROM deleted JOIN workspace_deletions deletion USING(workspace_id)) deleted_notices
        FROM identities viewer LEFT JOIN visible ON true
        WHERE viewer.id=$1
        ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,
@@ -1663,7 +1662,7 @@ export class PhoneService {
         id: row.id,name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
-        ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
+        createdAt: unix(row.created_at),
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,allowFixSweep: row.allow_fix_sweep,rooms: managedRooms,
@@ -2830,17 +2829,6 @@ export class PhoneService {
   }
 
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
-    const eligible = `m.id IN (
-      (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
-         AND raw.raw_page_candidate=true
-       ORDER BY raw.created_at DESC,raw.id ASC LIMIT 180)
-      UNION
-      (SELECT conversation.id FROM legacy_room_events conversation
-       WHERE conversation.room_id=$1 AND conversation.conversation_candidate=true
-       ORDER BY conversation.created_at DESC,conversation.id ASC LIMIT 30)
-      UNION
-      (SELECT plan.id FROM legacy_room_events plan WHERE plan.room_id=$1 AND plan.kind=30078)
-    )`;
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
@@ -2921,9 +2909,6 @@ export class PhoneService {
            JOIN identities i ON i.id=m.author_id
            WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
              AND ${visibleMessageSql('m')}
-             AND (NOT EXISTS(
-               SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
-             ) OR ${eligible})
            ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -2940,9 +2925,6 @@ export class PhoneService {
            JOIN active_turn_rows turn ON turn.agent_id=m.author_id
              AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
            WHERE m.presentation='activity' AND m.durable_fact IS NULL
-             AND (NOT EXISTS(
-               SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
-             ) OR ${eligible})
            ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), corner_tool_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -2966,12 +2948,6 @@ export class PhoneService {
            JOIN messages m ON m.room_id=room.parent_id
            JOIN identities i ON i.id=m.author_id
            WHERE room.parent_id IS NOT NULL AND m.created_at<=room.created_at
-             AND (NOT EXISTS(SELECT 1 FROM legacy_room_events all_legacy
-               WHERE all_legacy.room_id=room.parent_id)
-               OR m.id IN(SELECT page.id FROM legacy_room_events page
-                 WHERE page.room_id=room.parent_id AND page.kind=9
-                   AND page.raw_page_candidate=true AND page.created_at<=room.created_at
-                 ORDER BY page.created_at DESC,page.id ASC LIMIT 40))
            ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
          SELECT
@@ -3960,7 +3936,6 @@ export class PhoneService {
          ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
            selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,
            model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
-           schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,machine_id=EXCLUDED.machine_id,
            machine_name=EXCLUDED.machine_name,updated_at=now()`,
@@ -8556,6 +8531,11 @@ export class PhoneService {
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
         ['messages', 'deleted_by'],
+        // Retained only for rolling-deployment and rollback compatibility.
+        ['corner_apps', 'author_agent_id'],
+        ['corner_app_installations', 'installed_by'],
+        ['corner_app_installations', 'developer_agent_id'],
+        ['corner_app_bindings', 'bound_by'],
         ['corner_brief_revisions', 'author_id'],
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
@@ -10571,7 +10551,7 @@ export class PhoneService {
     query: WorkspaceMemberListQuery = {},
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
-      id: string; name: string; about: string | null; avatar: string | null;
+      id: string; name: string; avatar: string | null;
       visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
@@ -10586,7 +10566,7 @@ export class PhoneService {
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
     const result = await this.database.query<{
       workspace_row: {
-        id: string; name: string; about: string | null; avatar: string | null;
+        id: string; name: string; avatar: string | null;
         visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
@@ -10599,7 +10579,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (

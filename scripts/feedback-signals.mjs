@@ -94,14 +94,20 @@ export function groupFeedback(rows) {
   })).sort((a, b) => b.humanCount - a.humanCount || b.agentCount - a.agentCount || a.signature.localeCompare(b.signature));
 }
 
-export function followUp({ releasedAt, observedThrough, occurrences }) {
+// Silence only proves a fix when the signal was readable for the whole window
+// and the fixed path actually ran. `coverageComplete: false` (an unreadable
+// source, a log-walk gap) and `exposure: 0` (no traffic on the path) are not
+// "fixed"; omitting them keeps the original behavior.
+export function followUp({ releasedAt, observedThrough, occurrences, coverageComplete, exposure }) {
   if (!releasedAt) return 'not yet released';
   const release = Date.parse(releasedAt);
   const through = Date.parse(observedThrough);
   if (!Number.isFinite(release) || !Number.isFinite(through)) throw new Error('release and observation timestamps are required');
   if (through <= release) return 'not yet released';
   if (occurrences.some(time => Date.parse(time) > release && Date.parse(time) <= through)) return 'still occurring (reopen)';
+  if (coverageComplete === false) return 'incomplete coverage';
   if (through - release < 86_400_000) throw new Error('next-day observation window is incomplete');
+  if (exposure === 0) return 'insufficient exposure';
   return 'stopped after release (fixed)';
 }
 

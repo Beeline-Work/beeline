@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   actions: write
+  issues: write
 concurrency:
   group: nightly-result-${{ github.event.workflow_run.id }}
   cancel-in-progress: false

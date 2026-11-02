@@ -316,7 +316,7 @@ export function createPhoneOperationDispatcher(
     } catch (error) {
       const explicit = error instanceof PhoneOperationError ? error.payload.code ?? error.payload.error : undefined;
       const code = typeof explicit === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(explicit)
-        ? explicit : error instanceof Error ? error.name : 'Error';
+        ? explicit : error instanceof Error ? error.name || 'Error' : 'Error';
       options.operationOutcomes?.record(args[0], errorStatus(error), code);
       throw error;
     }

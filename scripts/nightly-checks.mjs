@@ -78,6 +78,49 @@ export async function finishNightly({ api, run, save }) {
   save(result); return result;
 }
 
+// The fix loop reads open `nightly-checks` issues the same way it reads
+// release failures, so a night's result needs no agent turn to fetch it.
+// One issue per job: a real failure (failed twice), a flaky job (passed on the
+// rerun; each flaky night adds a comment), or a night that did not finish. An
+// issue closes when its job next passes on the first attempt.
+export const NIGHTLY_LABEL = 'nightly-checks';
+const failedTitle = name => `Nightly Checks: ${name} failed twice`;
+const flakyTitle = name => `Nightly Checks: ${name} is flaky`;
+const UNFINISHED = 'Nightly Checks: the nightly run did not finish';
+export async function publishIssues({ api, result, runUrl }) {
+  if (!result || result.skipped || result.dispatched || result.rerunRequested) return [];
+  const open = (await api('GET', `issues?labels=${NIGHTLY_LABEL}&state=open&per_page=100`)).filter(issue => !issue.pull_request);
+  const actions = [];
+  const note = async (title, body) => {
+    const issue = open.find(item => item.title === title);
+    if (issue) await api('POST', `issues/${issue.number}/comments`, { body });
+    else await api('POST', 'issues', { title, body, labels: [NIGHTLY_LABEL] });
+    actions.push([issue ? 'comment' : 'open', title]);
+  };
+  const close = async (issue, body) => {
+    await api('POST', `issues/${issue.number}/comments`, { body });
+    await api('PATCH', `issues/${issue.number}`, { state: 'closed', state_reason: 'completed' });
+    actions.push(['close', issue.title]);
+  };
+  if (result.infrastructureError) {
+    await note(UNFINISHED, `Run ${runUrl} did not finish: ${String(result.infrastructureError).slice(0, 500)}`);
+    return actions;
+  }
+  const links = job => job.attempts.map(a => `[${a.conclusion}](${a.html_url || a.url})`).join(' → ');
+  for (const job of result.failures) {
+    const tests = job.attempts.flatMap(a => a.failingTests ?? []).slice(0, 20).map(t => `- \`${t.slice(0, 200)}\``).join('\n');
+    await note(failedTitle(job.name), `Commit ${result.sha}, run ${runUrl}: ${links(job)}\n\n${tests || 'No failing test names were found in the job log.'}`);
+  }
+  for (const job of result.flakyJobs) await note(flakyTitle(job.name), `Flaky on commit ${result.sha}, run ${runUrl}: ${links(job)}`);
+  const first = result.attempts[0]?.jobs ?? [];
+  for (const issue of open) {
+    if (issue.title === UNFINISHED) { await close(issue, `Run ${runUrl} finished.`); continue; }
+    const name = [...first.map(j => j.name)].find(n => issue.title === failedTitle(n) || issue.title === flakyTitle(n));
+    if (name && first.find(j => j.name === name).conclusion === 'success') await close(issue, `${name} passed on the first attempt on commit ${result.sha}, run ${runUrl}.`);
+  }
+  return actions;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const repo = process.env.GITHUB_REPOSITORY;
   const api = async (method, endpoint, body) => {
@@ -86,6 +129,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const output = execFileSync('gh', args, { input: body ? JSON.stringify(body) : undefined, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     return method === 'LOG' ? output : output.trim() ? JSON.parse(output) : null;
   };
+  const runLink = `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
   let latestResult;
   const save = result => {
     latestResult = result;
@@ -96,9 +140,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       ? await finishNightly({ api, save, run: JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')).workflow_run })
       : await runNightly({ api, save, manual: process.env.EVENT_NAME === 'workflow_dispatch', requestId: process.env.GITHUB_RUN_ID });
     if (result && process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.skipped ? `${result.reason}\n` : result.dispatched ? `Nightly Checks dispatched for ${result.requestedSha}; completion follows its workflow event.\n` : `## Nightly Checks\nCommit: ${result.sha}\n\nFailures: ${result.failures.length}; flaky jobs: ${result.flakyJobs.length}\n\nWall clock: ${result.wallClockMinutes.toFixed(2)} minutes; runner time: ${result.runnerMinutes.toFixed(2)} minutes\n\n${result.attempts.map(a => `[Attempt ${a.attempt}](${a.url})`).join(' · ')}\n\n${[...result.failures, ...result.flakyJobs].map(j => `- ${j.name}: ${j.attempts.map(a => `[${a.conclusion}](${a.html_url || a.url})`).join(' → ')}`).join('\n')}\n`);
+    await publishIssues({ api, result, runUrl: runLink });
     if (result?.failures?.length) process.exitCode = 1;
   } catch (error) {
     save({ ...latestResult, schemaVersion: 1, infrastructureError: error.message });
+    await publishIssues({ api, result: latestResult, runUrl: runLink }).catch(() => {});
     throw error;
   }
 }

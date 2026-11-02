@@ -9,7 +9,8 @@ import { latencyLoops, prepareInsights, publishInsights } from './nightly-insigh
 const capture = JSON.parse(await readFile(new URL('./fixtures/night-2026-10-30-report.json', import.meta.url)));
 const loops = () => ({ updatedAt: '2026-10-29T12:00:00Z', loops: [{ slug: 'ci', charts: [], note: 'keep me' },
   { slug: 'latency', charts: [{ series: [{ key: 'actions', points: [{ date: '2026-10-29', value: 42 }] }] }], fixes: [{ title: 'keep fix' }], log: [] }] });
-const verdict = { head: capture.commit, runId: 'night-2026-10-30-EG85he', night: '2026-10-30', pass: false, final: true, report: capture, failures: ['budget exceeded'] };
+const load = { mean: 3, max: 4, cpus: 20 };
+const verdict = { load, head: capture.commit, runId: 'night-2026-10-30-EG85he', night: '2026-10-30', pass: false, final: true, report: capture, failures: ['budget exceeded'] };
 const contents = (document, sha = 'original') => ({ sha, content: Buffer.from(JSON.stringify(document)).toString('base64') });
 test('real completed failed capture publishes measured per-case p50/p95 without altering other loops or existing series', () => {
   const before = loops(), after = latencyLoops(before, verdict);
@@ -65,11 +66,13 @@ test('actual nightly CLI to history to sealed-API request body with the inherite
   const dir = await mkdtemp(join(tmpdir(), 'latency-insights-'));
   const script = (name) => fileURLToPath(new URL(name, import.meta.url));
   try {
+    const loadPath = join(dir, 'load.json');
+    await writeFile(loadPath, JSON.stringify(load));
     const report = join(dir, 'capture.json'), output = join(dir, 'nightly.json'), snapshot = join(dir, 'contents.json'), request = join(dir, 'put.json');
     await writeFile(report, JSON.stringify(capture));
     const result = spawnSync(process.execPath, [script('./nightly-local.mjs'), '--current', report, '--rerun', report,
       '--baseline', join(dir, 'last-pass.json'), '--out', output, '--head', capture.commit,
-      '--run-id', verdict.runId, '--started-at', '2026-10-31T02:00:00Z'], { encoding: 'utf8' });
+      '--load', loadPath, '--run-id', verdict.runId, '--started-at', '2026-10-31T02:00:00Z'], { encoding: 'utf8' });
     assert.equal(result.status, 1, result.stderr);
     const recorded = JSON.parse(await readFile(output));
     assert.equal(recorded.night, '2026-10-30');
@@ -86,4 +89,16 @@ test('actual nightly CLI to history to sealed-API request body with the inherite
     assert.equal(published.loops[1].charts[1].series[0].points[0].value, 472);
     assert.equal(published.loops[1].charts[6].series[1].points[0].value, 178);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+test('one partial case, invalid verdict, missing load or contended capture suppresses every chart point', () => {
+  const partial = structuredClone(capture); partial.rows[1].samples = 19;
+  const badPercentile = structuredClone(capture); delete badPercentile.rows[1].p50Ms;
+  for (const extra of [{ report: partial }, { report: badPercentile }, { capture: { pass: false } },
+    { contended: true }, { load: { mean: 23, max: 25, cpus: 20 } }, { load: undefined }]) {
+    const before = loops(), after = latencyLoops(before, { ...verdict, ...extra });
+    assert.deepEqual(after.loops[1].charts, before.loops[1].charts);
+    assert.equal(after.loops[1].log.length, 1);
+    assert.match(after.loops[1].note, /no latency point added/);
+    if (extra.contended || extra.load?.mean === 23) assert.match(after.loops[1].note, /Contended capture/);
+  }
 });

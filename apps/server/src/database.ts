@@ -2144,9 +2144,42 @@ CREATE TABLE IF NOT EXISTS corner_validation_stages (
   PRIMARY KEY (corner_id,brief_revision,head_sha,stage)
 );
 
-DROP TABLE IF EXISTS corner_apps;
-DROP TABLE IF EXISTS corner_app_bindings;
-DROP TABLE IF EXISTS corner_app_installations;
+-- Retired storage only (SENTRY-22). Older images still join these tables on
+-- ordinary corner reads during rolling deployment and rollback. Preserve rows;
+-- CREATE IF NOT EXISTS also repairs databases where #3221 already dropped them.
+-- No current tools/routes/UI use these tables. Remove only in a separate contract
+-- migration after all live AND rollback images no longer reference them.
+CREATE TABLE IF NOT EXISTS corner_apps (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  slug text NOT NULL,
+  author_agent_id text NOT NULL REFERENCES identities(id),
+  definition jsonb NOT NULL,
+  revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id, slug)
+);
+CREATE INDEX IF NOT EXISTS corner_apps_author_idx ON corner_apps(author_agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS corner_apps_command_idx
+  ON corner_apps(corner_id,(definition->>'command'));
+
+CREATE TABLE IF NOT EXISTS corner_app_installations (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  installed_by text NOT NULL REFERENCES identities(id),
+  developer_agent_id text REFERENCES identities(id),
+  manifest jsonb NOT NULL,
+  connected_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS corner_app_installations_workspace_idx
+  ON corner_app_installations(workspace_id,connected_at DESC);
+CREATE TABLE IF NOT EXISTS corner_app_bindings (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  installation_id uuid NOT NULL REFERENCES corner_app_installations(id) ON DELETE RESTRICT,
+  instance_id uuid NOT NULL UNIQUE,
+  bound_by text NOT NULL REFERENCES identities(id),
+  bound_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
 DROP TABLE IF EXISTS corner_check_facts;

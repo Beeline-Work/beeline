@@ -5,8 +5,8 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, re
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentLabel, defaultName, detectAgent, isAgentId, pickName, type AgentId } from './agents.js';
-import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, registerClient, signInLink, SignInEndedError, type SignIn } from './beeline-api.js';
-import { ensureBridge, renderMention, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
+import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, NOT_JOINED, registerClient, signInLink, SignInEndedError, type SignIn } from './beeline-api.js';
+import { ensureBridge, renderMention, renderRules, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
 import { chosenName, claudeTranscript, heldBy, inboundSetting, permissionMode, postToClaude, scanClaude } from './claude.js';
 import { acceptClaudeInbound, assertClaudePolicy, restoreClaudeInbound } from './claude-inbound.js';
 import { hasClaudeMcp, runClaudeMcp } from './claude-mcp.js';
@@ -228,7 +228,7 @@ async function finishJoinOwned(file: string, env: NodeJS.ProcessEnv): Promise<vo
     }
     ensureBridge(dir, run, env);
     const rooms = me.rooms.map(r => r.name).slice(0, 5).join(', ');
-    await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}`, dir);
+    await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}\n\n${renderRules(joined, run)}`, dir);
   }catch(error){retain=!(error instanceof SignInEndedError);throw error;}
   finally{if(!retain)rmSync(file,{force:true});}
 }
@@ -257,7 +257,7 @@ function own(args: string[], env: NodeJS.ProcessEnv): JoinedSession {
     const mine = findOwnSession(env, dir);
     return sessions.find(s => s.key === sessionKey(mine.agent, mine.cwd));
   })();
-  if (!found) throw new Error('This session has not joined Beeline. Run: npx -y usebeeline join');
+  if (!found) throw new Error(NOT_JOINED);
   return found;
 }
 
@@ -281,7 +281,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   if (sub === 'bridge') return runBridge(dir, runner(dir, env));
   if (sub === 'finish-join') return finishJoin(rest[0] ?? '', env);
   if (sub === 'mcp') return runZcodeMcp(dir);
-  if (sub === 'claude-mcp') return runClaudeMcp(dir, env);
+  if (sub === 'claude-mcp') return runClaudeMcp(dir, env, joined => renderRules(joined, runner(dir, env)));
   if (sub === 'antigravity-sidecar') return runAntigravitySidecar(dir);
   if (sub === 'hook') {
     // Never fail loudly: a broken Beeline must not break the app.
@@ -292,6 +292,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       let payload: Record<string, unknown> = {};
       try { payload = JSON.parse(input.replace(/^﻿/, '')) as Record<string, unknown>; } catch { /* no payload */ }
       const out = runHook(dir, { agent, event, payload, session: flag(rest, '--session'), state: flag(rest, '--state'),
+        rules: joined => renderRules(joined, runner(dir, env)),
         pid: process.ppid, env });
       if (out) process.stdout.write(out + '\n');
       if (event === 'session-start' && readState(dir).sessions.length) ensureBridge(dir, runner(dir, env), env);

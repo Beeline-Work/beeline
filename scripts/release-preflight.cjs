@@ -27,6 +27,10 @@ exports.triageFailure = async ({ github, context, run = context.payload.workflow
   const issues = await listIssues();
   const existing = issues.filter(issue => !issue.pull_request).sort((a, b) => a.number - b.number).find(issue => issue.body?.includes(marker));
   if (existing) return existing;
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo, run_id: run.id, filter: 'latest', per_page: 100,
+  });
+  const failedJobs = jobs.filter(job => !['success', 'skipped'].includes(job.conclusion)).map(job => job.name);
   try {
     await github.rest.issues.getLabel({ ...context.repo, name: 'release-failure' });
   } catch (error) {
@@ -37,9 +41,50 @@ exports.triageFailure = async ({ github, context, run = context.payload.workflow
     ...context.repo,
     title: `${run.name}: ${run.conclusion} (run ${run.id})`,
     labels: ['release-failure'],
-    body: `${marker}\n\n${run.html_url}\n\nConclusion: ${run.conclusion}\nSource: ${run.head_sha}\nAttempt: ${run.run_attempt}\n\nInspect failed jobs and queued runner labels. Repair the cause before the next release; this item does not authorize a deployment.`,
+    body: `${marker}\n<!-- release-failed-jobs:${JSON.stringify(failedJobs)} -->\n\n${run.html_url}\n\nConclusion: ${run.conclusion}\nSource: ${run.head_sha}\nAttempt: ${run.run_attempt}\nFailed jobs: ${failedJobs.join(', ') || 'none reported'}\n\nInspect failed jobs and queued runner labels. Repair the cause before the next release; this item does not authorize a deployment.`,
   });
   // The mutation response is its receipt. A stale list cannot improve that
   // receipt; ambiguous API failures propagate without a retry or second create.
   return created;
+};
+
+exports.recoverFailures = async ({ github, context, run = context.payload.workflow_run }) => {
+  if (run.conclusion !== 'success') return;
+  const preflight = run.path === '.github/workflows/release-preflight.yml';
+  if (!preflight && run.path !== '.github/workflows/unified-release.yml') return;
+  const issues = await github.paginate(github.rest.issues.listForRepo, {
+    ...context.repo, state: 'open', labels: 'release-failure', per_page: 100,
+  });
+  const jobs = preflight ? [] : await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo, run_id: run.id, filter: 'latest', per_page: 100,
+  });
+  for (const issue of issues) {
+    if (issue.pull_request || issue.state !== 'open' || !(Date.parse(issue.created_at) < Date.parse(run.run_started_at))) continue;
+    if (preflight) {
+      if (!issue.title.startsWith('Release preflight:')) continue;
+    } else {
+      // The dispatch attribution is the unified workflow's run name in newer issues.
+      if (!issue.title.startsWith('Unified production release:') && !issue.title.startsWith('Production release ·')) continue;
+      const record = issue.body?.match(/<!-- release-failed-jobs:(.*?) -->/);
+      if (record) {
+        const failedJobs = JSON.parse(record[1]);
+        if (!failedJobs.length || !failedJobs.every(name => jobs.some(job => job.name === name && job.conclusion === 'success'))) continue;
+      } else {
+        // Older issues lack job evidence: every delivery job must have run successfully.
+        const components = jobs.filter(job => !['initialize', 'release_result', 'release_proof'].includes(job.name));
+        if (!components.length || !components.every(job => job.conclusion === 'success')) continue;
+      }
+    }
+    const marker = `<!-- release-recovery:${run.id} -->`;
+    const comments = await github.paginate(github.rest.issues.listComments, {
+      ...context.repo, issue_number: issue.number, per_page: 100,
+    });
+    if (!comments.some(comment => comment.body?.includes(marker))) {
+      await github.rest.issues.createComment({
+        ...context.repo, issue_number: issue.number,
+        body: `${marker}\nRecovered by successful ${preflight ? 'Release preflight' : 'Unified production release'}: ${run.html_url}`,
+      });
+    }
+    await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+  }
 };

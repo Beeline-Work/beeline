@@ -45,3 +45,5 @@ export * from './router-protocol.js';
 export * from './router-command.js';
 
 export * from './media-metadata.js';
+
+export * from './external-agent-rules.js';

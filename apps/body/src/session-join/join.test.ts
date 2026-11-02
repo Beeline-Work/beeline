@@ -6,7 +6,7 @@ import { createServer as createSocketServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { WAKE_REDELIVERY_MINUTES, deliver, pollOnce, renderMention, serveOutboxes, toolViaOutbox } from './bridge.js';
+import { WAKE_REDELIVERY_MINUTES, deliver, pollOnce, renderMention, renderWake, serveOutboxes, toolViaOutbox } from './bridge.js';
 import { runSessionCommand } from './command.js';
 import { readState, stateDir, takeInbox, updateState } from './store.js';
 
@@ -219,11 +219,46 @@ describe('a tag reaches the joined session', () => {
     } finally { wakes = []; mentions = tags; }
   });
 
+  // Reproduction (SESSION-JOIN-REJOIN-1): a joined Codex that dropped --as was told "Run: npx -y usebeeline join",
+  // obeyed, and registered a new connection on the default production server.
+  it('SESSION-JOIN-REJOIN-1 never tells a session to join on its own', async () => {
+    const home = scratch();
+    const env = { HOME: home, XDG_STATE_HOME: join(home, 'state'), PATH: process.env.PATH ?? '' };
+    // An unknown --as key reaches the refusal in every environment.
+    const refusal = runSessionCommand(['session', 'tool', 'report', '{}', '--as', 'codex:/nowhere'], env);
+    await expect(refusal).rejects.toThrow('including its --as <member> flag');
+    await expect(refusal).rejects.not.toThrow(/Run:? (npx -y )?usebeeline join|join again/);
+    // Without --as the session is looked up from the process tree; whichever refusal that gives, it never says to join.
+    await expect(runSessionCommand(['session', 'tool', 'report', '{}'], env)).rejects.not.toThrow(/Run:? (npx -y )?usebeeline join|join again/);
+  });
+
   it('C3 prefixes helper-injected Room messages with the Beeline header', () => {
     const text = renderMention({ id: 'm', room_id: 'r', author_handle: null, author_name: 'Ana', text: 'hi' },
       { key: 'k', agent: 'pi', cwd: '/', name: 'p', server: '', clientId: '', refreshToken: '', cursor: '0', deliveredWakes: [], joinedAt: '' }, { node: 'node', bundle: '/b' });
     expect(text.startsWith('[Beeline · Room r · message m · from Ana]')).toBe(true);
     expect(text).toContain('member ID');
     expect(text).toContain('answer in this Room with replyTo m');
+  });
+
+  // Reproduction (SESSION-JOIN-ORDER-1): a real Codex given the old order text posted nothing useful until it had
+  // guessed report's arguments four times, because the only concrete command was a plain reply.
+  it('SESSION-JOIN-ORDER-1 names the exact report call for an order, and no plain reply', () => {
+    const joined = { key: 'codex:/w', agent: 'codex' as const, cwd: '/w', name: 'c', handle: 'c', server: '', clientId: '', refreshToken: '', cursor: '0', deliveredWakes: [], joinedAt: '' };
+    const runner = { node: 'node', bundle: '/b' };
+    const address = '22222222-2222-4222-8222-222222222222';
+    const order = renderWake({ id: 'w1', address, reason: 'order', kind: 'order', text: 'Compute 7 times 8', createdAt: '', next: 'Do the work, then call report with this address.' }, joined, runner);
+    expect(order).not.toContain(' reply --room');
+    expect(order).toContain('It is not a tag');
+    const call = /session tool report '(\{[^']*\})' --as codex:\/w/.exec(order);
+    expect(call).not.toBeNull();
+    const args = JSON.parse(call![1]!) as Record<string, string>;
+    expect(Object.keys(args).sort()).toEqual(['address', 'status', 'text']);
+    expect(args).toMatchObject({ address, status: 'done' });
+    expect(args.text!.startsWith('done:')).toBe(true);
+    const lifecycle = renderWake({ id: 'w2', address, reason: 'corner_lifecycle', kind: 'lifecycle', createdAt: '' }, joined, runner);
+    expect(lifecycle).toContain(`reply --room ${address} "<text>" --as codex:/w`);
+    // The silent close names this one wake, as the server's hint says, so it never clears other wakes at the address.
+    expect(lifecycle).toContain(`tool no_reply_needed '{"address":"${address}","commandId":"w2"}' --as codex:/w`);
+    expect(lifecycle).not.toContain('tool report');
   });
 });

@@ -142,6 +142,15 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_handoffs (
   expires_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_handoffs_expiry ON rooms_mcp_handoffs(expires_at);
+CREATE OR REPLACE FUNCTION beeline_mcp_handoff_completion() RETURNS trigger AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND ROW(NEW.code,NEW.error,NEW.expires_at) IS NOT DISTINCT FROM ROW(OLD.code,OLD.error,OLD.expires_at) THEN RETURN NULL;END IF;
+ PERFORM pg_notify('beeline_command_completion',json_build_object('principal','oauth','operation','mcp-handoff','commandId',NEW.state_hash)::text);
+ RETURN NULL;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS beeline_mcp_handoff_completion ON rooms_mcp_handoffs;
+CREATE TRIGGER beeline_mcp_handoff_completion AFTER INSERT OR UPDATE ON rooms_mcp_handoffs
+ FOR EACH ROW EXECUTE FUNCTION beeline_mcp_handoff_completion();
 CREATE TABLE IF NOT EXISTS rooms_mcp_tokens (
   hash text PRIMARY KEY, client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,

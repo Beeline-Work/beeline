@@ -290,7 +290,7 @@ export const phoneInputShapes: readonly WireShape[] = [
   shape({"kind":"literal","value":1.5}),
   shape({"kind":"object","properties":{"name":{"node":13,"optional":true},"handle":{"node":13,"optional":true},"avatar":{"node":13,"optional":true}}}),
   shape({"kind":"intersection","choices":[16,288]}),
-  shape({"kind":"object","properties":{"name":{"node":13,"optional":true},"visibility":{"node":71,"optional":true},"reviewerAgentId":{"node":266,"optional":true},"reviewerFallbackIds":{"node":234,"optional":true}}}),
+  shape({"kind":"object","properties":{"name":{"node":13,"optional":true},"visibility":{"node":71,"optional":true},"reviewerAgentId":{"node":266,"optional":true}}}),
   shape({"kind":"intersection","choices":[16,290]}),
   shape({"kind":"object","properties":{"muted":{"node":41,"optional":true},"viewing":{"node":41,"optional":true},"sessionId":{"node":13,"optional":true}}}),
   shape({"kind":"intersection","choices":[22,292]}),

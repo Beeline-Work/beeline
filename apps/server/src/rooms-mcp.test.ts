@@ -2106,6 +2106,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(loaded.markdown).toContain('Read the saved instructions.');
       const read = await ok(client, 'read', { address: ROOM, facet: 'procedure', slug: 'mcp-procedure' });
       expect(read).toEqual(loaded);
+      const described = await ok(client, 'app_tool', { address: ROOM, app: 'beeline:workflow', tool: 'describe', args: { slug: 'mcp-procedure' } });
+      expect(described).toEqual(loaded);
     });
     it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
       const surface = await import('../../body/src/minimal-tool-surface.js');
@@ -2122,6 +2124,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => exposed.has(name))).toEqual([]);
       // Every exclusion names a real agent tool, so the table cannot hide a typo.
       expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => !agentTools.has(name))).toEqual([]);
+      // Reproduction (R-MCP-ROUTES): names alone hid that beeline:workflow had no describe action, which the
+      // helper's start description tells agents to call first. Every helper app action is listed or excluded.
+      for (const [app, routes] of Object.entries(surface.CAPABILITY_ROUTES)) {
+        const listed = await call(client, 'app_tool', { address: ROOM, app: `beeline:${app}` });
+        const actions = listed.error ? [] : (JSON.parse(listed.text).data.tools as { name: string }[]).map(entry => entry.name);
+        const missingActions = Object.entries(routes).filter(([action, op]) => !actions.includes(action) && !MCP_AGENT_EXCLUSIONS[op]);
+        expect(missingActions, app).toEqual([]);
+      }
     });
     it('R-MCP-EXCLUDED: refuses wallet spending and host grants with a plain reason', async () => {
       const { client } = await connected();

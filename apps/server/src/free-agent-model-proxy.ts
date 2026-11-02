@@ -8,6 +8,9 @@ import type { SqlDatabase } from './database.js';
 import { warnFreeAgentOwner } from './free-agent-warning.js';
 import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-agents.js';
 import { FreeAgentPromptCache, promptTextBytes } from './free-agent-prompt-budget.js';
+import { OwnedModelAttempts, OwnedModelUnknownPayload, type OwnedModelAttemptReceipt, type OwnedModelEvidence, type OwnedModelReservation } from './owned-model-attempt.js';
+import { OwnedModelCredentials, type AuthenticatedOwnedModel } from './owned-model-credential.js';
+import { CommandRefusalError } from './command-refusal.js';
 
 const promptCache = new FreeAgentPromptCache();
 // Shared across all in-flight calls for one owner/day, including other servers.
@@ -28,6 +31,14 @@ export interface FreeAgentModelProxyOptions {
   upstreamBaseUrl?: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /** Absent until schema, installed helper negotiation and claim hook are ready.
+   * This does not opt legacy per-agent credentials into owned authority. */
+  ownedModel?: Readonly<{
+    credentials: OwnedModelCredentials;
+    ready(): boolean;
+    /** Synchronous server-known model evidence only; absent means text-only. */
+    acceptsImages?(model: string): boolean;
+  }>;
 }
 
 interface Usage {
@@ -104,6 +115,34 @@ async function readBody(request: IncomingMessage): Promise<Buffer> {
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   response.end(JSON.stringify(value));
+}
+
+/** The one existing model transport leaf. Both adapters supply final bytes;
+ * no caller authorization/identity header is ever forwarded upstream. */
+function requestModelUpstream(options: FreeAgentModelProxyOptions, body: string, signal: AbortSignal): Promise<Response> {
+  const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+  return (options.fetchImpl ?? fetch)(`${upstreamBase}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${options.upstreamKey}`, 'content-type': 'application/json',
+      'x-title': 'Beeline free agent', 'http-referer': 'https://usebeeline.app',
+    },
+    body, signal,
+  });
+}
+
+function modelPayload(body: Record<string, unknown>, model: string, maxOutput: number, openRouter: boolean): Record<string, unknown> {
+  return {
+    ...forwardedFields(body),
+    ...(openRouter ? {} : { messages: (body.messages as unknown[]).map(message => {
+      if (!message || typeof message !== 'object') return message;
+      const { reasoning_content: _reasoning, ...rest } = message as Record<string, unknown>;
+      return rest;
+    }) }),
+    model, max_tokens: maxOutput,
+    ...(openRouter ? { usage: { include: true } } : {}),
+    ...(body.stream === true ? { stream_options: { include_usage: true } } : {}),
+  };
 }
 
 /** A complete assistant reply, in the shape the caller asked for. */
@@ -344,6 +383,7 @@ function pause(ms: number, signal: AbortSignal): Promise<boolean> {
 export class StreamUsageReader {
   #buffer = '';
   usage: Usage | undefined;
+  done = false;
 
   push(text: string): void {
     this.#buffer += text;
@@ -353,6 +393,7 @@ export class StreamUsageReader {
       this.#buffer = this.#buffer.slice(newline + 1);
       if (line.startsWith('data:')) {
         const data = line.slice(5).trim();
+        if (data === '[DONE]') this.done = true;
         if (data && data !== '[DONE]' && data.includes('"usage"')) {
           try {
             const parsed = JSON.parse(data) as { usage?: Usage };
@@ -384,6 +425,7 @@ export async function handleFreeAgentModelRequest(
   }
   const header = request.headers.authorization;
   const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (token.startsWith('bfmc_')) return handleOwnedFreeAgentModel(request, response, token, options);
   const agent = token.startsWith('bfm_')
     ? (
         await options.database.query<{ agent_id: string; owner_id: string; model: string | null }>(
@@ -439,6 +481,179 @@ export async function handleFreeAgentModelRequest(
 
 interface ModelAgent { agent_id: string; owner_id: string; model: string | null }
 interface ModelTurn { started: Date | string; room_id: string; turn_request_id: string }
+
+class OwnedModelAllowanceRefusal extends CommandRefusalError {
+  constructor(readonly limit: 'daily' | 'lifetime' | 'budget' | 'rate') {
+    super('Owned model allowance is unavailable', limit === 'rate' ? 429 : 403);
+  }
+}
+function ownedOutcome(response: ServerResponse, receipt: OwnedModelAttemptReceipt): void {
+  if (response.destroyed || response.writableEnded) return;
+  if (response.headersSent) { response.destroy(); return; }
+  sendJson(response, 409, { error: {
+    code: receipt.state === 'unknown' ? 'owned_model_unknown' : 'owned_model_recorded',
+    message: receipt.state === 'unknown' ? 'Model request outcome is UNKNOWN; do not resubmit.' : 'Model request already has a recorded outcome; do not resubmit.',
+  }, receipt });
+}
+function waitOwned<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const stop = () => { cleanup(); reject(new Error('Owned model request ended')); };
+    const cleanup = () => signal.removeEventListener('abort', stop);
+    pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+    if (signal.aborted) stop(); else signal.addEventListener('abort', stop, { once: true });
+  });
+}
+function ownedUsage(value: Usage | undefined, limits: FreeAgentLimits): { tokens: number; usd: number } | undefined {
+  if (!value || ![value.prompt_tokens, value.completion_tokens, value.prompt_tokens_details?.cached_tokens ?? 0]
+    .every(count => Number.isSafeInteger(count) && Number(count) >= 0)) return;
+  const tokens = chargedTokens(value, limits.cachedTokenWeight);
+  const usd = typeof value.cost === 'number' && Number.isFinite(value.cost) && value.cost >= 0 ? value.cost :
+    (value.prompt_tokens! * limits.inputUsdPerMillion + value.completion_tokens! * limits.outputUsdPerMillion) / 1_000_000;
+  if (!Number.isSafeInteger(tokens) || !Number.isFinite(usd) || usd < 0) return;
+  return { tokens, usd };
+}
+
+/** Closed selected cohort at the existing endpoint. There is deliberately no
+ * latest-command lookup, timer retry, streamed-answer replay or legacy fallback.
+ * Schema/signer/claim/installed-helper negotiation must all precede ready(). */
+async function handleOwnedFreeAgentModel(request: IncomingMessage, response: ServerResponse, token: string,
+  options: FreeAgentModelProxyOptions): Promise<boolean> {
+  const selected = options.ownedModel;
+  if (!selected?.ready()) {
+    sendJson(response, 401, { error: { code: 'owned_model_unavailable', message: 'Owned model access is unavailable' } }); return true;
+  }
+  let actor: AuthenticatedOwnedModel;
+  try { actor = await selected.credentials.authenticate(options.database, token); }
+  catch {
+    sendJson(response, 401, { error: { code: 'owned_model_authority', message: 'Owned model authority is unavailable' } }); return true;
+  }
+  const id = request.headers['x-beeline-model-request'];
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+    sendJson(response, 400, { error: { message: 'Owned model request identity is required' } }); return true;
+  }
+  const binding = selected.credentials.actor(actor), limits = options.config.limits ?? DEFAULT_FREE_AGENT_LIMITS;
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse((await readBody(request)).toString('utf8')) as Record<string, unknown>;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.messages)) throw new Error('messages required');
+    // No public model-metadata network read. Initial text-only compatibility is
+    // an explicit activation gate until pinned modality evidence is supplied.
+    imageInput(body, selected.acceptsImages?.(binding.model) === true);
+  } catch {
+    sendJson(response, 400, { error: { message: 'Invalid owned model request' } }); return true;
+  }
+  const stream = body.stream === true, now = options.now?.() ?? new Date(), day = now.toISOString().slice(0, 10);
+  const requested = [body.max_tokens, body.max_completion_tokens].map(Number).filter(value => Number.isFinite(value) && value > 0);
+  const requestedOutput = requested.length ? Math.min(...requested) : undefined;
+  const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+  const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');
+  const semantic = modelPayload(body, binding.model, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION, openRouter);
+  const cacheBody = { ...forwardedFields(body), model: binding.model, upstream: upstreamBase };
+  const cacheKey = `${binding.agentId}:${day}`, estimated = promptTokenBound(body);
+  const cached = Math.min(estimated, promptCache.cached(cacheKey, cacheBody, now.getTime()));
+  const attempts = new OwnedModelAttempts(options.database, selected.credentials);
+  let admitted: Awaited<ReturnType<OwnedModelAttempts['reserve']>>;
+  try {
+    admitted = await attempts.reserve(actor, id, semantic, async tx => {
+      const config = { ...options.config, dailyTokenCap: await freeAgentTokenCapAt(tx, binding.ownerId, now, options.config) };
+      const reserved = await reserveAllowance(tx, binding.ownerId, now, config,
+        estimated - cached + Math.ceil(cached * limits.cachedTokenWeight), requestedOutput, limits,
+        Buffer.byteLength(JSON.stringify(withoutImageData(forwardedFields(body))), 'utf8') + 256 + imageInput(body, true),
+        promptTextBytes(withoutImageData(forwardedFields(body))) + 256 + imageInput(body, true));
+      if ('limit' in reserved) throw new OwnedModelAllowanceRefusal(reserved.limit);
+      return { reservation: { ...reserved, day }, payload: modelPayload(body, binding.model, reserved.maxOutput, openRouter) };
+    });
+  } catch (error) {
+    if (error instanceof CommandRefusalError) sendJson(response, error.status, { error: {
+      code: error instanceof OwnedModelAllowanceRefusal ? 'owned_model_allowance' : error instanceof OwnedModelUnknownPayload ? 'owned_model_unknown' : 'owned_model_refused', message: error.message,
+    } });
+    else sendJson(response, 503, { error: { code: 'owned_model_unknown', message: 'Model request admission is uncertain; do not resubmit.' } });
+    return true;
+  }
+  if (!admitted.permit) { ownedOutcome(response, admitted.receipt); return true; }
+  const permit = admitted.permit;
+  const settle = async (tx: SqlDatabase, reservation: OwnedModelReservation, evidence: OwnedModelEvidence): Promise<void> => {
+    const tokens = evidence.kind === 'usage' ? evidence.tokens : 0, usd = evidence.kind === 'usage' ? evidence.usd : 0;
+    await adjustUsage(tx, binding.ownerId, reservation.day, tokens - reservation.reserved, -reservation.credit);
+    await tx.query(`UPDATE free_agent_budget SET usd=GREATEST(0,usd+$2) WHERE day=$1::date`, [reservation.day, usd - reservation.reservedUsd]);
+    await recordFreeAgentEvent(tx, binding.agentId, 'model_usage', { day: reservation.day, tokens, usd, modelRequestId: id });
+  };
+  const abort = new AbortController(), close = () => abort.abort();
+  response.once('close', close);
+  const deadline = Math.min(binding.expiresMs, Date.now() + limits.maxTurnMs);
+  const timer = setTimeout(close, Math.max(0, deadline - Date.now()));
+  let release: (() => void) | undefined;
+  const knownNonentry = async (reason: 'authority' | 'queue' | 'cancelled' | 'deadline') => {
+    try { ownedOutcome(response, await attempts.refuseBeforeHandoff(permit, reason, settle)); }
+    catch { ownedOutcome(response, admitted.receipt); }
+  };
+  try {
+    release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal, deadline);
+    if (!release || abort.signal.aborted || Date.now() >= deadline) {
+      await knownNonentry(abort.signal.aborted ? 'cancelled' : 'deadline'); return true;
+    }
+    let started: { state: 'started'; completion: Promise<Response> } | { state: 'unknown'; completion?: Promise<Response> };
+    try { started = await attempts.handoff(permit, bytes => {
+      if (abort.signal.aborted || Date.now() >= deadline) throw new Error('Owned model deadline ended before handoff');
+      return requestModelUpstream(options, bytes, abort.signal);
+    }); }
+    catch { await knownNonentry('authority'); return true; }
+    if (started.state === 'unknown') {
+      abort.abort();
+      void started.completion?.then(upstream => upstream.body?.cancel()).catch(() => {});
+      ownedOutcome(response, admitted.receipt); return true;
+    }
+    let upstream: Response;
+    void started.completion.then(result => {
+      if (abort.signal.aborted) void result.body?.cancel().catch(() => {});
+    }).catch(() => {});
+    try { upstream = await waitOwned(started.completion, abort.signal); }
+    catch { ownedOutcome(response, admitted.receipt); return true; }
+    if (!upstream.ok) {
+      void upstream.body?.cancel().catch(() => {});
+      if ([400, 401, 402, 403, 404, 413, 422, 429].includes(upstream.status)) {
+        try { ownedOutcome(response, await attempts.refuseFromProvider(actor, id, upstream.status, settle)); }
+        catch { ownedOutcome(response, admitted.receipt); }
+      } else ownedOutcome(response, admitted.receipt);
+      return true;
+    }
+    if (!upstream.body) { ownedOutcome(response, admitted.receipt); return true; }
+    const reader = upstream.body.getReader(), decoder = new TextDecoder(), usage = new StreamUsageReader();
+    let whole = '', bytes = 0, complete = false, reported: Usage | undefined;
+    response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' });
+    try {
+      for (;;) {
+        const next = await waitOwned(reader.read(), abort.signal); if (next.done) { complete = true; break; }
+        bytes += next.value.byteLength; if (bytes > MAX_REQUEST_BYTES) throw new Error('Owned model response exceeds capacity');
+        const text = decoder.decode(next.value, { stream: true });
+        if (stream) usage.push(text); else whole += text;
+        response.write(next.value);
+      }
+      if (stream) { reported = usage.usage; complete &&= usage.done; }
+      else {
+        const result = JSON.parse(whole) as { usage?: Usage; choices?: unknown };
+        reported = result.usage; complete &&= Array.isArray(result.choices);
+      }
+    } catch { complete = false; }
+    finally { if (!complete) { abort.abort(); void reader.cancel().catch(() => {}); } reader.releaseLock(); }
+    const observed = ownedUsage(reported ?? usage.usage, limits);
+    // Only complete terminal evidence can release any of this reservation.
+    // A usage object before a lost delimiter does not prove final billing.
+    if (observed && complete && !abort.signal.aborted) {
+      try {
+        await attempts.settleUsage(actor, id, observed, 'succeeded', settle);
+        promptCache.observe(cacheKey, cacheBody, Math.min(Math.max(0, Number((reported ?? usage.usage)?.prompt_tokens) || 0),
+          Math.max(0, Number((reported ?? usage.usage)?.prompt_tokens_details?.cached_tokens) || 0)), now.getTime());
+      } catch { complete = false; }
+    }
+    // Even a clean stream without valid usage leaves conservative UNKNOWN and
+    // its original reservation. A lost answer is never reconstructed/replayed.
+    if (!complete) response.destroy(); else response.end();
+    return true;
+  } finally {
+    clearTimeout(timer); response.removeListener('close', close); release?.();
+  }
+}
 
 async function executeFreeAgentModel(response: ServerResponse, body: Record<string, unknown>,
   agent: ModelAgent, turn: ModelTurn, options: FreeAgentModelProxyOptions, signal?: AbortSignal): Promise<boolean> {
@@ -509,25 +724,7 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     }).catch(error => console.error('[free-agents] usage charge or warning failed', error));
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');
-  const upstreamBody = {
-    ...forwardedFields(body),
-    // Strict OpenAI-compatible hosts refuse the reasoning a harness replays.
-    ...(openRouter
-      ? {}
-      : {
-          messages: (body.messages as unknown[]).map((message) => {
-            if (!message || typeof message !== 'object') return message;
-            const { reasoning_content: _reasoning, ...rest } = message as Record<string, unknown>;
-            return rest;
-          }),
-        }),
-    model: options.config.model,
-    // The reservation bounds the reply; a larger client bound is dropped.
-    max_tokens: reservation.maxOutput,
-    // OpenRouter's own usage flag; other OpenAI-compatible hosts refuse it.
-    ...(openRouter ? { usage: { include: true } } : {}),
-    ...(stream ? { stream_options: { include_usage: true } } : {}),
-  };
+  const upstreamBody = modelPayload(body, options.config.model, reservation.maxOutput, openRouter);
   const abort = new AbortController();
   response.on('close', () => abort.abort());
   signal?.addEventListener('abort', () => abort.abort(), { once: true });
@@ -539,20 +736,7 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     let retryUntil: number | undefined;
     for (;;) {
       try {
-        upstream = await (options.fetchImpl ?? fetch)(
-          `${upstreamBase}/chat/completions`,
-          {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${options.upstreamKey}`,
-              'content-type': 'application/json',
-              'x-title': 'Beeline free agent',
-              'http-referer': 'https://usebeeline.app',
-            },
-            body: JSON.stringify(upstreamBody),
-            signal: abort.signal,
-          },
-        );
+        upstream = await requestModelUpstream(options, JSON.stringify(upstreamBody), abort.signal);
       } catch (error) {
         await settle(0, 0);
         if (!response.headersSent)

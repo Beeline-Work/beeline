@@ -99,6 +99,11 @@
       "import": "./dist/media-metadata.js",
       "default": "./dist/media-metadata.js"
     },
+    "./helper-model": {
+      "types": "./dist/helper-model.d.ts",
+      "import": "./dist/helper-model.js",
+      "default": "./dist/helper-model.js"
+    },
     "./helper-overlay": {
       "types": "./dist/helper-overlay.d.ts",
       "import": "./dist/helper-overlay.js",

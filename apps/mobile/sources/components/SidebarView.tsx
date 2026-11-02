@@ -258,6 +258,7 @@ export const SidebarView = React.memo(function SidebarView() {
     const stop = mobileSurfaceCache.subscribe(address, () => {
       const cached = mobileSurfaceCache.peek(address, isWorkspaceListView);
       if (!cancelled) {
+        if (cached) setNavigationError(null);
         setViewerIdentity(cached?.viewer ?? null);
         setWorkspaces(cached?.workspaces ?? []);
       }
@@ -267,6 +268,7 @@ export const SidebarView = React.memo(function SidebarView() {
     if (!pathname.startsWith('/beeline/channels'))
       void mobileSurfaceCache.fetch(address, isWorkspaceListView, () => client.workspaces()).then((list) => {
       if (cancelled || !list) return;
+      setNavigationError(null);
       const selected = workspaceIdRef.current;
       if (selected && !list.workspaces.some((workspace) => workspace.id === selected)) {
         const nextId = list.workspaces[0]?.id ?? null;

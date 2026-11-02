@@ -15,7 +15,7 @@ RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_a
   && rm -f /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* \
   && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" -o /usr/local/bin/cloudflared \
   && chmod 755 /usr/local/bin/cloudflared
-COPY infra/free-agent/hosted-services.sh /opt/beeline/
+COPY infra/free-agent/hosted-services.sh infra/free-agent/reconcile-broker-marker.mjs /opt/beeline/
 ARG SQUIRE_VERSION=1.1.39
 RUN npm install --prefix /opt/beeline/squire --omit=dev --no-audit --no-fund "@trusty-squire/mcp@${SQUIRE_VERSION}" \
   && npm cache clean --force

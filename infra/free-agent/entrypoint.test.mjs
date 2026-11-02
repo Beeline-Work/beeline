@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import './reconcile-broker-marker.test.mjs';
 
 test('a failed hosted service manager stops boot before the helper or installer runs', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-hosted-services-'));

@@ -7976,14 +7976,20 @@ export class PhoneService {
         connectorId: squireMachineAddress(offer.machine_id) };
     }
     const paired = await this.database.transaction(async (database) => {
+      await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`connector-offer:${offer.room_id}:${connectorType}`]);
+      if (offer.status === 'failed' && (await database.query(`SELECT 1 FROM connector_offers
+        WHERE room_id=$1 AND connector_type=$2 AND id::text<>$3 AND status IN ('pending','connecting')`,
+        [offer.room_id, connectorType, input.offerId])).rowCount)
+        throw new Error('connector offer conflict: use the newer connection card');
       const updated = await database.query<{ accepted_at: Date }>(
         `UPDATE connector_offers SET status='connecting',accepted_by=$2,
-             accepted_at=COALESCE(accepted_at,now())
-         WHERE id::text=$1 AND status='pending' RETURNING accepted_at`,
+             accepted_at=now()
+         WHERE id::text=$1 AND status IN ('pending','failed') RETURNING accepted_at`,
         [input.offerId, viewerId],
       );
       const acceptedAt = updated.rows[0]?.accepted_at ?? offer.accepted_at;
-      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting'))
+      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting' && offer.status !== 'failed'))
         throw new Error('connector offer conflict: already accepted');
       const pairing = await this.armConnectorPairing(database, {
         workspaceId: offer.workspace_id,
@@ -8094,7 +8100,7 @@ export class PhoneService {
         [input.roomId, input.offerId],
       )
     ).rows[0];
-    if (!card || !['pending', 'connecting'].includes(card.card.status)) return;
+    if (!card || !['pending', 'connecting', 'failed'].includes(card.card.status)) return;
     const connecting: ConnectorOfferCardView = {
       ...card.card,
       status: 'connecting',

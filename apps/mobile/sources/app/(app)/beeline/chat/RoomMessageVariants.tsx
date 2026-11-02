@@ -339,16 +339,17 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
   const agentName = agent ? display.name : offer.agent.name;
   const pending = offer.status === 'pending';
+  const failed = offer.status === 'failed';
   const connecting = offer.status === 'connecting';
   const canAccept =
     !viewerIsAgent &&
     (viewerPubkey === offer.addressee.pubkey || viewerCanManage);
   const busy = actionId === offer.offerId;
   const actions: TranscriptCardAction[] =
-    pending && canAccept
+    (pending || failed) && canAccept
       ? [
           {
-            label: offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
+            label: failed ? 'Retry' : offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
             primary: true,
             disabled: actionId !== null,
             loading: busy,
@@ -397,7 +398,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             ? canAccept
               ? undefined
               : connectorOfferWaitingLine(offer)
-            : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
+            : failed ? 'Connection failed. Retry to continue.' : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
       }
       footerNoteTestID={
         connecting

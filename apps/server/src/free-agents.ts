@@ -1,14 +1,16 @@
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
+import { FlyApiError } from './fly-machines.js';
 import type { LiveHub } from './live.js';
 import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { joinRooms } from './membership-join.js';
 import { captureServerError } from './sentry.js';
-import { systemLine } from './system-line.js';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { createStarterOnboardingRun } from './starter-onboarding-run.js';
 
@@ -605,7 +607,22 @@ export class FreeAgentService {
     const owned = (await database.query<{ count: number }>(
       `SELECT count(*)::int count FROM free_agents WHERE owner_id=$1`, [input.creatorId],
     )).rows[0]?.count ?? 0;
-    if (owned + 2 > this.config.maxPerOwner) return undefined;
+    if (owned + 2 > this.config.maxPerOwner) {
+      const existing = (await database.query<{ name: string; workspace_name: string }>(
+        `SELECT identity.name,workspace.name workspace_name FROM free_agents free
+         JOIN identities identity ON identity.id=free.agent_id
+         JOIN workspaces workspace ON workspace.id=free.workspace_id
+         WHERE free.owner_id=$1 AND free.removed_at IS NULL ORDER BY free.created_at,free.agent_id`,
+        [input.creatorId],
+      )).rows;
+      await ensureSystemIdentity(database);
+      await systemLine(database, { roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,
+        subject: { kind: 'system', name: 'Your starter agents' },
+        verb: existing.length ? 'are already in' : 'could not be added',
+        ...(existing.length ? { object: existing.map(agent => `${agent.name} in ${agent.workspace_name}`).join(', ') } : {}),
+        consequence: 'Your account has reached its free-agent limit' });
+      return undefined;
+    }
     const beebee = await createFreeAgentInWorkspace(database, this.config, { ...input, silent: true, team: true });
     const luna = await createFreeAgentInWorkspace(database, {
       ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
@@ -761,7 +778,7 @@ export class FreeAgentService {
     }
     const claimed = decision.claimed;
     try {
-      await this.machines.start(claimed.fly_machine_id);
+      await this.machines.start(claimed.fly_machine_id, this.config.image);
       await recordFreeAgentEvent(this.database, agentId, 'machine_started', {
         machineId: claimed.fly_machine_id,
       });
@@ -777,7 +794,7 @@ export class FreeAgentService {
         return this.provision(agentId);
       }
       // `started` already, or mid-transition: the sweep retries after the fence.
-      if (state !== 'started') throw error;
+      if (state !== 'started' || (error instanceof FlyApiError && error.operation !== 'start')) throw error;
     }
     return true;
   }

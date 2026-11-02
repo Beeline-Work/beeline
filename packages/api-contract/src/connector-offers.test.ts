@@ -24,7 +24,7 @@ describe('connector offers (R5)', () => {
     expect(isOfferableConnectorKind('wallet')).toBe(true);
     expect(isOfferableConnectorKind('tailscale')).toBe(true);
     expect(isOfferableConnectorKind('nonsense')).toBe(false);
-    expect([...CONNECTOR_OFFER_STATUSES]).toEqual(['pending', 'connecting', 'accepted', 'denied']);
+    expect([...CONNECTOR_OFFER_STATUSES]).toEqual(['pending', 'connecting', 'accepted', 'denied', 'failed']);
     expect(CONNECTOR_OFFER_WINDOW_MS).toBe(2 * 60_000);
   });
 

@@ -646,6 +646,10 @@ describe('free starter agents', () => {
     await createWorkspace('Three');
     const { id } = await createWorkspace('Four');
     expect((await db.query(`SELECT 1 FROM free_agents WHERE workspace_id=$1`, [id])).rowCount).toBe(0);
+    const notice = (await db.query<{ text: string }>(`SELECT text FROM messages message JOIN rooms room ON room.id=message.room_id
+      WHERE room.workspace_id=$1 AND message.presentation='system'`, [id])).rows;
+    expect(notice.some(line => line.text.includes('Your starter agents are already in') &&
+      line.text.includes('Once') && line.text.includes('free-agent limit'))).toBe(true);
     expect(
       (await db.query(`SELECT 1 FROM free_agents WHERE owner_id=$1`, [OWNER])).rowCount,
     ).toBe(2);

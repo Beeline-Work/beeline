@@ -4,6 +4,13 @@ import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+
+/** Archival writers take lifecycle first, then authority before command or
+ * Room/member locks. Acquiring only at the archival trigger is too late. */
+export async function lockCornerArchivalAuthority(database: SqlDatabase): Promise<void> {
+  await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
+}
 
 /**
  * Cancels every pending or claimed input/resume/restart command for a corner, and any
@@ -14,6 +21,7 @@ import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
  * command output already holds its command when dispatch locks rooms FOR SHARE.
  */
 export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId: string): Promise<void> {
+  await lockCornerArchivalAuthority(database);
   const active = await database.query<CommandRow>(
     `SELECT * FROM agent_commands
      WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')
@@ -111,6 +119,7 @@ export async function closeCornerPullRequestBestEffort(
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {
   await lockCornerLifecycle(database, cornerId);
+  await lockCornerArchivalAuthority(database);
   const corner = (
     await database.query<{ parent_id: string; name: string }>(
       `SELECT parent_id,name FROM rooms

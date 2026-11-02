@@ -72,6 +72,7 @@ import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-
 import { backfillRegistryApps } from './app-connections.js';
 import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
 import { CHOICE_EXPIRY_SCHEMA } from './choice-expiry-schema.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
@@ -252,7 +253,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 59;
+export const REQUIRED_SCHEMA_VERSION = 60;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3358,6 +3359,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('turn ownership schema', TURN_OWNERSHIP_SCHEMA);
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);

@@ -1,3 +1,4 @@
+import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { buildRouterSnapshot } from './router-projections.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
@@ -259,7 +260,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState, lockCornerArchivalAuthority } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -1526,7 +1527,7 @@ export class PhoneService {
        JOIN rooms r ON r.id=o.room_id AND r.parent_id IS NOT NULL
        JOIN agent_turns t ON t.room_id=o.room_id AND t.request_id=o.turn_id AND t.agent_id=o.agent_id
        WHERE o.room_id=$1 AND o.kind='draft'
-         AND t.status='working' AND t.created_at>now()-interval '90 seconds'
+         AND t.status='working' AND ${workingTurnFreshSql('t')}
        ORDER BY o.updated_at`,
       [roomId],
     );
@@ -6245,6 +6246,7 @@ export class PhoneService {
   private async requestCornerClose(roomId: string, viewerId: string, locked?: boolean) {
     const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, roomId);
+      if (locked === undefined) await lockCornerArchivalAuthority(database);
       const access = await database.query<{ workspace_role: string }>(
         `SELECT workspace_member.role workspace_role FROM memberships room_member
          JOIN rooms room ON room_member.room_id=COALESCE(room.parent_id,room.id)
@@ -8374,9 +8376,6 @@ export class PhoneService {
     );
     if (machinesLeft.rowCount) throw new Error('Agent machines are still stopping; try again shortly');
     await this.database.transaction(async (database) => {
-      await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
-      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount)
-        return;
       const owned = await database.query<{ agent_id: string }>(
         `SELECT agent_id FROM agents WHERE owner_id=$1
          UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`,
@@ -8384,6 +8383,28 @@ export class PhoneService {
       );
       // Everything erased by this deletion: the person and each agent it owned.
       const gone = [viewerId, ...owned.rows.map((row) => row.agent_id)];
+      const plannedCorners = await database.query<{id:string}>(
+        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
+           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1)) ORDER BY id`, [gone]);
+      for (const corner of plannedCorners.rows) await lockCornerLifecycle(database, corner.id);
+      await lockCornerArchivalAuthority(database);
+      // Discovery takes no row locks. A newly acquired agent/corner changes
+      // the deletion scope and requires a new explicit attempt, rather than
+      // taking another lifecycle lock while holding authority in reverse order.
+      const currentOwned = await database.query<{agent_id:string}>(
+        `SELECT agent_id FROM agents WHERE owner_id=$1
+         UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`, [viewerId]);
+      const plannedAgents = new Set(owned.rows.map(row => row.agent_id));
+      if (currentOwned.rows.length !== plannedAgents.size || currentOwned.rows.some(row => !plannedAgents.has(row.agent_id)))
+        throw new Error('Account changed while deletion was being prepared; try again');
+      const closingCorners = await database.query<{ id: string }>(
+        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
+           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1)) ORDER BY id FOR KEY SHARE`, [gone]);
+      const plannedIds = new Set(plannedCorners.rows.map(row => row.id));
+      if (closingCorners.rows.some(row => !plannedIds.has(row.id)))
+        throw new Error('Account changed while deletion was being prepared; try again');
+      await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
+      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount) return;
 
       // The agents are removed, not re-owned: tokens, schedules and grants die
       // with them, and their corners archive as removeAgent archives them.
@@ -8397,14 +8418,8 @@ export class PhoneService {
       await database.query(`UPDATE agent_grants SET decided_by=NULL WHERE decided_by=ANY($1)`, [
         gone,
       ]);
-      const closingCorners = await database.query<{ id: string }>(
-        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))
-         ORDER BY id FOR KEY SHARE`,
-        [gone],
-      );
-      // Each corner closes exactly as a human close does: its workflow run,
-      // wake sources and corner state end with the archival.
+      // Lifecycle scope and authority were locked before any erasure above.
+      // Preserve the common close path, including workflow and wake cleanup.
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,

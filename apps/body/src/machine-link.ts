@@ -1,6 +1,7 @@
 import { HelperUsageChannel } from './helper-usage-channel.js';
 import { HelperActivationChannel } from './helper-activation-channel.js';
 import { HelperOverlayChannel } from './helper-overlay-channel.js';
+import { HelperTurnChannel } from './helper-turn-channel.js';
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
 import { unknownServerEventLogger } from './unknown-server-event.js';
@@ -28,6 +29,7 @@ export interface AgentChannelHandlers {
  * can drop or refuse one agent without touching the others.
  */
 export class AgentChannel {
+  readonly turn = new HelperTurnChannel(frame => this.send(frame), () => this.isOpen());
   readonly activation=new HelperActivationChannel(frame=>this.send(frame),()=>this.activationScope()!==undefined);
   #activationSource:{connectionId:string;epoch:number}|undefined;
   activationContextSelected=false;
@@ -51,6 +53,9 @@ export class AgentChannel {
   #replacementSpent = false;
   #registrations = 0;
   #intakeHeartbeat = false;
+  /** Current-server correlation is required before accepting initial data. */
+  initialSnapshotsV1 = false;
+  #initialRecoveryPending = false;
   #intakeDeadline: ReturnType<typeof setTimeout> | undefined;
   readonly #openListeners = new Set<() => void>();
 
@@ -85,6 +90,7 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
     this.usage.suspend();
@@ -93,6 +99,9 @@ export class AgentChannel {
     if (this.#registered) this.send({ type: 'unregister' });
     this.#registered = false;
     this.#pending = false;
+    this.#initialRecoveryPending = false;
+    this.initialSnapshotsV1 = false;
+    this.#recovered = false;
     this.machine.unwant(this);
   }
 
@@ -119,16 +128,28 @@ export class AgentChannel {
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true, turnOwnershipV1:true,
     }))) this.#pending = false;
   }
 
   /** @internal Routed by the machine link. */
   receive(event: Record<string, unknown>): void {
     if (event.type === 'registered') {
+      const pending = this.#pending;
       this.#pending = false;
       if (!this.#wanted || this.#registered) return;
+      // A registration completing after its deadline cannot resurrect its owner.
+      if (!pending) {
+        this.machine.link.send(JSON.stringify({ type: 'unregister', agentId: this.agentId }));
+        return;
+      }
       this.#registered = true;
+      this.initialSnapshotsV1 = (event.capabilities as {initialSnapshotsV1?:unknown}|undefined)?.initialSnapshotsV1 === true;
+      const turnCapabilities = event.capabilities as { turnOwnershipV1?: unknown; turnConnectionId?: unknown; turnConnectionEpoch?: unknown } | undefined;
+      this.turn.negotiate(turnCapabilities?.turnOwnershipV1 === true && typeof turnCapabilities.turnConnectionId === 'string' &&
+        Number.isSafeInteger(turnCapabilities.turnConnectionEpoch) && Number(turnCapabilities.turnConnectionEpoch) > 0
+        ? { connectionId: turnCapabilities.turnConnectionId, epoch: Number(turnCapabilities.turnConnectionEpoch) } : undefined,
+        turnCapabilities?.turnOwnershipV1 === true);
       const activationCapabilities=event.capabilities as {activationContextV1?:unknown;activationConnectionId?:unknown;activationConnectionEpoch?:unknown}|undefined;
       if(activationCapabilities?.activationContextV1===true)this.activationContextSelected=true;
       this.#activationSource=activationCapabilities?.activationContextV1===true&&typeof activationCapabilities.activationConnectionId==='string'&&
@@ -158,7 +179,7 @@ export class AgentChannel {
       return;
     }
     if (event.type === 'intake-ready') {
-      if (this.#registered && this.#intakeHeartbeat) this.#armIntakeDeadline();
+      if (this.#registered && this.#intakeHeartbeat && !this.#initialRecoveryPending) this.#armIntakeDeadline();
       return;
     }
     if (event.type === 'register-refused') {
@@ -185,12 +206,13 @@ export class AgentChannel {
       if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
-    if(this.#registered&&(this.overlay.receive(event)||this.usage.receive(event)||this.activation.receive(event)))return;
+    if(this.#registered&&(this.turn.receive(event)||this.overlay.receive(event)||this.usage.receive(event)||this.activation.receive(event)))return;
     if (this.#registered) this.handlers.onMessage(event);
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
     this.usage.suspend();
@@ -198,6 +220,9 @@ export class AgentChannel {
     this.#clearIntakeDeadline();
     this.#pending = false;
     if (this.#registered) this.#ended();
+    this.#initialRecoveryPending = false;
+    this.initialSnapshotsV1 = false;
+    this.#recovered = false;
   }
 
   /** @internal Machine-wide frames (release notices, force-update). */
@@ -225,17 +250,23 @@ export class AgentChannel {
       // A missing registration/intake acknowledgement is not an independent
       // recovery boundary and cannot reopen the machine repeatedly.
       this.#pending = false;
-      if(this.#registered) this.#ended();
+      if(this.#registered) {
+        this.send({ type: 'unregister' });
+        this.#ended();
+      }
     }, this.machine.intakeTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs);
     this.#intakeDeadline.unref?.();
   }
 
   #ended(): void {
+    this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
     this.usage.suspend();
     this.overlay.suspend();
     this.#registered = false;
+    this.initialSnapshotsV1 = false;
+    this.#initialRecoveryPending = false;
     this.#clearIntakeDeadline();
     this.#recovered = false;
     this.handlers.onClose();
@@ -244,8 +275,18 @@ export class AgentChannel {
   /** Authentication plus current demanded-lane acknowledgements. */
   recovered(): void {
     if(!this.isOpen() || this.#recovered)return;
+    this.#initialRecoveryPending=false;
+    this.#clearIntakeDeadline();
+    if(this.#intakeHeartbeat)this.#armIntakeDeadline();
     this.#recovered=true;this.#replacementSpent=false;
     this.machine.recovered();
+  }
+  /** One admission deadline for initial demanded data; controls cannot renew it. */
+  awaitInitialRecovery(): void {
+    if(!this.isOpen() || this.#initialRecoveryPending)return;
+    this.#initialRecoveryPending=true;
+    this.#recovered=false;
+    this.#armIntakeDeadline();
   }
   get recoveryComplete(): boolean {return this.#recovered;}
 

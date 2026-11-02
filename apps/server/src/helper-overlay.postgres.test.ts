@@ -1,3 +1,4 @@
+import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
@@ -35,8 +36,8 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
         CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
         CREATE TABLE room_push_views(room_id uuid,identity_id text,session_id text,instance_id text,expires_at timestamptz);
         CREATE TABLE live_server_instances(instance_id text,renewed_at timestamptz);
-        CREATE TABLE agent_connections(agent_id text,connection_id text,epoch bigint,released_at timestamptz);
-        CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,generation_id text,state text,created_at timestamptz DEFAULT now());
+        CREATE TABLE agent_connections(agent_id text,connection_id text,epoch bigint,released_at timestamptz,instance_id text);
+        CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,generation_id text,state text,created_at timestamptz DEFAULT now(),lease_expires_at timestamptz);
         CREATE TABLE agent_turns(room_id uuid,agent_id text,request_id text,generation_id text,status text);
         CREATE TABLE live_outputs(room_id uuid,agent_id text,turn_id text,kind text,body jsonb,updated_at timestamptz DEFAULT now(),PRIMARY KEY(room_id,agent_id,turn_id,kind));
         CREATE TABLE registry_mcp_oauth_attempts(state text,connector_id text,expires_at timestamptz,code text);`);
@@ -44,12 +45,14 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
       // trigger on the one table this isolated fixture exercises.
       await writer.query(POSTGRES_LIVE_SCHEMA.split('-- Memory jobs')[0]!);
       await writer.query(`CREATE TRIGGER beeline_notify_live_live_outputs AFTER INSERT OR UPDATE OR DELETE ON live_outputs FOR EACH ROW EXECUTE FUNCTION beeline_notify_live()`);
-      await writer.query(HELPER_OVERLAY_SCHEMA);
+      await writer.query(TURN_OWNERSHIP_SCHEMA);
+    await writer.query(HELPER_OVERLAY_SCHEMA);
       await writer.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
       await writer.query(`INSERT INTO room_access VALUES($1,'agent',NULL),($1,'reader',NULL)`,[room]);
       await writer.query(`INSERT INTO memberships VALUES($1,NULL,'agent','member',NULL),($1,NULL,'reader','member',NULL)`,[workspace]);
       await writer.query(`INSERT INTO room_push_views VALUES($1,'reader','phone-on-reader-instance',NULL,NULL)`,[room]);
-      await writer.query(`INSERT INTO agent_connections VALUES('agent','connection',1,NULL);
+      await writer.query(`INSERT INTO live_server_instances VALUES('owner-server',clock_timestamp());
+      INSERT INTO agent_connections VALUES('agent','connection',1,NULL,'owner-server');
         INSERT INTO agent_turns VALUES('${room}','agent','turn','generation','working');
         INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,generation_id,state) VALUES('command','${room}','agent','turn','input','generation','claimed');`);
       listening=listener.run();await ready.promise;

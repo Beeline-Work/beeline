@@ -1,3 +1,4 @@
+import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
@@ -231,7 +232,7 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
          AND ((d.command_id IS NULL AND m.deleted_at IS NULL AND m.id IS NOT NULL)
            OR (d.command_id IS NOT NULL AND command.id IS NOT NULL AND command.action IN ('input','resume')
              AND command.reason<>'mcp_call'
-             AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))))
+             AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))))
          AND EXISTS(SELECT 1 FROM room_access rm WHERE rm.room_id=d.room_id AND rm.identity_id=s.member_id AND rm.removed_at IS NULL)
          AND EXISTS(SELECT 1 FROM memberships wm WHERE wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=s.member_id AND wm.removed_at IS NULL)) deliverable
       FROM claimed d JOIN rooms_mcp_event_subscriptions s ON s.id=d.subscription_id

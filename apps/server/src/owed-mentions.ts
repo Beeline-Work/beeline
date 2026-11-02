@@ -1,3 +1,4 @@
+import { commandOwnerLiveSql, workingTurnFreshSql } from './turn-ownership.js';
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { queueMcpMentionEvents } from './rooms-mcp-events.js';
@@ -66,11 +67,11 @@ export async function retryOwedMentions(db: SqlDatabase, now = new Date()): Prom
         AND EXISTS(SELECT 1 FROM effective_memberships rm WHERE rm.room_id=r.id AND rm.identity_id=mention.member_id AND rm.removed_at IS NULL)
         AND EXISTS(SELECT 1 FROM memberships wm WHERE wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=mention.member_id AND wm.removed_at IS NULL)
         AND NOT EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=mention.member_id AND c.source_message_id=mention.message_id
-          AND c.state='claimed' AND c.lease_expires_at>now())
+          AND c.state='claimed' AND ${commandOwnerLiveSql('c')})
         AND NOT EXISTS(SELECT 1 FROM agent_turns t JOIN agent_commands c
           ON c.agent_id=t.agent_id AND c.room_id=t.room_id AND c.turn_request_id=t.request_id
           WHERE c.agent_id=mention.member_id AND c.source_message_id=mention.message_id
-            AND t.status='working' AND t.created_at>now()-interval '90 seconds')
+            AND t.status='working' AND ${workingTurnFreshSql('t')})
       ORDER BY mention.created_at,mention.seq LIMIT 100 FOR UPDATE OF mention SKIP LOCKED`, [now])).rows;
     for (const row of due) {
       const attempt = row.rewakes + 1;
@@ -84,7 +85,7 @@ export async function retryOwedMentions(db: SqlDatabase, now = new Date()): Prom
       }
       // The command still names the original message and keeps its authority/provenance.
       await tx.query(`UPDATE agent_commands SET state='pending',completed_at=NULL,claimed_at=NULL,
-        lease_expires_at=NULL,generation_id=NULL,result_message_id=NULL,turn_request_id=$3
+        lease_expires_at=NULL,generation_id=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL,result_message_id=NULL,turn_request_id=$3
         WHERE agent_id=$1 AND source_message_id=$2 AND action='input' AND state='complete'`,
       [row.member_id, row.message_id, createHash('sha256').update(`mention:${row.member_id}:${row.message_id}:retry:${attempt}`).digest('hex')]);
       await tx.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,

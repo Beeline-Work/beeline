@@ -1,4 +1,5 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
@@ -626,7 +627,7 @@ async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): P
        SELECT command.id FROM agent_commands command
        JOIN messages message ON message.id=command.source_message_id
        WHERE command.room_id=$1 AND message.card->>'runId'=$2
-         AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
+         AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
        FOR UPDATE OF command SKIP LOCKED
      ), cancelled AS (
        UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='workflow_attempt_advanced'

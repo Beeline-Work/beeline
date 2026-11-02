@@ -1,4 +1,5 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { commandOwnerExpiredBeforeSql, commandOwnerExpiredSql } from './turn-ownership.js';
 import { reportToCommander } from './commander.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import type { CommandRow } from './agent-command.js';
@@ -26,7 +27,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { reassignFailedWorkflowRole } from './workflow-runs.js';
-import { reassignFailedCornerReviewer } from './corner-lifecycle.js';
+import { lockCornerLifecycle, reassignFailedCornerReviewer } from './corner-lifecycle.js';
 import { reportAgentFeedback } from './feedback.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
@@ -84,7 +85,7 @@ export function turnSilenceLockKey(roomId: string, requestId: string, agentId: s
 /**
  * A claimed command's lease already makes it reclaimable by any helper that
  * next asks for this room's commands (`claimAgentCommand` allows it the
- * moment `lease_expires_at<=now()`), but nothing ever asks again for a room
+ * moment `${commandOwnerExpiredSql(undefined)}`), but nothing ever asks again for a room
  * or corner whose live loop stopped watching it. Two paths that would
  * otherwise notice miss it entirely: an agent-to-agent dispatch
  * (`agent_tag`, `subscribed_event`) has no human-authored source message
@@ -118,35 +119,34 @@ export async function reclaimExpiredCommandLeases(
   }>(
     `SELECT id,room_id,agent_id,turn_request_id,generation_id FROM agent_commands
      WHERE state='claimed' AND action IN ('input','resume')
-       AND lease_expires_at<now()-make_interval(secs => $1::double precision/1000)
+       AND ${commandOwnerExpiredBeforeSql(undefined, 'now()-make_interval(secs => $1::double precision/1000)')}
      ORDER BY lease_expires_at LIMIT 200`,
     [graceMs],
   );
   let terminated = 0;
   for (const command of stuck.rows) {
-    await database.transaction((db) =>
-      reassignFailedWorkflowRole(db, {
-        roomId: command.room_id,
-        requestId: command.turn_request_id,
-        agentId: command.agent_id,
-      }),
-    );
-    await reassignFailedCornerReviewer(database, {
-      roomId: command.room_id,
-      requestId: command.turn_request_id,
-      agentId: command.agent_id,
-    });
     const completed = await database.transaction(async (db) => {
+      if ((await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL`, [command.room_id])).rowCount)
+        await lockCornerLifecycle(db, command.room_id);
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         turnSilenceLockKey(command.room_id, command.turn_request_id, command.agent_id),
       ]);
       const current = await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 AND state='claimed'
-        AND lease_expires_at<now() FOR UPDATE`, [command.id]);
+        AND generation_id IS NOT DISTINCT FROM $2 AND ${commandOwnerExpiredBeforeSql(undefined, 'now()')} FOR UPDATE`, [command.id, command.generation_id]);
       if (!current.rowCount) return false;
+      // The discovery cut may have raced a renewal or takeover. No role may
+      // move until the exact expired generation has won this lock.
+      await reassignFailedWorkflowRole(db, {
+        roomId: command.room_id, requestId: command.turn_request_id, agentId: command.agent_id,
+      });
+      await reassignFailedCornerReviewer(db, {
+        roomId: command.room_id, requestId: command.turn_request_id, agentId: command.agent_id,
+      });
       const result = await db.query(
         `UPDATE agent_commands SET state='complete',completed_at=now()
-         WHERE id=$1 AND state='claimed' AND lease_expires_at<now()`,
-        [command.id],
+         WHERE id=$1 AND state='claimed' AND generation_id IS NOT DISTINCT FROM $2
+           AND ${commandOwnerExpiredBeforeSql(undefined, 'now()')}`,
+        [command.id, command.generation_id],
       );
       if (!result.rowCount) return false;
       await db.query(
@@ -583,7 +583,8 @@ async function reopenCommand(
 ): Promise<boolean> {
   const updated = await database.query(
     `UPDATE agent_commands SET
-       state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,private_payload=private_payload-'reportedGenerationId',
+       state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
+       turn_owner_connection_id=NULL,turn_owner_epoch=NULL,private_payload=private_payload-'reportedGenerationId',
        completed_at=NULL,hiccup_attempts=$2,
        wake_after=CASE WHEN $4::int>0 THEN now()+make_interval(secs => $4::int) ELSE NULL END
      WHERE id=$1 AND state='claimed' AND generation_id=$3`,

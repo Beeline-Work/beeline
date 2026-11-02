@@ -1,3 +1,4 @@
+import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { flushStartupWakeBackoffs, startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { NotificationWork } from './notification-work.js';
 import type { LiveHub } from './live.js';
@@ -103,7 +104,7 @@ export async function refreshWakeDigests(
     const heads = (
       await tx.query<{ id: string; coalesced_context: string }>(
         `SELECT id,coalesced_context FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND coalesced_context IS NOT NULL
-       AND (state='pending' OR (state='claimed' AND lease_expires_at<=now())
+       AND (state='pending' OR (state='claimed' AND ${commandOwnerExpiredSql(undefined)})
          OR (state='cancelled' AND cancellation_reason IN ('workflow_attempt_expired','answered_report','source_deleted','stop')))
        ORDER BY inbox_sequence FOR UPDATE`,
         [roomId, agentId],

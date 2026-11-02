@@ -1,4 +1,5 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { commandOwnerLiveSql } from './turn-ownership.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -225,7 +226,7 @@ export async function stopCommandedTurn(
        AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
        AND command.action IN ('input','resume')
      WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
-       AND command.state='claimed' AND command.lease_expires_at>now()
+       AND command.state='claimed' AND ${commandOwnerLiveSql('command')}
        AND command.generation_id=turn.generation_id
        AND turn.generation_id NOT LIKE 'pending:%'
      ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1 FOR UPDATE OF command`,

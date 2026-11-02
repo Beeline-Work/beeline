@@ -2,7 +2,8 @@ import {
   HELPER_OVERLAY_MAX_FRAME_BYTES, appendHelperOverlay, readHelperOverlayFrame, type HelperOverlayAck,
   type HelperOverlayDemand, type HelperOverlayFrame,
 } from '@beeline/api-contract/helper-overlay';
-import { authorizeCommandOutput } from './agent-command.js';
+import { authorizeCommandOutput, type CommandRow } from './agent-command.js';
+import { assertCurrentTurnOwner, registerOwnedEffectFence } from './turn-ownership.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent } from './live.js';
@@ -84,19 +85,22 @@ export function helperOverlayEvent(body:Record<string,unknown>):HelperOverlayLiv
     turnId:metadata.turnId,kind:metadata.kind,overlayV1:metadata};
   return {type:metadata.kind,roomId:metadata.roomId,agentId:metadata.agentId,turnId:metadata.turnId,text:body.text,overlayV1:metadata};
 }
-async function currentOwner(db:SqlDatabase,metadata:HelperOverlayMetadata):Promise<boolean>{
-  const row=await db.query(`SELECT 1 FROM agent_connections WHERE agent_id=$1 AND connection_id=$2 AND epoch=$3
-    AND released_at IS NULL FOR SHARE`,[metadata.agentId,metadata.connectionId,metadata.connectionEpoch]);
-  if(!row.rowCount)return false;
+async function currentOwner(db:SqlDatabase,metadata:HelperOverlayMetadata):Promise<CommandRow|undefined>{
+  const row=await db.query(`SELECT connection.agent_id FROM agent_connections connection JOIN live_server_instances server
+    ON server.instance_id=connection.instance_id AND server.renewed_at>clock_timestamp()-interval '90 seconds'
+    WHERE connection.agent_id=$1 AND connection.connection_id=$2 AND connection.epoch=$3
+    AND connection.released_at IS NULL FOR SHARE OF connection`,[metadata.agentId,metadata.connectionId,metadata.connectionEpoch]);
+  if(!row.rowCount)return;
   const command=await authorizeCommandOutput(db,metadata.roomId,metadata.agentId,metadata.turnId,metadata.turnGeneration,
-    metadata.type==='end'||metadata.type==='retract');
-  if(command.id!==metadata.commandId)return false;
+    metadata.type==='end'||metadata.type==='retract',false);
+  if(command.id!==metadata.commandId)return;
   if((await db.query(`SELECT 1 FROM agent_commands newer JOIN agent_commands current ON current.id=$1
     WHERE newer.room_id=current.room_id AND newer.agent_id=current.agent_id AND newer.state='claimed'
-      AND (newer.created_at,newer.id)>(current.created_at,current.id)`,[command.id])).rowCount)return false;
-  return !(await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+      AND (newer.created_at,newer.id)>(current.created_at,current.id)`,[command.id])).rowCount)return;
+  if((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
     AND generation_id=$4 AND status IN ('complete','failed','cancelled')`,
-    [metadata.roomId,metadata.agentId,metadata.turnId,metadata.turnGeneration])).rowCount;
+    [metadata.roomId,metadata.agentId,metadata.turnId,metadata.turnGeneration])).rowCount)return;
+  return command;
 }
 /** Caller authenticates the agent and pins the actual machine registration.
  * Every token is still authorized against current command and Room authority. */
@@ -109,7 +113,8 @@ export async function applyHelperOverlay(db:SqlDatabase,authenticatedAgentId:str
   const metadata:HelperOverlayMetadata={...control,text:'',connectionId:owner.connectionId,connectionEpoch:owner.epoch};
   try{return await db.transaction(async tx=>{
     await tx.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
-    if(!await currentOwner(tx,metadata))return {ack:{accepted:false,reason:'stale'}};
+    const command=await currentOwner(tx,metadata);
+    if(!command)return {ack:{accepted:false,reason:'stale'}};
     if(!(await tx.query(`SELECT 1 FROM room_access access JOIN rooms room ON room.id=access.room_id
       JOIN memberships workspace ON workspace.workspace_id=room.workspace_id AND workspace.identity_id=access.identity_id
       AND workspace.room_id IS NULL AND workspace.removed_at IS NULL
@@ -136,6 +141,7 @@ export async function applyHelperOverlay(db:SqlDatabase,authenticatedAgentId:str
     const body={text,overlayV1:metadata};
     const event=helperOverlayEvent(body);
     if(!event||Buffer.byteLength(JSON.stringify(event))+256>HELPER_OVERLAY_MAX_FRAME_BYTES)return {ack:{accepted:false,reason:'unavailable'}};
+    await registerOwnedEffectFence(tx,command);
     await tx.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,$3,$4,$5::jsonb)
       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET body=EXCLUDED.body,updated_at=now()`,
       [frame.roomId,frame.agentId,frame.turnId,frame.kind,JSON.stringify(body)]);
@@ -162,6 +168,7 @@ export async function fenceHelperOverlayEnqueue(db:SqlDatabase,event:LiveEvent,e
     const current=helperOverlayMetadata(latest?.overlayV1);
     if(!current||current.runGeneration!==metadata.runGeneration||current.revision<metadata.revision||
       ((current.type==='end'||current.type==='retract')&&metadata.type!=='end'&&metadata.type!=='retract'))return;
+    await assertCurrentTurnOwner(tx,metadata.agentId,{connectionId:metadata.connectionId,epoch:metadata.connectionEpoch});
     enqueue();
   });}catch{/* A stale/unavailable overlay stays hidden. */}
 }

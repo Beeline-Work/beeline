@@ -8,7 +8,7 @@ import { scanSource, NETWORK_LIBRARIES } from './phone-network-channels.mjs';
 export const INVENTORY = 'packages/net/migration-sites.json';
 const ROOTS = ['apps/server/src', 'apps/body/src', 'apps/api/src', 'apps/auth/src', 'apps/mobile/sources', 'apps/mobile/modules',
   'apps/mobile/index.ts', 'apps/mobile/src-tauri/src', 'packages'];
-const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts', 'packages/net/src/helper-codecs.ts', 'packages/net/src/helper-activation-codecs.ts'];
+const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts', 'packages/net/src/helper-codecs.ts', 'packages/net/src/helper-activation-codecs.ts', 'packages/net/src/helper-turn-codecs.ts'];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|swift|kt|java|m|mm|rs)$/;
 const TEST = /\.(?:test|spec|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
@@ -204,6 +204,8 @@ export function inspectSource(file, text) {
         // A public barrel must never export private runtime factories, even indirectly.
         if (PUBLIC_ENTRIES.includes(file) && target?.includes('/private/'))
           errors.push(`${file}: public API exposes private owner machinery`);
+      } else if (target === '@beeline/net/helper-turn-codecs' && ['apps/body/src/helper-turn-channel.ts', 'apps/server/src/daemon-live.ts'].includes(file)) {
+        // Closed claim/receipt/ack controls belong only to the existing machine adapters.
       } else if (target === '@beeline/net/helper-activation-codecs' && ['apps/body/src/helper-activation-channel.ts', 'apps/server/src/daemon-live.ts'].includes(file)) {
         // Closed activation codec belongs only to the owned machine socket adapters.
       } else if (target === '@beeline/net/helper-codecs' && ['apps/body/src/helper-usage-channel.ts', 'apps/server/src/daemon-live.ts'].includes(file)) {

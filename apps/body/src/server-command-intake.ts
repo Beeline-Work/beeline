@@ -10,12 +10,25 @@ import { isNetworkFailure } from './live-link.js';
 
 /** Session-local output context. No transcript or sender policy enters this boundary. */
 export class CommandExecutionContext {
-  readonly generationId = randomUUID();
-  readonly path: string;
+  private generation = randomUUID();
+  private contextPath: string;
+  private ownership?: string;
+  get generationId(): string { return this.generation; }
+  get path(): string { return this.contextPath; }
   current?: AgentCommand;
   private startedAt?: number;
-  constructor(root?: string) {
-    this.path = join(root ?? tmpdir(), `beeline-command-${this.generationId}.json`);
+  constructor(private readonly root?: string) {
+    this.contextPath = join(root ?? tmpdir(), `beeline-command-${this.generationId}.json`);
+  }
+  /** A replaced owner gets a new execution generation and context file only
+   * after the old task drains. Old harness tools cannot read a new owner's file. */
+  prepareOwnership(source: import('@beeline/api-contract/helper-turn-ownership').HelperTurnOwnershipSource, commandId: string): void {
+    const owner = JSON.stringify([source, commandId]);
+    if (owner === this.ownership) return;
+    if (this.current) throw new Error('Previous turn owner has not drained');
+    this.ownership = owner;
+    this.generation = randomUUID();
+    this.contextPath = join(this.root ?? tmpdir(), `beeline-command-${this.generationId}.json`);
   }
   async enter(command: AgentCommand): Promise<void> {
     this.current = command;
@@ -59,6 +72,7 @@ export class CommandExecutionContext {
   async leave(): Promise<void> {
     this.current = undefined;
     await writeFile(this.path, '{}', { mode: 0o600 });
+    this.ownership = undefined;
   }
   bind(api: DaemonApiClient): DaemonApiClient {
     return new Proxy(api, {
@@ -247,6 +261,9 @@ export async function runServerCommandIntake(options: {
         const startingTurn = command.action !== 'restart' && command.action !== 'stop';
         if (startingTurn) options.onClaiming?.(command);
         let claimSucceeded = false;
+        const claimOwner = api.turnOwnershipScope?.();
+        if (claimOwner && startingTurn) context.prepareOwnership(claimOwner, command.id);
+        const claimedGeneration = context.generationId;
         try {
           // A lost response may already have committed this generation's claim.
           // One attempt per admitted boundary; uncertainty never starts backoff.
@@ -276,6 +293,10 @@ export async function runServerCommandIntake(options: {
               if (coalesced) command = { ...command, source: { ...command.source,
                 body: command.source.body + '\nAdditional inbox wakes in arrival order:\n' + coalesced } };
               claimSucceeded = true;
+              if (claimOwner && startingTurn) api.noteOwnedTurnClaim?.({
+                roomId, requestId: command.turnRequestId, generationId: claimedGeneration,
+              }, claimOwner, () => options.stop(command.turnRequestId));
+              else if (startingTurn) api.noteLegacyTurnClaim?.({ roomId, requestId: command.turnRequestId, generationId: claimedGeneration });
               break;
             } catch (error) {
               const retryable = error instanceof DaemonApiError
@@ -319,6 +340,7 @@ export async function runServerCommandIntake(options: {
           });
         } else {
           const release = async () => {
+            api.releaseOwnedTurn?.({ roomId, requestId: command.turnRequestId, generationId: claimedGeneration });
             context.current = undefined;
             const sawSnapshot = requeued.delete(command.id);
             // A push or reconciliation may have read pending state before our
@@ -362,7 +384,12 @@ export async function runServerCommandIntake(options: {
           }
           const configuration = configurationVersion;
           busy = Promise.resolve()
-            .then(() => options.run(command))
+            .then(() => {
+              const currentOwner = api.turnOwnershipScope?.();
+              if (claimOwner && (!currentOwner || currentOwner.connectionId !== claimOwner.connectionId || currentOwner.epoch !== claimOwner.epoch))
+                throw new Error('Turn owner changed before activation');
+              return options.run(command);
+            })
             .catch((error) => {
               parkFailure(error, configuration === configurationVersion);
               options.onError?.(error);

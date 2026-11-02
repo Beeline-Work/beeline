@@ -4,6 +4,7 @@ import { COMMAND_ACTIVATION_MAX_BYTES } from '@beeline/api-contract/helper-activ
 import type { CommandRow } from './agent-command.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import type { SqlDatabase } from './database.js';
+import { isCommandOwnerLive } from './turn-ownership.js';
 
 /** Independent gate; an old helper keeps its existing setup reads. */
 export const helperActivationEnabled=()=>process.env.BEELINE_ACTIVATION_CONTEXT_V1==='1';
@@ -15,7 +16,8 @@ function commandRevision(command:CommandRow):string{
   // digest carries no source text or grant material into persistent controls.
   return createHash('sha256').update(JSON.stringify([command.turn_request_id,command.action,command.reason,
     command.root_command_id,command.parent_command_id,command.root_source_message_id,command.source_message_id,
-    command.private_payload,command.review_context,command.wake_context,command.coalesced_context,command.coalesced_attachments])).digest('hex');
+    command.private_payload,command.review_context,command.wake_context,command.coalesced_context,command.coalesced_attachments,
+    command.turn_owner_connection_id,command.turn_owner_epoch])).digest('hex');
 }
 
 function validIdentity(input:CommandActivationInput):boolean{
@@ -76,7 +78,7 @@ export async function captureCommandActivation(database:SqlDatabase,input:Comman
     const values=await read(db,command,isCorner),capturedAt=await serverTime(db);
     const expiries=values.grants.grants.flatMap(grant=>grant.expiresAt===undefined?[]:[grant.expiresAt]);
     const validUntil=expiries.length?Math.min(...expiries):undefined;
-    if(!command.lease_expires_at||new Date(command.lease_expires_at).getTime()/1000<=capturedAt||
+    if(!(await isCommandOwnerLive(db,command.id,capturedAt))||
       validUntil!==undefined&&validUntil<=capturedAt)throw new Error('Activation authority expired');
     const snapshot:CommandActivationSnapshot={...input,v:1,capturedAt,authority:{...authority,commandRevision:commandRevision(command)},...values,...(validUntil!==undefined?{validUntil}:{})};
     assertBounded(snapshot);return snapshot;
@@ -93,7 +95,7 @@ export async function fenceCommandActivationEnqueue(database:SqlDatabase,snapsho
     if(commandRevision(command)!==snapshot.authority.commandRevision)return false;
     await currentScope(db,snapshot);
     const at=await serverTime(db);
-    if(!command.lease_expires_at||new Date(command.lease_expires_at).getTime()/1000<=at||snapshot.validUntil!==undefined&&snapshot.validUntil<=at)return false;
+    if(!(await isCommandOwnerLive(db,command.id,at))||snapshot.validUntil!==undefined&&snapshot.validUntil<=at)return false;
     assertBounded(snapshot);enqueue(snapshot);return true;
   });
 }

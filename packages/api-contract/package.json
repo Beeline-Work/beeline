@@ -118,6 +118,11 @@
       "types": "./dist/system-message-catalog.d.ts",
       "import": "./dist/system-message-catalog.js",
       "default": "./dist/system-message-catalog.js"
+    },
+    "./helper-turn-ownership": {
+      "types": "./dist/helper-turn-ownership.d.ts",
+      "import": "./dist/helper-turn-ownership.js",
+      "default": "./dist/helper-turn-ownership.js"
     }
   },
   "scripts": {

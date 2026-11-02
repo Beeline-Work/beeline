@@ -179,6 +179,15 @@ test('closed helper usage codecs are restricted to the existing machine adapters
   assert.ok(inspectSource('packages/net/src/helper-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
 });
 
+test('closed turn controls cannot escape their two existing machine adapters', () => {
+  const source = 'import { helperTurnCodecs } from "@beeline/net/helper-turn-codecs";';
+  for (const file of ['apps/body/src/helper-turn-channel.ts', 'apps/server/src/daemon-live.ts'])
+    assert.deepEqual(inspectSource(file, source).errors, []);
+  for (const file of ['apps/body/src/feature.ts', 'apps/server/src/phone-operations.ts', 'apps/mobile/sources/buzz/feature.ts'])
+    assert.ok(inspectSource(file, source).errors.length);
+  assert.ok(inspectSource('packages/net/src/helper-turn-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
+});
+
  test('closed activation codec is restricted to machine adapters', () => {
   const source = 'import { helperActivationCodecs } from "@beeline/net/helper-activation-codecs";';
   for (const file of ['apps/body/src/helper-activation-channel.ts', 'apps/server/src/daemon-live.ts'])

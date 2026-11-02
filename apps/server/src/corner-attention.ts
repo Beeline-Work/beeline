@@ -1,3 +1,4 @@
+import { commandOwnerLiveSql } from './turn-ownership.js';
 import { createHash } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -180,7 +181,7 @@ function attentionSql() {
     EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL) held,
     EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
       AND command.action='input' AND (command.state='pending' OR
-        (command.state='claimed' AND command.lease_expires_at>now()))
+        (command.state='claimed' AND ${commandOwnerLiveSql('command')}))
       AND command.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
       AND command.review_context->>'purpose' IS NULL
       AND command.agent_id IS DISTINCT FROM f.worker_agent_id) review_queued,

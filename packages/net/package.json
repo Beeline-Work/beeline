@@ -28,6 +28,11 @@
       "types": "./dist/helper-activation-codecs.d.ts",
       "import": "./dist/helper-activation-codecs.js",
       "default": "./dist/helper-activation-codecs.js"
+    },
+    "./helper-turn-codecs": {
+      "types": "./dist/helper-turn-codecs.d.ts",
+      "import": "./dist/helper-turn-codecs.js",
+      "default": "./dist/helper-turn-codecs.js"
     }
   },
   "scripts": {

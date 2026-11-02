@@ -1,3 +1,4 @@
+import { commandOwnerLiveSql } from './turn-ownership.js';
 import { freeAgentModelTakesImages, imageInput, withoutImageData } from './free-agent-image-input.js';
 import { Writable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
@@ -421,7 +422,10 @@ export async function handleFreeAgentModelRequest(
        ON turn.agent_id=command.agent_id AND turn.room_id=command.room_id
          AND turn.request_id=command.turn_request_id
        WHERE command.agent_id=$1 AND command.state='claimed'
-         AND command.action IN ('input','resume') AND command.lease_expires_at>$2
+         AND command.action IN ('input','resume') AND ${commandOwnerLiveSql('command', '$2')}
+         -- A per-agent model token does not identify a new connection's execution.
+         -- The owned cohort stays closed until this transport binds that actor.
+         AND command.turn_owner_connection_id IS NULL
          AND COALESCE(turn.started_at,command.claimed_at)>$2::timestamptz-make_interval(secs => $3::double precision / 1000)
        ORDER BY started DESC LIMIT 1`,
     [agent.agent_id, now, limits.maxTurnMs],

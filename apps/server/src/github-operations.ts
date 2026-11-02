@@ -1,5 +1,6 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
+import { commandOwnerLiveSql } from './turn-ownership.js';
 import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
@@ -24,7 +25,7 @@ import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js'
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cancelCornerAgentCommands, retryCornerPullRequestClosures } from './corner-close.js';
+import { cancelCornerAgentCommands, retryCornerPullRequestClosures, lockCornerArchivalAuthority } from './corner-close.js';
 import { captureServerError } from './sentry.js';
 import { retryMigrationStep, retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
@@ -1232,7 +1233,7 @@ export class GitHubOperations {
     if (reviewerWake.status === 'dispatched' && !gate.approved) {
       const delivery = (await this.database.query<{ ended: boolean; live: boolean }>(
         `SELECT bool_or(command.state='complete') ended,
-           bool_or(command.state='pending' OR (command.state='claimed' AND command.lease_expires_at>now())) live
+           bool_or(command.state='pending' OR (command.state='claimed' AND ${commandOwnerLiveSql('command')})) live
          FROM agent_commands command WHERE command.room_id=$1
            AND command.review_context->>'headSha'=$2 AND command.review_context->'pullRequest'=$3::jsonb
            AND command.review_context->>'purpose' IS NULL`,
@@ -3103,6 +3104,7 @@ export class GitHubOperations {
     await retryOnDeadlock(() => database.transaction(async (database) => {
       updated = false;
       await lockCornerLifecycle(database, target.corner_id);
+      await lockCornerArchivalAuthority(database);
       if (unfinishedClaimHead) {
         const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
         if (claim?.head_sha !== unfinishedClaimHead || claim.number !== expectedPrNumber) return;

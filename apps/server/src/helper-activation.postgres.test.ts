@@ -5,6 +5,7 @@ import type { CommandActivationInput } from '@beeline/api-contract/helper-activa
 import { PostgresDatabase,type SqlDatabase } from './database.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { captureCommandActivation,fenceCommandActivationEnqueue,type ActivationReader } from './helper-activation.js';
+import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname))throw new Error('Activation proofs require isolated loopback PostgreSQL');
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {resolve,promise};};
@@ -23,20 +24,22 @@ describe.skipIf(!url)('actual PostgreSQL coherent activation and authority conte
         CREATE TABLE identities(id text PRIMARY KEY,name text);
         CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid,parent_id uuid,archived_at timestamptz);
         CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
-        CREATE TABLE agent_connections(agent_id text PRIMARY KEY,connection_id text,epoch bigint,released_at timestamptz);
+        CREATE TABLE agent_connections(agent_id text PRIMARY KEY,connection_id text,epoch bigint,released_at timestamptz,instance_id text);
+        CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz);
         CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,generation_id text,state text,lease_expires_at timestamptz);
         CREATE TABLE agent_grants(id uuid PRIMARY KEY,workspace_id uuid,room_id uuid,agent_id text,app_id uuid,status text);
         CREATE TABLE workspace_apps(id uuid PRIMARY KEY,workspace_id uuid,owner_identity_id text);
         CREATE TABLE workspace_connectors(id uuid PRIMARY KEY,workspace_id uuid,owner_identity_id text);
         CREATE TABLE corner_facts(corner_id uuid);CREATE TABLE corner_brief_revisions(corner_id uuid);
         CREATE TABLE corner_merge_holds(corner_id uuid);CREATE TABLE corner_merge_approvals(corner_id uuid);CREATE TABLE free_agents(agent_id text);`);
+      await left.query(TURN_OWNERSHIP_SCHEMA);
       await left.query(HELPER_ACTIVATION_SCHEMA);
       await left.query(`INSERT INTO workspaces VALUES($1,'private')`,[workspace]);
       await left.query('INSERT INTO agents(agent_id) VALUES($1)',[agent]);
       await left.query('INSERT INTO rooms(id,workspace_id) VALUES($1,$2)',[room,workspace]);
       await left.query(`INSERT INTO memberships VALUES($1,NULL,$2,'member',NULL),($1,$3,$2,'member',NULL)`,[workspace,agent,room]);
-      await left.query(`INSERT INTO agent_connections VALUES($1,'connection',1,NULL)`,[agent]);
-      await left.query(`INSERT INTO agent_commands VALUES($1,$2,$3,'generation','claimed',now()+interval '1 day')`,[input.commandId,room,agent]);
+      await left.query(`INSERT INTO agent_connections(agent_id,connection_id,epoch,released_at) VALUES($1,'connection',1,NULL)`,[agent]);
+      await left.query(`INSERT INTO agent_commands(id,room_id,agent_id,generation_id,state,lease_expires_at) VALUES($1,$2,$3,'generation','claimed',now()+interval '1 day')`,[input.commandId,room,agent]);
       await left.query(`INSERT INTO agent_grants(id,workspace_id,room_id,agent_id,status) VALUES('33333333-3333-4333-8333-333333333333',$1,$2,$3,'approved')`,[workspace,room,agent]);
       const read:ActivationReader=async db=>{
         const fast=(await db.query<{fast_mode:boolean}>('SELECT fast_mode FROM agents WHERE agent_id=$1',[agent])).rows[0]!.fast_mode;

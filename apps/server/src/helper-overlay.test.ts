@@ -1,3 +1,4 @@
+import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
 import { appendHelperOverlay, type HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
@@ -16,16 +17,18 @@ describe('helper overlay source ownership and final enqueue',()=>{
       CREATE TABLE memberships(workspace_id uuid,room_id uuid,identity_id text,role text,removed_at timestamptz);
       CREATE TABLE room_push_views(room_id uuid,identity_id text,session_id text,instance_id text,expires_at timestamptz);
       CREATE TABLE live_server_instances(instance_id text,renewed_at timestamptz);
-      CREATE TABLE agent_connections(agent_id text,connection_id text,epoch bigint,released_at timestamptz);
-      CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,generation_id text,state text,created_at timestamptz DEFAULT now());
+      CREATE TABLE agent_connections(agent_id text,connection_id text,epoch bigint,released_at timestamptz,instance_id text);
+      CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,generation_id text,state text,created_at timestamptz DEFAULT now(),lease_expires_at timestamptz);
       CREATE TABLE agent_turns(room_id uuid,agent_id text,request_id text,generation_id text,status text);
       CREATE TABLE live_outputs(room_id uuid,agent_id text,turn_id text,kind text,body jsonb,updated_at timestamptz DEFAULT now(),PRIMARY KEY(room_id,agent_id,turn_id,kind));`);
+    await db.query(TURN_OWNERSHIP_SCHEMA);
     await db.query(HELPER_OVERLAY_SCHEMA);
     await db.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
     await db.query(`INSERT INTO room_access VALUES($1,'agent',NULL),($1,'reader',NULL)`,[room]);
     await db.query(`INSERT INTO memberships VALUES($1,NULL,'agent','member',NULL),($1,NULL,'reader','member',NULL)`,[workspace]);
     await db.query(`INSERT INTO room_push_views VALUES($1,'reader','session',NULL,NULL)`,[room]);
-    await db.query(`INSERT INTO agent_connections VALUES('agent','connection',1,NULL);
+    await db.query(`INSERT INTO live_server_instances VALUES('owner-server',clock_timestamp());
+      INSERT INTO agent_connections VALUES('agent','connection',1,NULL,'owner-server');
       INSERT INTO agent_turns VALUES('${room}','agent','turn','generation','working');
       INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,generation_id,state) VALUES('command','${room}','agent','turn','input','generation','claimed');`);
   },30000);

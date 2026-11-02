@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -385,7 +386,7 @@ export async function postRoomChoice(
     roomId: input.roomId,
     authorId: input.agentId,
     subject: identitySubject({ id: agent.id, kind: agent.kind, name: agent.name }),
-    verb: 'asked',
+    verb: systemMessage("room-choice.asked"),
     object: prompt,
     ...(constraint ? { consequence: constraint } : {}),
     presentation: 'card',
@@ -535,7 +536,7 @@ async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<
   await writeChoiceCard(database, choice.message_id, card);
   const consequence =
     tally.outcome === 'winner' && winner
-      ? `${responses.length} of ${choice.electorate.length} voted for ${winner.label}`
+      ? systemMessage("room-choice.of-voted-for", responses.length, choice.electorate.length, winner.label)
       : footer;
   if (agent.kind === 'agent') {
     await wakeChoice(database, {
@@ -543,7 +544,7 @@ async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<
       authorId: choice.agent_id,
       agentId: choice.agent_id,
       subject: agent,
-      verb: 'asked a poll',
+      verb: systemMessage("room-choice.asked-a-poll"),
       consequence,
       kind: 'poll-closed',
       card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },
@@ -560,7 +561,7 @@ async function skipOpenChoice(
 ): Promise<void> {
   const status: ChoiceStatus = 'skipped';
   const agent = await loadIdentity(database, choice.agent_id);
-  const footer = reason === 'expired' ? 'expired · no answer' : `skipped · @${handleOf(viewer)}`;
+  const footer = reason === 'expired' ? systemMessage("room-choice.expired-no-answer") : systemMessage("room-choice.skipped", handleOf(viewer));
   const updated = await database.query(
     `UPDATE room_choices SET status=$2 WHERE id=$1 AND status='open'`,
     [choice.id, status],
@@ -586,8 +587,8 @@ async function skipOpenChoice(
     authorId: viewer?.id ?? choice.agent_id,
     agentId: choice.agent_id,
     subject: viewer ?? agent,
-    verb: reason === 'expired' ? 'asked' : 'skipped',
-    ...(reason === 'expired' ? { consequence: 'expired · no answer' } : {}),
+    verb: reason === 'expired' ? systemMessage("room-choice.asked") : systemMessage("room-choice.skipped-2"),
+    ...(reason === 'expired' ? { consequence: systemMessage("room-choice.expired-no-answer") } : {}),
     kind: 'choice-skipped',
     card: { choiceId: choice.id, status, reason },
   });
@@ -595,7 +596,7 @@ async function skipOpenChoice(
 
 function handleOf(identity: IdentityRow | undefined): string {
   const handle = identity?.handle?.replace(/^@/, '');
-  return handle || identity?.name || 'someone';
+  return handle || identity?.name || systemMessage("room-choice.someone");
 }
 
 /**
@@ -697,7 +698,7 @@ export async function answerRoomChoice(
     responses,
     answeredBy: cardIdentity(viewer),
     selectedOptionId: input.optionId,
-    footer: `picked ${option.letter} · @${handleOf(viewer)}`,
+    footer: systemMessage("room-choice.picked", option.letter, handleOf(viewer)),
     note,
   });
   await writeChoiceCard(database, choice.message_id, card);
@@ -707,7 +708,7 @@ export async function answerRoomChoice(
     authorId: input.viewerId,
     agentId: choice.agent_id,
     subject: viewer,
-    verb: 'picked',
+    verb: systemMessage("room-choice.picked-2"),
     object: option.letter,
     consequence: option.label,
     kind: 'choice-answered',

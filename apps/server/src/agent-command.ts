@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
@@ -888,7 +889,7 @@ function lifecycleSubject(target: LifecycleTarget) {
   return {
     kind: 'agent' as const,
     id: target.agent_id,
-    name: target.handle ? `@${target.handle}` : target.name,
+    name: target.handle ? systemMessage("agent-command.agent-mention", target.handle) : target.name,
   };
 }
 
@@ -942,12 +943,12 @@ async function routeTaggedLifecycleCommand(
   const loginHarness = isAgentSignInHarness(target.harness) ? target.harness : undefined;
   const deniedVerb =
     action !== 'login'
-      ? `did not ${action}`
+      ? systemMessage("agent-command.did-not", action)
       : !loginHarness
-        ? 'did not sign in'
+        ? systemMessage("agent-command.did-not-sign-in")
         : agentSignInUsesKey(loginHarness)
-          ? 'did not take a new key'
-          : `did not sign in to ${AGENT_SIGN_IN_SERVICE_LABELS[loginHarness]}`;
+          ? systemMessage("agent-command.did-not-take-a-new-key")
+          : systemMessage("agent-command.did-not-sign-in-to", AGENT_SIGN_IN_SERVICE_LABELS[loginHarness]);
   const deny = async (consequence: string) => {
     await systemLine(db, {
       id: createHash('sha256')
@@ -967,12 +968,12 @@ async function routeTaggedLifecycleCommand(
     // field) once `beginAgentSignInCards` asks after this transaction commits.
     // A code or key is pasted into the card, never sent as a message.
     if (!ownsAgent) {
-      await deny('only its owner may sign it in');
+      await deny(systemMessage("agent-command.only-its-owner-may-sign-it-in"));
       return true;
     }
     const harness = loginHarness;
     if (!harness) {
-      await deny('sign-in from Beeline is not available for its harness');
+      await deny(systemMessage("agent-command.sign-in-from-beeline-is-not-available-for-its-harness"));
       return true;
     }
     await systemLine(db, {
@@ -981,9 +982,9 @@ async function routeTaggedLifecycleCommand(
       authorId: target.agent_id,
       subject: lifecycleSubject(target),
       verb: agentSignInUsesKey(harness)
-        ? 'asked for a new key'
-        : `started a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`,
-      consequence: 'its owner finishes it in this card',
+        ? systemMessage("agent-command.asked-for-a-new-key")
+        : systemMessage("agent-command.started-a-sign-in", AGENT_SIGN_IN_SERVICE_LABELS[harness]),
+      consequence: systemMessage("agent-command.its-owner-finishes-it-in-this-card"),
       afterMessageId: sourceId,
       presentation: 'card',
       cardType: 'agent-sign-in',
@@ -1035,8 +1036,8 @@ async function routeTaggedLifecycleCommand(
 
   if (action === 'help') {
     await line(
-      'supports lifecycle commands',
-      'restart · status · stop · retry · debug · help · /login',
+      systemMessage("agent-command.supports-lifecycle-commands"),
+      systemMessage("agent-command.restart-status-stop-retry-debug-help-login"),
     );
     return true;
   }
@@ -1047,24 +1048,24 @@ async function routeTaggedLifecycleCommand(
         Date.now() - target.presence_updated_at!.getTime() < 90_000));
   if (action === 'status') {
     await line(
-      online ? 'is online' : 'is offline',
-      active ? 'one turn is running' : 'no turn is running',
+      online ? systemMessage("agent-command.is-online") : systemMessage("agent-command.is-offline"),
+      active ? systemMessage("agent-command.one-turn-is-running") : systemMessage("agent-command.no-turn-is-running"),
     );
     return true;
   }
   if (action === 'debug') {
     const details = [
-      `lifecycle ${target.lifecycle_id ?? 'unknown'}`,
-      `release ${target.release_version ?? 'unknown'}`,
-      `source ${target.source_sha?.slice(0, 12) ?? 'unknown'}`,
-      active ? `turn ${active.request_id}` : 'no active turn',
+      systemMessage("agent-command.lifecycle", target.lifecycle_id ?? systemMessage("agent-command.unknown")),
+      systemMessage("agent-command.release", target.release_version ?? systemMessage("agent-command.unknown")),
+      systemMessage("agent-command.source", target.source_sha?.slice(0, 12) ?? systemMessage("agent-command.unknown")),
+      active ? systemMessage("agent-command.turn", active.request_id) : systemMessage("agent-command.no-active-turn"),
     ];
-    await line('reported diagnostics', details.join(' · '));
+    await line(systemMessage("agent-command.reported-diagnostics"), details.join(systemMessage("agent-command.separator")));
     return true;
   }
   if (action === 'stop') {
     if (!active) {
-      await line('has nothing to stop');
+      await line(systemMessage("agent-command.has-nothing-to-stop"));
       return true;
     }
     await lockAgentCommandQueue(db, source.room_id, target.agent_id);
@@ -1096,7 +1097,7 @@ async function routeTaggedLifecycleCommand(
          AND action IN ('input','resume') AND state IN ('pending','claimed')`,
       [source.room_id, target.agent_id, active.request_id],
     );
-    await line('stopped its running turn', dropped ? `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : undefined);
+    await line(systemMessage("agent-command.stopped-its-running-turn"), dropped ? systemMessage("agent-command.queued-dropped", dropped, dropped === 1 ? systemMessage("agent-command.order") : systemMessage("agent-command.orders")) : undefined);
     return true;
   }
   if (action === 'retry') {
@@ -1112,7 +1113,7 @@ async function routeTaggedLifecycleCommand(
       )
     ).rows[0];
     if (!failed) {
-      await line('has no failed turn to retry');
+      await line(systemMessage("agent-command.has-no-failed-turn-to-retry"));
       return true;
     }
     await createAgentCommand(db, {
@@ -1125,7 +1126,7 @@ async function routeTaggedLifecycleCommand(
       parent: failed,
       retainDepth: true,
     });
-    await line('queued a retry for its last failed turn');
+    await line(systemMessage("agent-command.queued-a-retry-for-its-last-failed-turn"));
     return true;
   }
 
@@ -1140,7 +1141,7 @@ async function routeTaggedLifecycleCommand(
     )
   ).rows[0];
   if (existingRestart) {
-    await line('already has a restart in progress');
+    await line(systemMessage("agent-command.already-has-a-restart-in-progress"));
     return true;
   }
   const restart = await createAgentCommand(db, {
@@ -1156,8 +1157,8 @@ async function routeTaggedLifecycleCommand(
       target.lifecycle_id,
     ]);
   await line(
-    'queued a restart',
-    active ? 'running turn will drain first' : 'helper will reconnect to confirm',
+    systemMessage("agent-command.queued-a-restart"),
+    active ? systemMessage("agent-command.running-turn-will-drain-first") : systemMessage("agent-command.helper-will-reconnect-to-confirm"),
   );
   return true;
 }
@@ -1475,7 +1476,7 @@ export { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
  * How long a failing head may keep a check pending, with no new check result,
  * before a fresh agent turn investigates the stalled run.
  */
-export const CORNER_CHECK_STUCK_AFTER = '1 hour';
+export const CORNER_CHECK_STUCK_AFTER = systemMessage("agent-command.1-hour");
 
 /** Push a connected helper's stranded orders and tags again.
  * A room the helper is already claiming waits for that turn to finish.
@@ -1542,7 +1543,7 @@ export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandR
   );
   if (dropped.rowCount) {
     await reportToCommander(db, stopped.room_id, stopped.agent_id,
-      `failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`,
+      systemMessage("agent-command.failed-queued-dropped-by-a-stop-the-running-turn-was-cancelled", dropped.rowCount, dropped.rowCount === 1 ? systemMessage("agent-command.order-was") : systemMessage("agent-command.orders-were")),
       dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true, digestSource: true });
   }
   return dropped.rowCount;
@@ -2304,7 +2305,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
         [row.corner_id, row.head_sha, row.implementer_id, JSON.stringify(row.lifecycle), row.last_command_id]);
       if (!current.rowCount) return;
       await ensureSystemIdentity(db);
-      const pullRequest = row.title ?? (row.number ? `pull request #${row.number}` : 'this head');
+      const pullRequest = row.title ?? (row.number ? systemMessage("agent-command.pull-request", row.number) : systemMessage("agent-command.this-head"));
       const line = await systemLine(db, {
         // One source per completed attempt; concurrent sweeps share the same wake.
         id: createHash('sha256')
@@ -2313,11 +2314,11 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
         roomId: row.corner_id,
         authorId: row.implementer_id,
         subject: GITHUB_SUBJECT,
-        verb: 'requested another check of',
+        verb: systemMessage("agent-command.requested-another-check-of"),
         object: { text: pullRequest, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
         consequence: row.check_stuck
-          ? `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`
-          : `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
+          ? systemMessage("agent-command.checks-fail-on-and-a-check-has-not-finished-for", pullRequest, CORNER_CHECK_STUCK_AFTER)
+          : systemMessage("agent-command.checks-still-fail-on-and-the-fix-turn-ended-with-nothing-new-push", pullRequest),
       });
       await advanceCorner(db, row.corner_id, {
         kind: 'checks', result: 'failing', sourceMessageId: line.id, followup: true,
@@ -2428,10 +2429,10 @@ export async function reconcileCornerMergeBlockers(
             roomId: row.corner_id,
             authorId: row.owner_agent_id,
             subject: GITHUB_SUBJECT,
-            verb: 'found failing checks on',
+            verb: systemMessage("agent-command.found-failing-checks-on"),
             kind: 'check-failed',
             object: {
-              text: row.title ?? `pull request #${row.number}`,
+              text: row.title ?? systemMessage("agent-command.pull-request", row.number),
               url: row.url,
               headSha: row.head_sha,
             },
@@ -2461,7 +2462,7 @@ export async function reconcileCornerMergeBlockers(
         if (!current.rowCount) return routedCommands;
         const gate = await cornerMergeGate(db, row.corner_id, { number: row.number, headSha: row.head_sha });
         if (gate.open) await reportToCommander(db, row.corner_id, row.owner_agent_id,
-          'blocked: PR is a draft; marking it ready for review failed', undefined,
+          systemMessage("agent-command.blocked-pr-is-a-draft-marking-it-ready-for-review-failed"), undefined,
           createHash('sha256').update(`draft-blocked:${row.corner_id}:${row.head_sha}`).digest('hex'));
       }
       if (row.mergeability === 'dirty') {
@@ -2481,9 +2482,9 @@ export async function reconcileCornerMergeBlockers(
           roomId: row.corner_id,
           authorId: row.owner_agent_id,
           subject: GITHUB_SUBJECT,
-          verb: 'found merge conflicts in',
+          verb: systemMessage("agent-command.found-merge-conflicts-in"),
           object: {
-            text: row.title ?? `pull request #${row.number}`,
+            text: row.title ?? systemMessage("agent-command.pull-request", row.number),
             url: row.url,
             headSha: row.head_sha,
           },
@@ -2573,10 +2574,10 @@ export async function reconcileConfiguredCornerReviewers(
           .digest('hex'),
         roomId: missing.corner_id,
         authorId: missing.author_id,
-        subject: { kind: 'github', name: 'GitHub' },
-        verb: 'passed checks',
+        subject: { kind: 'github', name: systemMessage("agent-command.github") },
+        verb: systemMessage("agent-command.passed-checks"),
         kind: 'check-passed',
-        object: { text: 'aggregate checks', headSha: missing.head_sha },
+        object: { text: systemMessage("agent-command.aggregate-checks"), headSha: missing.head_sha },
       });
       const routed = await db.query(
         `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2

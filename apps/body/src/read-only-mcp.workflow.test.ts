@@ -29,7 +29,7 @@ describe('workflow run tools', () => {
     expect(agentToolsFor(true, false).map(tool => tool.name)).toContain('app_tool');
     expect(agentToolsFor(true, false).map(tool => tool.name)).not.toContain('get_workflow_run');
     const discovered = JSON.parse(await callAgentTool('app_tool', { app: 'beeline:workflow' }, 'discover'));
-    expect(discovered.tools.map((tool: { name: string }) => tool.name)).toEqual(['save', 'start', 'read', 'advance', 'cancel', 'archive', 'rebind']);
+    expect(discovered.tools.map((tool: { name: string }) => tool.name)).toEqual(['save', 'describe', 'start', 'read', 'advance', 'cancel', 'archive', 'rebind']);
     expect(calls).toEqual([]);
   });
 

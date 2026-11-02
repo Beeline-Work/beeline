@@ -8,6 +8,7 @@ import { scanSource, NETWORK_LIBRARIES } from './phone-network-channels.mjs';
 export const INVENTORY = 'packages/net/migration-sites.json';
 const ROOTS = ['apps/server/src', 'apps/body/src', 'apps/api/src', 'apps/auth/src', 'apps/mobile/sources', 'apps/mobile/modules',
   'apps/mobile/index.ts', 'apps/mobile/src-tauri/src', 'packages'];
+const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts'];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|swift|kt|java|m|mm|rs)$/;
 const TEST = /\.(?:test|spec|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
@@ -58,9 +59,9 @@ export function inspectSource(file, text) {
         if (entry.dynamic || !target?.startsWith('packages/net/src/'))
           errors.push(`${file}: shared router core cannot load ${entry.specifier ?? 'computed module'}`);
         // A public barrel must never export private runtime factories, even indirectly.
-        if (file === 'packages/net/src/index.ts' && target?.includes('/private/'))
+        if (PUBLIC_ENTRIES.includes(file) && target?.includes('/private/'))
           errors.push(`${file}: public API exposes private owner machinery`);
-      } else if (target?.startsWith('@beeline/net/') || target?.startsWith('packages/net/')) {
+      } else if (target?.startsWith('@beeline/net/') && target !== '@beeline/net/phone-inputs' || target?.startsWith('packages/net/')) {
         // No production owner has migrated yet. Add exact owners with their M2/M3
         // proofs rather than authorizing a directory of feature callers.
         errors.push(`${file}: private router import ${entry.specifier}`);
@@ -136,7 +137,7 @@ export function scanRouterTree(root) {
       publicReach(target.replace(/\.js$/, '.ts'));
     }
   }
-  publicReach('packages/net/src/index.ts');
+  for (const entry of PUBLIC_ENTRIES) publicReach(entry);
   return { sites, errors };
 }
 

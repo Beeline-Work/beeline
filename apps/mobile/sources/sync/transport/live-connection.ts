@@ -1,3 +1,4 @@
+import { RouteObservation } from './route-observation';
 import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
@@ -150,6 +151,7 @@ export class LiveConnection {
   private readonly connectedListeners = new Set<() => void>();
   private readonly disconnectedListeners = new Set<() => void>();
   private readonly requests = new Map<string, PendingRequest>();
+  private readonly routeObservation = new RouteObservation();
   private nextRequestId = 0;
   private socket: WebSocket | undefined;
   /** True only after this socket's `onopen`. A failed handshake stays false. */
@@ -235,6 +237,7 @@ export class LiveConnection {
       if (utf8ToBytes(frame).length > PHONE_SOCKET_MAX_FRAME_BYTES)
         return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
     } catch (error) { return Promise.reject(error); }
+    this.routeObservation.observe(op, args);
     return new Promise((resolve, reject) => {
       const finish = () => {
         clearTimeout(timer);
@@ -302,7 +305,11 @@ export class LiveConnection {
     return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connectInFlight) };
   }
 
+  /** Local shadow evidence only; intentionally separate from telemetry diagnostics. */
+  routeDiagnostics() { return this.routeObservation.snapshot(); }
+
   dispose(): void {
+    this.routeObservation.clear();
     this.dropConnection();
     for (const registration of this.registrations.values()) registration.closed = true;
     this.registrations.clear();
@@ -483,6 +490,7 @@ export class LiveConnection {
    * again as the new identity.
    */
   private handleIdentityChanged(): void {
+    this.routeObservation.clear();
     this.dropConnection();
     this.refcount.clear();
     for (const registration of this.registrations.values()) {

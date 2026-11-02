@@ -108,3 +108,36 @@ if (process.argv.includes('--check')) {
   if (readFileSync(target,'utf8') !== output) throw new Error('Network codecs are stale; run node scripts/generate-network-codecs.mjs');
 } else writeFileSync(target, output);
 console.log(`${Object.keys(operations).length} operation contracts; ${nodes.length} schema nodes`);
+
+// A generated projection, not another declaration authority: the phone's M1
+// observer needs inputs only, not daemon contracts or full response DTOs.
+const inputNodes = [];
+const inputIds = new Map();
+function selectInput(id) {
+  if (inputIds.has(id)) return inputIds.get(id);
+  const next = inputNodes.length;
+  inputIds.set(id, next); inputNodes.push(null);
+  const node = nodes[id];
+  let projected = node;
+  if (node.kind === 'union' || node.kind === 'intersection') projected = { ...node, choices: node.choices.map(selectInput) };
+  else if (node.kind === 'array') projected = { ...node, item: selectInput(node.item) };
+  else if (node.kind === 'tuple') projected = { ...node, items: node.items.map(selectInput) };
+  else if (node.kind === 'object') projected = { ...node,
+    properties: Object.fromEntries(Object.entries(node.properties).map(([key, field]) => [key, { ...field, node: selectInput(field.node) }])),
+    ...(node.index === undefined ? {} : { index: selectInput(node.index) }),
+  };
+  inputNodes[next] = projected;
+  return next;
+}
+const inputOperations = Object.fromEntries(Object.entries(operations).filter(([id]) => id.startsWith('phone.'))
+  .map(([id, contract]) => [id.slice('phone.'.length), contract.input === 'file-bytes' ? 'file-bytes' : selectInput(contract.input)]));
+const inputOutput = '// Generated from the phone input projection by scripts/generate-network-codecs.mjs.\n' +
+  'import type { WireShape } from \'./wire-codec.js\';\n' +
+  'const shape = (value: WireShape): WireShape => value;\n' +
+  'export const phoneInputShapes: readonly WireShape[] = [\n' + inputNodes.map(node => '  shape(' + JSON.stringify(node) + ')').join(',\n') + '\n];\n' +
+  'export const phoneInputs = ' + JSON.stringify(inputOperations, null, 2) + ' as const;\n';
+const inputTarget = path.join(root, 'packages/net/src/generated-phone-input-shapes.ts');
+if (process.argv.includes('--check')) {
+  if (readFileSync(inputTarget, 'utf8') !== inputOutput) throw new Error('Phone input codecs are stale; run node scripts/generate-network-codecs.mjs');
+} else writeFileSync(inputTarget, inputOutput);
+console.log(`${Object.keys(inputOperations).length} phone inputs; ${inputNodes.length} projected schema nodes`);

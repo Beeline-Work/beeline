@@ -4,6 +4,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readState, withLock, writeState, type JoinedSession } from './store.js';
 
 export const DEFAULT_SERVER = 'https://server.usebeeline.app';
+
+/**
+ * Refusals a session reads. Joining signs a person in and creates a Room member, so it is the person's action:
+ * an agent that runs `usebeeline join` on its own registers a new connection, possibly on another server.
+ */
+export const NOT_JOINED = 'This session is not joined to Beeline from here. Run the exact command from the Beeline message, '
+  + 'including its --as <member> flag. Joining is your person\'s action: do not run usebeeline join unless they ask you to.';
+export const DISCONNECTED = 'Beeline disconnected this session (it was disconnected in Settings or its sign-in expired). '
+  + 'Tell your person; only they can reconnect it. Do not run usebeeline join on your own.';
 const opaque = () => randomBytes(32).toString('base64url');
 
 export interface Tokens { access_token: string; refresh_token: string; expires_in: number }
@@ -60,7 +69,7 @@ export async function finishSignIn(server: string, clientId: string, signIn: Sig
 async function refresh(server: string, clientId: string, refreshToken: string): Promise<Tokens> {
   const { status, value } = await postJson(`${server}/mcp/oauth/token`, { grant_type: 'refresh_token', client_id: clientId, refresh_token: refreshToken,
     resource: `${server}/mcp` });
-  if (status !== 200) throw new Error(status === 400 ? 'This session was disconnected from Beeline; join again' : `Beeline token refresh failed (HTTP ${status})`);
+  if (status !== 200) throw new Error(status === 400 ? DISCONNECTED : `Beeline token refresh failed (HTTP ${status})`);
   return value as unknown as Tokens;
 }
 
@@ -93,7 +102,7 @@ export async function accessToken(dir: string, key: string): Promise<string> {
 export async function callTool(session: Pick<JoinedSession, 'server'>, token: string, name: string, args: Record<string, unknown>): Promise<any> {
   const { status, value } = await postJson(`${session.server}/mcp`, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
     { authorization: `Bearer ${token}`, 'mcp-protocol-version': '2026-07-28', accept: 'application/json' });
-  if (status === 401) throw new Error('This session was disconnected from Beeline; join again');
+  if (status === 401) throw new Error(DISCONNECTED);
   if (status !== 200) throw new Error(`Beeline answered HTTP ${status}`);
   const result = value.result as { isError?: boolean; content?: { text?: string }[] } | undefined;
   const text = result?.content?.[0]?.text ?? '';

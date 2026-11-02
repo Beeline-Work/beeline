@@ -1,55 +1,47 @@
 # Production log walk
 
-Repository code reads the existing collector files on squire. It never executes
-Ruby's DM script or changes collectors, Fly login, grants or approval policy.
-The original DM file is unavailable in a corner; this implementation reconstructs
-the sections from the saved `log-walk` procedure. Findings are heuristics, not
-proof that an incident is new. The fixture exercises the actual CLI and both
-report files, baseline comparison, loops and head/tail/interior coverage behavior.
+Fly keeps about 100 lines of log history, so three collectors on squire stream
+`beeline-server`, `beeline-free-agents` and `beeline-voice-livekit` into daily
+files, and a daily walk turns the last 24 hours into a report the fix loop reads.
+Findings are heuristics, not proof that an incident is new. Everything runs as
+the host user from a dedicated checkout of `main`; no Actions runner, host
+command grant or DM script is involved.
 
-The private `Production log walk` workflow runs near 06:40 America/New_York and
-also accepts dispatches on main. The two UTC cron slots cover daylight saving;
-only the slot in the local morning hour reads logs. GitHub can delay scheduled
-jobs. Its own concurrency group and short timeout bound runner use. Node builtins
-stream lines without installing project dependencies. Baselines live outside the
-checkout at `/home/lunchbox/.local/state/beeline/log-walk-reviewed/state`.
-The collector raw directory is read only. No human script read or host grant is
-part of this path. The workflow requires the normal independent review and merge
-before any production execution.
+| Piece | What it does |
+| --- | --- |
+| `collect.sh` (`beeline-log-collector@<app>.service`) | Streams one app with `flyctl logs`, reconnecting every 10 minutes. `timeout -k` kills a stream that ignores SIGTERM: on 2026-10-31 flyctl did, and server logs stopped for two days. systemd restarts the loop if it dies. Keeps 8 days. |
+| `host-walk.sh` (`beeline-log-walk.timer`, 06:40 America/New_York) | Fetches `main` into `~/.local/share/beeline-log-walk/checkout`, runs `walk.mjs` over the last 24 hours and atomically replaces the out directory with `report.md`, `report.json` and `source-sha`. |
+| `walk.mjs` | Node builtins only. Coverage first, then errors/refusals, new or up versus the previous day, gone, steady identity loops, identities, routes and background jobs. |
+| `install-host.sh <out-dir>` | One-time operator install: checkout, `~/.config/beeline-log-walk.env`, user units, enable. |
 
-## Replacement `log-walk` procedure for Ruby
+The out directory is the fix-loop agent's own home directory on squire (for
+Ruby in issues-triage: `<agent home>/user/log-walk/out`), so the agent reads
+the report as a plain file. Raw logs and baselines stay in
+`~/.local/share/beeline-log-walk/`, outside the Beeline state directory, which
+holds keys no runner or report should touch.
 
-During the 07:00 feedback-triage pull step, download the latest private Actions
-report instead of running a host command. From the linked Beeline checkout:
+Phone **socket** refusals are not logged at all and HTTP refusals never reach
+Sentry, so the walk is the only place repeated refusals (a client stuck on a
+denied call) show up. A database count of operation outcomes is the durable
+replacement for that signal; until it lands the walk is the source.
 
-```sh
-gh api 'repos/Beeline-Work/beeline/actions/artifacts?per_page=100' \
-  --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main" and (.name | startswith("log-walk-")))] | sort_by(.created_at) | last | {run: .workflow_run.id, name, created_at}'
-gh run download <run> --repo Beeline-Work/beeline --name <name> --dir <fresh-local-directory>
-```
+## Reading the report (fix loop)
 
-Read `report.md` first; use `report.json` only to drill down. Check `window.to`
-is today's morning and covers the intended 24 hours. If no fresh artifact exists,
-report the missing reading and inspect the workflow failure; do not reuse an old
-reading as today's. Recovery after merge: `gh workflow run log-walk.yml --ref main
---repo Beeline-Work/beeline`. No host command grant is needed.
+1. Check `report.json` `window.to` is this morning. A missing or stale report is
+   reported as missing; never reuse an old reading.
+2. Read coverage before findings. Head, tail and interior gaps over ten minutes
+   go on the card. Zero lines for an app means the collector or Fly login is
+   broken (see `collector.err` next to the raw files), not a quiet night.
+   Untimestamped lines count as unseen coverage.
+3. Then ask, for each of the top errors and refusals and anything new or up:
+   - Which code path produces it? Trace the stack or route to a file.
+   - Who is hit: a person, an agent, a background job? How many identities?
+   - Is it a client calling something it is refused again and again (a loop or
+     poll), a real failure, or expected noise?
+   - Did it start or grow with a release (compare with the previous day)?
+   - Is it already a problem in `problems/*.json` or an open corner?
+4. Carry ranked findings into the fix loop with a stable signature
+   (app + normalized pattern). Gone patterns need complete coverage in both
+   windows. Never put identity ids or raw log lines in cards or public text.
 
-Read coverage before findings. Head, tail and interior gaps over ten minutes
-must appear in the card. Zero free-agent traffic needs independent confirmation
-that machines were suspended; the walk does not assume that. Untimestamped lines
-are counted as unseen coverage. Minute buckets make gap estimates conservative
-by up to a minute. Incomplete coverage must never become “nothing found.”
-
-Then read errors/refusals, new or up vs baseline, gone, loops, heaviest identities,
-busiest routes and background job counts. The first run has no baseline; same-day
-reruns continue comparing with the prior saved day. Gone patterns need complete
-coverage in both windows before interpretation. Dedupe against `problems/*.json`
-and `digests/*.md` in beeline-insights, trace top findings to code, classify them
-as broken/friction/waste and carry ranked `source: "log"` groups into triage.
-Resolve flagged identities through the approved database connection as needed.
-Never put identity ids or raw log lines in cards or public text. Report artifacts
-remain in the private repository and expire after fourteen days.
-
-Collector repair and login recovery remain a separate authorized operator task;
-this report-download procedure does not run or restart collectors. The 10:00
-loops writer downloads the same artifact instead of reading the old DM output.
+Collector repair and Fly login recovery are operator tasks.

@@ -45,6 +45,14 @@ test('incomplete observation never claims a fix and offset timestamps compare by
   assert.equal(followUp({releasedAt:'2026-10-20T10:00:00Z',observedThrough:'2026-10-21T10:00:00Z',
     occurrences:['2026-10-20T07:00:00-04:00']}), 'still occurring (reopen)');
 });
+test('silence is not a fix without full coverage and exposure on the fixed path', () => {
+  const input = { releasedAt: '2026-10-20', observedThrough: '2026-10-23', occurrences: [] };
+  assert.equal(followUp({ ...input, coverageComplete: false }), 'incomplete coverage');
+  assert.equal(followUp({ ...input, exposure: 0 }), 'insufficient exposure');
+  assert.equal(followUp({ ...input, coverageComplete: true, exposure: 12 }), 'stopped after release (fixed)');
+  // A real recurrence outranks a coverage gap.
+  assert.equal(followUp({ ...input, coverageComplete: false, occurrences: ['2026-10-22'] }), 'still occurring (reopen)');
+});
 test('printed groups keep each report version and whether it is latest', () => {
   const printed = groupFeedback([{
     ...row,

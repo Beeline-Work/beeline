@@ -2,6 +2,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getEncoding } from 'js-tiktoken';
+import { messageTexts } from './prompt-text.mjs';
 
 const encoding = getEncoding('o200k_base');
 export const countTokens = text => encoding.encode(text).length;
@@ -130,11 +131,11 @@ export function parseRollout(text, { prompt, variant, tools = [] }) {
       if (!firstResponse) initialInlineDefinitions = nextInline;
     }
     if (row.type === 'response_item' && item.type === 'message' && ['system', 'developer', 'user'].includes(item.role))
-      for (const content of item.content ?? []) if (typeof content.text === 'string') {
-        const label = blockLabel(content.text, base, prompt);
-        const tokens = countTokens(content.text);
+      for (const text of messageTexts(item.content)) {
+        const label = blockLabel(text, base, prompt);
+        const tokens = countTokens(text);
         if (label !== 'beelineReplayPrompt') codexInstructionTokens += tokens;
-        if (!firstResponse) blocks.push({ label, role: item.role, tokens, chars: content.text.length });
+        if (!firstResponse) blocks.push({ label, role: item.role, tokens, chars: text.length });
       }
     if (row.type === 'response_item' && ['custom_tool_call_output', 'function_call_output'].includes(item.type)) {
       const output = typeof item.output === 'string' ? [item.output] : (item.output ?? []).map(c => c.text ?? '');

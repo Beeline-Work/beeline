@@ -1,0 +1,8 @@
+[Unit]
+Description=Beeline daily production log walk
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/beeline-log-walk.env
+ExecStart=%h/.local/share/beeline-log-walk/checkout/scripts/log-walk/host-walk.sh ${LOG_WALK_RAW} ${LOG_WALK_STATE} ${LOG_WALK_OUT}
+TimeoutStartSec=600

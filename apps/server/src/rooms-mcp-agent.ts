@@ -10,7 +10,7 @@ import type { ObjectService } from './object-service.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { McpToolError, mcpProvenance } from './rooms-mcp-members.js';
 import { COMMAND_MAX_DEPTH } from './agent-command.js';
-import { mcpWakeHint } from './rooms-mcp-events.js';
+import { mcpWakeNext } from './rooms-mcp-events.js';
 
 /**
  * Agent tools a connected AI app does not get, with the plain reason it is
@@ -712,5 +712,5 @@ export async function pendingMcpWakes(db: SqlDatabase, member: string) {
          AND member.identity_id=$1 AND member.removed_at IS NULL)
      ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
     .map(row => ({ id: row.id, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
-      ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeHint(row.kind) }));
+      ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeNext(row.kind, row.reason) }));
 }

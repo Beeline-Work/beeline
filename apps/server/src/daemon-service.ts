@@ -37,7 +37,7 @@ import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
   squireMachineId, squireWorkStatus, reportSquireWork, recordSquireSignIn, forgetSquireSignIn,
   squireSignedIn } from './squire-machine.js';
-import { completeSquireMachineOffers } from './connector-offer-completion.js';
+import { completeSquireMachineOffers, failConnectingOffers } from './connector-offer-completion.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { renderAgentAvatar } from './agent-avatar.js';
@@ -2685,39 +2685,43 @@ export class DaemonService {
       await this.database.transaction((db) => reportSquireWork(db, agentId, input));
       return { id: input.connectorId, createdAt: Math.floor(Date.now() / 1000) };
     }
-    const row = (
-      await this.database.query<{
-        id: string;
-        connector_type: string;
-        registry_server_name: string | null;
-      }>(
-        `UPDATE workspace_connectors
-         SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
-             status_error=COALESCE($3::text,status_error),
-             status_steps=$2::jsonb,
-             squire_version=COALESCE($4,squire_version),
-             signed_in_as=COALESCE($5,signed_in_as),
-             sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
-             updated_at=now()
-         WHERE id=$1::uuid
-           AND helper_agent_id=$8
-           AND status='installing'
-           AND pairing_generation=$9
-         RETURNING id,connector_type,registry_server_name`,
-        [
-          input.connectorId,
-          JSON.stringify(input.steps),
-          input.errorMessage ?? null,
-          input.squireVersion ?? null,
-          input.signedInAs ?? null,
-          input.signIn ? JSON.stringify(input.signIn) : null,
-          input.signIn !== undefined,
-          agentId,
-          input.pairingGeneration ?? 1,
-        ],
-      )
-    ).rows[0];
-    if (!row) throw new Error('connector not found for this helper');
+    const row = await this.database.transaction(async db => {
+      const row = (
+        await db.query<{
+          id: string;
+          connector_type: string;
+          registry_server_name: string | null;
+        }>(
+          `UPDATE workspace_connectors
+           SET status=CASE WHEN $3::text IS NOT NULL THEN 'error' ELSE status END,
+               status_error=COALESCE($3::text,status_error),
+               status_steps=$2::jsonb,
+               squire_version=COALESCE($4,squire_version),
+               signed_in_as=COALESCE($5,signed_in_as),
+               sign_in=CASE WHEN $7::boolean THEN $6::jsonb ELSE sign_in END,
+               updated_at=now()
+           WHERE id=$1::uuid
+             AND helper_agent_id=$8
+             AND status='installing'
+             AND pairing_generation=$9
+           RETURNING id,connector_type,registry_server_name`,
+          [
+            input.connectorId,
+            JSON.stringify(input.steps),
+            input.errorMessage ?? null,
+            input.squireVersion ?? null,
+            input.signedInAs ?? null,
+            input.signIn ? JSON.stringify(input.signIn) : null,
+            input.signIn !== undefined,
+            agentId,
+            input.pairingGeneration ?? 1,
+          ],
+        )
+      ).rows[0];
+      if (!row) throw new Error('connector not found for this helper');
+      if (input.errorMessage) await failConnectingOffers(db, { agentId, connectorId: row.id });
+      return row;
+    });
     if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
     if (row.connector_type === 'registry-mcp' && input.signIn?.url && input.signIn.attemptId)
       await this.resumeRegistrySignIn(row, input.signIn);
@@ -6411,7 +6415,7 @@ export class DaemonService {
       const corner = (await database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
         `SELECT ${cornerImplementerSql('fact', 'room')} worker,
           fact.lifecycle->'pr'->>'number' IS NOT NULL has_pr,
-          (fact.lifecycle->>'lifecycle'='landed' OR fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL) merged
+          fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL merged
          FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
         [command.room_id])).rows[0];
       if (corner?.worker === agentId && !corner.merged) {
@@ -6527,8 +6531,10 @@ export class DaemonService {
   }
   private async cornerRemote(input: Input<'postCornerRemoteState'>, agentId: string) {
     await this.access(input.cornerId, agentId);
+    // A helper heartbeat never ends a corner: only close and merge archive it.
+    // A `gone` remote branch is recorded as an unknown remote state.
     const lifecycle = {
-      lifecycle: input.state === 'gone' ? 'done' : input.state,
+      lifecycle: input.state === 'gone' ? 'unknown' : input.state,
       branch: input.branch,
       checks: input.checks,
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),

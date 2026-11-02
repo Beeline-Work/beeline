@@ -3,6 +3,8 @@
 # Squire installs its broker through this real systemd user manager.
 set -eu
 
+node /opt/beeline/reconcile-broker-marker.mjs
+
 : "${XDG_RUNTIME_DIR:?hosted runtime directory is required}"
 mkdir -p "$XDG_RUNTIME_DIR" /run/systemd/system
 chmod 700 "$XDG_RUNTIME_DIR"

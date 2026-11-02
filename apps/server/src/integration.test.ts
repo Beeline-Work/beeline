@@ -1,3 +1,4 @@
+import { failConnectingOffers } from './connector-offer-completion.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
@@ -7112,6 +7113,34 @@ describe('monolith integration', () => {
     ).toEqual([{ received: true, payload: null }]);
   });
 
+  it('never closes a corner from a helper remote-state heartbeat', async () => {
+    const created = await operation('createHumanCorner', { roomId: ROOM, title: 'Gone-branch' });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    expect(
+      (
+        await daemonOperation('postCornerRemoteState', {
+          cornerId,
+          branch: 'fm/gone-branch',
+          state: 'gone',
+          checks: 'unknown',
+        })
+      ).status,
+    ).toBe(200);
+    const listed = (await (await request(`/v1/phone/rooms/${ROOM}/corners`)).json()) as {
+      corners: Array<{ corner: { id: string }; state: string }>;
+    };
+    expect(listed.corners.find((item) => item.corner.id === cornerId)?.state).not.toBe('archived');
+    expect(
+      (
+        await database.query<{ lifecycle: string | null }>(
+          `SELECT lifecycle->>'lifecycle' lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).not.toEqual([{ lifecycle: 'done' }]);
+  });
+
   it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {
     processWebhook.mockImplementation((event, payload) =>
       githubOperations.processWebhook(event, payload),
@@ -13007,6 +13036,50 @@ describe('monolith integration', () => {
     const { id: nextId } = await next.json() as { id: string };
     expect((await operation('setRoomTargetBranch', { roomId: ROOM, targetBranch: 'release' })).status).toBe(200);
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === nextId)?.targetBranch).toMatchObject({ status: 'allowed', decidedBy: { pubkey: HUMAN }, decidedAt: expect.any(Number) });
+  });
+
+  it.each([['reported','trusty-squire'], ['timeout','trusty-squire'], ['reported','tailscale'], ['timeout','tailscale']] as const)('HOSTED-SQUIRE: %s %s install failure settles the phone card, resumes and retries', async (failure, connectorType) => {
+    await database.query(`UPDATE agents SET machine_id='proof-machine' WHERE agent_id=$1`, [AGENT]);
+    const asked = (await (await operation('sendRoomMessage', { roomId: ROOM, text: '@bee connect Trusty Squire', mentions: [AGENT] })).json()) as { messageId: string };
+    const offered = await daemonOperation('offerConnector', { roomId: ROOM, requestId: asked.messageId,
+      connectorType, reason: 'make the welcome video' });
+    expect(offered.status).toBe(200);
+    const { offerId, messageId } = await offered.json() as { offerId: string; messageId: string };
+    const accepted = await operation('acceptConnectorOffer', { offerId });
+    expect(accepted.status).toBe(200);
+    const { connectorId } = await accepted.json() as { connectorId: string };
+    const assignments = await (await daemonOperation('getConnectorAssignments', { agentId: AGENT })).json() as {
+      assignments: Array<{ pairingGeneration: number }> };
+    if (failure === 'reported') {
+      const report = await daemonOperation('postConnectorStatus', { connectorId,
+        pairingGeneration: assignments.assignments[0]!.pairingGeneration, steps: [], errorMessage: 'Squire MCP connection closed' });
+      expect(report.status).toBe(200);
+    } else {
+      await database.query(`UPDATE connector_offers SET accepted_at=now()-interval '16 minutes' WHERE id=$1`, [offerId]);
+      await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{reportedAt}',
+        to_jsonb(extract(epoch FROM now())-960)) WHERE agent_id=$1`, [AGENT]);
+      if (connectorType !== 'trusty-squire') await database.query(`UPDATE workspace_connectors SET updated_at=now()-interval '16 minutes' WHERE id=$1`, [connectorId]);
+      await database.transaction(db => failConnectingOffers(db, { expired: true }));
+    }
+    const room = await phone.readRoom(ROOM, HUMAN);
+    expect(isRoomView(room)).toBe(true);
+    expect(room?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('failed');
+    expect((await database.query(`SELECT 1 FROM connector_offers WHERE id=$1 AND status='failed'`, [offerId])).rowCount).toBe(1);
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='connector-offer-decision'
+      AND card->>'status'='failed'`, [ROOM])).rowCount).toBe(1);
+    expect((await (await daemonOperation('getConnectorAssignments', { agentId: AGENT })).json() as { assignments: unknown[] }).assignments).toEqual([]);
+    const retried = await operation('acceptConnectorOffer', { offerId });
+    expect(retried.status).toBe(200);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer?.status).toBe('connecting');
+    // A failed retry frees the slot for a fresh offer by the resumed agent.
+    const nextAssignments = await (await daemonOperation('getConnectorAssignments', { agentId: AGENT })).json() as { assignments: Array<{ pairingGeneration: number }> };
+    expect((await daemonOperation('postConnectorStatus', { connectorId,
+      pairingGeneration: nextAssignments.assignments[0]!.pairingGeneration, steps: [], errorMessage: 'Retry failed' })).status).toBe(200);
+    const fresh = await daemonOperation('offerConnector', { roomId: ROOM, requestId: asked.messageId,
+      connectorType, reason: 'retry the welcome video' });
+    expect(fresh.status).toBe(200);
+    expect((await fresh.json() as { offerId: string }).offerId).not.toBe(offerId);
+    expect((await operation('acceptConnectorOffer', { offerId })).status).toBe(409);
   });
 
   it('APPROVAL-V3: declining a connector closes the offer and resumes its asking command', async () => {

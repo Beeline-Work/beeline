@@ -1,3 +1,4 @@
+import { failConnectingOffers } from './connector-offer-completion.js';
 import type { ConnectorAssignment, ConnectorStatus, PostConnectorStatusInput } from '@beeline/api-contract/daemon';
 import type { SquireMachineReport } from '@beeline/api-contract/workbench';
 import { appKeyForHost, registrableDomain } from '@beeline/api-contract/app-connections';
@@ -155,8 +156,13 @@ export async function reportSquireWork(database: SqlDatabase, agentId: string,
     delete work.errorMessage; delete work.forceReloginProvider;
     if (!input.signedInAs) delete work.signedInAs;
   }
+  if (input.errorMessage) {
+    delete work.install;
+    delete work.signIn;
+  }
   await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
     [agentId, JSON.stringify(work)]);
+  if (input.errorMessage) await failConnectingOffers(database, { agentId });
 }
 
 /** Whether this agent's Squire session was last seen signed in to the app. */

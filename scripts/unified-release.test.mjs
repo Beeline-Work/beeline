@@ -586,7 +586,8 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
   assert.ok(publishJob.steps.some((step) => step.uses === 'dtolnay/rust-toolchain@stable'));
   const publish = publishJob.steps.find((step) => step.name === 'Publish the free starter agent base image');
   assert.match(publish.run, /bash scripts\/stage-free-agent-helper\.sh/);
-  assert.match(publish.run, /Free starter agent image was not published/);
+  assert.match(publish.run, /set -euo pipefail/);
+  assert.doesNotMatch(publish.run, /docker tag|:latest/);
   assert.equal(publish.env.RELEASE_SHA, '${{ steps.release.outputs.sha }}');
   const identity = publishJob.steps.find((step) => step.id === 'release');
   assert.match(identity.run, /selected\?\.includes\('server'\)/);
@@ -613,43 +614,58 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
   }
 });
 
-test('R-release-timeout: independent starter publishing preserves release identity and remains best effort', () => {
+test('HOSTED-SQUIRE: publication promotes the digest and rejects stale server refs', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/free-agent-image.yml', import.meta.url), 'utf8'));
-  const publish = workflow.jobs.free_agent_image.steps.find((step) => step.name === 'Publish the free starter agent base image');
+  const publish = workflow.jobs.free_agent_image.steps.find(step => step.id === 'publish');
+  const promotion = workflow.jobs.promote_image_ref;
+  assert.equal(promotion.concurrency.group, 'deploy-beeline-server');
+  assert.equal(promotion.concurrency['cancel-in-progress'], false);
+  const promote = promotion.steps.find(step => step.name === 'Promote and verify the published image on every server');
   const root = mkdtempSync(join(tmpdir(), 'starter-publish-'));
   try {
     const trace = join(root, 'trace');
-    for (const command of ['bash', 'flyctl', 'docker']) {
-      const script = join(root, command);
-      writeFileSync(script, `#!/bin/sh
-printf '%s %s %s %s\\n' '${command}' "$*" "\${BEELINE_RELEASE_SHA:-}" "\${BEELINE_RELEASE_VERSION:-}" >> "$TRACE"
-if [ '${command}' = bash ] && [ "$FAIL_STAGE" = true ]; then exit 1; fi
-`);
-      chmodSync(script, 0o755);
+    const output = join(root, 'output');
+    const digest = `sha256:${'a'.repeat(64)}`;
+    const image = `registry.fly.io/beeline-free-agents:0.1.97-${NEW_SHA.slice(0,12)}@${digest}`;
+    const scripts = {
+      bash: `#!/bin/sh
+if [ "$FAIL_STAGE" = true ]; then exit 1; fi
+`,
+      docker: `#!/bin/sh
+printf '%s' '{"Descriptor":{"digest":"${digest}"}}'
+`,
+      flyctl: `#!/bin/sh
+printf '%s\\n' "$*" >> "$TRACE"
+case "$*" in
+  'machine list '*) printf '%s' '[{"id":"server-a","state":"started"},{"id":"server-b","state":"started"}]' ;;
+  'machine exec '*) if [ "$STALE" = true ]; then echo old-image; else echo "$IMAGE_REF"; fi ;;
+esac
+`,
+      curl: '#!/bin/sh\nexit 0\n',
+    };
+    for (const [command, script] of Object.entries(scripts)) {
+      writeFileSync(join(root, command), script);
+      chmodSync(join(root, command), 0o755);
     }
-    for (const failStage of ['false', 'true']) {
-      writeFileSync(trace, '');
-      const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', publish.run], {
-        cwd: root, encoding: 'utf8', timeout: 10_000,
-        env: { ...process.env, PATH: `${root}:${process.env.PATH}`, TRACE: trace,
-          FAIL_STAGE: failStage, RELEASE_VERSION: 'v0.1.97', RELEASE_SHA: NEW_SHA },
-      });
-      assert.equal(result.status, 0, result.stderr);
-      const calls = readFileSync(trace, 'utf8').trim().split('\n');
-      assert.equal(calls[0], `bash scripts/stage-free-agent-helper.sh ${NEW_SHA} v0.1.97`);
-      if (failStage === 'true') {
-        assert.equal(calls.length, 1);
-        assert.match(result.stdout, /::warning::Free starter agent image was not published/);
-      } else {
-        assert.equal(calls.length, 5);
-        assert.match(calls[1], new RegExp(`flyctl deploy .*--build-arg BEELINE_RELEASE_SHA=${NEW_SHA}`));
-        assert.match(calls[4], /docker push registry.fly.io\/beeline-free-agents:latest/);
-        assert.match(result.stdout, /Published registry.fly.io\/beeline-free-agents:0.1.97-/);
-      }
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    const env = { ...process.env, PATH: `${root}:${process.env.PATH}`, TRACE: trace,
+      RUNNER_TEMP: root, GITHUB_OUTPUT: output, IMAGE_REF: image,
+      RELEASE_VERSION: 'v0.1.97', RELEASE_SHA: NEW_SHA };
+    const run = (script, extra = {}) => spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', script], {
+      cwd: root, encoding: 'utf8', timeout: 10_000, env: { ...env, ...extra },
+    });
+    assert.notEqual(run(publish.run, { FAIL_STAGE: 'true' }).status, 0);
+    assert.equal(run(publish.run).status, 0);
+    assert.equal(readFileSync(output, 'utf8').trim(), `image_ref=${image}`);
+    writeFileSync(trace, '');
+    const passed = run(promote.run);
+    assert.equal(passed.status, 0, passed.stderr);
+    const calls = readFileSync(trace, 'utf8');
+    assert.match(calls, /secrets set --app beeline-server --stage FLY_FREE_AGENT_IMAGE=/);
+    assert.ok(calls.indexOf('machine exec server-a') < calls.indexOf('machine update server-b'));
+    const failed = run(promote.run, { STALE: 'true' });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stdout, /::error::Server server-a still uses an older free-agent image/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('store choice explicitly selects a native mobile binary', () => {

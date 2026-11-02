@@ -1,3 +1,4 @@
+import { failConnectingOffers } from './connector-offer-completion.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
 import { syncXSiteVisits } from './x-site-visits.js';
@@ -562,6 +563,7 @@ async function main() {
     }
     await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
     await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce(now));
+    await backgroundJobs.run('connector-offer-expiry', () => jobsDatabase.transaction(db => failConnectingOffers(db, { expired: true })));
     await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
     await backgroundJobs.run('corner-checks-blocked', () =>
       noteBlockedCornerChecks(jobsDatabase));

@@ -228,7 +228,7 @@
         "packages"
       ],
       "owners": [],
-      "total": 4,
+      "total": 5,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     }
   ],
@@ -237,7 +237,7 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1889,
+    "bootstrapTotal": 1890,
     "unusedTotal": 197,
     "tables": {
       "agent_avatars": {
@@ -2975,7 +2975,8 @@
         "install": "existing before the registry; weekly audit reviews",
         "generation": "existing before the registry; weekly audit reviews",
         "signIn": "existing before the registry; weekly audit reviews",
-        "signedInApps": "existing before the registry; weekly audit reviews"
+        "signedInApps": "existing before the registry; weekly audit reviews",
+        "reportedAt": "existing before the registry; weekly audit reviews"
       },
       "custom_tags": {},
       "chosen_voices": {

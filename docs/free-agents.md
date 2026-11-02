@@ -293,11 +293,22 @@ size, sleep, the reaper, live turns, owner token/rate limits and the shared doll
 Hosted VMs include Chrome, the remote sign-in display tools and a real systemd
 user manager started by `infra/free-agent/hosted-services.sh`. Each VM keeps its
 own profile and broker sockets on its private rootfs. The image-owned Squire
-broker unit stays stopped until requested; hosted installation waits for both
+broker unit is enabled under `default.target` and starts on boot. The helper's
+existing suspend detector reruns `hosted-services.sh` before its immediate
+socket reconnect, restoring a missing user manager or broker through systemd.
+This script fixes HOME and XDG paths to the machine's root account, including
+when called from a process with an agent home. Failed recovery exits the helper
+so the existing entrypoint retries boot recovery. Hosted installation waits for both
 broker sockets before opening sign-in. The phone receives Squire's streamed
 virtual browser page. Owners' personal-computer setup keeps its existing path.
 The isolated entry is `infra/free-agent/hosted-install-proof.mjs`; evidence and
 remaining full-account checks are in [the onboarding connection proof](onboarding-connect-proof.md).
+Real Fly restart, suspend/resume and missing-manager recovery evidence:
+[broker restart proof](free-agent-broker-restart-proof.json). The disposable
+Machine uses the production helper with an empty agent inventory; it proves
+real systemd/Squire recovery and sign-in, without server registration or model
+turns. `infra/free-agent/resume-proof-helper.mjs` supplies that entry and
+`infra/free-agent/hosted-service-state.mjs` records redacted state/sign-in results.
 
 
 After a server release, `.github/workflows/free-agent-image.yml` builds

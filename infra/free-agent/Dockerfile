@@ -20,6 +20,7 @@ ARG SQUIRE_VERSION=1.1.39
 RUN npm install --prefix /opt/beeline/squire --omit=dev --no-audit --no-fund "@trusty-squire/mcp@${SQUIRE_VERSION}" \
   && npm cache clean --force
 COPY infra/free-agent/hosted-squire-broker.service /etc/systemd/user/trusty-squire-broker.service
+RUN systemctl --global enable trusty-squire-broker.service
 ENV XDG_RUNTIME_DIR=/run/user/0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus
 
 FROM node:22-bookworm-slim AS helper-build

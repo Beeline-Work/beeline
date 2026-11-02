@@ -285,9 +285,6 @@ describe('server readiness', () => {
     const timeout = new Error('timeout exceeded when trying to connect');
     const connect = vi.fn()
       .mockRejectedValueOnce(timeout)
-      .mockRejectedValueOnce(timeout)
-      .mockRejectedValueOnce(timeout)
-      .mockRejectedValueOnce(timeout)
       .mockResolvedValueOnce({
         query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
         release: vi.fn(),
@@ -300,7 +297,7 @@ describe('server readiness', () => {
       on: vi.fn(),
       end: vi.fn(),
     } as unknown as Pool;
-    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+    const database = new PostgresDatabase('', 5, { pool });
     const server = createBeelineServer({
       database,
       auth: {} as TokenAuth,
@@ -315,7 +312,7 @@ describe('server readiness', () => {
 
     const failed = await fetch(url);
     expect(failed.status).toBe(503);
-    expect(connect).toHaveBeenCalledTimes(4);
+    expect(connect).toHaveBeenCalledOnce();
     const recovered = await fetch(url);
     expect(recovered.status).toBe(200);
   });

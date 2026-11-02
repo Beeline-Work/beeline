@@ -82,3 +82,6 @@ These counts identify the staged validation run; later changes must rerun affect
 
 
 - F16/F18 staged leader integration selects the single blocking advisory-lock owner in `index.ts`, removes the old try-lock/health-query loop, and makes dedicated pool checkout one attempt. Leader12, real PostgreSQL2 (including polling-old/blocking-new overlap), shutdown6, Needs expiry9, scheduling8, background40 and dedicated checkout2 pass. Remaining periodic job/provider/source composition and general query retries remain open. No whole finding changes status.
+
+
+- F18 SQL admission now removes generic query/BEGIN and boot-schema retry clocks. A lost INSERT reply reproduced two effects before removal. Database59 pass across full57 + corrected legacy-fixture2; actual PostgreSQL2 proves one effect despite lost INSERT/COMMIT replies; background recovery4, operator delivery9 and server91 pass. The new PostgreSQL proof and mixed-leader proof run in the isolated CI lane. Higher-level and SDK retry/removal coverage remains open.

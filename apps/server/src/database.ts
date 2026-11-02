@@ -169,8 +169,6 @@ export function postgresPoolConfig(
 const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT', 'EAI_AGAIN']);
 const TRANSIENT_CONNECTION_MESSAGE =
   /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
-const RETRY_DELAYS_MS = [100, 300, 700];
-const SCHEMA_RETRY_DELAYS_MS = [1_000, 2_000, 5_000];
 
 export function isTransientDatabaseConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -181,9 +179,7 @@ export function isTransientDatabaseConnectionError(error: unknown): boolean {
   );
 }
 
-type Pause = (milliseconds: number) => Promise<void>;
-
-/** The transaction callback never ran; durable background work can try again. */
+/** The callback never ran; another admitted boundary may try the durable work. */
 export class DatabaseTransactionStartError extends Error {
   readonly code?: string;
 
@@ -195,11 +191,8 @@ export class DatabaseTransactionStartError extends Error {
   }
 }
 
-const pause: Pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
 export interface PostgresDatabaseOptions {
   pool?: Pool;
-  pause?: Pause;
   /** Deterministic test override; production uses the pool class limit. */
   transactionDeadlineMs?: number;
 }
@@ -275,31 +268,26 @@ export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   `);
 }
 
-export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = pause): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    let result: QueryResult<{ version: number }>;
-    try {
-      result = await database.query<{ version: number }>(
-        `SELECT version FROM beeline_schema_state WHERE singleton=true`,
-      );
-    } catch (error) {
-      if (isTransientDatabaseConnectionError(error)) {
-        await wait(SCHEMA_RETRY_DELAYS_MS[Math.min(attempt, SCHEMA_RETRY_DELAYS_MS.length - 1)]!);
-        continue;
-      }
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `database schema is not ready for this server image (${detail}); run the release migration step`,
-        { cause: error },
-      );
-    }
-    const version = result.rows[0]?.version;
-    if (version !== REQUIRED_SCHEMA_VERSION) {
-      throw new Error(
-        `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
-      );
-    }
-    return;
+export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
+  let result: QueryResult<{ version: number }>;
+  try {
+    result = await database.query<{ version: number }>(
+      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
+    );
+  } catch (error) {
+    // Unavailability is not a schema mismatch and grants no timed observation.
+    if (isTransientDatabaseConnectionError(error)) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `database schema is not ready for this server image (${detail}); run the release migration step`,
+      { cause: error },
+    );
+  }
+  const version = result.rows[0]?.version;
+  if (version !== REQUIRED_SCHEMA_VERSION) {
+    throw new Error(
+      `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
+    );
   }
 }
 
@@ -308,7 +296,6 @@ export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   #closePromise?: Promise<void>;
   readonly #profiler = new QueryProfiler();
-  readonly #pause: Pause;
   readonly #transactionDeadlineMs: number;
   readonly #transactions = new Map<number, number>();
   #transactionDeadlines = 0;
@@ -401,7 +388,6 @@ export class PostgresDatabase implements ClosableDatabase {
     this.#pool =
       options.pool ??
       new Pool(postgresPoolConfig(connectionString, maximumConnections, options.mode));
-    this.#pause = options.pause ?? pause;
     this.#transactionDeadlineMs = options.transactionDeadlineMs ??
       (options.mode === 'enrichment' ? ENRICHMENT_TRANSACTION_DEADLINE_MS
         : options.mode === 'diagnostics' ? HEALTH_TRANSACTION_DEADLINE_MS
@@ -446,19 +432,17 @@ export class PostgresDatabase implements ClosableDatabase {
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
     try {
-      const raw = await this.#timed(sql, () =>
-        this.#retryTransientConnection(async () => {
-          const { client, release } = await this.#connectCheckedOut();
-          try {
-            const result = values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
-            release();
-            return result;
-          } catch (error) {
-            release(error instanceof Error ? error : new Error('query failed'));
-            throw error;
-          }
-        }),
-      );
+      const raw = await this.#timed(sql, async () => {
+        const { client, release } = await this.#connectCheckedOut();
+        try {
+          const result = values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
+          release();
+          return result;
+        } catch (error) {
+          release(error instanceof Error ? error : new Error('query failed'));
+          throw error;
+        }
+      });
       this.#noteSuccess();
       const result = Array.isArray(raw) ? raw.at(-1) : raw;
       return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
@@ -518,6 +502,7 @@ export class PostgresDatabase implements ClosableDatabase {
     });
     Error.captureStackTrace(deadlineError, this.transaction);
     const { client, release } = await this.#beginTransaction().catch((error: unknown) => {
+      this.#noteFailure(error);
       if (isTransientDatabaseConnectionError(error)) throw new DatabaseTransactionStartError(error);
       throw error;
     });
@@ -556,6 +541,7 @@ export class PostgresDatabase implements ClosableDatabase {
       };
       const result = await Promise.race([work(database), deadline]);
       await Promise.race([client.query('COMMIT'), deadline]);
+      this.#noteSuccess();
       return result;
     } catch (error) {
       this.#noteFailure(error);
@@ -620,27 +606,13 @@ export class PostgresDatabase implements ClosableDatabase {
     client: PoolClient;
     release: (error?: Error) => void;
   }> {
-    return this.#retryTransientConnection(async () => {
-      const checkedOut = await this.#connectCheckedOut();
-      try {
-        await checkedOut.client.query('BEGIN');
-        return checkedOut;
-      } catch (error) {
-        checkedOut.release(error instanceof Error ? error : new Error('transaction begin failed'));
-        throw error;
-      }
-    });
-  }
-
-  async #retryTransientConnection<T>(work: () => Promise<T>): Promise<T> {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await work();
-      } catch (error) {
-        if (!isTransientDatabaseConnectionError(error) || attempt >= RETRY_DELAYS_MS.length)
-          throw error;
-        await this.#pause(RETRY_DELAYS_MS[attempt]!);
-      }
+    const checkedOut = await this.#connectCheckedOut();
+    try {
+      await checkedOut.client.query('BEGIN');
+      return checkedOut;
+    } catch (error) {
+      checkedOut.release(error instanceof Error ? error : new Error('transaction begin failed'));
+      throw error;
     }
   }
 }

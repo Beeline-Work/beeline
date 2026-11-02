@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-const { reportAdapterFailures } = createRequire(import.meta.url)('./acp-adapter-issue.cjs');
+const require = createRequire(import.meta.url);
+const { reportAdapterFailures } = require('./acp-adapter-issue.cjs');
 
 function fixture() {
   const issues = [], comments = [], labels = [];

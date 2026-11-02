@@ -12,7 +12,7 @@ export type Codec<T> = Readonly<{ parse(value: unknown): T }>;
 
 /** Bounded JSON preflight prevents getters, cycles, nonfinite values, exotic
  * prototypes and oversized payloads before any union backtracking can happen. */
-export function assertJsonBudget(value: unknown, maxBytes: number): void {
+function walkJson(value: unknown, maxBytes: number, canonical = false): string | undefined {
   let bytes = 0;
   let nodes = 0;
   const ancestors = new Set<object>();
@@ -24,15 +24,16 @@ export function assertJsonBudget(value: unknown, maxBytes: number): void {
     }
     if (bytes > maxBytes) throw new Error('network codec: byte limit');
   }
-  function visit(item: unknown, depth: number): void {
-    if (++nodes > 32768 || depth > 64) throw new Error('network codec: complexity limit');
-    if (item === undefined) return;
-    if (item === null || typeof item === 'boolean') { add(JSON.stringify(item)); return; }
+  function visit(item: unknown, depth: number): string | undefined {
+    if (++nodes > (canonical ? 4096 : 32768) || depth > (canonical ? 32 : 64)) throw new Error('network codec: complexity limit');
+    if (item === undefined && !canonical) return;
+    if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) {
+      const text = JSON.stringify(item); add(text); return canonical ? text : undefined;
+    }
     if (typeof item === 'string') {
       if (item.length > maxBytes) throw new Error('network codec: byte limit');
-      add(JSON.stringify(item)); return;
+      const text = JSON.stringify(item); add(text); return canonical ? text : undefined;
     }
-    if (typeof item === 'number' && Number.isFinite(item)) { add(String(item)); return; }
     if (typeof item !== 'object' || item === null) throw new Error('network codec: non-JSON value');
     if (ancestors.has(item)) throw new Error('network codec: cyclic value');
     if (!Array.isArray(item) && Object.getPrototypeOf(item) !== Object.prototype && Object.getPrototypeOf(item) !== null)
@@ -40,28 +41,44 @@ export function assertJsonBudget(value: unknown, maxBytes: number): void {
     if (Object.getOwnPropertySymbols(item).length) throw new Error('network codec: symbol property');
     ancestors.add(item);
     add('[]');
-    if (Array.isArray(item)) {
+    const array = Array.isArray(item);
+    let result = array ? '[' : '{';
+    if (array) {
       for (let i = 0; i < item.length; i++) {
         const descriptor = Object.getOwnPropertyDescriptor(item, String(i));
         if (!descriptor || !('value' in descriptor) || descriptor.value === undefined) throw new Error('network codec: invalid array');
         if (i) add(',');
-        visit(descriptor.value, depth + 1);
+        const encoded = visit(descriptor.value, depth + 1);
+        if (canonical) result += (i ? ',' : '') + encoded;
       }
     } else {
       let first = true;
-      for (const key of Object.getOwnPropertyNames(item)) {
+      const keys = Object.getOwnPropertyNames(item);
+      for (const key of canonical ? keys.sort() : keys) {
         const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
         if (!('value' in descriptor) || !descriptor.enumerable) throw new Error('network codec: accessor or non-enumerable field');
         if (descriptor.value === undefined) continue; // optional JS fields disappear on JSON wire
         if (!first) add(',');
+        const field = JSON.stringify(key);
+        add(field); add(':');
+        const encoded = visit(descriptor.value, depth + 1);
+        if (canonical) result += (first ? '' : ',') + field + ':' + encoded;
         first = false;
-        add(JSON.stringify(key)); add(':');
-        visit(descriptor.value, depth + 1);
       }
     }
     ancestors.delete(item);
+    return canonical ? result + (array ? ']' : '}') : undefined;
   }
-  visit(value, 0);
+  return visit(value, 0);
+}
+
+export function assertJsonBudget(value: unknown, maxBytes: number): void {
+  walkJson(value, maxBytes);
+}
+
+/** Same descriptor-only JSON walk, with local-key complexity and sorted fields. */
+export function canonicalJson(value: unknown): string {
+  return walkJson(value, 64 * 1024, true)!;
 }
 
 export function jsonCodec<T>(shapes: readonly WireShape[], root: number, maxBytes: number): Codec<T> {

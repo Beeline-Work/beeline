@@ -1,3 +1,4 @@
+import { insertCornerFacts } from './test-support.js';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -107,9 +108,8 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       repository_resolution,github_installation_id) VALUES($1,$2,$3,'Parent','owner/widgets',
       'https://github.com/owner/widgets.git','repository',77)`, [R,W,H]);
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Incident')`, [C,W,R,A]);
-    await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle,workflow_state)
-      VALUES($1,'Prove recovery',$2,$3::jsonb,'implement')`, [C,A,JSON.stringify({checks:'passing',
-      pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
+    await insertCornerFacts(db, { cornerId: C, ownerAgentId: A, lifecycle: JSON.stringify({checks:'passing',
+      pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}}), workflowState: 'implement' });
     for (const who of [H,A,B,F]) for (const room of [null,R])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
   });

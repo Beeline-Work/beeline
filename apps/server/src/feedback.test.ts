@@ -8,7 +8,7 @@ import { groupFeedback } from '../../../scripts/feedback-signals.mjs';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { ensureSystemIdentity } from './system-line.js';
 
 const PERSON = 'a'.repeat(64);
@@ -64,11 +64,8 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Issues triage')`,
     [TRIAGE_CORNER, WORKSPACE, ROOM, PERSON],
   );
-  await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES
-      ($1,$3),($2,$3)`,
-    [CORNER, TRIAGE_CORNER, TRIAGE],
-  );
+  for (const corner of [CORNER, TRIAGE_CORNER])
+    await insertCornerFacts(database, { cornerId: corner, ownerAgentId: TRIAGE });
   await database.query(
     `INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$4),($5,$2)`,
     [AGENT, PERSON, TRIAGE, CREATOR, OUTSIDER],

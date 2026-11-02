@@ -3818,7 +3818,7 @@ export class DaemonService {
    *
    * The branch on GitHub is the shared artifact. Parent Room access is the
    * authority, so every parent Room agent lists the corner
-   * and can be addressed in it. `corner_facts.owner_agent_id` survives as the
+   * and can be addressed in it. The derived owner (`cornerOwnerSql`) is the
    * historical "opened by" — it still names `createdBy` here, and the phone
    * still shows it — but it no longer decides who may work. Listing on the
    * opener alone is what made the motivating incident silent: a helper that
@@ -8532,11 +8532,7 @@ export class DaemonService {
            LEFT JOIN corner_brief_revisions initial
              ON initial.corner_id=child.id AND initial.revision=1
            WHERE child.parent_id=$1
-             -- The drop release removes this legacy replay-only fallback.
-             AND COALESCE(opening.private_payload->>'openKey',
-               CASE WHEN opening.private_payload->>'openKey' IS NULL
-                 THEN COALESCE(fact.open_idempotency_key,fact.request_id) END,
-               opening.turn_request_id)=$2
+             AND COALESCE(opening.private_payload->>'openKey',opening.turn_request_id)=$2
              AND child.archived_at IS NULL
            ORDER BY child.created_at,child.id
            LIMIT 1`,

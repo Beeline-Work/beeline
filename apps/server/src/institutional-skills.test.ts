@@ -1,4 +1,4 @@
-import { seedCornerOpening, describedWorkflow, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, describedWorkflow, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandRow } from './agent-command.js';
@@ -86,13 +86,12 @@ beforeEach(async () => {
        ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$5,'member'),($1,$6,$2,'owner'),($1,$6,$3,'member'),($1,$6,$4,'member'),($1,$6,$5,'member') `,
     [WORKSPACE, REQUESTER, OTHER_HUMAN, WORKER, OTHER_AGENT, ROOM],
   );
-  await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Make release migrations safe',$3::jsonb)`, [CORNER, WORKER, JSON.stringify({
+  await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: WORKER, commissionedBy: REQUESTER, lifecycle: JSON.stringify({
         lifecycle: 'done',
         checks: 'passing',
         outcome: 'landed',
         pr: { headSha: TARGET_COMMIT, mergeCommitSha: TARGET_COMMIT },
-      })]);
-  await seedCornerOpening(database, { cornerId: CORNER, agentId: WORKER, commissionedBy: REQUESTER });
+      }) });
   await database.query(
     `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at) VALUES
        ($1,$2,$3,'How should we handle release migrations?','message',now()-interval '3 minutes'),

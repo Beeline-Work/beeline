@@ -98,8 +98,8 @@ export async function ensureReviewProofFixture(
   );
   await database.query(
     // The phone creator owns this proof corner; no agent opening order exists.
-    `INSERT INTO corner_facts(corner_id,owner_agent_id)
-     VALUES($1,NULL) ON CONFLICT(corner_id) DO NOTHING`,
+    `INSERT INTO corner_facts(corner_id)
+     VALUES($1) ON CONFLICT(corner_id) DO NOTHING`,
     [REVIEW_PROOF_CORNER_ID],
   );
 

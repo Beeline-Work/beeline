@@ -219,7 +219,7 @@ async function main() {
       VALUES(101,77,'owner/widgets','main')`);
     await db.query(`UPDATE rooms SET repository_key='owner/widgets',github_installation_id=77 WHERE id=$1`, [ROOM]);
     const branch = `feature/corner-${corner.replaceAll('-', '').slice(0, 12)}`;
-    await db.query(`UPDATE corner_facts SET feature_branch=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [corner, branch,
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner,
       JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 42, url: 'https://github.com/owner/widgets/pull/42', headSha: '9'.repeat(40), targetBranch: 'main' } })]);
     const mergePush = pushed(RUBY, command => command.reason === 'watched_corner' && command.source.systemEvent?.kind === 'merged');
     const github = new GitHubOperations(db, {} as never, { deleteBranch: async () => {} } as never, 'proof');

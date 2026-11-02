@@ -22,7 +22,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { migrate } from '../apps/server/src/database.js';
-import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.js';
 import { TokenAuth } from '../apps/server/src/auth.js';
 import { PhoneService } from '../apps/server/src/phone-service.js';
 import { DaemonService } from '../apps/server/src/daemon-service.js';
@@ -91,14 +91,7 @@ async function main(): Promise<void> {
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Widget fix')`,
     [CORNER, WORKSPACE, ROOM, HUMAN],
   );
-  await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
-     VALUES($1,$2,'Fix the widget',$3,$4::jsonb)`,
-    [
-      CORNER,
-      IMPLEMENTER,
-      BRANCH,
-      JSON.stringify({
+  await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: IMPLEMENTER, lifecycle: JSON.stringify({
         lifecycle: 'in-review',
         branch: BRANCH,
         checks: 'unknown',
@@ -110,9 +103,7 @@ async function main(): Promise<void> {
           headSha: HEAD,
           mergeability: 'clean',
         },
-      }),
-    ],
-  );
+      }) });
   for (const who of [HUMAN, RIDGE, SABLE, IMPLEMENTER])
     for (const room of [null, ROOM, CORNER])
       await database.query(

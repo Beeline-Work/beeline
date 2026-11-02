@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerOwed, type SqlDatabase } from './database.js';
 import { addressedToPersonSql, cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -157,8 +157,7 @@ describe('corner_owed', () => {
          VALUES($1,NULL,$2,$3),($1,$4,$2,$3)`,
         [WORKSPACE, id, id === OWNER ? 'owner' : 'member', ROOM],
       );
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [CORNER, AGENT]);
-    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: OWNER });
+    await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT, commissionedBy: OWNER });
   });
 
   it('refreshes existing deliverables when the opening order records their commissioner', async () => {
@@ -291,8 +290,7 @@ describe('corner_owed', () => {
     const otherCorner = '44444444-4444-4444-8444-444444444444';
     await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name)
       VALUES($1,$2,$3,'Other corner')`, [otherCorner, WORKSPACE, ROOM]);
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [otherCorner, AGENT]);
-    await seedCornerOpening(database, { cornerId: otherCorner, agentId: AGENT, commissionedBy: OTHER });
+    await insertCornerFacts(database, { cornerId: otherCorner, ownerAgentId: AGENT, commissionedBy: OTHER });
     await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
       VALUES
       ('own-complete',$1,$2,'Done','card','daemon-fact',$3::jsonb),

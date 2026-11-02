@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, recordCornerRun } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
 
@@ -39,15 +39,15 @@ async function fixture() {
        VALUES($1,$2,$3,$4,$5,'2026-01-01T00:00:00Z'::timestamptz + make_interval(mins => $6))`,
       [id, WORKSPACE, ROOM, AGENT, name, index],
     );
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [id, AGENT]);
-    await seedCornerOpening(database, { cornerId: id, agentId: AGENT, commissionedBy: mine ? VIEWER : null });
+    await insertCornerFacts(database, { cornerId: id, ownerAgentId: AGENT, commissionedBy: mine ? VIEWER : null });
   }
   await database.query(
-    `UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL,
+    `UPDATE corner_facts SET
        lifecycle='{"lifecycle":"open","checks":"failing","pr":{"url":"https://github.com/o/r/pull/1","number":1}}'
      WHERE corner_id=$1`,
     [FAILING],
   );
+  await recordCornerRun(database, FAILING, 'implement');
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      SELECT $1::uuid,NULL::uuid,$2::text,'owner' UNION ALL

@@ -101,7 +101,6 @@ it.each([
   const report = (await commands(opened.cornerId, WORKER)).find(command => command.reason === 'report')!;
   expect(report).toBeDefined();
   // A delegate is not the corner implementer, so its blocker has no attention-index row.
-  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE report_id=$1', [report.id])).rowCount).toBe(0);
   await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Use the recovered input' }, WORKER);
   if (path === 'cached claim') await expect(claim(report)).rejects.toThrow('command claim conflict');
   expect((await commands(opened.cornerId, WORKER)).some(command => command.id === report.id)).toBe(status === 'done');

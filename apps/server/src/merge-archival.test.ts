@@ -3,7 +3,7 @@ import { Pool, type QueryResultRow } from 'pg';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, insertCornerFacts } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
@@ -69,10 +69,9 @@ beforeEach(async () => {
     VALUES($1,$2,$3,'member'),($1,$2,$4,'member'),($1,$2,$5,'owner')`, [W,R,A,B,H]);
   await db.query(`INSERT INTO memberships(workspace_id,identity_id,role)
     VALUES($1,$2,'member'),($1,$3,'member'),($1,$4,'owner')`, [W,A,B,H]);
-  await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle)
-    VALUES($1,'Fix archival',$2,$3::jsonb)`, [C,A,JSON.stringify({
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: A, lifecycle: JSON.stringify({
       checks: 'passing', pr: { number: 1, headSha: '1'.repeat(40), url: event.pull_request.html_url },
-    })]);
+    }) });
   const command = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
   requestId = command!.turn_request_id;
   await db.transaction(tx => claimAgentCommand(tx, C, A, command!.id, 'generation'));
@@ -114,7 +113,6 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   expect(attempts).toBe(2);
   await assertArchived();
   expect(app.branchDeletionSafety).toHaveBeenCalledTimes(1);
-  expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [C])).rowCount).toBe(0);
   expect(app.deleteBranch).toHaveBeenCalledTimes(1);
   await operations().processWebhook('pull_request', event);
   await assertArchived();
@@ -139,7 +137,6 @@ it.each([['40P01', 3], ['XX000', 1]] as const)('bounds archival retries for %s',
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='stop'`, [C])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE card->>'type'='corner-complete'`)).rowCount).toBe(0);
   expect(app.deleteBranch).not.toHaveBeenCalled();
-  expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [C])).rowCount).toBe(0);
 });
 
 it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as const)(

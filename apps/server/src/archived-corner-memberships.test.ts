@@ -1,3 +1,4 @@
+import { cornerOwnerSql } from './corner-worker.js';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
@@ -8,7 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { resolveCurrentMemberMentions } from './message-mentions.js';
-import { seedCornerOpening, migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, migratedDatabase, type PgliteDatabase, insertCornerFacts } from './test-support.js';
 import type { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 
@@ -44,8 +45,7 @@ beforeEach(async () => {
     WHERE (identity_id<>$6 OR surface IS NULL) AND $3::uuid IS NOT NULL`,
     [workspace, room, corner, person, agent, outsider],
   );
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, agent]);
-  await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: person });
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, commissionedBy: person });
   await db.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES('history',$1,$2,'Keep corner history')`,
     [corner, person],
@@ -131,7 +131,7 @@ it('active corners open, post and delete through parent access without creating 
   await phone.execute('deleteRoomMessage', { roomId: corner, messageId: id }, person);
   expect((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1`, [corner])).rowCount).toBe(0);
   expect(
-    (await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]
+    (await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [corner])).rows[0]
       ?.owner_agent_id,
   ).toBe(agent);
   await expect(

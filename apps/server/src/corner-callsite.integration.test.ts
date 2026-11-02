@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -109,10 +109,7 @@ async function sourceFor(kind: 'dm' | 'room' | 'parent') {
         `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'parent-work',$4)`,
         [sourceRoom, W, R, A],
       );
-      await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Parent work','{"lifecycle":"working","checks":"unknown"}')`,
-        [sourceRoom, A],
-      );
+      await insertCornerFacts(db, { cornerId: sourceRoom, ownerAgentId: A, lifecycle: '{"lifecycle":"working","checks":"unknown"}' });
     }
   return sourceRoom;
 }

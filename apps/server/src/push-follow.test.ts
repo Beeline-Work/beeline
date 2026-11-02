@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
-import { seedCornerOpening, PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, insertCornerFacts } from './test-support.js';
 
 const person = 'a'.repeat(64),
   teammate = 'b'.repeat(64),
@@ -42,8 +42,7 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$3,'Room',NULL,$4),($2,$3,'Corner',$1,$4)`,
     [room, corner, workspace, teammate],
   );
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Work')`, [corner, agent]);
-  await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: teammate });
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, commissionedBy: teammate });
   await db.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member')`,
     [workspace, person, teammate, agent],

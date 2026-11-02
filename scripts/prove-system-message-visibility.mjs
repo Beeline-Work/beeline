@@ -1,6 +1,6 @@
 // Isolated delivery proof; build the server first. Never touches a live database.
 import assert from 'node:assert/strict';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { ensureSystemIdentity } from '../apps/server/dist/system-line.js';
 import { migrate } from '../apps/server/dist/database.js';
 import { reportToCommander } from '../apps/server/dist/commander.js';
@@ -42,11 +42,7 @@ try {
       [workspace, identity, room],
     );
   }
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective)
-    VALUES($1,$2,$2,$3,'System visibility proof')`,
-    [corner, worker, human],
-  );
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, workerAgentId: worker, commissionedBy: human });
   const phone = new PhoneService(db, 'http://isolated-proof');
   const privateText = 'blocked: Private idle notice';
   const flags = { automatic: true, agentOnly: true };

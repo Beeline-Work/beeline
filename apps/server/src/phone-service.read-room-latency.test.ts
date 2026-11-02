@@ -6,7 +6,7 @@ import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import type { CommittedMessageLiveRow } from './live.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, insertCornerFacts } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111119';
 const ROOM = '22222222-2222-4222-8222-222222222229';
@@ -165,10 +165,7 @@ describe('PhoneService.readRoom latency', () => {
       await database.query(`UPDATE rooms SET created_at=now() + interval '1 minute' WHERE id=$1`, [
         CORNER,
       ]);
-      await database.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`,
-        [CORNER, AGENT],
-      );
+      await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT });
       await database.query(
         `UPDATE corner_facts SET lifecycle='{"lifecycle":"working","checks":"unknown"}'::jsonb
          WHERE corner_id=$1`,

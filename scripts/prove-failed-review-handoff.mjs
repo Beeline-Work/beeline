@@ -1,7 +1,7 @@
 /** Isolated built-service proof; no live daemon, repository or provider writes. */
 import assert from 'node:assert/strict';
 import { migrate } from '../apps/server/dist/database.js';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { TokenAuth } from '../apps/server/dist/auth.js';
 import { PhoneService } from '../apps/server/dist/phone-service.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
@@ -25,7 +25,7 @@ try {
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Room'),($2,$3,'Corner')`, [room, corner, workspace]);
   await db.query(`UPDATE rooms SET repository_key='owner/repo',repository_resolution='repository',reviewer_agent_id=$2 WHERE id=$1`, [room, reviewer]);
   await db.query('UPDATE rooms SET parent_id=$2,created_by=$3 WHERE id=$1', [corner, room, worker]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Proof')`, [corner, worker]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, workerAgentId: worker });
   for (const identity of [human, worker, reviewer]) for (const place of [null, room])
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [workspace, place, identity]);
   // This provenance is the path #2907's head-only fixtures missed: the

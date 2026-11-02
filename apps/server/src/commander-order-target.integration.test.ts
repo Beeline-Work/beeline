@@ -1,3 +1,4 @@
+import { cornerImplementerSql } from './corner-worker.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
@@ -111,7 +112,7 @@ it.each(['corner', 'parent Room'])('Reproduction corner-peer-orders: %s order re
   expect(replies.find(c => c.reason === 'report')).toMatchObject({ private: true,
     source: { authorId: BABY, body: 'done: replay passed' } });
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [JELLYBEAN])).rowCount).toBe(0);
-  expect((await db.query(`SELECT worker_agent_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0]?.worker_agent_id).not.toBe(BABY);
+  expect((await db.query(`SELECT ${cornerImplementerSql('f', 'c')} worker_agent_id FROM corner_facts f JOIN rooms c ON c.id=f.corner_id WHERE f.corner_id=$1`, [opened.cornerId])).rows[0]?.worker_agent_id).not.toBe(BABY);
   console.info(`Demonstrated corner-peer-orders: Candy → ${target} Baby → Candy privately; commander Jellybean received no report`);
 });
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun, insertCornerFacts, setCornerOwner, seedCornerOpening } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -85,11 +85,7 @@ beforeEach(async () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Review PR 614')`,
       [corner, W, R, H],
     );
-    await db.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-       VALUES($1,$2,'Review PR 614','{"checks":"unknown","lifecycle":"working"}')`,
-      [corner, A],
-    );
+    await insertCornerFacts(db, { cornerId: corner, ownerAgentId: A, lifecycle: '{"checks":"unknown","lifecycle":"working"}' });
   }
   for (const room of [R]) {
     await db.query(
@@ -582,7 +578,10 @@ describe('PR-scoped check gate', () => {
 
   it('does not single out a configured reviewer that opened the corner', async () => {
     await ownPr();
-    await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
+    // The reviewer opened this corner: its opening order and creator are A.
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_objective','human_tag')`, [AUTHOR]);
+    await seedCornerOpening(db, { cornerId: AUTHOR, agentId: A });
+    await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [AUTHOR, A]);
     await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
     // An opener with no separate worker is the effective implementer.

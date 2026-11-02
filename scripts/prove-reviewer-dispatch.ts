@@ -26,7 +26,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { migrate } from '../apps/server/src/database.js';
-import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { PgliteDatabase, insertCornerFacts, setCornerOwner } from '../apps/server/src/test-support.js';
 import { TokenAuth } from '../apps/server/src/auth.js';
 import { PhoneService } from '../apps/server/src/phone-service.js';
 import { DaemonService } from '../apps/server/src/daemon-service.js';
@@ -109,14 +109,7 @@ async function main(): Promise<void> {
     [ALREADY_GREEN_CORNER, 'feature/already-green', 2, '2'],
     [ZERO_CHECK_CORNER, 'feature/zero-checks', 3, '3'],
   ] as const)
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
-       VALUES($1,$2,'Do the work',$3,$4::jsonb)`,
-      [
-        corner,
-        IMPLEMENTER,
-        branch,
-        JSON.stringify({
+    await insertCornerFacts(database, { cornerId: corner, ownerAgentId: IMPLEMENTER, lifecycle: JSON.stringify({
           lifecycle: 'in-review',
           branch,
           checks: 'unknown',
@@ -128,9 +121,7 @@ async function main(): Promise<void> {
             headSha: head(seed),
             mergeability: 'clean',
           },
-        }),
-      ],
-    );
+        }) });
   for (const who of [HUMAN, REVIEWER, IMPLEMENTER])
     for (const room of [null, ROOM, OVERWRITTEN_CORNER, ALREADY_GREEN_CORNER, ZERO_CHECK_CORNER])
       await database.query(
@@ -362,9 +353,7 @@ async function main(): Promise<void> {
   // `owner_agent_id` predates the corner-owner backfill. That is the record the
   // corner listing used to substitute the polling agent for.
   console.log('# 4. same, for a green head whose corner owner was never recorded');
-  await database.query(`UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [
-    ALREADY_GREEN_CORNER,
-  ]);
+  await setCornerOwner(database, ALREADY_GREEN_CORNER, null);
   const unowned = await reviewerToolSurface(ALREADY_GREEN_CORNER);
   console.log(
     `   reconciled turn env: reviewerHandle=${unowned.reviewerHandle ?? 'none'} ` +

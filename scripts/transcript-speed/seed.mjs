@@ -34,8 +34,9 @@ try {
     }
   }
   await database.query('UPDATE rooms SET parent_id=$1,name=$2 WHERE id=$3', [rooms[0], 'Transcript streaming corner', corner]);
-  await database.query(`INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind)
-    VALUES($1,$2,'Local concurrent streaming fixture','human') ON CONFLICT DO NOTHING`, [corner, viewer]);
+  // A person-opened corner: its creator is its commissioner.
+  await database.query('UPDATE rooms SET created_by=COALESCE(created_by,$2) WHERE id=$1', [corner, viewer]);
+  await database.query('INSERT INTO corner_facts(corner_id) VALUES($1) ON CONFLICT DO NOTHING', [corner]);
   await database.query('COMMIT');
   console.log(JSON.stringify({ workspace, rooms, agents, messagesPerRoom: 1000, fixtureFingerprint }));
 } catch (error) {

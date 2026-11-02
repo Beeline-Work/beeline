@@ -4,7 +4,7 @@ import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient, retryGitHubRead } from '@beeline/auth/github';
 import { type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from './test-support.js';
 import { captureServerError } from './sentry.js';
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 import { GitHubOperations } from './github-operations.js';
@@ -73,12 +73,12 @@ describe('GitHub phone operations', () => {
     for (let number = 1; number <= count; number++) {
       const corner = `33333333-${String(number).padStart(4, '0')}-4333-8333-333333333333`;
       corners.push(corner);
+      // The reviewer agent opened these corners: its opening order and creator.
       await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
-        VALUES($1,$2,$3,$4,'Checks')`, [corner, workspace, room, HUMAN]);
-      await database.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle)
-        VALUES($1,'Fix checks',$2,$3::jsonb)`,
-      [corner, REVIEWER, JSON.stringify({ checks: 'passing',
-        pr: { number, headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' } })]);
+        VALUES($1,$2,$3,$4,'Checks')`, [corner, workspace, room, REVIEWER]);
+      await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({ checks: 'passing',
+        pr: { number, headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' } }) });
+      await seedCornerOpening(database, { cornerId: corner, agentId: REVIEWER });
     }
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token', expiresAt: '2030-01-01T00:00:00Z' })),
@@ -165,7 +165,7 @@ describe('GitHub phone operations', () => {
         const attempt = ++attempts;
         if (attempt === 2) {
           expect((await tx.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.checks).toBe('passing');
-          expect((await tx.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
+          expect((await tx.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rows).toHaveLength(0);
           expect(changed).not.toHaveBeenCalled();
         }
         if (attempt === 1 && boundary === 'before writes')
@@ -203,7 +203,7 @@ describe('GitHub phone operations', () => {
       expect(spy).toHaveBeenCalledTimes(code === '23514' ? 1 : 3);
       expect(changed).not.toHaveBeenCalled();
       expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.summary).toBeNull();
-      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
+      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rows).toHaveLength(0);
     });
 
   it.each(['40P01', '55P03'])('CHECK-LOCK-1: leaves %s rollback and replay to the supplied transaction owner', async code => {
@@ -262,7 +262,7 @@ describe('GitHub phone operations', () => {
         `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]!.lifecycle;
       if (guard === 'head') expect(lifecycle.pr.headSha).toBe('new-head');
       else expect(lifecycle.checksSummary?.total).toBe(99);
-      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
+      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rows).toHaveLength(0);
     });
 
   it.each(['webhook', 'live checks read'] as const)('R-GH-SHUTDOWN: drains %s before closing the pool', async trigger => {
@@ -504,7 +504,7 @@ describe('GitHub phone operations', () => {
     const implementer = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [cornerId, implementer]);
+    await setCornerOwner(database, cornerId, implementer);
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number)
       VALUES($1,$2,$3,1)`, [cornerId, REVIEWER, headSha]);
@@ -529,7 +529,7 @@ describe('GitHub phone operations', () => {
   it('Reproduction merged-1: archival during the provider read cannot leave a landing offer', async () => {
     const {corners,headSha,app}=await checksFixture();
     const cornerId=corners[0]!;
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`,[cornerId,HUMAN]);
+    await setCornerOwner(database, cornerId, HUMAN);
     await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`,[cornerId,REVIEWER,headSha]);
     const rollup=await app.readCommitCheckRollup();
     app.readCommitCheckRollup.mockImplementationOnce(async()=>{
@@ -543,7 +543,7 @@ describe('GitHub phone operations', () => {
   it('Reproduction merged-1: live GitHub merged state closes the gate before archival reaches the read', async () => {
     const {corners,headSha,app}=await checksFixture();
     const cornerId=corners[0]!;
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`,[cornerId,HUMAN]);
+    await setCornerOwner(database, cornerId, HUMAN);
     await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`,[cornerId,REVIEWER,headSha]);
     const pr=await app.readPullRequest('room-token','owner/widgets',1);
     app.readPullRequest.mockResolvedValue({...pr,merged:true,state:'closed'});
@@ -759,7 +759,7 @@ describe('GitHub phone operations', () => {
     const implementer = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [corner, implementer]);
+    await setCornerOwner(database, corner, implementer);
     app.readPullRequest.mockImplementation(async (_token, _repository, number) => ({
       number, headSha, url: `https://github.com/owner/widgets/pull/${number}`,
       mergeability: 'clean', state: number === 1 ? 'closed' : 'open', headRef: 'feature/corner-333333330001',
@@ -801,7 +801,7 @@ describe('GitHub phone operations', () => {
     const implementer = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [corner, implementer]);
+    await setCornerOwner(database, corner, implementer);
     const newHead = '2'.repeat(40);
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     const prEvent = (action: string, sha: string) => ({
@@ -1029,7 +1029,8 @@ describe('GitHub phone operations', () => {
   it('Reproduction REVIEW-LOOP: checks expose an ended review without claiming a verdict', async () => {
     const {corners,app}=await checksFixture();
     const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
-    await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`,[corners[0]]);
+    await setCornerOwner(database, corners[0]!, null);
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`,[corners[0]]);
     expect((await operations.prChecksStatus({cornerId:corners[0]!})).reviewerWake.status).toBe('dispatched');
     await database.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1`,[corners[0]]);
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`,[corners[0]]);
@@ -1049,7 +1050,8 @@ describe('GitHub phone operations', () => {
     expect(self.reviewerWake.status).toBe('waiting');
     expect(self).not.toHaveProperty('rule');
     expect(self).not.toHaveProperty('reviewerIsAuthor');
-    await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    await setCornerOwner(database, corners[0]!, null);
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });
     // Repairing the unknown snapshot commits the green transition; the wake
     // reports the resulting dispatch, without a self-review special case.
@@ -1139,10 +1141,7 @@ describe('GitHub phone operations', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
        VALUES($1,$2,$3,$4,'Promoted')`, [corner, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Promoted work','{"checks":"unknown"}')`, [corner],
-    );
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: '{"checks":"unknown"}' });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readCommitCheckRollup: vi.fn(async () => ({
@@ -1171,10 +1170,9 @@ describe('GitHub phone operations', () => {
         check_suite: { head_branch: branch, head_sha: headSha },
       },
     });
-    const fact = (await database.query<{ feature_branch: string; lifecycle: object }>(
-      `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    const fact = (await database.query<{ lifecycle: object }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
     )).rows[0]!;
-    expect(fact.feature_branch).toBeNull();
     expect(fact.lifecycle).not.toHaveProperty('branch');
     expect(fact.lifecycle).toMatchObject({ checks: 'passing', pr: { number: 4, headSha } });
     expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(1);
@@ -1188,10 +1186,7 @@ describe('GitHub phone operations', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
        VALUES($1,$2,$3,$4,'Collision')`, [collision, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Another corner','{"checks":"unknown"}')`, [collision],
-    );
+    await insertCornerFacts(database, { cornerId: collision, lifecycle: '{"checks":"unknown"}' });
     await database.query(
       `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
       [corner],
@@ -1204,17 +1199,10 @@ describe('GitHub phone operations', () => {
         base: { ref: 'main' }, mergeable_state: 'clean',
       },
     });
-    expect((await database.query<{ feature_branch: string | null }>(
-      `SELECT feature_branch FROM corner_facts WHERE corner_id=$1`, [corner],
-    )).rows[0]?.feature_branch).toBeNull();
     await operations.processWebhook('push', {
       installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       ref: `refs/heads/${branch}`, after: headSha,
     });
-    expect((await database.query<{ feature_branch: string | null }>(
-      `SELECT feature_branch FROM corner_facts WHERE corner_id=ANY($1::uuid[]) ORDER BY corner_id`,
-      [[corner, collision]],
-    )).rows).toEqual([{ feature_branch: null }, { feature_branch: null }]);
     expect((await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=ANY($1::uuid[])`, [[corner, collision]])).rows).toEqual([{ lifecycle: { checks: 'unknown' } }, { lifecycle: { checks: 'unknown' } }]);
     await operations.processWebhook('pull_request', {
       action: 'opened', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
@@ -1286,11 +1274,7 @@ describe('GitHub phone operations', () => {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
         [workspace,room,opener],
       );
-      await tx.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-         VALUES($1,$2,'Convo chains',$3::jsonb)`,
-        [corner, opener, JSON.stringify({ checks: 'unknown' })],
-      );
+      await insertCornerFacts(tx, { cornerId: corner, ownerAgentId: opener, lifecycle: JSON.stringify({ checks: 'unknown' }) });
     });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
@@ -1363,7 +1347,7 @@ describe('GitHub phone operations', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Hidden river')`,
       [corner, workspace, room, HUMAN],
     );
-    await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Hidden river','{"checks":"unknown"}')`, [corner]);
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: '{"checks":"unknown"}' });
     // An earlier system note carries the old fallback's author; it must not count.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,system_event,created_at)
@@ -1424,21 +1408,14 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Two PRs')`,
       [corner, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Two PRs',$2::jsonb)`,
-      [
-        corner,
-        JSON.stringify({
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({
           checks: 'passing',
           pr: {
             number: 100,
             url: 'https://github.com/owner/widgets/pull/100',
             headSha,
           },
-        }),
-      ],
-    );
+        }) });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readCommitCheckRollup: vi.fn(async () => ({
@@ -1512,21 +1489,14 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Two PRs')`,
       [corner, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Two PRs',$2::jsonb)`,
-      [
-        corner,
-        JSON.stringify({
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({
           checks: 'passing',
           pr: {
             number: 100,
             url: 'https://github.com/owner/widgets/pull/100',
             headSha,
           },
-        }),
-      ],
-    );
+        }) });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readCommitCheckRollup: vi.fn(async () => ({
@@ -1623,11 +1593,7 @@ describe('GitHub phone operations', () => {
     );
     // The corner starts with a branch but no pull association, so #200's
     // branch lookup matches it with no recorded number.
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Two PRs',$2::jsonb)`,
-      [corner, JSON.stringify({ checks: 'passing' })],
-    );
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({ checks: 'passing' }) });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readCommitCheckRollup: vi.fn(async () => ({
@@ -1736,21 +1702,14 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Promoted')`,
       [corner, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Promoted work',$2::jsonb)`,
-      [
-        corner,
-        JSON.stringify({
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({
           checks: 'unknown',
           pr: {
             number: 9,
             url: 'https://github.com/owner/widgets/pull/9',
             headSha,
           },
-        }),
-      ],
-    );
+        }) });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readCommitCheckRollup: vi.fn(async () => ({
@@ -1779,13 +1738,12 @@ describe('GitHub phone operations', () => {
 
     expect(
       (
-        await database.query<{ feature_branch: string; lifecycle: object }>(
-          `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`,
+        await database.query<{ lifecycle: object }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
           [corner],
         )
       ).rows[0],
     ).toMatchObject({
-      feature_branch: null,
       lifecycle: { checks: 'passing' },
     });
     // Checks on an associated PR need no branch-to-PR discovery.
@@ -1825,7 +1783,7 @@ describe('GitHub phone operations', () => {
        ($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
       [workspace, HUMAN, room],
     );
-    await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Recover missed merge',$2::jsonb)`, [corner, JSON.stringify({
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({
           lifecycle: 'in-review',
           checks: 'failing',
           pr: {
@@ -1836,7 +1794,7 @@ describe('GitHub phone operations', () => {
             headSha,
             mergeability: 'clean',
           },
-        })]);
+        }) });
     await seedCornerOpening(database, { cornerId: corner, commissionedBy: HUMAN });
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
@@ -2617,12 +2575,7 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Checks')`,
       [corner, workspace, room, HUMAN],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
-       VALUES($1,'Fix checks',$2::jsonb)`,
-      [
-        corner,
-        JSON.stringify({
+    await insertCornerFacts(database, { cornerId: corner, lifecycle: JSON.stringify({
           lifecycle: 'in-review',
           branch: 'feature/corner-333333333333',
           checks: 'unknown',
@@ -2634,9 +2587,7 @@ describe('GitHub phone operations', () => {
             headSha,
             mergeability: 'clean',
           },
-        }),
-      ],
-    );
+        }) });
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Reviewer')`, [
       REVIEWER,
     ]);
@@ -2759,11 +2710,10 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ agent_id: REVIEWER }]);
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [
-      corner,
-      REVIEWER,
-    ]);
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    // The reviewer opened this corner, so it is the one woken for the conflict.
+    await seedCornerOpening(database, { cornerId: corner, agentId: REVIEWER });
+    await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [corner, REVIEWER]);
     const dirty = {
       action: 'synchronize',
       installation: { id: 77 },
@@ -2791,7 +2741,7 @@ describe('GitHub phone operations', () => {
     expect(
       (
         await database.query<{ reason: string }>(
-          `SELECT reason FROM agent_commands WHERE room_id=$1`,
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`,
           [corner],
         )
       ).rows,
@@ -2799,13 +2749,13 @@ describe('GitHub phone operations', () => {
     readPullRequest.mockResolvedValueOnce(confirmDirty);
     await operations.processWebhook('pull_request', dirty);
     expect(
-      (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount,
+      (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rowCount,
     ).toBe(1);
-    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner]);
     readPullRequest.mockResolvedValueOnce(confirmDirty);
     await operations.processWebhook('pull_request', dirty);
     expect(
-      (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount,
+      (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rowCount,
     ).toBe(1);
     readCommitCheckRollup.mockResolvedValue({
       state: 'failed',

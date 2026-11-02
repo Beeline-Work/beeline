@@ -1,7 +1,7 @@
 // Run after building @beeline/server. --base asserts the original 503/Sentry behavior.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
 import { LiveHub } from '../apps/server/dist/live.js';
@@ -40,7 +40,7 @@ try {
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Parent')`, [parent, workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, workspace, parent]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace, parent, agent]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, agent]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent });
   await db.query(`INSERT INTO daemon_tokens(token_hash,agent_id) VALUES($1,$2)`, [tokenHash('bdt_refusal_fixture_123456789'), agent]);
   server = createBeelineServer({ database: db, daemon, live, auth: new TokenAuth(db, async () => { throw new Error('unused'); }), phone: new PhoneService(db, 'http://test'), mediaMaximumBytes: 1 });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

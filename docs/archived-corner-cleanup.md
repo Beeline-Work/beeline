@@ -13,7 +13,7 @@ node --import tsx apps/server/src/corner-cleanup-cli.ts
 node --import tsx apps/server/src/corner-cleanup-cli.ts --apply
 ```
 
-The command checks schema compatibility. Inspection lists archived corners and their derived branches without contacting GitHub. Apply also requires the established `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_APP_SLUG` environment configuration; it never prints those values. It scans archived corners itself on every explicit invocation, making guarded branch deletion attempts directly. It does not read or write `corner_branch_deletions` and never pushes commits.
+The command checks schema compatibility. Inspection lists archived corners and their derived branches without contacting GitHub. Apply also requires the established `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_APP_SLUG` environment configuration; it never prints those values. It scans archived corners itself on every explicit invocation, making guarded branch deletion attempts directly. There is no branch-deletion queue, and it never pushes commits.
 
 Historical deletion requires containment for every branch, including merged corners. A squash-merged branch may be removed only when its live tip equals that corner's recorded merged PR head; later unpublished commits remain protected. Results report `deleted_or_already_absent`, `kept` with a reason, or `failed`. Missing repository mappings retain the branch with an explicit reason. Temporary blockers and provider failures are reconsidered only when an operator explicitly runs maintenance again.
 

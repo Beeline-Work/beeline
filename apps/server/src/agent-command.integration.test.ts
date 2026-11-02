@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase, seedCornerOpening } from './test-support.js';
+import { PgliteDatabase, seedCornerOpening, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -759,10 +759,7 @@ beforeAll(async () => {
     W,
   ]);
   await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [R, C]);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work','{"checks":"unknown"}')`,
-    [C, B],
-  );
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: B, lifecycle: '{"checks":"unknown"}' });
   for (const who of [H, A, B, P])
     for (const room of [null, R])
       await db.query(
@@ -2732,7 +2729,7 @@ it('stuck-turn-1: a completion receipt closes a working turn even when its comma
 it('Reproduction stuck-turn-1: superseded review output completes its command and closes its turn together', async () => {
   const corner = '44444444-4444-4444-8444-444444444444';
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'stuck-turn-proof')`, [corner,W,R]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"working"}')`, [corner,A]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: A, lifecycle: '{"lifecycle":"working"}' });
   await send('@hoots review this head', corner);
   const [command] = await commands(A, corner);
   await claim(command!);

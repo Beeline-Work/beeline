@@ -1,4 +1,6 @@
 import { helperUsageCodecs } from '@beeline/net/helper-codecs';
+import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
+import { helperActivationEnabled,fenceCommandActivationEnqueue } from './helper-activation.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
 import { helperUsageEnabled } from './helper-usage.js';
@@ -132,6 +134,7 @@ export class DaemonAgentSession {
   usageOwnerId:string|undefined;
   get usageAccountV1():boolean{return this.presence.usageAccountV1===true&&helperUsageEnabled()&&this.usageOwnerId!==undefined&&this.epoch!==undefined;}
   get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
+  get activationContextV1():boolean{return this.presence.activationContextV1===true&&helperActivationEnabled()&&this.epoch!==undefined;}
 
   constructor(
     private readonly deps: DaemonLiveDependencies,
@@ -143,6 +146,7 @@ export class DaemonAgentSession {
       sourceSha?: string;
       overlayV1?: boolean;
       usageAccountV1?:boolean;
+      activationContextV1?:boolean;
     } = {},
   ) {
     const { live, database } = deps;
@@ -286,7 +290,7 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
-    if((raw.type==='overlay-update'||raw.type==='usage-operation')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
+    if((raw.type==='overlay-update'||raw.type==='usage-operation'||raw.type==='activation-context')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
       this.deps.errors.overload++;this.transport.drop(1009,'overlay frame capacity exceeded');this.close();return;
     }
     if (this.#tasks >= MAX_LIVE_SESSION_TASKS ||
@@ -348,6 +352,25 @@ export class DaemonAgentSession {
 
   async #process(item: Record<string, unknown>): Promise<void> {
     if (!this.transport.admit(item)) return;
+    if(item.type==='activation-context'){
+      if(!this.activationContextV1||typeof item.requestId!=='string'||!item.requestId||item.requestId.length>128)return;
+      try{
+        if(Object.keys(item).some(key=>!['type','requestId','agentId','input'].includes(key)))throw new Error('Activation unknown frame field');
+        const input=helperActivationCodecs.params.parse(item.input);
+        if(input.agentId!==this.agentId||input.source.connectionId!==this.connectionId||input.source.epoch!==this.epoch)
+          throw new Error('Activation registration source mismatch');
+        const snapshot=helperActivationCodecs.result.parse(await this.deps.daemon.readCommandActivation(input,this.agentId));
+        const accepted=await fenceCommandActivationEnqueue(this.deps.database,snapshot,current=>{
+          const reply={type:'activation-context-result',requestId:item.requestId,result:current};
+          if(Buffer.byteLength(JSON.stringify(reply))+256>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Activation reply capacity');
+          if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
+        });
+        if(!accepted)throw new Error('Activation source changed before enqueue');
+      }catch{
+        if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'activation-context-result',requestId:item.requestId,error:'activation_context_refused'});
+      }
+      return;
+    }
     if(item.type==='usage-operation'){
       const names=['publishAgentUsageAccount','attachAgentUsageAccount','postAgentUsage'] as const;
       if(!this.usageAccountV1||typeof item.requestId!=='string'||!item.requestId||item.requestId.length>128||
@@ -818,6 +841,7 @@ export function serveMachineSocket(
           ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
           ...(item.overlayV1===true?{overlayV1:true}:{}),
           ...(item.usageAccountV1===true?{usageAccountV1:true}:{}),
+          ...(item.activationContextV1===true?{activationContextV1:true}:{}),
         },
       );
       sessions.set(agentId, session);
@@ -833,6 +857,7 @@ export function serveMachineSocket(
         agentId,
         capabilities: { discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true,
           ...(session.overlayV1?{overlayV1:true}:{}),
+          ...(session.activationContextV1?{activationContextV1:true,activationConnectionId:session.connectionId,activationConnectionEpoch:session.epoch}:{}),
           ...(session.usageAccountV1?{usageAccountV1:true,usageOwnerId:session.usageOwnerId,usageConnectionId:session.connectionId,usageConnectionEpoch:session.epoch}:{}) },
       });
     } catch (error) {

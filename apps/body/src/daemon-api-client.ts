@@ -389,10 +389,20 @@ export class DaemonApiClient {
     this.channel.stop();
   }
 
+  /** One negotiated command setup read, carried only by the existing machine
+   * channel. This method bypasses generic HTTP and context argument injection. */
+  async readCommandActivation(input:import('@beeline/api-contract/helper-activation').CommandActivationInput){
+    const identity=input&&typeof input==='object'?Object.getOwnPropertyDescriptor(input,'agentId'):undefined;
+    if(!identity||!('value' in identity)||identity.value!==this.agentId)throw new Error('Activation runtime identity mismatch');
+    this.requestCount++;this.inFlight++;
+    try{return await this.channel.activation.request(input);}finally{this.inFlight--;}
+  }
+
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
     input: Input<Name>,
   ): Promise<Output<Name>> {
+    if(name==='readCommandActivation')throw new Error('Activation context requires the command-owned machine adapter');
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
       throw new Error('daemon operation agentId does not match the runtime identity');

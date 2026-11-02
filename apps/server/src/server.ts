@@ -2936,6 +2936,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       return;
     }
     const name = match[1]!;
+    if (name === 'readCommandActivation') {
+      json(response, 409, { error: 'activation_context_socket_required' });
+      return;
+    }
     if (name === 'getCornerAsk') {
       json(response, 410, { error: 'getCornerAsk is retired; use order and report' });
       return;

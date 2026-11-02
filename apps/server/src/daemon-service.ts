@@ -1,4 +1,6 @@
 import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
+import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
+import { captureCommandActivation, helperActivationEnabled } from './helper-activation.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
@@ -415,6 +417,21 @@ export class DaemonService {
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
+  /** Narrow DB-only setup path. Every effect still uses execute's current
+   * command/grant authorization; this value only replaces duplicate reads. */
+  async readCommandActivation(input:CommandActivationInput,authenticatedAgentId:string){
+    if(!helperActivationEnabled()||input.agentId!==authenticatedAgentId)throw new Error('Activation capability unavailable');
+    return captureCommandActivation(this.database,input,async(db,command,isCorner)=>{
+      const scoped=new DaemonService(db,this.live,undefined,this.mediaMaximumBytes,true,command);
+      const configuration=await scoped.configuration(authenticatedAgentId,input.roomId);
+      const roster=await scoped.workspaceRoster({agentId:authenticatedAgentId,workspaceId:input.workspaceId},authenticatedAgentId);
+      const grants=await scoped.listAgentGrants(authenticatedAgentId,input.roomId);
+      const requester=await scoped.repositoryOnboardingRequester(authenticatedAgentId,input.roomId);
+      const repository={...await scoped.repository(input.roomId,authenticatedAgentId),...(requester?{repositoryOnboarding:true}: {})};
+      return {configuration,roster,grants,repository,...(isCorner?{corner:await scoped.cornerRestore(input.roomId,authenticatedAgentId)}:{})};
+    });
+  }
+
   constructor(
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
@@ -472,6 +489,7 @@ export class DaemonService {
     input: Input<Name>,
     authenticatedAgentId: string,
   ): Promise<Output<Name>> {
+    if(name==='readCommandActivation')throw new Error('Activation context requires the negotiated machine socket');
     for (let attempt = 0; ; attempt++) {
       let committed = false;
       try {
@@ -9460,6 +9478,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentAvatar: true,
   postAgentUsage: true,
   publishAgentUsageAccount:true,
+  readCommandActivation:true,
   attachAgentUsageAccount:true,
   getAgentUsage: true,
   answerUsageRefresh: true,

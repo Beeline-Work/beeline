@@ -1,3 +1,4 @@
+import { CommandActivationContext } from './helper-activation-context.js';
 import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
 import { tryWithKernelLock } from './kernel-lock.js';
@@ -500,6 +501,7 @@ export interface MonolithCornerTurnOptions {
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly commandContext: CommandExecutionContext;
+  private readonly activationContext: CommandActivationContext;
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
@@ -683,6 +685,11 @@ export class MonolithCornerTurnLoop {
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
+    this.activationContext=new CommandActivationContext({
+      scope:()=>options.api.channel?.activationScope?.(),
+      selected:()=>options.api.channel?.activationContextSelected===true,
+      read:input=>options.api.readCommandActivation(input),
+    });
     const checkout = this.options;
     options.grantRunner?.register(options.cornerId, {
       workspaceId: options.workspaceId,
@@ -775,8 +782,36 @@ export class MonolithCornerTurnLoop {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
+  private commandActivation(){
+    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    const command=this.commandContext?.current;
+    if(!command){
+      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
+      return Promise.resolve(undefined);
+    }
+    return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
+      roomId:this.options.cornerId,commandId:command.id,generationId:this.commandContext.generationId});
+  }
+
+  private async configuration(){
+    const activation=await this.commandActivation();
+    return activation?activation.configuration:this.options.api.execute('getAgentConfiguration',{agentId:this.agent.publicKey,roomId:this.options.cornerId});
+  }
+
+  private async restoredState(){
+    const activation=await this.commandActivation();
+    if(activation){if(!activation.corner)throw new Error('Activation corner context absent');return activation.corner;}
+    return this.options.api.execute('getCornerRestoreState',{cornerId:this.options.cornerId});
+  }
+
+  private async repositoryState(){
+    const activation=await this.commandActivation();
+    return activation?activation.repository:this.options.api.execute('getRoomRepositoryState',{roomId:this.options.cornerId});
+  }
+
   private async roster(): Promise<WorkspaceRoster> {
-    const roster = await this.options.api.execute('getWorkspaceRoster', {
+    const activation=await this.commandActivation();
+    const roster = activation?activation.roster:await this.options.api.execute('getWorkspaceRoster', {
       agentId: this.agent.publicKey,
       workspaceId: this.options.workspaceId,
     });
@@ -927,13 +962,10 @@ export class MonolithCornerTurnLoop {
 
   private async currentSessionFingerprint(): Promise<string> {
     const [configuration, roster, grants, restored, cornerPrepareScript] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.cornerId,
-      }),
+      this.configuration(),
       this.roster(),
       this.grantedResources(),
-      this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
+      this.restoredState(),
       hasCornerPrepareScript(this.options.worktreePath),
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
@@ -972,7 +1004,8 @@ export class MonolithCornerTurnLoop {
 
   private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
     try {
-      const grants = await this.options.api.execute('listAgentGrants', {
+      const activation=await this.commandActivation();
+      const grants = activation?activation.grants:await this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       });
@@ -1028,13 +1061,10 @@ export class MonolithCornerTurnLoop {
     trace?.noteActivation('cold');
     this.sectionBaseline.reset();
     const [configuration, roster, grants, restored] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.cornerId,
-      }),
+      this.configuration(),
       this.roster(),
       this.grantedResources(),
-      this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
+      this.restoredState(),
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
     const privateAssetRoot = resolve(runtimeDirectory(this.options.runtime.supervisorRoot,
@@ -1770,12 +1800,10 @@ export class MonolithCornerTurnLoop {
   private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
     // Each writer owns its refs and files. Detached tools retain their harness,
     // never a checkout lock or another agent's turn.
-    const configuration = this.options.repository ? await this.options.api.execute('getAgentConfiguration', {
-      agentId: this.agent.publicKey, roomId: this.options.cornerId,
-    }) : undefined;
+    const configuration = this.options.repository ? await this.configuration() : undefined;
     this.reviewerCheckout = configuration?.isReviewer === true;
     if (this.options.prepareCheckout && this.options.repository) {
-      const restored = await this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId });
+      const restored = await this.restoredState();
       // An unbriefed human corner still bootstraps on its feature branch;
       // repository publication remains gated by its first assigned brief.
       const repositoryWork = !restored.brief || cornerHasRepositoryWork(restored.brief);
@@ -1916,13 +1944,13 @@ export class MonolithCornerTurnLoop {
                     narrationRequestId: requestId,
                   }),
                   this.roster(),
-                  api.execute('getCornerRestoreState', { cornerId }),
+                  this.restoredState(),
                   this.activeReviewerInstruction(),
                   awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
                   api.execute('listRoomCorners', { roomId: this.options.parentRoomId }),
-                  api.execute('getRoomRepositoryState', { roomId: cornerId })
+                  this.repositoryState()
                     .then(state => state.repositoryOnboarding === true, () => false),
                 ]),
               );
@@ -2868,6 +2896,8 @@ export class MonolithCornerTurnLoop {
           }
           if (!this.reconcileCloseRequested) return false;
           this.reconcileCloseRequested = false;
+          // A close control owns a current authority read, independently of a
+          // command's held setup value.
           const state = await api.execute('getCornerRestoreState', { cornerId });
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.

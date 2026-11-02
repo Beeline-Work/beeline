@@ -1,4 +1,5 @@
 import { HelperUsageChannel } from './helper-usage-channel.js';
+import { HelperActivationChannel } from './helper-activation-channel.js';
 import { HelperOverlayChannel } from './helper-overlay-channel.js';
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
@@ -27,6 +28,12 @@ export interface AgentChannelHandlers {
  * can drop or refuse one agent without touching the others.
  */
 export class AgentChannel {
+  readonly activation=new HelperActivationChannel(frame=>this.send(frame),()=>this.activationScope()!==undefined);
+  #activationSource:{connectionId:string;epoch:number}|undefined;
+  activationContextSelected=false;
+  activationScope():{origin:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
+    return this.#activationSource&&this.isOpen()?{origin:this.machine.origin,generation:this.reconnects,source:this.#activationSource}:undefined;
+  }
   readonly usage=new HelperUsageChannel(frame=>this.send(frame),()=>this.usageAccountScope()!==undefined);
   readonly overlay=new HelperOverlayChannel(frame=>this.send(frame),()=>this.isOpen());
   #usageOwnerId:string|undefined;
@@ -78,6 +85,7 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
     this.usage.suspend();
     this.overlay.suspend();
@@ -111,7 +119,7 @@ export class AgentChannel {
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true,
     }))) this.#pending = false;
   }
 
@@ -121,6 +129,11 @@ export class AgentChannel {
       this.#pending = false;
       if (!this.#wanted || this.#registered) return;
       this.#registered = true;
+      const activationCapabilities=event.capabilities as {activationContextV1?:unknown;activationConnectionId?:unknown;activationConnectionEpoch?:unknown}|undefined;
+      if(activationCapabilities?.activationContextV1===true)this.activationContextSelected=true;
+      this.#activationSource=activationCapabilities?.activationContextV1===true&&typeof activationCapabilities.activationConnectionId==='string'&&
+        Number.isSafeInteger(activationCapabilities.activationConnectionEpoch)&&Number(activationCapabilities.activationConnectionEpoch)>0
+        ?{connectionId:activationCapabilities.activationConnectionId,epoch:Number(activationCapabilities.activationConnectionEpoch)}:undefined;
       const usageCapabilities=event.capabilities as {usageAccountV1?:unknown;usageOwnerId?:unknown;usageConnectionId?:unknown;usageConnectionEpoch?:unknown}|undefined;
       this.usageAccountSelected=usageCapabilities?.usageAccountV1===true;
       this.#usageOwnerId=this.usageAccountSelected&&typeof usageCapabilities?.usageOwnerId==='string'?usageCapabilities.usageOwnerId:undefined;
@@ -172,12 +185,13 @@ export class AgentChannel {
       if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
-    if(this.#registered&&(this.overlay.receive(event)||this.usage.receive(event)))return;
+    if(this.#registered&&(this.overlay.receive(event)||this.usage.receive(event)||this.activation.receive(event)))return;
     if (this.#registered) this.handlers.onMessage(event);
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
     this.usage.suspend();
     this.overlay.suspend();
@@ -217,6 +231,7 @@ export class AgentChannel {
   }
 
   #ended(): void {
+    this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
     this.usage.suspend();
     this.overlay.suspend();

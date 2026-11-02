@@ -23,6 +23,11 @@
       "types": "./dist/helper-codecs.d.ts",
       "import": "./dist/helper-codecs.js",
       "default": "./dist/helper-codecs.js"
+    },
+    "./helper-activation-codecs": {
+      "types": "./dist/helper-activation-codecs.d.ts",
+      "import": "./dist/helper-activation-codecs.js",
+      "default": "./dist/helper-activation-codecs.js"
     }
   },
   "scripts": {

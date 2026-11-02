@@ -108,6 +108,11 @@
       "types": "./dist/helper-usage.d.ts",
       "import": "./dist/helper-usage.js",
       "default": "./dist/helper-usage.js"
+    },
+    "./helper-activation": {
+      "types": "./dist/helper-activation.d.ts",
+      "import": "./dist/helper-activation.js",
+      "default": "./dist/helper-activation.js"
     }
   },
   "scripts": {

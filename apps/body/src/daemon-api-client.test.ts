@@ -421,6 +421,7 @@ describe('DaemonApiClient', () => {
         intakeHeartbeat: true,
         overlayV1:true,
         usageAccountV1:true,
+        activationContextV1:true,
         agentId: 'b'.repeat(64),
         token: `bdt_${'y'.repeat(43)}`,
         lifecycleId: expect.any(String),

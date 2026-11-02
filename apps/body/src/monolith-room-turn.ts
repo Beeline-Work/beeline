@@ -1,3 +1,4 @@
+import { CommandActivationContext } from './helper-activation-context.js';
 import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
@@ -576,6 +577,7 @@ export interface MonolithRoomTurnOptions {
  */
 export class MonolithRoomTurnLoop {
   private readonly commandContext: CommandExecutionContext;
+  private readonly activationContext: CommandActivationContext;
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
@@ -713,6 +715,11 @@ export class MonolithRoomTurnLoop {
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
+    this.activationContext=new CommandActivationContext({
+      scope:()=>options.api.channel?.activationScope?.(),
+      selected:()=>options.api.channel?.activationContextSelected===true,
+      read:input=>options.api.readCommandActivation(input),
+    });
     options.grantRunner?.register(options.roomId, {
       workspaceId: options.workspaceId,
       cwd: options.cwd,
@@ -846,8 +853,25 @@ export class MonolithRoomTurnLoop {
     await this.options.scheduler.forceSuspend(this.options.roomId);
   }
 
+  private commandActivation(){
+    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    const command=this.commandContext?.current;
+    if(!command){
+      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
+      return Promise.resolve(undefined);
+    }
+    return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
+      roomId:this.options.roomId,commandId:command.id,generationId:this.commandContext.generationId});
+  }
+
+  private async configuration(){
+    const activation=await this.commandActivation();
+    return activation?activation.configuration:this.options.api.execute('getAgentConfiguration',{agentId:this.agent.publicKey,roomId:this.options.roomId});
+  }
+
   private async roster(): Promise<WorkspaceRoster> {
-    const roster = await this.options.api.execute('getWorkspaceRoster', {
+    const activation=await this.commandActivation();
+    const roster = activation?activation.roster:await this.options.api.execute('getWorkspaceRoster', {
       agentId: this.agent.publicKey,
       workspaceId: this.options.workspaceId,
     });
@@ -882,8 +906,9 @@ export class MonolithRoomTurnLoop {
     return delivered;
   }
 
-  private repositoryState(): Promise<RoomRepositoryState> {
-    return this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId });
+  private async repositoryState(): Promise<RoomRepositoryState> {
+    const activation=await this.commandActivation();
+    return activation?activation.repository:this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId });
   }
 
   /**
@@ -1018,10 +1043,7 @@ export class MonolithRoomTurnLoop {
 
   private async currentSessionFingerprint(): Promise<string> {
     const [configuration, roster, grants] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-      }),
+      this.configuration(),
       this.roster(),
       this.grantedResources(),
     ]);
@@ -1056,7 +1078,8 @@ export class MonolithRoomTurnLoop {
 
   private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
     try {
-      const grants = await this.options.api.execute('listAgentGrants', {
+      const activation=await this.commandActivation();
+      const grants = activation?activation.grants:await this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       });
@@ -1129,10 +1152,7 @@ export class MonolithRoomTurnLoop {
     this.sectionBaseline.reset();
     const [configuration, roster, repositoryState, grants] =
       await Promise.all([
-        this.options.api.execute('getAgentConfiguration', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.roomId,
-        }),
+        this.configuration(),
         this.roster(),
         this.repositoryState(),
         this.grantedResources(),

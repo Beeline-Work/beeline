@@ -289,6 +289,7 @@ const daemonOperations = {
   postAgentToolScheduleIndex: true,
   postAgentTurnReceipt: true,
   postAgentUsage: true,
+  readCommandActivation: true,
   publishAgentUsageAccount: true,
   attachAgentUsageAccount: true,
   postBackgroundToolCompletion: true,

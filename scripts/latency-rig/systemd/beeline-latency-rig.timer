@@ -1,0 +1,9 @@
+[Unit]
+Description=Beeline latency rig at 03:00 Eastern
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/New_York
+Persistent=false
+
+[Install]
+WantedBy=timers.target

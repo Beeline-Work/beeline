@@ -3,7 +3,7 @@
 set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$repo_dir"
-rig_state="${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy"
+rig_state="${LATENCY_RIG_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy}"
 mkdir -p "$rig_state"
 chmod 700 "$rig_state"
 run_dir="$(mktemp -d "$rig_state/night-$(date -u +%Y-%m-%d)-XXXXXX")"

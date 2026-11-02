@@ -1,0 +1,11 @@
+[Unit]
+Description=Beeline nightly local latency rig
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/beeline-latency-rig.env
+ExecStart=/bin/bash -c 'exec bash "$$LATENCY_RIG_RUNNER" "$$LATENCY_RIG_STATE"'
+MemoryMax=31G
+TimeoutStartSec=4h
+TimeoutStopSec=90s
+KillMode=control-group

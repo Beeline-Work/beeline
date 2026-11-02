@@ -19,7 +19,7 @@ JS
 device="${LATENCY_RIG_DEVICE:?select the owned Beeline-leased emulator explicitly}"
 if [[ ! "$device" =~ ^emulator-[0-9]+$ ]]; then echo 'Disposable emulator required' >&2; exit 2; fi
 cd "$repo_dir"
-lock_dir="${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy"
+lock_dir="${LATENCY_RIG_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy}"
 mkdir -p "$lock_dir"
 exec 9>"$lock_dir/capture.lock"
 export GRADLE_USER_HOME="$lock_dir/gradle"

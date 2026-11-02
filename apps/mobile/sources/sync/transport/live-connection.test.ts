@@ -1482,8 +1482,47 @@ describe('LiveConnection', () => {
     expect(sockets[0]!.closed).toBe(false);
     await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
     expect(sockets).toHaveLength(1);
-    expect(sockets[0]!.sent).toHaveLength(1);
+    expect(sockets[0]!.sent).toHaveLength(2);
+    expect(sockets[0]!.sent.filter(frame => frame === '{"type":"ping"}')).toHaveLength(1);
 
+    connection.dispose();
+  });
+
+  it('P4: joins a half-open challenge and parks after one failed replacement for a day', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground, networkChanged } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+    sockets[0]!.autoPong = false;
+    foreground();
+    networkChanged();
+    expect(sockets[0]!.sent.filter(frame => frame === '{"type":"ping"}')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(sockets[0]!.closed).toBe(true);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.error();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(sockets).toHaveLength(2);
+    connection.dispose();
+  });
+
+  it('P4: a request deadline joins the pending challenge incident without a later second replacement', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+    sockets[0]!.autoPong = false;
+    foreground();
+    connection.reportRequestDeadlineMissed();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.open();
+    sockets[0]!.emit({ type: 'pong' });
+    sockets[1]!.drop();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(sockets).toHaveLength(2);
     connection.dispose();
   });
 

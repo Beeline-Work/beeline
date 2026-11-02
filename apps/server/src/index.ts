@@ -38,6 +38,7 @@ import { BackgroundWork } from './background-work.js';
 import { OperationOutcomes, startOperationOutcomeFlush } from './operation-outcomes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
+import { subscribeCommandCompletion } from './command-completion.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
 import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, renudgeStrandedPendingCommands } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
@@ -482,12 +483,9 @@ async function main() {
     const due = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
     if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
   });
-  work.add('choices', reconciliationMs, async () => {
-    await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-    const due = await backgroundJobs.run('choice-next-due', () => jobsDatabase.query<{ due: Date | null }>(
-      `SELECT min(closes_at) due FROM room_choices WHERE status='open' AND closes_at IS NOT NULL`));
-    if (due.ok && due.value.rows[0]?.due)
-      return Math.max(5000, due.value.rows[0].due.getTime() - Date.now());
+  work.addDeadline('choices', async () => {
+    const due = await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+    if (due.ok) return due.value;
   });
   work.add('deadlines', reconciliationMs, async (newLeader) => {
     const due = await backgroundJobs.run('deadline-expiry', () => deadlineExpiry.runOnce(newLeader));
@@ -563,6 +561,9 @@ async function main() {
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader), reconciliationMs);
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
+  const wakeChoices = () => wakeWork('choices', 'choice-expiry');
+  const stopChoiceWake = subscribeCommandCompletion({ principal: 'choice', operation: 'expiry', commandId: 'pending' }, wakeChoices);
+  const stopChoiceRecovery = jobsDatabase.onRecovery(wakeChoices);
   const stopSystemDmWake=subscribeOperatorSystemDmDeliveries(wakeSystemDms);
   const stopSystemDmRecovery=jobsDatabase.onRecovery(wakeSystemDms);
   if (push) liveListener.setPushWake(() => wakeWork('push'));
@@ -587,7 +588,6 @@ async function main() {
     if (event.type !== 'invalidate') return;
     if (event.reason === 'postgres:messages') {
       wakeWork('deadlines', 'messages');
-      wakeWork('choices', 'messages');
     }
     if (event.reason === 'postgres:agent_schedules') wakeWork('schedules');
   });
@@ -604,6 +604,7 @@ async function main() {
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     stopSystemDmWake();stopSystemDmRecovery();
+    stopChoiceWake();stopChoiceRecovery();
     await leader.stop();
     stopComputerExpiry();
     stopBackgroundWake();

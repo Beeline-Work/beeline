@@ -73,6 +73,7 @@ import { backfillRegistryApps } from './app-connections.js';
 import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
+import { CHOICE_EXPIRY_SCHEMA } from './choice-expiry-schema.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
@@ -251,7 +252,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 57;
+export const REQUIRED_SCHEMA_VERSION = 58;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3617,6 +3618,7 @@ export async function migrate(
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
+  await ddlScript('choice expiry source', CHOICE_EXPIRY_SCHEMA);
   await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);
   await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);

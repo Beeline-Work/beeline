@@ -478,32 +478,36 @@ async function wakeChoice(
   });
 }
 
-export async function closeExpiredChoices(database: SqlDatabase, now = new Date()): Promise<number> {
-  const due = await database.query<{ id: string }>(
-    `SELECT id FROM room_choices WHERE status='open' AND closes_at IS NOT NULL AND closes_at<=$1`,
-    [now],
+/** A bounded batch of actual obligations. Capture the PostgreSQL timestamp text
+ * without JS millisecond truncation; a changed deadline is a different version. */
+export async function closeExpiredChoices(database: SqlDatabase): Promise<number> {
+  const due = await database.query<{ id: string; expiry_version: string }>(
+    `SELECT id,closes_at::text expiry_version FROM room_choices
+     WHERE status='open' AND closes_at<=clock_timestamp() ORDER BY closes_at,id LIMIT 100`,
   );
   let closed = 0;
   for (const row of due.rows) {
     try {
-      await database.transaction((tx) => settleExpiredChoice(tx, row.id));
-      closed += 1;
+      const changed = await database.transaction(async tx => {
+        const current = await tx.query(
+          `SELECT id FROM room_choices WHERE id=$1 AND status='open'
+           AND closes_at=$2::timestamptz AND closes_at<=clock_timestamp() FOR UPDATE`,
+          [row.id, row.expiry_version],
+        );
+        if (!current.rowCount) return false;
+        const choice = await loadChoice(tx, row.id);
+        if (!choice || choice.status !== 'open') return false;
+        if (choice.mode === 'question') await skipOpenChoice(tx, choice, undefined, 'expired');
+        else await closeOpenPoll(tx, choice);
+        return true;
+      });
+      if (changed) closed += 1;
     } catch (error) {
       if (error instanceof Error && error.message.includes('conflict')) continue;
       throw error;
     }
   }
   return closed;
-}
-
-async function settleExpiredChoice(database: SqlDatabase, choiceId: string): Promise<void> {
-  const choice = await loadChoice(database, choiceId);
-  if (!choice || choice.status !== 'open') return;
-  if (choice.mode === 'question') {
-    await skipOpenChoice(database, choice, undefined, 'expired');
-    return;
-  }
-  await closeOpenPoll(database, choice);
 }
 
 async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<void> {

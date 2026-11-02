@@ -813,11 +813,8 @@ UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
 );
 
 
-CREATE TABLE IF NOT EXISTS service_review_notice_deliveries (
-  identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
-  provider_id text NOT NULL,
-  sent_at timestamptz NOT NULL
-);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS service_review_notice_deliveries;
 CREATE TABLE IF NOT EXISTS service_review_visits (
   agent_id text,
   run_id text,
@@ -955,7 +952,6 @@ CREATE TABLE IF NOT EXISTS agents (
   model_catalog jsonb NOT NULL DEFAULT '[]'::jsonb,
   model_unavailable text CHECK (model_unavailable IN ('model','effort','selection')),
   commands jsonb NOT NULL DEFAULT '[]'::jsonb,
-  schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   yolo_mode boolean NOT NULL DEFAULT true,
   yolo_set_by text,
   yolo_set_at timestamptz,
@@ -975,7 +971,8 @@ CREATE TABLE IF NOT EXISTS usage_accounts (
 );
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_account_id bigint REFERENCES usage_accounts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS agents_usage_account ON agents(usage_account_id) WHERE usage_account_id IS NOT NULL;
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+-- Retired: never non-empty in production; nothing reads it since schedules moved to the server.
+ALTER TABLE agents DROP COLUMN IF EXISTS schedule_ids;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
@@ -1199,18 +1196,8 @@ CREATE INDEX IF NOT EXISTS messages_event_root_idx ON messages(event_root_cause_
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS messages_request_idx ON messages(room_id, request_id) WHERE request_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS legacy_room_events (
-  id text PRIMARY KEY,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  kind integer NOT NULL,
-  created_at timestamptz NOT NULL,
-  raw_page_candidate boolean NOT NULL DEFAULT true,
-  conversation_candidate boolean NOT NULL DEFAULT false
-);
-ALTER TABLE legacy_room_events ADD COLUMN IF NOT EXISTS raw_page_candidate boolean NOT NULL DEFAULT true;
-ALTER TABLE legacy_room_events ADD COLUMN IF NOT EXISTS conversation_candidate boolean NOT NULL DEFAULT false;
-CREATE INDEX IF NOT EXISTS legacy_room_events_page_idx
-  ON legacy_room_events(room_id, created_at DESC, id);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS legacy_room_events;
 
 CREATE TABLE IF NOT EXISTS agent_turns (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1862,16 +1849,8 @@ CREATE TABLE IF NOT EXISTS permission_authority (
 );
 CREATE INDEX IF NOT EXISTS permission_authority_room_idx ON permission_authority(room_id);
 
-CREATE TABLE IF NOT EXISTS mission_authority (
-  mission_id text NOT NULL,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  principal_id text NOT NULL REFERENCES identities(id),
-  exercise text NOT NULL,
-  status text NOT NULL CHECK (status IN ('authorized', 'denied', 'unavailable')),
-  generation bigint NOT NULL DEFAULT 1,
-  PRIMARY KEY (mission_id, room_id, principal_id, exercise)
-);
-CREATE INDEX IF NOT EXISTS mission_authority_room_idx ON mission_authority(room_id);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS mission_authority;
 
 CREATE TABLE IF NOT EXISTS work_schedules (
   schedule_id text NOT NULL,
@@ -1929,16 +1908,8 @@ WHERE agent_schedules.id=labels.id AND agent_schedules.title IS NULL;
 
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS last_reported_blocking_run_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS updated_by text REFERENCES identities(id);
-CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
-  id bigserial PRIMARY KEY,
-  workflow_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  actor_id text NOT NULL REFERENCES identities(id),
-  previous_owner_id text REFERENCES identities(id),
-  new_owner_id text NOT NULL REFERENCES identities(id),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS workflow_owner_transfers_room_idx ON workflow_owner_transfers(room_id);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS workflow_owner_transfers;
 WITH resolved AS (
   SELECT schedule.id,${scheduleWorkflowSlugSql('schedule.workspace_id', 'schedule.message')} slug
   FROM agent_schedules schedule WHERE schedule.workflow_slug IS NULL
@@ -2361,15 +2332,12 @@ CREATE INDEX IF NOT EXISTS github_auth_flows_expiry_idx ON github_auth_flows(exp
 
 CREATE TABLE IF NOT EXISTS github_webhook_deliveries (
   delivery_id text PRIMARY KEY,
-  event_type text NOT NULL,
-  payload jsonb NOT NULL,
-  received_at timestamptz NOT NULL DEFAULT now(),
-  processed_at timestamptz
+  received_at timestamptz NOT NULL DEFAULT now()
 );
--- Keep these nullable during the rolling deploy so the previous server image
--- can still write its old shape. New writes use only delivery_id/received_at.
-ALTER TABLE github_webhook_deliveries ALTER COLUMN event_type DROP NOT NULL;
-ALTER TABLE github_webhook_deliveries ALTER COLUMN payload DROP NOT NULL;
+-- The old payload shape: NULL on every row in production on 2026-11-02.
+ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS event_type;
+ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS payload;
+ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS processed_at;
 
 CREATE TABLE IF NOT EXISTS push_devices (
   token text PRIMARY KEY,
@@ -2389,15 +2357,14 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
 -- One row per iOS device: when it was last sent a silent shade clear
--- (PushDeliveryLoop.sendReadClears). cleared_through and cleared_through_room
--- are no longer read or written; they stay for rolling-update compatibility.
+-- (PushDeliveryLoop.sendReadClears).
 CREATE TABLE IF NOT EXISTS push_read_clears (
   device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
-  cleared_through timestamptz NOT NULL,
-  cleared_through_room text NOT NULL DEFAULT '',
   sent_at timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE push_read_clears ALTER COLUMN cleared_through DROP NOT NULL;
+-- Retired: neither read nor written, and empty in production on 2026-11-02.
+ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through;
+ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through_room;
 -- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
@@ -2776,23 +2743,9 @@ CREATE TABLE IF NOT EXISTS room_choice_votes (
 -- A workflow gate answer's optional note, delivered to the woken agent.
 ALTER TABLE room_choice_votes ADD COLUMN IF NOT EXISTS note text;
 
-CREATE TABLE IF NOT EXISTS import_runs (
-  import_id text PRIMARY KEY,
-  source_fingerprint text NOT NULL,
-  state text NOT NULL CHECK (state IN ('running', 'complete', 'failed')),
-  checkpoint jsonb NOT NULL DEFAULT '{}'::jsonb,
-  started_at timestamptz NOT NULL DEFAULT now(),
-  completed_at timestamptz,
-  error text
-);
-
-CREATE TABLE IF NOT EXISTS import_items (
-  import_id text NOT NULL REFERENCES import_runs(import_id) ON DELETE CASCADE,
-  source_type text NOT NULL,
-  source_id text NOT NULL,
-  imported_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (import_id, source_type, source_id)
-);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS import_items;
+DROP TABLE IF EXISTS import_runs;
 
 -- Workbench: per-human connector provisioning. One row per (Workspace,
 -- owner, connector type, machine): a connection belongs to whoever
@@ -3152,8 +3105,8 @@ CREATE TABLE IF NOT EXISTS operation_outcomes_hourly (
 -- here. The saved feedback-triage workflow reads this table through a
 -- read-only grant, and notify_feedback_fixed resolves items once a fix merges.
 -- Message ids only, plus the text of a person's own @system report. The
--- issue_* columns and feedback_issue_comments are retired GitHub-filing state,
--- kept for rolling-update compatibility.
+-- issue_* columns are retired GitHub-filing state, kept for rolling-update
+-- compatibility.
 CREATE TABLE IF NOT EXISTS feedback_items (
   id text PRIMARY KEY,
   source_kind text NOT NULL CHECK (source_kind IN ('agent','human')),
@@ -3211,14 +3164,8 @@ CREATE INDEX IF NOT EXISTS feedback_items_issue_idx
   ON feedback_items(issue_repository, issue_number) WHERE issue_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS feedback_items_workspace_idx ON feedback_items(workspace_id);
 CREATE INDEX IF NOT EXISTS feedback_items_room_idx ON feedback_items(room_id) WHERE room_id IS NOT NULL;
--- The one server-maintained report-count comment per linked issue.
-CREATE TABLE IF NOT EXISTS feedback_issue_comments (
-  repository text NOT NULL,
-  issue_number integer NOT NULL,
-  comment_id bigint NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (repository, issue_number)
-);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS feedback_issue_comments;
 
 -- First-party Google Workspace consent is retired. Existing sealed grants
 -- cannot be moved to a different OAuth client, so disconnect the old rows and
@@ -3325,11 +3272,6 @@ export async function migrate(
     database, 'github_webhook_deliveries_received_idx',
     `CREATE INDEX CONCURRENTLY github_webhook_deliveries_received_idx
      ON github_webhook_deliveries(received_at)`,
-  ));
-  await retryMigrationStep('webhook payload drain index', () => createIndexConcurrently(
-    database, 'github_webhook_deliveries_payload_idx',
-    `CREATE INDEX CONCURRENTLY github_webhook_deliveries_payload_idx
-     ON github_webhook_deliveries(received_at) WHERE payload IS NOT NULL`,
   ));
   await retryMigrationStep('terminal push claim expiry index', () => createIndexConcurrently(
     database, 'push_delivery_claims_terminal_idx',
@@ -4033,8 +3975,7 @@ async function boundedMigrationUpdate(
   }
 }
 
-/** Clear legacy JSON without one long row lock or table rewrite. The old
- * payload column remains nullable until every server runs the new image. */
+/** Expire old deliveries without one long row lock. */
 export async function compactWebhookDeliveries(database: SqlDatabase): Promise<void> {
   const expired = await boundedMigrationUpdate(database, 'expired webhook deliveries',
     `DELETE FROM github_webhook_deliveries delivery
@@ -4042,15 +3983,7 @@ export async function compactWebhookDeliveries(database: SqlDatabase): Promise<v
        SELECT delivery_id FROM github_webhook_deliveries
        WHERE received_at<now()-interval '30 days'
        ORDER BY received_at,delivery_id LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
-  const cleared = await boundedMigrationUpdate(database, 'webhook payloads',
-    `UPDATE github_webhook_deliveries delivery
-     SET payload=NULL,event_type=NULL,processed_at=NULL
-     WHERE delivery.delivery_id IN (
-       SELECT delivery_id FROM github_webhook_deliveries
-       WHERE payload IS NOT NULL
-       ORDER BY received_at,delivery_id LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
-  if (expired || cleared)
-    console.log(`compactWebhookDeliveries: expired ${expired}, cleared ${cleared} payload(s)`);
+  if (expired) console.log(`compactWebhookDeliveries: expired ${expired}`);
 }
 
 export async function compactPushClaims(database: SqlDatabase): Promise<void> {

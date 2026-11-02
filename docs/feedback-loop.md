@@ -256,8 +256,8 @@ triage tools (`list_feedback`, `get_feedback`, `list_feedback_issues`,
 `file_feedback_issue`, `attach_feedback_to_issue`, `dismiss_feedback`), GitHub
 issue filing with its redaction rules, and the `issues` webhook resolver are
 gone. Fix corners replace the public issues. The unused `corner_facts.feedback_triage`
-column is dropped. The `feedback_items.issue_*` columns and `feedback_issue_comments`
-stay unread for rolling-update compatibility.
+column and the empty `feedback_issue_comments` table are dropped. The
+`feedback_items.issue_*` columns stay unread for rolling-update compatibility.
 
 ## Workspace browsing rollout
 

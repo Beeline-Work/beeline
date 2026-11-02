@@ -3461,6 +3461,12 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_corner_run_card_idx
      ON messages (room_id, ((card->>'seq')::int) DESC) WHERE card_type='corner-workflow-handoff'`,
   ));
+  // A corner's worker and owner are its assignment commands (corner-worker.ts).
+  await retryMigrationStep('corner assignment index', () => createIndexConcurrently(
+    database, 'agent_commands_corner_assignment_idx',
+    `CREATE INDEX CONCURRENTLY agent_commands_corner_assignment_idx
+     ON agent_commands (room_id, inbox_sequence) WHERE reason IN ('corner_objective','human_tag')`,
+  ));
   await createIndexConcurrently(
     database, 'messages_corner_fact_idx',
     `CREATE INDEX CONCURRENTLY messages_corner_fact_idx

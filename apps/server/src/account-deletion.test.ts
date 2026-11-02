@@ -537,6 +537,11 @@ describe('deleteAccount', () => {
       CORNER,
       partnerAgent,
     ]);
+    // The owner is derived from the opening order, so the partner agent opens it.
+    await database.query(`UPDATE agent_commands SET agent_id=$2 WHERE room_id=$1 AND reason='corner_objective'`, [
+      CORNER,
+      partnerAgent,
+    ]);
     // A plain member stays a member after the deletion promotes the partner.
     const member = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Member','member')`, [member]);

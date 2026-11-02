@@ -7,13 +7,15 @@
  * All worker-scoped reads use this expression.
  */
 export function cornerImplementerSql(factAlias: string, cornerAlias: string): string {
+  // An owner from an assignment is itself an assignment, so the latest one
+  // already covers it; only the legacy owner column and the opener remain.
   return `COALESCE((SELECT assignment.agent_id FROM agent_commands assignment
       WHERE assignment.room_id=${cornerAlias}.id AND assignment.reason IN ('corner_objective','human_tag')
         AND assignment.agent_id IS DISTINCT FROM COALESCE(${factAlias}.reviewer_agent_id,
           (SELECT assignment_parent.reviewer_agent_id FROM rooms assignment_parent
            WHERE assignment_parent.id=${cornerAlias}.parent_id))
       ORDER BY assignment.inbox_sequence DESC LIMIT 1),
-    ${cornerOwnerSql(`${cornerAlias}.id`)},${cornerAlias}.created_by)`;
+    ${factAlias}.owner_agent_id,${cornerAlias}.created_by)`;
 }
 
 /**
@@ -25,13 +27,13 @@ export function cornerImplementerSql(factAlias: string, cornerAlias: string): st
  */
 export function cornerOwnerSql(cornerId: string): string {
   const earliest = (reason: string) => `(SELECT opening.agent_id FROM agent_commands opening
-      WHERE opening.room_id=${cornerId} AND opening.reason='${reason}'
-        AND opening.agent_id IS DISTINCT FROM COALESCE(
-          (SELECT opening_fact.reviewer_agent_id FROM corner_facts opening_fact WHERE opening_fact.corner_id=${cornerId}),
-          (SELECT opening_parent.reviewer_agent_id FROM rooms opening_corner
-           JOIN rooms opening_parent ON opening_parent.id=opening_corner.parent_id WHERE opening_corner.id=${cornerId}))
-      ORDER BY opening.inbox_sequence LIMIT 1)`;
-  return `COALESCE(${earliest('corner_objective')},
-    (SELECT legacy.owner_agent_id FROM corner_facts legacy WHERE legacy.corner_id=${cornerId}),
-    ${earliest('human_tag')})`;
+        WHERE opening.room_id=owner_corner.id AND opening.reason='${reason}'
+          AND opening.agent_id IS DISTINCT FROM owner_corner.reviewer_id
+        ORDER BY opening.inbox_sequence LIMIT 1)`;
+  return `(SELECT COALESCE(${earliest('corner_objective')},owner_corner.legacy_owner_id,${earliest('human_tag')})
+    FROM (SELECT owner_room.id,owner_fact.owner_agent_id legacy_owner_id,
+        COALESCE(owner_fact.reviewer_agent_id,owner_parent.reviewer_agent_id) reviewer_id
+      FROM rooms owner_room LEFT JOIN corner_facts owner_fact ON owner_fact.corner_id=owner_room.id
+      LEFT JOIN rooms owner_parent ON owner_parent.id=owner_room.parent_id
+      WHERE owner_room.id=${cornerId}) owner_corner)`;
 }

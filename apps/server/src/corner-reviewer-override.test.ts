@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, seedCornerOpening } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -52,6 +52,9 @@ beforeEach(async () => {
       }),
     ],
   );
+  // The owner agent opened this corner: its opening order makes it an agent corner.
+  await seedCornerOpening(db, { cornerId: C, agentId: OWNER_AGENT });
+
   for (const who of [H, OWNER_AGENT, REVIEWER_A, REVIEWER_B, OUTSIDER])
     for (const room of [null, R])
       await db.query(

@@ -22,6 +22,8 @@ export function cornerWaitingReportSql(corner: string): string {
   return `SELECT ${corner}.id corner_id,latest.report_id,latest.message_id,latest.card_id,
     latest.return_room_id,latest.created_at,latest.commander_id,person.id person_id
   FROM corner_facts waiting_fact
+  -- Derive the worker once; every branch below compares against it.
+  CROSS JOIN LATERAL (SELECT ${cornerImplementerSql('waiting_fact', corner)} id) waiting_worker
   CROSS JOIN LATERAL (
     SELECT reports.* FROM (
       (SELECT command.id report_id,
@@ -35,7 +37,7 @@ export function cornerWaitingReportSql(corner: string): string {
       WHERE command.private_payload->>'kind'='report'
         AND command.private_payload->>'text' ~ '^(needs-decision|blocked):'
         AND command.private_payload->>'fromRoomId'=${corner}.id::text
-        AND command.private_payload->>'authorId'=${cornerImplementerSql('waiting_fact', corner)}
+        AND command.private_payload->>'authorId'=waiting_worker.id
       ORDER BY command.created_at DESC,command.id DESC LIMIT 1)
       UNION ALL
       (SELECT NULL::text,message.id,encode(sha256(convert_to('agent-command-card:'||message.id,'UTF8')),'hex'),message.room_id,message.created_at,
@@ -44,13 +46,13 @@ export function cornerWaitingReportSql(corner: string): string {
       WHERE message.card->>'reportToId' IS NOT NULL
         AND message.text ~ '^(needs-decision|blocked):'
         AND message.presentation='message' AND message.system_event IS NULL AND message.deleted_at IS NULL
-        AND message.author_id=${cornerImplementerSql('waiting_fact', corner)}
+        AND message.author_id=waiting_worker.id
         AND ${humanReportCornerSql('message')}=${corner}.id::text
       ORDER BY message.created_at DESC,message.id DESC LIMIT 1)
     ) reports ORDER BY reports.created_at DESC,reports.sort_id DESC LIMIT 1
   ) latest
   CROSS JOIN LATERAL (SELECT latest.text,'message'::text presentation,${corner}.id room_id,
-    ${cornerImplementerSql('waiting_fact', corner)} author_id) item
+    waiting_worker.id author_id) item
   JOIN identities person ON person.id=latest.commander_id OR (person.kind='human' AND EXISTS (
     SELECT 1 FROM room_access member WHERE member.room_id=${corner}.id
       AND member.identity_id=person.id AND member.removed_at IS NULL

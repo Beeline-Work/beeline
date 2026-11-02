@@ -150,7 +150,7 @@ it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks 
         return true;
       };
       try {
-        const payload={action:'completed',installation:{id:77},repository:{full_name:'owner/widgets'},check_run:{name:'lint',status:'completed',conclusion:'success',head_sha:head,check_suite:{head_branch:'feature/fixture',head_sha:head}}};
+        const payload={action:'completed',installation:{id:77},repository:{full_name:'owner/widgets'},check_run:{name:'lint',status:'completed',conclusion:'success',head_sha:head,check_suite:{head_branch:'feature/corner-333333333333',head_sha:head}}};
         await assert.rejects(operations.processWebhook('check_run',payload),error=>{checkFailure(error);captureServerError(error);return true;});
         await assert.rejects(operations.prChecksStatus({cornerId:corner}),checkFailure);
         assert.equal(await operations.landCorner(corner),false);

@@ -15,7 +15,8 @@ import {
 import { AGENT_GRANT_VERBS, grantPresentation, connectionInstallName, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
-import {RouterProjectionUnavailable} from './router-projections.js';
+import {RouterProjectionUnavailable, routerAuthority, routerAtomicGroup} from './router-projections.js';
+import type { RouterSnapshot } from '@beeline/api-contract/router-protocol';
 
 /**
  * The "Needs you" tray, owned here and nowhere else.
@@ -498,6 +499,40 @@ export async function countNeedsYouProjection(database:SqlDatabase,workspaceId:s
   const count=Number(row.count);
   if(!Number.isSafeInteger(count)||count<0)throw new RouterProjectionUnavailable('budget');
   return count;
+}
+
+/** The scalar badge, stream head and authority all come from one PostgreSQL
+ * statement snapshot. A single pure SELECT needs no extra transaction/setup
+ * or separate membership/head reads to establish its coherent cut. */
+export async function readNeedsYouCountSnapshot(database: SqlDatabase, workspaceId: string,
+  viewerId: string): Promise<RouterSnapshot<'needs-you-count'>> {
+  const input = { family: 'needs-you-count' as const, workspaceId };
+  const domains = [`reader:${viewerId}:workspace:${workspaceId}`, `reader:${viewerId}:workspace:${workspaceId}:visibility`];
+  const stream = `workspace:${workspaceId}`;
+  const result = await database.query<{ count: string; questions: number; authorized: boolean;
+    epoch: string | null; through: string | null; scopes: { authorityScope: string; epoch: string }[] | null }>(
+    `${NEEDS_YOU_PROJECTION_COUNT_CANDIDATES}, counted AS (
+      SELECT count(*)::text count,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
+        ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}
+    ) SELECT counted.*,head.epoch,head.sequence::text through,authority.scopes
+      FROM counted LEFT JOIN live_streams head ON head.id=$4
+      LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('authorityScope',scope,'epoch',epoch::text) ORDER BY scope) scopes
+        FROM router_authority WHERE scope=ANY($3::text[])) authority ON true`,
+    [workspaceId, viewerId, domains, stream]);
+  const row = result.rows[0];
+  if (!row?.authorized || row.scopes?.length !== 2 ||
+      row.scopes.some(scope => !domains.includes(scope.authorityScope) || !/^\d+$/.test(scope.epoch)))
+    throw new RouterProjectionUnavailable('authority');
+  const count = Number(row.count), through = Number(row.through);
+  if (row.questions > CANDIDATE_LIMIT || !Number.isSafeInteger(count) || count < 0)
+    throw new RouterProjectionUnavailable('budget');
+  if (!row.epoch || row.through === null || !Number.isSafeInteger(through) || through < 0)
+    throw new RouterProjectionUnavailable('dependency');
+  const snapshot: RouterSnapshot<'needs-you-count'> = { kind: 'snapshot', family: input.family, scope: workspaceId,
+    value: { count }, cut: { stream, epoch: row.epoch, through, protocol: 1 },
+    atomicGroup: routerAtomicGroup(input, viewerId), authority: routerAuthority(row.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))) };
+  if (Buffer.byteLength(JSON.stringify(snapshot)) > 1024) throw new RouterProjectionUnavailable('budget');
+  return snapshot;
 }
 
 /** Complete rows; legacy callers start clocks, while preview reads remain side-effect free. */

@@ -25,12 +25,6 @@ END $backoff$;
 DROP TRIGGER IF EXISTS defer_startup_wake ON agent_commands;
 CREATE TRIGGER defer_startup_wake BEFORE INSERT OR UPDATE OF state ON agent_commands
   FOR EACH ROW EXECUTE FUNCTION defer_startup_wake();
-CREATE TABLE IF NOT EXISTS automatic_report_wakes (
-  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  agent_id text NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
-  next_at timestamptz NOT NULL,
-  PRIMARY KEY(corner_id,agent_id)
-);
 `;
 
 /** Only the immediate human request bypasses a pause; inherited human roots do not. */

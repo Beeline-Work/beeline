@@ -1954,7 +1954,7 @@ DROP TRIGGER IF EXISTS corner_attention_head ON corner_facts;
 DROP TRIGGER IF EXISTS corner_attention_open ON corner_facts;
 DROP TRIGGER IF EXISTS corner_state_facts ON corner_facts;
 DROP TABLE IF EXISTS corner_validation_stages, corner_attention_flags, corner_pr_closures,
-  corner_branch_deletions, corner_report_blockers, corner_attention_spans;
+  corner_branch_deletions, corner_report_blockers, corner_attention_spans, automatic_report_wakes;
 DROP INDEX IF EXISTS corner_facts_opened_from_idx;
 DROP INDEX IF EXISTS corner_facts_owner_agent_idx;
 DROP INDEX IF EXISTS corner_facts_commissioned_by_idx;

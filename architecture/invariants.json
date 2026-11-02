@@ -237,7 +237,7 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1745,
+    "bootstrapTotal": 1741,
     "unusedTotal": 181,
     "tables": {
       "agent_avatars": {
@@ -529,16 +529,6 @@
           "custom_tags": "existing before the registry; weekly audit reviews",
           "chosen_voices": "existing before the registry; weekly audit reviews"
         }
-      },
-      "automatic_report_wakes": {
-        "module": "Work authority",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "corner_id": "existing before the registry; weekly audit reviews",
-          "agent_id": "existing before the registry; weekly audit reviews",
-          "next_at": "existing before the registry; weekly audit reviews"
-        },
-        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "avatars": {
         "module": "Identity and sign-in",

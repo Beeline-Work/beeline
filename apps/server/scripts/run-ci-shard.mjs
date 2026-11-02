@@ -9,6 +9,8 @@ import { readSelection, selected as chosen } from './selected-tests.mjs';
 const [position, count] = process.argv[2]?.split('/').map(Number) ?? [];
 assert.ok(Number.isInteger(position) && Number.isInteger(count) && position > 0 && position <= count && count <= 16,
   'expected a server shard such as 1/4');
+const workers = Number(process.env.CI_TEST_WORKERS || 2);
+assert.ok(Number.isInteger(workers) && workers >= 1 && workers <= 2, 'CI_TEST_WORKERS must be 1 or 2');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 // Wall-clock budgets and held voice playback must not compete with database
@@ -17,7 +19,7 @@ const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime
 const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
   .flatMap((file) => ['--exclude', file]);
 function list(files = [], exclude = exclusions) {
-  const result = spawnSync(process.execPath, [vitest, 'list', ...files, '--filesOnly', '--json', ...exclude], {
+  const result = spawnSync(process.execPath, [vitest, 'list', '--maxWorkers=1', '--minWorkers=1', ...files, '--filesOnly', '--json', ...exclude], {
     cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'],
   });
   if (result.error) throw result.error;
@@ -41,7 +43,7 @@ if (!process.argv.includes('--list')) {
   let status = 0;
   if (selected.files.length) {
     const result = spawnSync(process.execPath, [vitest, 'run', ...exclusions, ...selected.files,
-      '--maxWorkers=2', '--minWorkers=2'], { cwd: root, stdio: 'inherit' });
+      `--maxWorkers=${workers}`, '--minWorkers=1'], { cwd: root, stdio: 'inherit' });
     if (result.error) throw result.error;
     status = result.status ?? 1;
   } else {

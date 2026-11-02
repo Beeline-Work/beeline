@@ -90,6 +90,13 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# One test worker per PR job: ten CI-only listeners share ten CPU threads.
+# Dispatch/merge-group jobs retain two workers on hosted runners.
+env:
+  CI_TEST_WORKERS: ${{ github.event_name == 'pull_request' && '1' || '2' }}
+  UV_THREADPOOL_SIZE: '1'
+  TURBO_CONCURRENCY: '1'
+
 jobs:
   changes:
     name: Detect changes
@@ -370,7 +377,7 @@ jobs:
     name: TYPECHECK
     if: ${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
     needs: shared-package-tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -382,16 +389,16 @@ jobs:
           UI_POLICY_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
         run: |
           git fetch --no-tags --depth=1 origin "$UI_POLICY_BASE"
-          node --test scripts/mobile-ui-policy.test.mjs
+          node --test --test-concurrency=1 scripts/mobile-ui-policy.test.mjs
           node scripts/check-mobile-ui-components.mjs --base "$UI_POLICY_BASE"
       - name: Allow no phone network channel besides the main live socket
         env:
           CHANNEL_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
         run: |
           git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
-          node --test scripts/phone-network-channels.test.mjs
+          node --test --test-concurrency=1 scripts/phone-network-channels.test.mjs
           node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
-          node --test scripts/router-boundaries.test.mjs
+          node --test --test-concurrency=1 scripts/router-boundaries.test.mjs
           node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
       # The base commit's copy of the guard judges the PR, so a PR cannot
       # weaken its own check. A merge group was already judged as its PRs.
@@ -403,7 +410,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
-          node --test scripts/check-architecture.test.mjs
+          node --test --test-concurrency=1 scripts/check-architecture.test.mjs
           runner=scripts
           if git cat-file -e "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" 2>/dev/null; then
             runner="$RUNNER_TEMP/architecture-guard"
@@ -439,9 +446,9 @@ jobs:
       # Runs on every pull request, after npm ci, so a filter that opens
       # every suite again fails here even when the diff is not a workflow.
       - name: Check path filters skip untouched suites
-        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs
+        run: node --test --test-concurrency=1 scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs
       - name: Test nightly Checks orchestration
-        run: node --test scripts/nightly-checks.test.mjs
+        run: node --test --test-concurrency=1 scripts/nightly-checks.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS
@@ -458,29 +465,29 @@ jobs:
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
       - name: Keep the production log walk producing triage reports
-        run: node --test scripts/log-walk/*.test.mjs
+        run: node --test --test-concurrency=1 scripts/log-walk/*.test.mjs
       - name: Send ACP adapter failures to the fix loop
-        run: node --test scripts/acp-adapter-issue.test.mjs
+        run: node --test --test-concurrency=1 scripts/acp-adapter-issue.test.mjs
       - name: Keep the prompt-block analysis aggregate-only
-        run: node --test scripts/prompt-blocks-analysis.test.mjs
+        run: node --test --test-concurrency=1 scripts/prompt-blocks-analysis.test.mjs
       - name: Check the weekly Reason adapter port job
-        run: node --test scripts/reason-upstream-check.test.mjs
+        run: node --test --test-concurrency=1 scripts/reason-upstream-check.test.mjs
       - name: Protect nightly latency history and measured Loops publication
-        run: node --test scripts/latency-rig/nightly-*.test.mjs
+        run: node --test --test-concurrency=1 scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions
         run: |
-          node --test scripts/external-request-deadlines.test.mjs
-          npm test -w @beeline/auth -- --run src/external-fetch.test.ts
-          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx'
+          node --test --test-concurrency=1 scripts/external-request-deadlines.test.mjs
+          npm test -w @beeline/auth -- --run src/external-fetch.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx' --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Prove local network admission
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: npm test -w @beeline/net -- src/router-pass.test.ts
+        run: npm test -w @beeline/net -- src/router-pass.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Run hermetic shared-package tests
-        run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
+        run: npm test -w @beeline/nostr -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/api-contract -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/buzz-client -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Protect Room navigation responsiveness
         run: >-
-          npm test --prefix apps/mobile -- --run
+          npm test --prefix apps/mobile -- --run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           sources/buzz/transition-work.test.ts
           sources/buzz/room-transition-work.test.ts
           sources/buzz/surface-registry.test.ts
@@ -491,7 +498,7 @@ jobs:
     name: DEAD CODE
     if: ${{ !cancelled() && (((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.code == 'true') || inputs.suite == 'all' || inputs.suite == 'dead-code') }}
     needs: [changes, shared-package-tests]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -559,9 +566,9 @@ jobs:
       # auth services reach @beeline/auth/*.
       - name: Run the hermetic Body suite
         working-directory: apps/body
-        run: npx vitest run
+        run: npx vitest run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Prove free-agent boot refresh and startup deadlines
-        run: node --test infra/free-agent/entrypoint.test.mjs
+        run: node --test --test-concurrency=1 infra/free-agent/entrypoint.test.mjs
 
   mac-helper-acceptance:
     name: MAC HELPER ACCEPTANCE
@@ -672,7 +679,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -802,7 +809,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -817,9 +824,9 @@ jobs:
         working-directory: apps/mobile
         # Shared hosts expose all CPUs; keep each job's test worker count
         # bounded instead of multiplying that count by ten runner services.
-        run: npx vitest run --maxWorkers=2 --minWorkers=2 --exclude sources/config/nativeFingerprint.test.ts
+        run: npx vitest run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 --exclude sources/config/nativeFingerprint.test.ts
       - name: Verify Android release shrinking mods
-        run: node --test scripts/android-shrinking.test.mjs
+        run: node --test --test-concurrency=1 scripts/android-shrinking.test.mjs
       - name: Typecheck the mobile app
         run: npm run mobile:typecheck
 
@@ -837,7 +844,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -846,7 +853,7 @@ jobs:
           mobile: 'true'
       - name: Export Android bundle
         working-directory: apps/mobile
-        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/mobile-export" --clear
+        run: npx expo export --max-workers 1 --platform android --output-dir "$RUNNER_TEMP/mobile-export" --clear
       # An export that resolved nothing still exits 0 in some Metro failure
       # modes; the bundle file is the evidence.
       - name: Prove the export produced an Android bundle
@@ -870,7 +877,7 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -884,7 +891,7 @@ jobs:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -1003,7 +1010,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && (needs.changes.outputs.nativeFingerprint == 'true' || needs.changes.outputs.mobileSuite == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -1068,9 +1075,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
       - name: Verify the committed app associations, Pages build, and bundle merge
-        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
+        run: node --test --test-concurrency=1 scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
       - name: Run the public website contract test
-        run: npm test -w @beeline/public-web-tests -- --run src/invite-web.test.ts
+        run: npm test -w @beeline/public-web-tests -- --run src/invite-web.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
 
   actionlint:
     name: ACTIONLINT
@@ -1108,11 +1115,11 @@ jobs:
       - name: Lint tracked shell scripts
         run: npm run lint:shell
       - name: Test the desktop signing credential gate
-        run: node --test scripts/desktop-signing.test.mjs
+        run: node --test --test-concurrency=1 scripts/desktop-signing.test.mjs
       - name: Test store upload identity, rerun store checks and Apple processing verification
-        run: node --test scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
+        run: node --test --test-concurrency=1 scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
+        run: node --test --test-concurrency=1 scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
       # Release state lives in the systems that own it and the published
       # GitHub Release record; artifacts and caches carry build outputs only.
       - name: Refuse release state in artifacts and caches

@@ -6,26 +6,47 @@ its existing platform runners. Both workflows cancel superseded PR heads;
 their non-PR runs have unique concurrency groups and are never cancelled by
 another run.
 
-## Routing
+## Routing and CPU budget
 
-| Checks work | Pull requests and merge groups | Manual dispatch |
+The budget files in `infra/ci/` are the proposed replacement for the older
+16-CPU pool policy below. Install and verify those limits before enabling
+any of the ten `beeline-ci@01` through `beeline-ci@10` listeners.
+
+| Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| Server shards 1 and 3 | `ubuntu-latest` | `ubuntu-latest` |
-| Server shards 2 and 4 | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
-| TYPECHECK and MOBILE SUITE | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
-| Preparation, verdicts, Body and remaining Linux gates | `ubuntu-latest` | `ubuntu-latest` |
+| All four server shards, TYPECHECK, MOBILE SUITE | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
+| DEAD CODE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, NATIVE FINGERPRINT | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
+| Preparation, selection, verdicts, Body and remaining Linux gates | `ubuntu-latest` | `ubuntu-latest` |
 
-The PostgreSQL claim-latency job and shard 3's timing-sensitive isolated tests
-stay hosted. Body requires privileged tool installation and stays hosted.
-Mobile Vitest uses two workers on either pool, so ten services do not each
-start a worker for every CPU on the shared host. Server shards already bound
-Vitest to two workers and execute integration batches in separate processes.
-Required check names and all eight integration batches remain unchanged.
-Release workflows do not use this pool.
+The PostgreSQL claim-latency job stays hosted. Body's privileged tool setup
+stays hosted. Desktop and Mac helper acceptance retain their existing runners.
+The main-push server coverage workflow stays hosted and runs the full suite;
+PR shards consume SELECT SERVER TESTS and fail closed to the full suite if
+selection is unavailable. No check contexts or integration batches change.
+
+PR Vitest commands use one worker, including the shared-package and Body
+commands on hosted runners; hosted merge-group and dispatch jobs use at most
+two. Node test-file concurrency, Turbo task concurrency, libuv's thread pool
+and Metro export workers are also bounded. Existing lockfile-keyed dependency
+caches and exact-commit build caches are reused after shared preparation;
+cold workspace builds execute one task at a time. Compiled outputs never
+fall back to another commit.
+
+The service drop-in caps each listener and its whole job process tree to one
+CPU, with memory pressure at 6 GiB and a hard limit of 8 GiB. The slice drop-in
+caps the ten-listener pool at ten CPUs, with pressure at 48 GiB and a hard
+limit of 60 GiB. Ten listeners therefore admit at most ten simultaneous jobs
+across all PRs; workflow matrix limits alone cannot enforce a host-wide bound.
+These CPU quotas bound CPU time, not host load average: agents also contribute
+to load, so the load-test measurements remain necessary.
+
+See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and
+abort instructions. The new budget has not yet been applied or load-tested;
+the historical measurements below do not establish the 15-minute target.
 
 ## CI-only host isolation
 
-On 2026-10-31 the owner authorized ten repository runners on `squire`, named
+The original 2026-10-31 setup authorized ten repository runners on `squire`, named
 `beeline-ci-squire-01` through `beeline-ci-squire-10`, with only the default
 `self-hosted, Linux, X64` labels plus `beeline-ci`. Existing release runners,
 their labels, and their services were not changed.
@@ -40,9 +61,9 @@ Each runner has its own persistent directory and systemd unit:
 - `/var/lib/beeline-ci/runner-01` through `runner-10`, each with `_work` and
   `_tool`; npm uses the CI user's persistent home cache.
 - `/etc/systemd/system/beeline-ci@.service`, instances `01` through `10`.
-- `/etc/systemd/system/beeline-ci.slice` bounds the pool to 80 GiB, with
+- The original `/etc/systemd/system/beeline-ci.slice` bounded the pool to 80 GiB, with
   reclaim pressure at 64 GiB, CPU weight 25, and a shared 16-CPU quota on the
-  20-CPU host. Each service has a 10 GiB memory limit and can use idle CPUs
+  20-CPU host. Each service originally had a 10 GiB memory limit and could use idle CPUs
   within that shared budget. These limits apply only to the new pool.
 
 The services start with `env -i` and only the CI home, system binary path,
@@ -117,7 +138,7 @@ measurements.
 An initial provisioning trial demonstrated why CPU limits belong on the
 pool rather than each service: with the host 74% idle, one server job hit
 its two-CPU quota in 7,822 of 9,213 periods and accumulated 706s of throttling.
-The final configuration removes those per-service caps, retains the pool's
+That trial's final configuration removed those per-service caps, retained the pool's
 low scheduling weight, and caps the whole pool at 16 CPUs. Test worker counts
 remain bounded. The trial was superseded before recording a final full-run
 comparison, so that comparison uses the final resource policy throughout.

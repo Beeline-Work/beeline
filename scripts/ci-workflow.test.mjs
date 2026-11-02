@@ -32,7 +32,7 @@ test('adapter failure intake keeps the check failing and uses trusted code and e
   assert.equal(intake.uses, 'actions/github-script@v7');
   assert.match(intake.with.script, /reportAdapterFailures/);
   assert.ok(job.steps.some(step => /npm list -g --depth=0 --json/.test(step.run)));
-  assert.ok(Object.values(jobs).some(job => job.steps?.some(step => step.run === 'node --test scripts/acp-adapter-issue.test.mjs')));
+  assert.ok(Object.values(jobs).some(job => job.steps?.some(step => step.run === 'node --test --test-concurrency=1 scripts/acp-adapter-issue.test.mjs')));
 });
 
 test('Android binary releases publish to production, completed, and send the build for review', () => {
@@ -82,7 +82,7 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   const file = 'sources/config/nativeFingerprint.test.ts';
   const suiteStep = mobile.steps.find((step) => step.name === 'Run the mobile vitest suite');
   assert.ok(suiteStep.run.endsWith(` --exclude ${file}`));
-  assert.equal(isolated['runs-on'], 'ubuntu-latest');
+  assert.match(isolated['runs-on'], /beeline-ci/);
   assert.equal(isolated['timeout-minutes'], 15);
   assert.equal(mobile['timeout-minutes'], 20);
   const regression = isolated.steps.find((step) => step.run ===
@@ -133,19 +133,44 @@ test('preparation, verdicts and the timing-sensitive PostgreSQL budget stay host
   }
 });
 
-test('PR heavy jobs use GitHub-hosted Linux runners', () => {
-  for (const name of ['server-suite-shard', 'typecheck', 'mobile-suite']) {
-    assert.equal(jobs[name]['runs-on'], 'ubuntu-latest', name);
+const squireJobs = ['server-suite-shard', 'typecheck', 'mobile-suite', 'dead-code',
+  'mobile-export-reachability', 'production-corpus-replay', 'native-fingerprint'];
+
+test('only credential-free PR Linux jobs use the bounded CI-only pool', () => {
+  for (const name of squireJobs) {
+    const routing = jobs[name]['runs-on'];
+    assert.match(routing, /github.event_name == 'pull_request'/, name);
+    assert.match(routing, /fromJSON\('\["self-hosted","Linux","X64","beeline-ci"\]'\)/, name);
+    assert.match(routing, /\|\| 'ubuntu-latest'/, name);
   }
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
-  assert.match(mobile.run, /--maxWorkers=2 --minWorkers=2/);
+  assert.match(mobile.run, /--maxWorkers="\$CI_TEST_WORKERS" --minWorkers=1/);
+  const workflow = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'));
+  assert.equal(workflow.env.CI_TEST_WORKERS, "${{ github.event_name == 'pull_request' && '1' || '2' }}");
+  assert.equal(workflow.env.UV_THREADPOOL_SIZE, '1');
+  assert.equal(workflow.env.TURBO_CONCURRENCY, '1');
+  assert.match(JSON.stringify(jobs['mobile-export-reachability'].steps), /--max-workers 1/);
 });
 
-test('no workflow job targets the overloaded beeline-ci pool', () => {
+test('every PR Linux Vitest command bounds both worker limits', () => {
+  for (const [name, job] of Object.entries(jobs)) {
+    if (name === 'mac-helper-acceptance' || name.endsWith('-on-demand')) continue;
+    for (const step of job.steps ?? []) {
+      for (const command of (step.run ?? '').split(/\n| && /)) {
+        if (!/npx vitest run|npm test /.test(command)) continue;
+        assert.match(command, /--maxWorkers=(?:"\$CI_TEST_WORKERS"|[12])/, `${name}: ${command}`);
+        assert.match(command, /--minWorkers=1/, `${name}: ${command}`);
+      }
+    }
+  }
+});
+
+test('no other workflow or job gains access to CI-only capacity', () => {
   const directory = new URL('../.github/workflows/', import.meta.url);
   for (const file of readdirSync(directory).filter((file) => /\.ya?ml$/.test(file))) {
     const workflow = parse(readFileSync(new URL(file, directory), 'utf8'));
     for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
+      if (file === 'checks.yml' && squireJobs.includes(name)) continue;
       const routing = JSON.stringify([job['runs-on'], job.strategy?.matrix]);
       assert.ok(!routing.includes('beeline-ci'), `${file}:${name} uses CI-only capacity`);
     }
@@ -178,10 +203,10 @@ test('four runners retain all eight bounded integration batches and fail closed'
   }
 });
 
-test('every hosted Linux workspace consumer waits for the shared preparation job', () => {
+test('every PR Linux workspace consumer waits for the shared preparation job', () => {
   for (const [name, job] of Object.entries(jobs)) {
     // Other operating systems and dispatch-only host lanes populate separate caches.
-    if (name === 'shared-package-tests' || job['runs-on'] !== 'ubuntu-latest') continue;
+    if (name === 'shared-package-tests' || (job['runs-on'] !== 'ubuntu-latest' && !squireJobs.includes(name))) continue;
     if (!job.steps?.some((step) => step.uses === './.github/actions/ci-workspace')) continue;
     const needs = Array.isArray(job.needs) ? job.needs : [job.needs];
     assert.ok(needs.includes('shared-package-tests'), `${name} races cache preparation`);

@@ -3,13 +3,9 @@ import { CommandRefusalError } from './command-refusal.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { systemLine } from './system-line.js';
 
-/** A corner override replaces the Room's entire reviewer list. */
+/** A corner's reviewer: its override, else the parent Room's reviewer. */
 export function cornerReviewerSql(corner = 'corner', parent = 'parent'): string {
   return `COALESCE((SELECT reviewer_agent_id FROM corner_facts WHERE corner_id=${corner}.id),${parent}.reviewer_agent_id)`;
-}
-
-export function cornerReviewerFallbacksSql(corner = 'corner', parent = 'parent'): string {
-  return `(CASE WHEN (SELECT reviewer_agent_id FROM corner_facts WHERE corner_id=${corner}.id) IS NULL THEN ${parent}.reviewer_fallback_ids ELSE ARRAY[]::text[] END)`;
 }
 
 export async function assertIndependentCornerReviewer(

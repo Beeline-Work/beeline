@@ -25,7 +25,6 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { reassignFailedWorkflowRole } from './workflow-runs.js';
-import { reassignFailedCornerReviewer } from './corner-lifecycle.js';
 import { reportAgentFeedback } from './feedback.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
@@ -88,15 +87,11 @@ export function turnSilenceLockKey(roomId: string, requestId: string, agentId: s
  * otherwise notice miss it entirely: an agent-to-agent dispatch
  * (`agent_tag`, `subscribed_event`) has no human-authored source message
  * for `noteFirstSilence`'s own trigger lookup to report against, so the
- * ordinary 90-second stall path calls `reassignFailedCornerReviewer` /
- * `reassignFailedWorkflowRole` but never reaches `inscribeSilence` to free
- * the command itself; and a corner reviewer reassignment with no configured
- * fallback leaves the original claim exactly where it was even when it does
- * run. Left alone, such a command sits `claimed` with an expired lease
+ * ordinary 90-second stall path calls `reassignFailedWorkflowRole` but
+ * never reaches `inscribeSilence` to free the command itself. Left alone, such a command sits `claimed` with an expired lease
  * forever, and a later arrival in the same room can be forced to wait
  * behind it the moment some helper claims it again. This sweep terminates
- * it outright on the lease alone -- no human trigger, no fallback reviewer,
- * and no live loop required -- so a lane can never stay blocked waiting on
+ * it outright on the lease alone -- no human trigger and no live loop required -- so a lane can never stay blocked waiting on
  * an execution that is already gone. Runs on the background reconciliation
  * cycle, well past `COMMAND_LEASE_SECONDS` so a heartbeat's own transient
  * gap is never mistaken for abandonment.
@@ -130,11 +125,6 @@ export async function reclaimExpiredCommandLeases(
         agentId: command.agent_id,
       }),
     );
-    await reassignFailedCornerReviewer(database, {
-      roomId: command.room_id,
-      requestId: command.turn_request_id,
-      agentId: command.agent_id,
-    });
     const completed = await database.transaction(async (db) => {
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         turnSilenceLockKey(command.room_id, command.turn_request_id, command.agent_id),
@@ -235,8 +225,8 @@ export async function noteFirstSilence(
   // holder's handoff card, or the run's own start card), and a review
   // dispatch's is the server's check-passed fact, neither of which the
   // notice's own trigger requirement below would satisfy. Failing a
-  // list-bound role or reviewer over must not depend on there being a human
-  // further up the chain.
+  // list-bound role over must not depend on there being a human further up
+  // the chain.
   if (!isModelCapacityFault(input.reason)) {
     await database.transaction((db) =>
       reassignFailedWorkflowRole(db, {
@@ -246,11 +236,6 @@ export async function noteFirstSilence(
         reason: input.reason,
       }),
     );
-    await reassignFailedCornerReviewer(database, {
-      roomId: input.roomId,
-      requestId: input.requestId,
-      agentId: input.agentId,
-    });
   }
 
   // Commands carry their original human source; private orders have no message row.

@@ -2020,7 +2020,7 @@ it('SYSTEM-VISIBILITY-2: private wake bookkeeping does not change the five mixed
     'checksReported',
     'ensureReviewDispatch',
     'noteReviewBlocked',
-    'reassignFailedCornerReviewer',
+    // reassignFailedCornerReviewer was deleted with Room reviewer fallbacks (PENDING lunchboxfortwo approval of this guard edit).
   ];
   for (const scope of scopes)
     expect(

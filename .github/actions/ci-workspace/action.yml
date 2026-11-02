@@ -1,6 +1,9 @@
 name: Reuse CI workspace
 description: Restore dependencies by lockfile and workspace builds by exact commit
 inputs:
+  prepared:
+    description: Require the dependency and build caches published by shared preparation
+    default: 'false'
   mobile:
     description: Install the isolated mobile dependency tree
     default: 'false'
@@ -21,7 +24,14 @@ runs:
         key: ci-root-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'package.json', 'apps/*/package.json', 'packages/*/package.json', '.npmrc') }}
     - if: steps.root.outputs.cache-hit != 'true'
       shell: bash
-      run: npm ci --no-audit --no-fund
+      env:
+        CI_PREPARED: ${{ inputs.prepared }}
+      run: |
+        if [ "$CI_PREPARED" = true ]; then
+          echo "::error::Missing prepared root dependencies cache; refusing a cold install/build on a consumer."
+          exit 1
+        fi
+        npm ci --no-audit --no-fund
     - uses: actions/cache@v4
       id: builds
       with:
@@ -32,7 +42,14 @@ runs:
         key: ci-build-v1-${{ runner.os }}-node22-${{ github.sha }}
     - if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
-      run: npm run build -- --concurrency=1
+      env:
+        CI_PREPARED: ${{ inputs.prepared }}
+      run: |
+        if [ "$CI_PREPARED" = true ]; then
+          echo "::error::Missing prepared exact-commit builds cache; refusing a cold install/build on a consumer."
+          exit 1
+        fi
+        npm run build -- --concurrency=1
     - uses: actions/cache@v4
       if: inputs.mobile == 'true'
       id: mobile
@@ -43,4 +60,11 @@ runs:
         key: ci-mobile-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/package.json', 'apps/mobile/patches/**', 'apps/mobile/scripts/patch-livekit-abort.cjs') }}
     - if: inputs.mobile == 'true' && steps.mobile.outputs.cache-hit != 'true'
       shell: bash
-      run: npm ci --prefix apps/mobile --no-audit --no-fund
+      env:
+        CI_PREPARED: ${{ inputs.prepared }}
+      run: |
+        if [ "$CI_PREPARED" = true ]; then
+          echo "::error::Missing prepared mobile dependencies cache; refusing a cold install/build on a consumer."
+          exit 1
+        fi
+        npm ci --prefix apps/mobile --no-audit --no-fund

@@ -31,8 +31,10 @@ commands on hosted runners; hosted merge-group and dispatch jobs use at most
 two. Node test-file concurrency, Turbo task concurrency, libuv's thread pool
 and Metro export workers are also bounded. Existing lockfile-keyed dependency
 caches and exact-commit build caches are reused after shared preparation;
-cold workspace builds execute one task at a time. Compiled outputs never
-fall back to another commit.
+cold workspace builds execute one task at a time on the producer. Squire
+consumers require those prepared caches and fail promptly on a miss, so a
+failed shared job cannot trigger ten cold installs/builds. Compiled outputs
+never fall back to another commit.
 
 The service drop-in caps each listener and its whole job process tree to one
 CPU, with memory pressure at 6 GiB and a hard limit of 8 GiB. The slice drop-in

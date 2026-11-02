@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { parse } from 'yaml';
 
@@ -250,4 +253,39 @@ test('the coverage map follows main pushes without a schedule and checks source-
   assert.match(run.run, /"\$SHARD\/8"/);
   assert.match(run.run, /"\$\(\(SHARD \+ 4\)\)\/8"/);
   assert.equal(jobs['coverage-map'].uses, './.github/workflows/server-coverage-map.yml');
+});
+
+test('the network admission CI command runs without duplicate package-script worker flags', () => {
+  const step = jobs['shared-package-tests'].steps.find(step => step.name === 'Prove local network admission');
+  const result = spawnSync('bash', ['-c', step.run], {
+    cwd: new URL(`../${step['working-directory'] ?? ''}/`, import.meta.url),
+    env: { ...process.env, ...step.env, CI_TEST_WORKERS: '1' }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test('prepared consumers cannot fan out cold installs or builds after a preparation failure', () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const directory = mkdtempSync(join(tmpdir(), 'ci-preparation-'));
+  try {
+    const marker = join(directory, 'npm-called');
+    writeFileSync(join(directory, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$NPM_MARKER"\n', { mode: 0o755 });
+    const steps = action.runs.steps.filter(step => /\bnpm (?:ci|run build)\b/.test(step.run ?? ''));
+    assert.equal(steps.length, 3, 'root, build and mobile fallbacks must be covered');
+    for (const step of steps) {
+      const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, NPM_MARKER: marker, CI_PREPARED: 'true' };
+      const missing = spawnSync('bash', ['-c', step.run], { env, encoding: 'utf8' });
+      assert.equal(missing.status, 1, `prepared consumer must fail before ${step.run}`);
+      assert.equal(existsSync(marker), false, 'a consumer must never install or rebuild');
+      assert.equal(step.env.CI_PREPARED, '${{ inputs.prepared }}');
+      const producer = spawnSync('bash', ['-c', step.run], { env: { ...env, CI_PREPARED: 'false' }, encoding: 'utf8' });
+      assert.equal(producer.status, 0, producer.stderr);
+      assert.ok(existsSync(marker), 'the producer must still prepare a cold cache');
+      rmSync(marker);
+    }
+    for (const name of squireJobs) {
+      const setup = jobs[name].steps.find(step => step.uses === './.github/actions/ci-workspace');
+      assert.equal(setup.with.prepared, "${{ github.event_name == 'pull_request' }}", name);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

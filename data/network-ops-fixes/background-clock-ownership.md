@@ -31,3 +31,40 @@ Central proofs: background leader10, ownership18 + PostgreSQL4, display clock10
 + PostgreSQL5, actual choice7 + PostgreSQL3, runner11. All passed with two or
 fewer workers, serial suites, and the4096MiB Node heap cap. Only loopback throwaway
 schemas were used. No production migration or lifecycle action was performed.
+
+
+## Unselected readiness and coherent read basis
+
+Readiness verifies the installed function bodies and PostgreSQL-parsed trigger
+contract, then reconciles durable bounded phases before publishing a generation.
+New empty Workspaces receive pending work; Room moves invalidate OLD and NEW
+scope readiness with bounded foreground work. Every clock basis transition
+advances its canonical Workspace cut, including expiry with no affected reader.
+
+Central readiness14/source17/readiness PostgreSQL3/display PostgreSQL6,
+display10/choice7/choice PostgreSQL3 and existing runner11 pass. Snapshot
+composition adds committed-clock6/scalar-count9/projection17. The pure readiness
+predicate rejects a naked ready bit and is shared by the actual basis and the
+single-SELECT scalar badge. No read initializes or repairs readiness.
+
+These are correctness proofs, not activation or performance acceptance. The
+catalog fingerprint still deparses the bounded capture contract on reads; the
+one-statement count does not establish cheap CPU. Source phases cap processed
+keys at100, but current Room-filtered global source ordering still needs query
+plan/buffer proofs or a bounded Room/source keyset redesign. Existing-owner
+lifecycle composition, complete source/WAL/CPU/wire costs and migration/cohort
+floors remain open. Production does not install or select these schemas.
+
+
+The readiness lifecycle now runs as explicit `tray.readiness` work under that
+same aggregate epoch and deferred COMMIT fence. One runner/subscription owns two
+bounded journal positions; only actual durable pending work yields immediate
+continuation. Opening source hints survive acquisition. Ownership19, existing
+runner11, actual-schema readiness runner7 and real PostgreSQL readiness-owner3
+pass. Backend loss between the final SELECT and COMMIT rolls back audit/source/
+publication changes. No additional listener, leader lease or retry timer exists.
+
+Reader health remains a separate activation gate: runner `live` only means its
+epoch and source heads were acquired. Both application servers must verify
+initial drain completion for the current owner epoch; an old persisted ready
+bit or a local-only healthy flag cannot certify takeover completion.

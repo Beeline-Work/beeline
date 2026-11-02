@@ -11,7 +11,7 @@ const attemptBrand: unique symbol = Symbol('background-attempt');
 
 /** Initial closed core vocabulary. Other jobs require an explicit adapter and
  * schema review before opt-in. These types are never public protocol fields. */
-export type BackgroundJobId = 'schedule.fire' | 'systemDm.deliver' | 'push.deliver' | 'checkin.deliver' | 'tray.expire';
+export type BackgroundJobId = 'schedule.fire' | 'systemDm.deliver' | 'push.deliver' | 'checkin.deliver' | 'tray.expire' | 'tray.readiness';
 export type BackgroundProviderJob = 'push.deliver' | 'checkin.deliver';
 type Provider<J extends BackgroundProviderJob> = J extends 'push.deliver' ? 'apns' | 'fcm' | 'webpush' : 'email';
 export type BackgroundEffectRequest<J extends BackgroundProviderJob = BackgroundProviderJob> = {
@@ -189,14 +189,14 @@ export class BackgroundOwnership {
    * still owns its due/version claim and domain authorization. Owner/lease
    * locks remain held through immediate pre-commit validation. */
   async withTransaction<T>(epoch: BackgroundEpoch, job: BackgroundJobId, work: (db: SqlDatabase) => Promise<T>): Promise<T> {
-    if (!['schedule.fire','systemDm.deliver','push.deliver','checkin.deliver','tray.expire'].includes(job)) throw new BackgroundOwnershipLost();
+    if (!['schedule.fire','systemDm.deliver','push.deliver','checkin.deliver','tray.expire','tray.readiness'].includes(job)) throw new BackgroundOwnershipLost();
     const state = this.state(epoch); this.requireCurrent(state);
     return this.database.transaction(async db => {
       await this.lockEpoch(db, state);
       // This exact DB-only leaf also validates at actual COMMIT, including a
       // driver delay after the final SELECT. Its uninstalled schema owns one
       // ephemeral transaction fence, never a retained per-expiry ledger.
-      if (job === 'tray.expire') await db.query('SELECT beeline_register_tray_clock_owner($1,$2::bigint,$3::uuid)',
+      if (job === 'tray.expire' || job === 'tray.readiness') await db.query('SELECT beeline_register_tray_clock_owner($1,$2::bigint,$3::uuid)',
         [this.instanceId, epoch.generation, state.nonce]);
       const value = await work(db);
       await this.lockEpoch(db, state);

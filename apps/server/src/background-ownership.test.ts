@@ -4,6 +4,7 @@ import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fi
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BackgroundEffectConflict,
   BackgroundOwnershipLost, BackgroundEnqueueContractError, type BackgroundEpoch,
   type BackgroundAttempt, type BackgroundEffectRequest } from './background-ownership.js';
+import {TRAY_CLOCK_OWNER_SCHEMA} from './tray-clock-owner.js';
 
 const database=new PgliteDatabase();
 const cores:Array<{owner:BackgroundOwnership;epoch:BackgroundEpoch}>=[];
@@ -19,7 +20,7 @@ async function prepare(core:BackgroundOwnership,epoch:BackgroundEpoch,effectId='
 }
 beforeAll(async()=>{
   await database.query(`CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz NOT NULL);
-    CREATE TABLE effects(id text PRIMARY KEY);${BACKGROUND_OWNERSHIP_SCHEMA}`);
+    CREATE TABLE effects(id text PRIMARY KEY);${BACKGROUND_OWNERSHIP_SCHEMA}${TRAY_CLOCK_OWNER_SCHEMA}`);
   await installBackgroundOwnerTestProof(database);
 });
 beforeEach(async()=>{await database.query('DELETE FROM background_effect_attempts;DELETE FROM background_leader_owners;DELETE FROM live_server_instances;DELETE FROM effects;DELETE FROM background_owner_test_backends');});
@@ -27,6 +28,18 @@ afterEach(()=>{for(const {owner,epoch}of cores.splice(0))owner.revoke(epoch);vi.
 afterAll(()=>database.close());
 
 describe('private background owner epochs and immutable effect admission',()=>{
+  it('admits only the explicit readiness job through the same deferred owner fence and rolls back epoch loss',async()=>{
+    const {core,epoch}=await owner();
+    await core.withTransaction(epoch,'tray.readiness',async db=>{
+      expect((await db.query(`SELECT * FROM tray_clock_owner_fences`)).rowCount).toBe(1);
+      await db.query(`INSERT INTO effects VALUES('ready')`);
+    });
+    expect((await database.query(`SELECT * FROM tray_clock_owner_fences`)).rows).toEqual([]);
+    await expect(core.withTransaction(epoch,'tray.readiness',async db=>{
+      await db.query(`INSERT INTO effects VALUES('lost-readiness')`);core.revoke(epoch);
+    })).rejects.toBeInstanceOf(BackgroundOwnershipLost);
+    expect((await database.query(`SELECT id FROM effects ORDER BY id`)).rows).toEqual([{id:'ready'}]);
+  });
   it('requires an actual lock proof and live aggregate lease, never caller readiness flags',async()=>{
     const core=new BackgroundOwnership(database,'instance');
     await expect(core.claim(await lock(false))).rejects.toBeInstanceOf(BackgroundOwnershipLost);

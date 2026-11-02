@@ -8,6 +8,7 @@ import {TrayClockOwner,TRAY_CLOCK_OWNER_SCHEMA} from './tray-clock-owner.js';
 import {TrayChoiceClockOwner} from './tray-choice-clock-owner.js';
 import {TRAY_CLOCK_SOURCE_SCHEMA} from './tray-clock-source.js';
 import {TrayClockWork,TRAY_CLOCK_WORK_SCHEMA} from './tray-clock-work.js';
+import {TrayClockReadinessOwner} from './tray-clock-readiness-owner.js';
 import {postRoomChoice} from './room-choice.js';
 import {LiveHub} from './live.js';
 import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
@@ -35,6 +36,11 @@ describe('unselected existing-leader Tray clock composition',()=>{
   const runners:TrayClockWork[]=[],leaders:BackgroundLeader[]=[],cleanups:Array<()=>Promise<void>>=[];
   beforeEach(async()=>{
     db=await migratedDatabase();live=new LiveHub();statements=[];ready=true;now=0;recovery=undefined;after=undefined;fail=false;
+    // These existing expiry tests deliberately replace the installed semantic
+    // SQL clock. They cannot attest the canonical capture manifest. The real
+    // readiness composition is exercised separately with unchanged SQL in
+    // tray-clock-work.readiness.test.ts, including ownership/loss/source paths.
+    vi.spyOn(TrayClockReadinessOwner.prototype,'run').mockResolvedValue({continuation:false});
     await db.query(`CREATE TABLE tray_work_test_clock(now_at timestamptz);INSERT INTO tray_work_test_clock VALUES('2000-01-08');
       CREATE FUNCTION tray_work_test_now() RETURNS timestamptz LANGUAGE sql VOLATILE AS $$SELECT now_at FROM tray_work_test_clock$$;`);
     await db.query(BACKGROUND_OWNERSHIP_SCHEMA);await db.query(TRAY_CLOCK_SOURCE_SCHEMA.replaceAll('clock_timestamp()','tray_work_test_now()'));

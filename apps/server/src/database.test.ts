@@ -10,7 +10,6 @@ import {
   MESSAGE_SEARCH_DOCUMENT_MAX_BYTES,
   backfillInstitutionalMemoryRollout,
   backfillPerItemEventSubscriptions,
-  backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
   APP_POOL_WAIT_TIMEOUT_MS,
@@ -1195,7 +1194,6 @@ describe('the yolo default migration', () => {
   const OWNER = 'a'.repeat(64);
   const ON_AGENT = '1'.repeat(64);
   const OFF_AGENT = '2'.repeat(64);
-  const ALREADY_ON_AGENT = '3'.repeat(64);
   const FRESH_AGENT = '4'.repeat(64);
   let database: PgliteDatabase;
   beforeEach(async () => {
@@ -1206,28 +1204,23 @@ describe('the yolo default migration', () => {
   });
   afterEach(() => database.close());
 
-  it('flips every existing agent, including one an owner had explicitly turned off, and reports the count', async () => {
+  it('keeps an owner\'s explicit yolo off across a release migration', async () => {
     await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','On'),($2,'agent','Off'),($3,'agent','AlreadyOn')`,
-      [ON_AGENT, OFF_AGENT, ALREADY_ON_AGENT],
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Off'),($2,'agent','On')`,
+      [OFF_AGENT, ON_AGENT],
     );
-    // Simulates rows written before this migration: the pre-change default (false),
-    // an owner's explicit off, and an agent an owner had already turned on.
     await database.query(
-      `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$4,false),($2,$4,false),($3,$4,true)`,
-      [ON_AGENT, OFF_AGENT, ALREADY_ON_AGENT, OWNER],
+      `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$3,false),($2,$3,true)`,
+      [OFF_AGENT, ON_AGENT, OWNER],
     );
-    await expect(backfillYoloModeDefault(database)).resolves.toBe(2);
+    await migrate(database);
     const rows = await database.query<{ agent_id: string; yolo_mode: boolean }>(
       `SELECT agent_id,yolo_mode FROM agents ORDER BY agent_id`,
     );
     expect(rows.rows).toEqual([
       { agent_id: ON_AGENT, yolo_mode: true },
-      { agent_id: OFF_AGENT, yolo_mode: true },
-      { agent_id: ALREADY_ON_AGENT, yolo_mode: true },
+      { agent_id: OFF_AGENT, yolo_mode: false },
     ]);
-    // A second run is a no-op: nothing left to flip.
-    await expect(backfillYoloModeDefault(database)).resolves.toBe(0);
   });
 
   it('defaults a newly created agent to yolo on', async () => {

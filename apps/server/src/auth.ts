@@ -1,6 +1,5 @@
 import { recordXSignup } from './x-ads.js';
 import { recordSigninAttempt } from './signin-attempts.js';
-import { externalFetch } from '@beeline/auth/external-fetch';
 import {
   createDecipheriv,
   createHash,
@@ -602,31 +601,14 @@ export function bearer(authorization: string | undefined): string | null {
   return token.length >= 20 ? token : null;
 }
 
-/** Prefer the mounted auth store; an endpoint override remains available for tests and migrations. */
+/** The mounted auth store consumes tickets; local identities are development-only. */
 export function verifierFromEnvironment(inProcess: VerifyGitHubOidc): VerifyGitHubOidc {
-  const endpoint = process.env.PHONE_GITHUB_EXCHANGE_ENDPOINT;
   return async (token) => {
     if (process.env.NODE_ENV !== 'production' && token.startsWith('local:')) {
       const login = token.slice('local:'.length);
       if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) throw new Error('invalid local GitHub identity');
       return { subject: `local-${login}`, login, name: login };
     }
-    if (!endpoint) return inProcess(token);
-    const response = await externalFetch(endpoint, {
-      method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ ticket: token }),
-    });
-    if (!response.ok) throw new Error('GitHub identity exchange failed');
-    const body = (await response.json()) as Record<string, unknown>;
-    if (typeof body.subject !== 'string' || typeof body.login !== 'string') {
-      throw new Error('GitHub identity response is invalid');
-    }
-    return {
-      subject: body.subject,
-      login: body.login,
-      name: typeof body.name === 'string' && body.name ? body.name : body.login,
-      ...(typeof body.avatar_url === 'string' ? { avatar: body.avatar_url } : {}),
-    };
+    return inProcess(token);
   };
 }

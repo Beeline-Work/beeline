@@ -4,8 +4,10 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { activeAdapterCommand } from './adapter-store.js';
+import type { AgentId } from './session-join/agents.js';
 import type { AdapterUpdateOptions } from './adapter-update.js';
-import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 export const AGENT_KINDS = [
   'codex',
@@ -19,6 +21,163 @@ export const AGENT_KINDS = [
   'custom',
 ] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
+
+/** Per-harness policy. Consumers select a capability; harness names stay here. */
+interface AgentBehavior {
+  label?: string;
+  cliSignIn?: 'codex' | 'grok' | 'cursor';
+  providerKeyStore?: 'env' | 'auth-file';
+  sharedLoginWriteBack?: boolean;
+  codexCacheBindings?: boolean;
+  probeProviderRootEnv?: string;
+  modelCatalogOwnsCredentials?: boolean;
+  fastMode?: boolean;
+  modelLaunch?: 'native-args' | 'command';
+  hostedModelConfig?: 'model-file' | 'inline-provider';
+  validateHostedModelInSession?: boolean;
+  resolveCommandOnStart?: boolean;
+  identityLabel?: string;
+  cliModelCatalog?: boolean;
+  providerModelEnv?: { provider: string; model: string };
+  roomTomlDefaults?: boolean;
+  quotaCredential?: { homeEnv: string; directory: string; file: string };
+  importedMcp?: { format: 'toml' | 'json' | 'extensions'; source: string; homeEnv: string; file: string };
+  session?: SessionAgentBehavior;
+}
+
+interface SessionAgentBehavior {
+  delivery?: 'socket' | 'queue';
+  processNames?: readonly string[];
+  clientNames?: readonly string[];
+  clientExactNames?: readonly string[];
+  clientPrefix?: string;
+  mailEvents?: readonly string[];
+  hookOutput?: Partial<Record<'start' | 'prompt' | 'tool' | 'stop', string>>;
+  pollText?: boolean;
+}
+
+export const CURSOR_ACP_BRIDGE_LABEL = 'cursor-acp-bridge';
+export const CURSOR_ACP_BRIDGE_FLAG = '--cursor-acp-bridge';
+
+/** Resolve the Beeline-owned bridge beside this helper, or inside its bundle. */
+export function cursorAcpBridgeLaunch(): { command: string; args: string[] } {
+  const meta = import.meta.url;
+  if (meta === 'beeline:bundle' || meta.startsWith('beeline:')) {
+    const entry = process.argv[1];
+    if (!entry) {
+      throw new Error('Cursor ACP bridge cannot resolve the Beeline CLI entry');
+    }
+    return { command: process.execPath, args: [entry, CURSOR_ACP_BRIDGE_FLAG] };
+  }
+  const js = fileURLToPath(new URL('./cursor-acp-bridge.js', meta));
+  const ts = fileURLToPath(new URL('./cursor-acp-bridge.ts', meta));
+  if (existsSync(js)) return { command: process.execPath, args: [js] };
+  if (existsSync(ts)) {
+    const tsx = createRequire(meta).resolve('tsx');
+    return { command: process.execPath, args: ['--import', tsx, ts] };
+  }
+  throw new Error('Cursor ACP bridge entry not found next to the Beeline helper');
+}
+
+
+export const AGENT_BEHAVIORS: Readonly<Record<AgentKind, AgentBehavior>> = {
+  codex: {
+    label: 'Codex', cliSignIn: 'codex', roomTomlDefaults: true, codexCacheBindings: true, fastMode: true,
+    quotaCredential: { homeEnv: 'CODEX_HOME', directory: '.codex', file: 'auth.json' },
+    importedMcp: { format: 'toml', source: '.codex/config.toml', homeEnv: 'CODEX_HOME', file: 'config.toml' },
+    session: { delivery: 'queue', processNames: ['codex', 'codex-tui'], clientNames: ['codex'],
+      hookOutput: { start: 'SessionStart', prompt: 'UserPromptSubmit', tool: 'PostToolUse', stop: 'block' } },
+  },
+  claude: {
+    label: 'Claude', sharedLoginWriteBack: true,
+    quotaCredential: { homeEnv: 'CLAUDE_CONFIG_DIR', directory: '.claude', file: '.credentials.json' },
+    importedMcp: { format: 'json', source: '.claude.json', homeEnv: 'CLAUDE_CONFIG_DIR', file: '.claude.json' },
+    session: { delivery: 'socket', processNames: ['claude'], clientNames: ['claude-code', 'claude code'], clientExactNames: ['claude'],
+      hookOutput: { start: 'SessionStart', prompt: 'UserPromptSubmit', stop: 'block' } },
+  },
+  goose: {
+    label: 'Goose', providerKeyStore: 'env', probeProviderRootEnv: 'GOOSE_PATH_ROOT', modelCatalogOwnsCredentials: true,
+    providerModelEnv: { provider: 'GOOSE_PROVIDER', model: 'GOOSE_MODEL' },
+    importedMcp: { format: 'extensions', source: '.config/goose/config.yaml', homeEnv: 'GOOSE_PATH_ROOT', file: 'config/config.yaml' },
+  },
+  pi: {
+    label: 'Pi', providerKeyStore: 'env', hostedModelConfig: 'model-file', validateHostedModelInSession: true,
+    importedMcp: { format: 'json', source: '.pi/agent/mcp.json', homeEnv: 'PI_CODING_AGENT_DIR', file: 'mcp.json' },
+    session: { processNames: ['pi'], clientPrefix: 'pi', mailEvents: ['poll', 'post-tool-use'], pollText: true },
+  },
+  grok: {
+    label: 'Grok', cliSignIn: 'grok', modelLaunch: 'native-args',
+    importedMcp: { format: 'toml', source: '.grok/config.toml', homeEnv: 'GROK_HOME', file: 'config.toml' },
+  },
+  cursor: { label: 'Cursor', cliSignIn: 'cursor', resolveCommandOnStart: true, identityLabel: CURSOR_ACP_BRIDGE_LABEL, cliModelCatalog: true },
+  opencode: { label: 'OpenCode', providerKeyStore: 'auth-file', modelCatalogOwnsCredentials: true, hostedModelConfig: 'inline-provider',
+    session: { processNames: ['opencode'], clientNames: ['opencode'], mailEvents: ['poll'], pollText: true } },
+  reference: {},
+  custom: { modelLaunch: 'command' },
+};
+
+export function agentBehavior(kind: string | undefined): AgentBehavior {
+  return kind && Object.hasOwn(AGENT_BEHAVIORS, kind) ? AGENT_BEHAVIORS[kind as AgentKind] : {};
+}
+
+// Preserve cross-harness declaration precedence when scanning the operator home.
+export const IMPORTED_MCP_KINDS: readonly AgentKind[] = ['codex', 'grok', 'claude', 'goose', 'pi'];
+
+// Joined sessions also include apps that are not daemon ACP harnesses.
+export const SESSION_AGENT_BEHAVIORS = {
+  'claude-code': AGENT_BEHAVIORS.claude.session!,
+  codex: AGENT_BEHAVIORS.codex.session!,
+  opencode: AGENT_BEHAVIORS.opencode.session!,
+  pi: AGENT_BEHAVIORS.pi.session!,
+  antigravity: { processNames: ['antigravity', 'agy'], clientNames: ['antigravity'],
+    mailEvents: ['session-start', 'user-prompt-submit', 'stop'], hookOutput: { start: 'inject', prompt: 'inject', stop: 'continue' } },
+  gemini: { processNames: ['gemini'], clientNames: ['gemini'],
+    hookOutput: { start: 'SessionStart', prompt: 'BeforeAgent', tool: 'AfterTool', stop: 'deny' } },
+  hermes: { processNames: ['hermes'], clientNames: ['hermes'], mailEvents: ['poll'], pollText: true },
+  zcode: { processNames: ['zcode'], clientPrefix: 'zcode', mailEvents: ['poll'], pollText: true },
+} satisfies Record<AgentId, SessionAgentBehavior>;
+
+export const SESSION_CLIENT_ORDER = ['claude-code', 'codex', 'antigravity', 'gemini', 'opencode', 'pi', 'hermes', 'zcode'] as const;
+
+export function sessionAgentBehavior(agent: keyof typeof SESSION_AGENT_BEHAVIORS | undefined): SessionAgentBehavior {
+  return agent ? SESSION_AGENT_BEHAVIORS[agent] : {};
+}
+
+/**
+ * Credential files shared back into an isolated harness state directory,
+ * keyed by the state directory the harness was pointed at. `source` is
+ * relative to the operator's real `$HOME`; `target` to the isolated dir.
+ */
+export const SHARED_CREDENTIALS: Array<{
+  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor' | 'user';
+  source: string;
+  target: string;
+  writeBack?: boolean;
+}> = [
+  // Claude Code relocates ~/.claude wholesale via CLAUDE_CONFIG_DIR; the OAuth
+  // credentials live inside it, so an isolated dir needs them linked back.
+  { dir: 'claude', source: '.claude/.credentials.json', target: '.credentials.json', writeBack: AGENT_BEHAVIORS.claude.sharedLoginWriteBack },
+  // Codex CLI relocates ~/.codex via CODEX_HOME; auth.json holds its login.
+  { dir: 'codex', source: '.codex/auth.json', target: 'auth.json' },
+  // Grok relocates ~/.grok via GROK_HOME; auth.json holds its login (same
+  // shape as codex).
+  { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
+  { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
+  // Cursor CLI stores chat/MCP state under ~/.cursor/; cursor-agent reads
+  // CURSOR_HOME to relocate that data directory. The login is NOT there:
+  // cursor-agent reads ~/.config/cursor/auth.json (XDG config). Beeline
+  // remaps HOME to the isolated user/ dir, so the login has to be linked
+  // into that HOME or every Room/corner except one that was patched by
+  // hand fails with "Authentication required".
+  { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
+  { dir: 'user', source: '.config/cursor/auth.json', target: '.config/cursor/auth.json' },
+  // OpenCode stores provider logins under XDG data, which follows isolated HOME.
+  {
+    dir: 'user',
+    source: '.local/share/opencode/auth.json',
+    target: '.local/share/opencode/auth.json',
+  },
+];
 
 export const AUTO_DETECT_AGENT_KINDS = [
   'codex',

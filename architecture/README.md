@@ -56,6 +56,9 @@ that judges it.
 System message wording is not a rule here: it lives in one catalog file and
 never blocks a PR.
 
+The [2026-11-02 harness/settings/path sweep](seam-sweep-b.md) records the
+remaining exceptions and why their callers still need them.
+
 ## Weekly audit
 
 A scheduled Beeline agent turn (a due-time wake, not a polling loop) reviews

@@ -15,7 +15,8 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 // Wall-clock budgets and held voice playback must not compete with database
 // migrations in another worker. Keep their coverage in the same required job.
-const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts'];
+const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
+  'src/phone-service.read-room-latency.test.ts'];
 const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
   .flatMap((file) => ['--exclude', file]);
 function list(files = [], exclude = exclusions) {

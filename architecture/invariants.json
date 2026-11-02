@@ -1,0 +1,3147 @@
+{
+  "rules": [
+    {
+      "id": "work.command-creation",
+      "module": "Work authority",
+      "invariant": "Agent commands are created only by createAgentCommand; only a command authorizes a turn.",
+      "pattern": "INSERT\\s+INTO\\s+agent_commands\\b",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-command.ts"
+      ],
+      "total": 1,
+      "fix": "Call createAgentCommand(db, {...}) from apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
+    },
+    {
+      "id": "corner.state-writes",
+      "module": "Corner state machine",
+      "invariant": "Corner state (corner_facts) is written only by the corner module.",
+      "pattern": "(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+corner_facts\\b",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/corner-lifecycle.ts",
+        "apps/server/src/corner-close.ts"
+      ],
+      "total": 38,
+      "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
+    },
+    {
+      "id": "corner.archive",
+      "module": "Corner state machine",
+      "invariant": "A corner is archived only by closeCornerState or the merge path, so its run, wakes and state end with it.",
+      "pattern": "UPDATE\\s+rooms\\s+(?:\\w+\\s+)?SET\\s+archived_at",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/corner-close.ts",
+        "apps/server/src/github-operations.ts"
+      ],
+      "total": 1,
+      "fix": "Close the corner with closeCornerState(db, cornerId) from apps/server/src/corner-close.ts. It archives the room, cancels commands, abandons the workflow run, deletes wake sources and advances the corner to closed."
+    },
+    {
+      "id": "corner.merge-call",
+      "module": "Corner state machine",
+      "invariant": "A pull request is merged only through GitHubOperations.landCorner.",
+      "pattern": "\\.mergePullRequest\\s*\\(",
+      "scope": [
+        "apps/server/src",
+        "apps/body/src"
+      ],
+      "owners": [
+        "apps/server/src/github-operations.ts"
+      ],
+      "total": 0,
+      "fix": "Merge through GitHubOperations.landCorner, the only merge path (AGENTS.md merge authority); it checks the exact-head yes, green checks and holds."
+    },
+    {
+      "id": "live.notify",
+      "module": "Live fanout",
+      "invariant": "Live notifications are published only by postgres-live.ts, so its decoder sees every event.",
+      "pattern": "pg_notify\\s*\\(",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/postgres-live.ts"
+      ],
+      "total": 15,
+      "fix": "Publish through a named notifier in apps/server/src/postgres-live.ts (add one beside notifyConnectorAssignment) and call it, so LiveNotification and its decoder cover the event."
+    },
+    {
+      "id": "timers.server-interval",
+      "module": "Background work and timers",
+      "invariant": "Server background work runs on the leader's work queue, not on free-running intervals.",
+      "pattern": "\\bsetInterval\\s*\\(",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [],
+      "total": 6,
+      "fix": "Use one of three shapes: a global job via the leader's work.add in apps/server/src/background.ts; a timeout chain owned by one connection and cleared in its close handler; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
+    },
+    {
+      "id": "access.membership-writes",
+      "module": "Access and membership",
+      "invariant": "Memberships are written only by the membership module.",
+      "pattern": "(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+memberships\\b",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/membership-join.ts"
+      ],
+      "total": 40,
+      "fix": "Change membership through a named helper in apps/server/src/membership-join.ts (add one there if needed) and call it."
+    },
+    {
+      "id": "agents.server-harness-branch",
+      "module": "Agent types",
+      "invariant": "The server and shared contract never branch on a harness name; harness behaviour lives in the helper's AgentKind tables.",
+      "pattern": "===?\\s*'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'|'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'\\s*===?",
+      "scope": [
+        "apps/server/src",
+        "packages/api-contract/src"
+      ],
+      "owners": [],
+      "total": 3,
+      "fix": "Send the server a capability or setting, not the harness name, and keep the per-harness value in a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts."
+    },
+    {
+      "id": "agents.helper-harness-branch",
+      "module": "Agent types",
+      "invariant": "Helper behaviour per harness is read from AgentKind tables, not from scattered harness-name comparisons.",
+      "pattern": "===?\\s*'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'|'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'\\s*===?",
+      "scope": [
+        "apps/body/src"
+      ],
+      "owners": [
+        "apps/body/src/agent-command.ts"
+      ],
+      "total": 85,
+      "fix": "Add the behaviour as a field of a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts and read that field here instead of comparing the harness name."
+    },
+    {
+      "id": "settings.server-env",
+      "module": "Server",
+      "invariant": "Server settings and feature flags (environment variables) only shrink; a new one must replace an old one.",
+      "pattern": "process\\.env\\.[A-Z][A-Z0-9_]*",
+      "distinct": true,
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [],
+      "total": 62,
+      "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
+    },
+    {
+      "id": "settings.helper-env",
+      "module": "Helper",
+      "invariant": "Helper settings and feature flags (environment variables) only shrink; a new one must replace an old one.",
+      "pattern": "process\\.env\\.[A-Z][A-Z0-9_]*",
+      "distinct": true,
+      "scope": [
+        "apps/body/src"
+      ],
+      "owners": [],
+      "total": 56,
+      "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
+    },
+    {
+      "id": "settings.phone-env",
+      "module": "Phone app",
+      "invariant": "Phone app settings and feature flags (environment variables) only shrink; a new one must replace an old one.",
+      "pattern": "process\\.env\\.[A-Z][A-Z0-9_]*",
+      "distinct": true,
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [],
+      "total": 13,
+      "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
+    },
+    {
+      "id": "settings.shared-env",
+      "module": "Shared packages",
+      "invariant": "Shared packages settings and feature flags (environment variables) only shrink; a new one must replace an old one.",
+      "pattern": "process\\.env\\.[A-Z][A-Z0-9_]*",
+      "distinct": true,
+      "scope": [
+        "packages"
+      ],
+      "owners": [],
+      "total": 0,
+      "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
+    },
+    {
+      "id": "paths.server-parallel",
+      "module": "Server",
+      "invariant": "Server code has one path per job: no new legacy, fallback or compatibility variants beside the main one.",
+      "pattern": "(?:\\bfunction\\s*\\*?\\s*|\\b(?:const|let|var)\\s+|\\b(?:private|protected|public|static|async)\\s+)\\w*(?:[Ll]egacy|[Ff]allback|[Cc]ompat)\\w*\\b",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [],
+      "total": 21,
+      "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    },
+    {
+      "id": "paths.helper-parallel",
+      "module": "Helper",
+      "invariant": "Helper code has one path per job: no new legacy, fallback or compatibility variants beside the main one.",
+      "pattern": "(?:\\bfunction\\s*\\*?\\s*|\\b(?:const|let|var)\\s+|\\b(?:private|protected|public|static|async)\\s+)\\w*(?:[Ll]egacy|[Ff]allback|[Cc]ompat)\\w*\\b",
+      "scope": [
+        "apps/body/src"
+      ],
+      "owners": [],
+      "total": 30,
+      "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    },
+    {
+      "id": "paths.phone-parallel",
+      "module": "Phone app",
+      "invariant": "Phone app code has one path per job: no new legacy, fallback or compatibility variants beside the main one.",
+      "pattern": "(?:\\bfunction\\s*\\*?\\s*|\\b(?:const|let|var)\\s+|\\b(?:private|protected|public|static|async)\\s+)\\w*(?:[Ll]egacy|[Ff]allback|[Cc]ompat)\\w*\\b",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [],
+      "total": 21,
+      "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    },
+    {
+      "id": "paths.shared-parallel",
+      "module": "Shared packages",
+      "invariant": "Shared packages code has one path per job: no new legacy, fallback or compatibility variants beside the main one.",
+      "pattern": "(?:\\bfunction\\s*\\*?\\s*|\\b(?:const|let|var)\\s+|\\b(?:private|protected|public|static|async)\\s+)\\w*(?:[Ll]egacy|[Ff]allback|[Cc]ompat)\\w*\\b",
+      "scope": [
+        "packages"
+      ],
+      "owners": [],
+      "total": 5,
+      "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    }
+  ],
+  "storage": {
+    "scope": [
+      "apps/server/src",
+      "apps/auth/src"
+    ],
+    "bootstrapTotal": 1890,
+    "unusedTotal": 197,
+    "tables": {
+      "agent_avatars": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "bytes": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "drawing": "existing before the registry; weekly audit reviews",
+          "generated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_commands": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "turn_request_id": "existing before the registry; weekly audit reviews",
+          "action": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "root_command_id": "existing before the registry; weekly audit reviews",
+          "parent_command_id": "existing before the registry; weekly audit reviews",
+          "root_source_message_id": "existing before the registry; weekly audit reviews",
+          "agent_depth": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "generation_id": "existing before the registry; weekly audit reviews",
+          "lease_expires_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews",
+          "result_message_id": "existing before the registry; weekly audit reviews",
+          "private_payload": "existing before the registry; weekly audit reviews",
+          "avatar_job": "existing before the registry; weekly audit reviews",
+          "hiccup_attempts": "existing before the registry; weekly audit reviews",
+          "renudged_at": "existing before the registry; weekly audit reviews",
+          "lifecycle_before": "existing before the registry; weekly audit reviews",
+          "review_context": "existing before the registry; weekly audit reviews",
+          "wake_context": "existing before the registry; weekly audit reviews",
+          "report_outcome": "existing before the registry; weekly audit reviews",
+          "restart_confirmed_at": "existing before the registry; weekly audit reviews",
+          "cancellation_reason": "existing before the registry; weekly audit reviews",
+          "recovery_context": "existing before the registry; weekly audit reviews",
+          "wake_after": "existing before the registry; weekly audit reviews",
+          "startup_wake_after": "existing before the registry; weekly audit reviews",
+          "coalesced_context": "existing before the registry; weekly audit reviews",
+          "coalesced_attachments": "existing before the registry; weekly audit reviews",
+          "inbox_sequence": "existing before the registry; weekly audit reviews",
+          "created_offline": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_connections": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "epoch": "existing before the registry; weekly audit reviews",
+          "connection_id": "existing before the registry; weekly audit reviews",
+          "instance_id": "existing before the registry; weekly audit reviews",
+          "connected_at": "existing before the registry; weekly audit reviews",
+          "released_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_grant_policy_revocations": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "grant_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "command_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "target": "existing before the registry; weekly audit reviews",
+          "requested_by": "existing before the registry; weekly audit reviews",
+          "previous_status": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "recovered": "existing before the registry; weekly audit reviews",
+          "turn_disposition": "existing before the registry; weekly audit reviews",
+          "revoked_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_grants": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "target": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "requested_by": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "decided_by": "existing before the registry; weekly audit reviews",
+          "decided_at": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "auto": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "script": "existing before the registry; weekly audit reviews",
+          "superseded_at": "existing before the registry; weekly audit reviews",
+          "purpose": "existing before the registry; weekly audit reviews",
+          "touches": "existing before the registry; weekly audit reviews",
+          "capabilities": "existing before the registry; weekly audit reviews",
+          "app_id": "existing before the registry; weekly audit reviews",
+          "command_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_mandates": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "generation": "existing before the registry; weekly audit reviews",
+          "mandate": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_pairing_codes": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "code_hash": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "created_by": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "claimed_by": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_pending_attachments": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "url": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "mime_type": "existing before the registry; weekly audit reviews",
+          "size": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "generation_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_schedule_occurrences": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "schedule_id": "existing before the registry; weekly audit reviews",
+          "scheduled_for": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_schedules": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "creator_id": "existing before the registry; weekly audit reviews",
+          "cadence": "existing before the registry; weekly audit reviews",
+          "message": "existing before the registry; weekly audit reviews",
+          "max_runs": "existing before the registry; weekly audit reviews",
+          "run_count": "existing before the registry; weekly audit reviews",
+          "next_run_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "workflow_slug": "existing before the registry; weekly audit reviews",
+          "human_command_message_id": "existing before the registry; weekly audit reviews",
+          "title": "existing before the registry; weekly audit reviews",
+          "last_reported_blocking_run_id": "existing before the registry; weekly audit reviews",
+          "updated_by": "existing before the registry; weekly audit reviews",
+          "workflow_run": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_startup_backoff": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "failures": "existing before the registry; weekly audit reviews",
+          "window_started_at": "existing before the registry; weekly audit reviews",
+          "paused_until": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_subscriptions": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "source": "existing before the registry; weekly audit reviews",
+          "event": "existing before the registry; weekly audit reviews",
+          "repository": "existing before the registry; weekly audit reviews",
+          "service_app_id": "existing before the registry; weekly audit reviews",
+          "service_account_id": "existing before the registry; weekly audit reviews",
+          "service_channel_id": "existing before the registry; weekly audit reviews",
+          "service_channel_name": "existing before the registry; weekly audit reviews",
+          "trigger_id": "existing before the registry; weekly audit reviews",
+          "prompt": "existing before the registry; weekly audit reviews",
+          "workflow_slug": "existing before the registry; weekly audit reviews",
+          "fired_count": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "last_fired_at": "existing before the registry; weekly audit reviews",
+          "title": "existing before the registry; weekly audit reviews",
+          "trigger_text": "existing before the registry; weekly audit reviews",
+          "webhook_token": "existing before the registry; weekly audit reviews",
+          "webhook_suffix": "existing before the registry; weekly audit reviews",
+          "webhook_token_created_at": "existing before the registry; weekly audit reviews",
+          "webhook_owner_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_turn_traces": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "trigger_message_id": "existing before the registry; weekly audit reviews",
+          "reply_message_ids": "existing before the registry; weekly audit reviews",
+          "outcome": "existing before the registry; weekly audit reviews",
+          "trace": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agent_turns": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "generation_id": "existing before the registry; weekly audit reviews",
+          "started_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "failure_reason": "existing before the registry; weekly audit reviews",
+          "completion_kind": "existing before the registry; weekly audit reviews",
+          "tool_calls": "existing before the registry; weekly audit reviews",
+          "input_tokens": "existing before the registry; weekly audit reviews",
+          "output_tokens": "existing before the registry; weekly audit reviews",
+          "startup_outcome": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "agents": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "access_policy": "existing before the registry; weekly audit reviews",
+          "soul": "existing before the registry; weekly audit reviews",
+          "selected_model": "existing before the registry; weekly audit reviews",
+          "selected_effort": "existing before the registry; weekly audit reviews",
+          "fast_mode": "existing before the registry; weekly audit reviews",
+          "model_catalog": "existing before the registry; weekly audit reviews",
+          "model_unavailable": "existing before the registry; weekly audit reviews",
+          "commands": "existing before the registry; weekly audit reviews",
+          "schedule_ids": "existing before the registry; weekly audit reviews",
+          "yolo_mode": "existing before the registry; weekly audit reviews",
+          "yolo_set_by": "existing before the registry; weekly audit reviews",
+          "yolo_set_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "usage_snapshot": "existing before the registry; weekly audit reviews",
+          "usage_account_id": "existing before the registry; weekly audit reviews",
+          "wake_batch_minutes": "existing before the registry; weekly audit reviews",
+          "machine_id": "existing before the registry; weekly audit reviews",
+          "machine_name": "existing before the registry; weekly audit reviews",
+          "squire_report": "existing before the registry; weekly audit reviews",
+          "squire_work": "existing before the registry; weekly audit reviews",
+          "harness": "existing before the registry; weekly audit reviews",
+          "custom_tags": "existing before the registry; weekly audit reviews",
+          "chosen_voices": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "automatic_report_wakes": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "next_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "avatars": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "bytes": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "beeline_agent_connect_grants": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token_hash": "existing before the registry; weekly audit reviews",
+          "community_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "minter_pubkey": "existing before the registry; weekly audit reviews",
+          "agent_pubkey": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "beeline_agent_pairing_claim_memberships": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token_hash": "existing before the registry; weekly audit reviews",
+          "community_id": "existing before the registry; weekly audit reviews",
+          "channel_id": "existing before the registry; weekly audit reviews",
+          "agent_pubkey": "existing before the registry; weekly audit reviews",
+          "joined_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "beeline_agent_pairing_claims": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token_hash": "existing before the registry; weekly audit reviews",
+          "community_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "minter_pubkey": "existing before the registry; weekly audit reviews",
+          "agent_pubkey": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "beeline_materializer_reservations": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "consumer": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "beeline_release_steps": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "name": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews",
+          "detail": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "beeline_room_read_marks": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "community_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "viewer_pubkey": "existing before the registry; weekly audit reviews",
+          "message_created_at": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "chat_dismissals": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "dismissed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "computer_session_events": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "session_id": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "detail": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "computer_sessions": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "source_session_id": "existing before the registry; weekly audit reviews",
+          "upstream_url": "existing before the registry; weekly audit reviews",
+          "relay_instance_id": "existing before the registry; weekly audit reviews",
+          "view_secret": "existing before the registry; weekly audit reviews",
+          "handoff_count": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "ended_at": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "connection_receipts": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "connection_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "owner_identity_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "operation": "existing before the registry; weekly audit reviews",
+          "status_code": "existing before the registry; weekly audit reviews",
+          "bytes": "existing before the registry; weekly audit reviews",
+          "grant_info": "existing before the registry; weekly audit reviews",
+          "turn_key": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "event_class": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "connector_discovery_cache": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "cache_key": "existing before the registry; weekly audit reviews",
+          "manifests": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "connector_offers": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "addressee_id": "existing before the registry; weekly audit reviews",
+          "connector_type": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "machine_id": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "command_id": "existing before the registry; weekly audit reviews",
+          "accepted_by": "existing before the registry; weekly audit reviews",
+          "accepted_at": "existing before the registry; weekly audit reviews",
+          "connector_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "intent": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_attention_spans": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "revision": "existing before the registry; weekly audit reviews",
+          "last_state": "existing before the registry; weekly audit reviews",
+          "episode": "existing before the registry; weekly audit reviews",
+          "checked_at": "existing before the registry; weekly audit reviews",
+          "reported_episode": "existing before the registry; weekly audit reviews",
+          "last_turn_ended_at": "existing before the registry; weekly audit reviews",
+          "ci_started_at": "existing before the registry; weekly audit reviews",
+          "ci_head": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_branch_deletions": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "installation_id": "existing before the registry; weekly audit reviews",
+          "repository_id": "existing before the registry; weekly audit reviews",
+          "repository": "existing before the registry; weekly audit reviews",
+          "branch": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "next_attempt_at": "existing before the registry; weekly audit reviews",
+          "finished_at": "existing before the registry; weekly audit reviews",
+          "last_error": "existing before the registry; weekly audit reviews",
+          "require_containment": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_brief_revisions": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "revision": "existing before the registry; weekly audit reviews",
+          "content": "existing before the registry; weekly audit reviews",
+          "change": "existing before the registry; weekly audit reviews",
+          "author_id": "existing before the registry; weekly audit reviews",
+          "source_room_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "attachments": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "intent_verbatim": "existing before the registry; weekly audit reviews",
+          "build_spec": "existing before the registry; weekly audit reviews",
+          "criteria": "existing before the registry; weekly audit reviews",
+          "non_goals": "existing before the registry; weekly audit reviews",
+          "brief_references": "existing before the registry; weekly audit reviews",
+          "approval_basis": "existing before the registry; weekly audit reviews",
+          "revision_hash": "existing before the registry; weekly audit reviews",
+          "spec": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_facts": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "owner_agent_id": "existing before the registry; weekly audit reviews",
+          "commissioned_by": "existing before the registry; weekly audit reviews",
+          "objective": "existing before the registry; weekly audit reviews",
+          "lifecycle": "existing before the registry; weekly audit reviews",
+          "plan": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "open_idempotency_key": "existing before the registry; weekly audit reviews",
+          "feature_branch": "existing before the registry; weekly audit reviews",
+          "close_requested": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "locked": "existing before the registry; weekly audit reviews",
+          "worker_agent_id": "existing before the registry; weekly audit reviews",
+          "opened_from_corner_id": "existing before the registry; weekly audit reviews",
+          "workflow_state": "existing before the registry; weekly audit reviews",
+          "workflow_outcome": "existing before the registry; weekly audit reviews",
+          "merge_attempt_head": "existing before the registry; weekly audit reviews",
+          "reviewer_agent_id": "existing before the registry; weekly audit reviews",
+          "title_generated": "existing before the registry; weekly audit reviews",
+          "command_check_state": "existing before the registry; weekly audit reviews",
+          "review_handback_head": "existing before the registry; weekly audit reviews",
+          "review_handback_count": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_follows": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_merge_approvals": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "approved_by": "existing before the registry; weekly audit reviews",
+          "force": "existing before the registry; weekly audit reviews",
+          "pull_request_number": "existing before the registry; weekly audit reviews",
+          "head_sha": "existing before the registry; weekly audit reviews",
+          "approved_at": "existing before the registry; weekly audit reviews",
+          "brief_revision": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_merge_holds": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "actor_id": "existing before the registry; weekly audit reviews",
+          "standing": "existing before the registry; weekly audit reviews",
+          "set_at": "existing before the registry; weekly audit reviews",
+          "released_at": "existing before the registry; weekly audit reviews",
+          "released_by": "existing before the registry; weekly audit reviews",
+          "set_by_agent_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "source_author_id": "existing before the registry; weekly audit reviews",
+          "source_text": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_owed": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "person_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "answerable": "existing before the registry; weekly audit reviews",
+          "blocking": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_person_state": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "event_subscriptions": "existing before the registry; weekly audit reviews",
+          "identity_profile": "existing before the registry; weekly audit reviews",
+          "push_muted": "existing before the registry; weekly audit reviews",
+          "generation": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_pr_closures": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "next_attempt_at": "existing before the registry; weekly audit reviews",
+          "finished_at": "existing before the registry; weekly audit reviews",
+          "last_error": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_report_blockers": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "person_id": "existing before the registry; weekly audit reviews",
+          "report_id": "existing before the registry; weekly audit reviews",
+          "return_room_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "commander_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_validation_stages": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "brief_revision": "existing before the registry; weekly audit reviews",
+          "head_sha": "existing before the registry; weekly audit reviews",
+          "stage": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "evidence": "existing before the registry; weekly audit reviews",
+          "actor_id": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_watches": {
+        "module": "Corner state machine",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "watcher_room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "corner_id": "existing before the registry; weekly audit reviews",
+          "kinds": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "incoming_command_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "daemon_token_exchanges": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "exchange_hash": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "consumed_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "daemon_tokens": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token_hash": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "revoked_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "last_used_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "device_update_receipts": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "device_id": "existing before the registry; weekly audit reviews",
+          "receipt": "existing before the registry; weekly audit reviews",
+          "reported_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "feedback_issue_comments": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "repository": "existing before the registry; weekly audit reviews",
+          "issue_number": "existing before the registry; weekly audit reviews",
+          "comment_id": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "feedback_items": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "source_kind": "existing before the registry; weekly audit reviews",
+          "reporter_identity_id": "existing before the registry; weekly audit reviews",
+          "reporter_owner_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "trigger_message_id": "existing before the registry; weekly audit reviews",
+          "message_ids": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "category": "existing before the registry; weekly audit reviews",
+          "summary": "existing before the registry; weekly audit reviews",
+          "summary_key": "existing before the registry; weekly audit reviews",
+          "detail": "existing before the registry; weekly audit reviews",
+          "tool_name": "existing before the registry; weekly audit reviews",
+          "error_excerpt": "existing before the registry; weekly audit reviews",
+          "prompt_section_ids": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "issue_repository": "existing before the registry; weekly audit reviews",
+          "issue_number": "existing before the registry; weekly audit reviews",
+          "triage_reason": "existing before the registry; weekly audit reviews",
+          "resolved_notified_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "triaged_at": "existing before the registry; weekly audit reviews",
+          "occurrence_count": "existing before the registry; weekly audit reviews",
+          "occurrences": "existing before the registry; weekly audit reviews",
+          "last_occurrence_at": "existing before the registry; weekly audit reviews",
+          "helper_version": "existing before the registry; weekly audit reviews",
+          "app_version": "existing before the registry; weekly audit reviews",
+          "app_platform": "existing before the registry; weekly audit reviews",
+          "harness": "existing before the registry; weekly audit reviews",
+          "harness_version": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "free_agent_budget": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "day": "existing before the registry; weekly audit reviews",
+          "usd": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "free_agent_call_rate": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "minute": "existing before the registry; weekly audit reviews",
+          "calls": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "free_agent_events": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "at": "existing before the registry; weekly audit reviews",
+          "detail": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "free_agent_usage": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "day": "existing before the registry; weekly audit reviews",
+          "tokens": "existing before the registry; weekly audit reviews",
+          "reservation_credit": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "free_agents": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "fly_machine_id": "existing before the registry; weekly audit reviews",
+          "removed_at": "existing before the registry; weekly audit reviews",
+          "removal_cleaned_at": "existing before the registry; weekly audit reviews",
+          "sealed_keys": "existing before the registry; weekly audit reviews",
+          "bootstrap_hash": "existing before the registry; weekly audit reviews",
+          "model_token_hash": "existing before the registry; weekly audit reviews",
+          "last_activity_at": "existing before the registry; weekly audit reviews",
+          "wake_requested_at": "existing before the registry; weekly audit reviews",
+          "provision_started_at": "existing before the registry; weekly audit reviews",
+          "provision_attempts": "existing before the registry; weekly audit reviews",
+          "provision_error": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "model": "existing before the registry; weekly audit reviews",
+          "starter_role": "existing before the registry; weekly audit reviews",
+          "allowance_paused_until": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "github_auth_flows": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "state_hash": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "redirect_uri": "existing before the registry; weekly audit reviews",
+          "purpose": "existing before the registry; weekly audit reviews",
+          "provider_identity": "existing before the registry; weekly audit reviews",
+          "encrypted_token": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "consumed_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "github_installations": {
+        "module": "GitHub",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "installation_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "account_id": "existing before the registry; weekly audit reviews",
+          "account_login": "existing before the registry; weekly audit reviews",
+          "account_type": "existing before the registry; weekly audit reviews",
+          "account_avatar_url": "existing before the registry; weekly audit reviews",
+          "repository_selection": "existing before the registry; weekly audit reviews",
+          "encrypted_token": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "api_retry_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "github_repositories": {
+        "module": "GitHub",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "repository_id": "existing before the registry; weekly audit reviews",
+          "installation_id": "existing before the registry; weekly audit reviews",
+          "full_name": "existing before the registry; weekly audit reviews",
+          "default_branch": "existing before the registry; weekly audit reviews",
+          "active": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "private": "existing before the registry; weekly audit reviews",
+          "allow_auto_merge": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "github_star_prompts": {
+        "module": "GitHub",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "replies": "existing before the registry; weekly audit reviews",
+          "reached_milestone": "existing before the registry; weekly audit reviews",
+          "answered_milestone": "existing before the registry; weekly audit reviews",
+          "checked_milestone": "existing before the registry; weekly audit reviews",
+          "closed": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "github_user_tokens": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "subject": "existing before the registry; weekly audit reviews",
+          "encrypted_token": "existing before the registry; weekly audit reviews",
+          "stale_at": "existing before the registry; weekly audit reviews",
+          "encrypted_refresh_token": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "github_webhook_deliveries": {
+        "module": "GitHub",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "delivery_id": "existing before the registry; weekly audit reviews",
+          "event_type": "existing before the registry; weekly audit reviews",
+          "payload": "existing before the registry; weekly audit reviews",
+          "received_at": "existing before the registry; weekly audit reviews",
+          "processed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "helper_release_notifications": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "singleton": "existing before the registry; weekly audit reviews",
+          "version": "existing before the registry; weekly audit reviews",
+          "sha": "existing before the registry; weekly audit reviews",
+          "announced_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "identities": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "handle": "existing before the registry; weekly audit reviews",
+          "avatar": "existing before the registry; weekly audit reviews",
+          "hidden_from_roster": "existing before the registry; weekly audit reviews",
+          "push_level": "existing before the registry; weekly audit reviews",
+          "github_subject": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "face_id": "existing before the registry; weekly audit reviews",
+          "welcome_cards_due": "existing before the registry; weekly audit reviews",
+          "speaking_speed": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "identity_external_links": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "provider": "existing before the registry; weekly audit reviews",
+          "subject": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "issuer": "existing before the registry; weekly audit reviews",
+          "audience": "existing before the registry; weekly audit reviews",
+          "provider_login": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "identity_successions": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "old_identity_id": "existing before the registry; weekly audit reviews",
+          "new_identity_id": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews",
+          "subject": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "import_items": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "import_id": "existing before the registry; weekly audit reviews",
+          "source_type": "existing before the registry; weekly audit reviews",
+          "source_id": "existing before the registry; weekly audit reviews",
+          "imported_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "import_runs": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "import_id": "existing before the registry; weekly audit reviews",
+          "source_fingerprint": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "checkpoint": "existing before the registry; weekly audit reviews",
+          "started_at": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews",
+          "error": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_context_serves": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "requester_identity_id": "existing before the registry; weekly audit reviews",
+          "snapshot_revision": "existing before the registry; weekly audit reviews",
+          "mode": "existing before the registry; weekly audit reviews",
+          "served": "existing before the registry; weekly audit reviews",
+          "shadow_job_id": "existing before the registry; weekly audit reviews",
+          "item_ids": "existing before the registry; weekly audit reviews",
+          "skill_candidates": "existing before the registry; weekly audit reviews",
+          "workspace_fact_bytes": "existing before the registry; weekly audit reviews",
+          "profile_bytes": "existing before the registry; weekly audit reviews",
+          "skill_index_bytes": "existing before the registry; weekly audit reviews",
+          "wrapper_bytes": "existing before the registry; weekly audit reviews",
+          "total_bytes": "existing before the registry; weekly audit reviews",
+          "estimated_tokens": "existing before the registry; weekly audit reviews",
+          "actual_input_tokens": "existing before the registry; weekly audit reviews",
+          "prompt_bytes": "existing before the registry; weekly audit reviews",
+          "candidate_count": "existing before the registry; weekly audit reviews",
+          "dropped_counts": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "search_memory_calls": "existing before the registry; weekly audit reviews",
+          "search_memory_misses": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_curator_cycles": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "cycle_key": "existing before the registry; weekly audit reviews",
+          "queued_jobs": "existing before the registry; weekly audit reviews",
+          "stale_items": "existing before the registry; weekly audit reviews",
+          "archived_items": "existing before the registry; weekly audit reviews",
+          "stale_skills": "existing before the registry; weekly audit reviews",
+          "archived_skills": "existing before the registry; weekly audit reviews",
+          "consolidated_items": "existing before the registry; weekly audit reviews",
+          "consolidated_skills": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_history_searches": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "output_room_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "requester_identity_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "query_hash": "existing before the registry; weekly audit reviews",
+          "authorized_room_count": "existing before the registry; weekly audit reviews",
+          "result_count": "existing before the registry; weekly audit reviews",
+          "omitted_count": "existing before the registry; weekly audit reviews",
+          "matches_capped": "existing before the registry; weekly audit reviews",
+          "latency_ms": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_host_availability_gaps": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "started_at": "existing before the registry; weekly audit reviews",
+          "ended_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_correction_events": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "requester_identity_id": "existing before the registry; weekly audit reviews",
+          "job_id": "existing before the registry; weekly audit reviews",
+          "source_room_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "canonical_key": "existing before the registry; weekly audit reviews",
+          "body": "existing before the registry; weekly audit reviews",
+          "memory_kind": "existing before the registry; weekly audit reviews",
+          "classifier_version": "existing before the registry; weekly audit reviews",
+          "confidence": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_fact_events": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "job_id": "existing before the registry; weekly audit reviews",
+          "source_room_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "canonical_key": "existing before the registry; weekly audit reviews",
+          "body": "existing before the registry; weekly audit reviews",
+          "classifier_version": "existing before the registry; weekly audit reviews",
+          "confidence": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "retirement_reason": "existing before the registry; weekly audit reviews",
+          "target_item_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_item_sources": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "item_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_items": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "subject_identity_id": "existing before the registry; weekly audit reviews",
+          "canonical_key": "existing before the registry; weekly audit reviews",
+          "body": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "source_room_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "source_corner_id": "existing before the registry; weekly audit reviews",
+          "audience_kind": "existing before the registry; weekly audit reviews",
+          "confidence": "existing before the registry; weekly audit reviews",
+          "version": "existing before the registry; weekly audit reviews",
+          "supersedes_id": "existing before the registry; weekly audit reviews",
+          "created_by_job_id": "existing before the registry; weekly audit reviews",
+          "created_by_command_id": "existing before the registry; weekly audit reviews",
+          "repository": "existing before the registry; weekly audit reviews",
+          "target_commit": "existing before the registry; weekly audit reviews",
+          "path": "existing before the registry; weekly audit reviews",
+          "content_hash": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "last_used_at": "existing before the registry; weekly audit reviews",
+          "deleted_at": "existing before the registry; weekly audit reviews",
+          "explicit_save": "existing before the registry; weekly audit reviews",
+          "curated_at": "existing before the registry; weekly audit reviews",
+          "keywords": "existing before the registry; weekly audit reviews",
+          "embedding": "existing before the registry; weekly audit reviews",
+          "embedding_model": "existing before the registry; weekly audit reviews",
+          "embedded_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_jobs": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "trigger_kind": "existing before the registry; weekly audit reviews",
+          "mode": "existing before the registry; weekly audit reviews",
+          "source_room_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "source_request_id": "existing before the registry; weekly audit reviews",
+          "requester_identity_id": "existing before the registry; weekly audit reviews",
+          "source_audience_kind": "existing before the registry; weekly audit reviews",
+          "idempotency_key": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "lease_owner_agent_id": "existing before the registry; weekly audit reviews",
+          "lease_owner_machine_id": "existing before the registry; weekly audit reviews",
+          "lease_token": "existing before the registry; weekly audit reviews",
+          "lease_expires_at": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "max_attempts": "existing before the registry; weekly audit reviews",
+          "next_attempt_at": "existing before the registry; weekly audit reviews",
+          "proposal": "existing before the registry; weekly audit reviews",
+          "proposal_hash": "existing before the registry; weekly audit reviews",
+          "extractor_version": "existing before the registry; weekly audit reviews",
+          "model": "existing before the registry; weekly audit reviews",
+          "input_bytes": "existing before the registry; weekly audit reviews",
+          "output_bytes": "existing before the registry; weekly audit reviews",
+          "input_tokens": "existing before the registry; weekly audit reviews",
+          "output_tokens": "existing before the registry; weekly audit reviews",
+          "estimated_cost_usd_micros": "existing before the registry; weekly audit reviews",
+          "error": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews",
+          "source_deleted_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "context": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_outcomes": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "serve_id": "existing before the registry; weekly audit reviews",
+          "job_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "success": "existing before the registry; weekly audit reviews",
+          "detail": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_memory_workspace_rollouts": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "stage": "existing before the registry; weekly audit reviews",
+          "stale_after_days": "existing before the registry; weekly audit reviews",
+          "archive_after_days": "existing before the registry; weekly audit reviews",
+          "retention_days": "existing before the registry; weekly audit reviews",
+          "expire_after_days": "existing before the registry; weekly audit reviews",
+          "explicit_expire_after_days": "existing before the registry; weekly audit reviews",
+          "daily_token_budget": "existing before the registry; weekly audit reviews",
+          "availability_observed_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "institutional_review_findings": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "job_id": "existing before the registry; weekly audit reviews",
+          "source_corner_id": "existing before the registry; weekly audit reviews",
+          "taxonomy": "existing before the registry; weekly audit reviews",
+          "summary": "existing before the registry; weekly audit reviews",
+          "severity": "existing before the registry; weekly audit reviews",
+          "path": "existing before the registry; weekly audit reviews",
+          "classifier_version": "existing before the registry; weekly audit reviews",
+          "confidence": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "invites": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token_hash": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "created_by": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "consumed_at": "existing before the registry; weekly audit reviews",
+          "public_token": "existing before the registry; weekly audit reviews",
+          "onboarding_room_id": "existing before the registry; weekly audit reviews",
+          "onboarding_created_at": "existing before the registry; weekly audit reviews",
+          "onboarding_friend_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "legacy_daemon_migrations": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "proof_id": "existing before the registry; weekly audit reviews",
+          "exchange_hash": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "migrated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "legacy_room_events": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "raw_page_candidate": "existing before the registry; weekly audit reviews",
+          "conversation_candidate": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "link_oauth_accounts": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "owner_identity_id": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "code_verifier": "existing before the registry; weekly audit reviews",
+          "attempt_expires_at": "existing before the registry; weekly audit reviews",
+          "sealed_grant": "existing before the registry; weekly audit reviews",
+          "granted_scopes": "existing before the registry; weekly audit reviews",
+          "ineligible": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "link_spend_requests": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "owner_identity_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "merchant": "existing before the registry; weekly audit reviews",
+          "amount": "existing before the registry; weekly audit reviews",
+          "description": "existing before the registry; weekly audit reviews",
+          "test": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "live_journal": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "stream_id": "existing before the registry; weekly audit reviews",
+          "sequence": "existing before the registry; weekly audit reviews",
+          "event": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "live_outputs": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "turn_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "body": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "live_server_instances": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "instance_id": "existing before the registry; weekly audit reviews",
+          "renewed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "live_streams": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "epoch": "existing before the registry; weekly audit reviews",
+          "sequence": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "memberships": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "role": "existing before the registry; weekly audit reviews",
+          "generation": "existing before the registry; weekly audit reviews",
+          "identity_profile": "existing before the registry; weekly audit reviews",
+          "invited_by": "existing before the registry; weekly audit reviews",
+          "joined_at": "existing before the registry; weekly audit reviews",
+          "removed_at": "existing before the registry; weekly audit reviews",
+          "push_muted": "existing before the registry; weekly audit reviews",
+          "event_subscriptions": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "message_bookmarks": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "source_room_name": "existing before the registry; weekly audit reviews",
+          "source_room_kind": "existing before the registry; weekly audit reviews",
+          "message_created_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "messages": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "author_id": "existing before the registry; weekly audit reviews",
+          "text": "existing before the registry; weekly audit reviews",
+          "presentation": "existing before the registry; weekly audit reviews",
+          "attachments": "existing before the registry; weekly audit reviews",
+          "reactions": "existing before the registry; weekly audit reviews",
+          "reply_to_message_id": "existing before the registry; weekly audit reviews",
+          "root_message_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "turn_id": "existing before the registry; weekly audit reviews",
+          "activity": "existing before the registry; weekly audit reviews",
+          "durable_fact": "existing before the registry; weekly audit reviews",
+          "card_type": "existing before the registry; weekly audit reviews",
+          "card": "existing before the registry; weekly audit reviews",
+          "legacy_event": "existing before the registry; weekly audit reviews",
+          "agent_hop_count": "existing before the registry; weekly audit reviews",
+          "system_event": "existing before the registry; weekly audit reviews",
+          "deleted_at": "existing before the registry; weekly audit reviews",
+          "deleted_by": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "version": "existing before the registry; weekly audit reviews",
+          "search_document": "existing before the registry; weekly audit reviews",
+          "search_stem_document": "existing before the registry; weekly audit reviews",
+          "event_cause_id": "existing before the registry; weekly audit reviews",
+          "event_root_cause_id": "existing before the registry; weekly audit reviews",
+          "event_depth": "existing before the registry; weekly audit reviews",
+          "event_woken": "existing before the registry; weekly audit reviews",
+          "agent_model": "existing before the registry; weekly audit reviews",
+          "source_client": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "mission_authority": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "mission_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "principal_id": "existing before the registry; weekly audit reviews",
+          "exercise": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "generation": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "mobile_store_minimums": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "platform": "existing before the registry; weekly audit reviews",
+          "min_version": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "needs_you_marks": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "first_seen_at": "existing before the registry; weekly audit reviews",
+          "cleared_at": "existing before the registry; weekly audit reviews",
+          "reminder_dismissed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "next_day_checkin_candidates": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "first_at": "existing before the registry; weekly audit reviews",
+          "due_at": "existing before the registry; weekly audit reviews",
+          "processed": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "next_day_checkins": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "due_at": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "command_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "sent_at": "existing before the registry; weekly audit reviews",
+          "skip_reason": "existing before the registry; weekly audit reviews",
+          "email_status": "existing before the registry; weekly audit reviews",
+          "email_attempted_at": "existing before the registry; weekly audit reviews",
+          "push_outcomes": "existing before the registry; weekly audit reviews",
+          "measured_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "object_expirations": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "retention_hours": "existing before the registry; weekly audit reviews",
+          "expired_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "objects": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "key": "existing before the registry; weekly audit reviews",
+          "mime": "existing before the registry; weekly audit reviews",
+          "title": "existing before the registry; weekly audit reviews",
+          "size": "existing before the registry; weekly audit reviews",
+          "sha256": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "operator_finance_snapshots": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "day": "existing before the registry; weekly audit reviews",
+          "service_id": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "source": "existing before the registry; weekly audit reviews",
+          "daily_usd": "existing before the registry; weekly audit reviews",
+          "month_to_date_usd": "existing before the registry; weekly audit reviews",
+          "measured_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "operator_function_events": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "function_name": "existing before the registry; weekly audit reviews",
+          "duration_ms": "existing before the registry; weekly audit reviews",
+          "network_rtt_residual_ms": "existing before the registry; weekly audit reviews",
+          "failed": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "js_response_delay_ms": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "operator_metric_epochs": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "metric": "existing before the registry; weekly audit reviews",
+          "started_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "operator_system_dm_deliveries": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "send_id": "existing before the registry; weekly audit reviews",
+          "recipient_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "operator_system_dm_sends": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "caller_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "recipients": "existing before the registry; weekly audit reviews",
+          "text_hash": "existing before the registry; weekly audit reviews",
+          "text": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "recipient_count": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "pending_mention_notices": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "sender_id": "existing before the registry; weekly audit reviews",
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "due_at": "existing before the registry; weekly audit reviews",
+          "notice_id": "existing before the registry; weekly audit reviews",
+          "notified_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "permission_authority": {
+        "module": "Work authority",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "permission_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "principal_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "action_id": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "generation": "existing before the registry; weekly audit reviews",
+          "result": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "phone_access_tokens": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token_hash": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "family_id": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "phone_sessions": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "refresh_hash": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "family_id": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "consumed_at": "existing before the registry; weekly audit reviews",
+          "successor_tokens": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "phone_update_devices": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "family_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "device_id": "existing before the registry; weekly audit reviews",
+          "reported_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "provider_webhooks": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "app_id": "existing before the registry; weekly audit reviews",
+          "connector_id": "existing before the registry; weekly audit reviews",
+          "service": "existing before the registry; weekly audit reviews",
+          "event": "existing before the registry; weekly audit reviews",
+          "receiver_url": "existing before the registry; weekly audit reviews",
+          "provider_id": "existing before the registry; weekly audit reviews",
+          "signing_secret": "existing before the registry; weekly audit reviews",
+          "account_context": "existing before the registry; weekly audit reviews",
+          "livemode": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "error": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_delivery_claims": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "message_id": "existing before the registry; weekly audit reviews",
+          "device_token": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews",
+          "error": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "next_retry_at": "existing before the registry; weekly audit reviews",
+          "read_cleared_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_delivery_floors": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "started_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_devices": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "token": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "platform": "existing before the registry; weekly audit reviews",
+          "environment": "existing before the registry; weekly audit reviews",
+          "registered_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "web_keys": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_level_migration_counts": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "old_level": "existing before the registry; weekly audit reviews",
+          "user_count": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_message_context": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "message_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "author_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "turn_ids": "existing before the registry; weekly audit reviews",
+          "burst_ids": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_outbox": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "message_id": "existing before the registry; weekly audit reviews",
+          "device_token": "existing before the registry; weekly audit reviews",
+          "not_before": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_outbox_retirements": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "message_id": "existing before the registry; weekly audit reviews",
+          "device_token": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "retired_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "push_read_clears": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "device_token": "existing before the registry; weekly audit reviews",
+          "cleared_through": "existing before the registry; weekly audit reviews",
+          "cleared_through_room": "existing before the registry; weekly audit reviews",
+          "sent_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "registry_mcp_oauth_attempts": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "state": "existing before the registry; weekly audit reviews",
+          "connector_id": "existing before the registry; weekly audit reviews",
+          "code": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "repository_link_successes": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "first_linked_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "room_choice_votes": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "choice_id": "existing before the registry; weekly audit reviews",
+          "voter_id": "existing before the registry; weekly audit reviews",
+          "option_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "note": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "room_choices": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "mode": "existing before the registry; weekly audit reviews",
+          "prompt": "existing before the registry; weekly audit reviews",
+          "constraint_text": "existing before the registry; weekly audit reviews",
+          "options": "existing before the registry; weekly audit reviews",
+          "electorate": "existing before the registry; weekly audit reviews",
+          "closes_at": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "workflow_run_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "room_push_views": {
+        "module": "Live fanout and push",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "session_id": "existing before the registry; weekly audit reviews",
+          "instance_id": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "room_read_marks": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "room_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "message_created_at": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "read_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "parent_id": "existing before the registry; weekly audit reviews",
+          "created_by": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "about": "existing before the registry; weekly audit reviews",
+          "avatar": "existing before the registry; weekly audit reviews",
+          "visibility": "existing before the registry; weekly audit reviews",
+          "archived_at": "existing before the registry; weekly audit reviews",
+          "direct_participants": "existing before the registry; weekly audit reviews",
+          "repository_key": "existing before the registry; weekly audit reviews",
+          "repository_name": "existing before the registry; weekly audit reviews",
+          "repository_remote": "existing before the registry; weekly audit reviews",
+          "repository_target_branch": "existing before the registry; weekly audit reviews",
+          "repository_updated_at": "existing before the registry; weekly audit reviews",
+          "repository_resolution": "existing before the registry; weekly audit reviews",
+          "github_installation_id": "existing before the registry; weekly audit reviews",
+          "reviewer_agent_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "reviewer_class": "existing before the registry; weekly audit reviews",
+          "reviewer_fallback_ids": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_admission": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "key": "existing before the registry; weekly audit reviews",
+          "window_at": "existing before the registry; weekly audit reviews",
+          "calls": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_audit": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "client_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "operation": "existing before the registry; weekly audit reviews",
+          "outcome": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_clients": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "redirects": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "logo": "existing before the registry; weekly audit reviews",
+          "callback_url": "existing before the registry; weekly audit reviews",
+          "secret_hash": "existing before the registry; weekly audit reviews",
+          "auth_method": "existing before the registry; weekly audit reviews",
+          "preregistered": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_codes": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "hash": "existing before the registry; weekly audit reviews",
+          "client_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "redirect_uri": "existing before the registry; weekly audit reviews",
+          "challenge": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_connections": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "client_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "connected_at": "existing before the registry; weekly audit reviews",
+          "last_used_at": "existing before the registry; weekly audit reviews",
+          "revoked_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_event_deliveries": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "subscription_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "event_id": "existing before the registry; weekly audit reviews",
+          "body": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews",
+          "next_attempt_at": "existing before the registry; weekly audit reviews",
+          "delivered_at": "existing before the registry; weekly audit reviews",
+          "command_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_event_subscriptions": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "client_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "member_id": "existing before the registry; weekly audit reviews",
+          "url": "existing before the registry; weekly audit reviews",
+          "secret": "existing before the registry; weekly audit reviews",
+          "previous_secret": "existing before the registry; weekly audit reviews",
+          "rotation_until": "existing before the registry; weekly audit reviews",
+          "verified_at": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "event_name": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_families": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "client_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "revoked_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_flows": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "browser_hash": "existing before the registry; weekly audit reviews",
+          "client_id": "existing before the registry; weekly audit reviews",
+          "redirect_uri": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "challenge": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "joiner_name": "existing before the registry; weekly audit reviews",
+          "joiner_handle": "existing before the registry; weekly audit reviews",
+          "claude_inbound_fallback": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_handoffs": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "state_hash": "existing before the registry; weekly audit reviews",
+          "code": "existing before the registry; weekly audit reviews",
+          "error": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_idempotency": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "member_id": "existing before the registry; weekly audit reviews",
+          "idempotency_key": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "result": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_members": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "client_id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "member_id": "existing before the registry; weekly audit reviews",
+          "model_label": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "workspace_ids": "existing before the registry; weekly audit reviews",
+          "callback_url": "existing before the registry; weekly audit reviews",
+          "callback_secret": "existing before the registry; weekly audit reviews",
+          "profile_set": "existing before the registry; weekly audit reviews",
+          "last_bridge_poll_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_mentions": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "seq": "existing before the registry; weekly audit reviews",
+          "member_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "cleared_at": "existing before the registry; weekly audit reviews",
+          "rewakes": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_pending_routes": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "message_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "member_id": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "last_error": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_refresh": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "hash": "existing before the registry; weekly audit reviews",
+          "family_id": "existing before the registry; weekly audit reviews",
+          "consumed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_tokens": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "hash": "existing before the registry; weekly audit reviews",
+          "client_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "scope": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews",
+          "revoked_at": "existing before the registry; weekly audit reviews",
+          "window_at": "existing before the registry; weekly audit reviews",
+          "calls": "existing before the registry; weekly audit reviews",
+          "family_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "rooms_mcp_webhook_outbox": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "call_id": "existing before the registry; weekly audit reviews",
+          "member_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "body": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "claimed_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "delivered_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "schedule_receipts": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "schedule_id": "existing before the registry; weekly audit reviews",
+          "occurrence_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "sentry_wake_issues": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "issue_id": "existing before the registry; weekly audit reviews",
+          "event_type": "existing before the registry; weekly audit reviews",
+          "title": "existing before the registry; weekly audit reviews",
+          "level": "existing before the registry; weekly audit reviews",
+          "culprit": "existing before the registry; weekly audit reviews",
+          "permalink": "existing before the registry; weekly audit reviews",
+          "first_seen": "existing before the registry; weekly audit reviews",
+          "last_seen": "existing before the registry; weekly audit reviews",
+          "event_count": "existing before the registry; weekly audit reviews",
+          "delivery_hash": "existing before the registry; weekly audit reviews",
+          "pending": "existing before the registry; weekly audit reviews",
+          "last_digested_at": "existing before the registry; weekly audit reviews",
+          "last_digested_level": "existing before the registry; weekly audit reviews",
+          "urgent": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "sentry_wake_state": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "singleton": "existing before the registry; weekly audit reviews",
+          "last_wake_at": "existing before the registry; weekly audit reviews",
+          "last_daily_wake_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "service_review_notice_deliveries": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "provider_id": "existing before the registry; weekly audit reviews",
+          "sent_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "service_review_visits": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "run_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "visited_at": "existing before the registry; weekly audit reviews",
+          "read_from": "existing before the registry; weekly audit reviews",
+          "read_through": "existing before the registry; weekly audit reviews",
+          "receipt": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "signin_attempt_correlations": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "attempt_id": "existing before the registry; weekly audit reviews",
+          "flow_hash": "existing before the registry; weekly audit reviews",
+          "recovery_hash": "existing before the registry; weekly audit reviews",
+          "ticket_hash": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "signin_attempt_events": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "attempt_id": "existing before the registry; weekly audit reviews",
+          "stage": "existing before the registry; weekly audit reviews",
+          "install_id": "existing before the registry; weekly audit reviews",
+          "funnel_attempt_id": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews",
+          "platform": "existing before the registry; weekly audit reviews",
+          "version": "existing before the registry; weekly audit reviews",
+          "internal": "existing before the registry; weekly audit reviews",
+          "error_code": "existing before the registry; weekly audit reviews",
+          "occurred_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "signin_funnel_auth_flows": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "flow_hash": "existing before the registry; weekly audit reviews",
+          "context": "existing before the registry; weekly audit reviews",
+          "expires_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "signin_funnel_daily": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "day": "existing before the registry; weekly audit reviews",
+          "platform": "existing before the registry; weekly audit reviews",
+          "event": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews",
+          "outcome": "existing before the registry; weekly audit reviews",
+          "installs": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "signin_funnel_events": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "install_id": "existing before the registry; weekly audit reviews",
+          "attempt_id": "existing before the registry; weekly audit reviews",
+          "event": "existing before the registry; weekly audit reviews",
+          "platform": "existing before the registry; weekly audit reviews",
+          "version": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews",
+          "outcome": "existing before the registry; weekly audit reviews",
+          "error_code": "existing before the registry; weekly audit reviews",
+          "source": "existing before the registry; weekly audit reviews",
+          "occurred_at": "existing before the registry; weekly audit reviews",
+          "recorded_at": "existing before the registry; weekly audit reviews",
+          "screen": "existing before the registry; weekly audit reviews",
+          "onboarding_option": "existing before the registry; weekly audit reviews",
+          "duration_ms": "existing before the registry; weekly audit reviews",
+          "artifact_id": "existing before the registry; weekly audit reviews",
+          "last_seen_at": "existing before the registry; weekly audit reviews",
+          "visits": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "signin_funnel_installs": {
+        "module": "Identity and sign-in",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "install_id": "existing before the registry; weekly audit reviews",
+          "internal": "existing before the registry; weekly audit reviews",
+          "seen_at": "existing before the registry; weekly audit reviews",
+          "account_hash": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "site_download_tap_daily": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "day": "existing before the registry; weekly audit reviews",
+          "platform": "existing before the registry; weekly audit reviews",
+          "source": "existing before the registry; weekly audit reviews",
+          "taps": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "starter_onboarding_runs": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "user_id": "existing before the registry; weekly audit reviews",
+          "beebee_id": "existing before the registry; weekly audit reviews",
+          "luna_id": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "lines": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "opened_at": "existing before the registry; weekly audit reviews",
+          "playback_claimed_at": "existing before the registry; weekly audit reviews",
+          "time_zone": "existing before the registry; weekly audit reviews",
+          "manual": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "store_download_days": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "platform": "existing before the registry; weekly audit reviews",
+          "day": "existing before the registry; weekly audit reviews",
+          "installs": "existing before the registry; weekly audit reviews",
+          "source": "existing before the registry; weekly audit reviews",
+          "fetched_at": "existing before the registry; weekly audit reviews",
+          "attempted_at": "existing before the registry; weekly audit reviews",
+          "final": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "subscription_webhook_calls": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "subscription_id": "existing before the registry; weekly audit reviews",
+          "called_at": "existing before the registry; weekly audit reviews",
+          "outcome": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "byte_size": "existing before the registry; weekly audit reviews",
+          "delivery_hash": "existing before the registry; weekly audit reviews",
+          "run_id": "existing before the registry; weekly audit reviews",
+          "wake_message_id": "existing before the registry; weekly audit reviews",
+          "repeat_at": "existing before the registry; weekly audit reviews",
+          "member_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "subscription_webhook_deliveries": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "subscription_id": "existing before the registry; weekly audit reviews",
+          "delivery_hash": "existing before the registry; weekly audit reviews",
+          "received_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "usage_accounts": {
+        "module": "Agent types",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "provider": "existing before the registry; weekly audit reviews",
+          "account_key": "existing before the registry; weekly audit reviews",
+          "usage": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "voice_calls": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "message_id": "existing before the registry; weekly audit reviews",
+          "started_at": "existing before the registry; weekly audit reviews",
+          "ended_at": "existing before the registry; weekly audit reviews",
+          "runtime_owner": "existing before the registry; weekly audit reviews",
+          "runtime_until": "existing before the registry; weekly audit reviews",
+          "end_reason": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "voice_messages": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "message_id": "existing before the registry; weekly audit reviews",
+          "call_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "voice_orders": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "source_message_id": "existing before the registry; weekly audit reviews",
+          "call_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "spoken_message_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "voice_participants": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "call_id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "joined_at": "existing before the registry; weekly audit reviews",
+          "left_at": "existing before the registry; weekly audit reviews",
+          "parked_at": "existing before the registry; weekly audit reviews",
+          "session_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "voice_turn_timings": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "trace_id": "existing before the registry; weekly audit reviews",
+          "call_id": "existing before the registry; weekly audit reviews",
+          "stage": "existing before the registry; weekly audit reviews",
+          "elapsed_ms": "existing before the registry; weekly audit reviews",
+          "server_release": "existing before the registry; weekly audit reviews",
+          "recorded_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "voice_workspace_usage": {
+        "module": "Rooms and messages",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "call_id": "existing before the registry; weekly audit reviews",
+          "day_start": "existing before the registry; weekly audit reviews",
+          "audio": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "wallet_balance_snapshots": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "chain": "existing before the registry; weekly audit reviews",
+          "asset": "existing before the registry; weekly audit reviews",
+          "amount": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "wallet_bindings": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "cdp_user_id": "existing before the registry; weekly audit reviews",
+          "eoa_address": "existing before the registry; weekly audit reviews",
+          "solana_address": "existing before the registry; weekly audit reviews",
+          "delegation_expires_at": "existing before the registry; weekly audit reviews",
+          "delegation_standing": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "wallet_transactions": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "tx_id": "existing before the registry; weekly audit reviews",
+          "direction": "existing before the registry; weekly audit reviews",
+          "asset": "existing before the registry; weekly audit reviews",
+          "amount": "existing before the registry; weekly audit reviews",
+          "counterparty": "existing before the registry; weekly audit reviews",
+          "chain": "existing before the registry; weekly audit reviews",
+          "balance_after_usd": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "tx_url": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "work_schedules": {
+        "module": "Background work and timers",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "schedule_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "revision": "existing before the registry; weekly audit reviews",
+          "schedule": "existing before the registry; weekly audit reviews",
+          "authority_status": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workflow_backfills": {
+        "module": "Saved workflows",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "name": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workflow_owner_transfers": {
+        "module": "Saved workflows",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workflow_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "actor_id": "existing before the registry; weekly audit reviews",
+          "previous_owner_id": "existing before the registry; weekly audit reviews",
+          "new_owner_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_app_routes": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "app_id": "existing before the registry; weekly audit reviews",
+          "route": "existing before the registry; weekly audit reviews",
+          "transport": "existing before the registry; weekly audit reviews",
+          "reason": "existing before the registry; weekly audit reviews",
+          "requested_by": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_app_usage": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "app_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "requester_id": "existing before the registry; weekly audit reviews",
+          "transport": "existing before the registry; weekly audit reviews",
+          "operation": "existing before the registry; weekly audit reviews",
+          "grant_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_apps": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "owner_identity_id": "existing before the registry; weekly audit reviews",
+          "app_key": "existing before the registry; weekly audit reviews",
+          "display_name": "existing before the registry; weekly audit reviews",
+          "domain": "existing before the registry; weekly audit reviews",
+          "transport": "existing before the registry; weekly audit reviews",
+          "route": "existing before the registry; weekly audit reviews",
+          "connector_id": "existing before the registry; weekly audit reviews",
+          "composio_account_id": "existing before the registry; weekly audit reviews",
+          "composio_link_expires_at": "existing before the registry; weekly audit reviews",
+          "sign_in_error": "existing before the registry; weekly audit reviews",
+          "machine_id": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "authorised_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_connections": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "connector_id": "existing before the registry; weekly audit reviews",
+          "owner_identity_id": "existing before the registry; weekly audit reviews",
+          "reference": "existing before the registry; weekly audit reviews",
+          "service": "existing before the registry; weekly audit reviews",
+          "label": "existing before the registry; weekly audit reviews",
+          "hosts": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "connection_metadata": "existing before the registry; weekly audit reviews",
+          "grants": "existing before the registry; weekly audit reviews",
+          "last_synced_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "machine_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_connectors": {
+        "module": "Tools and connectors",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "owner_identity_id": "existing before the registry; weekly audit reviews",
+          "connector_type": "existing before the registry; weekly audit reviews",
+          "helper_agent_id": "existing before the registry; weekly audit reviews",
+          "machine_id": "existing before the registry; weekly audit reviews",
+          "status": "existing before the registry; weekly audit reviews",
+          "status_steps": "existing before the registry; weekly audit reviews",
+          "status_error": "existing before the registry; weekly audit reviews",
+          "pending_ops": "existing before the registry; weekly audit reviews",
+          "pairing_generation": "existing before the registry; weekly audit reviews",
+          "connected_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "sign_in": "existing before the registry; weekly audit reviews",
+          "squire_version": "existing before the registry; weekly audit reviews",
+          "signed_in_as": "existing before the registry; weekly audit reviews",
+          "registry_server_name": "existing before the registry; weekly audit reviews",
+          "registry_version": "existing before the registry; weekly audit reviews",
+          "registry_manifest": "existing before the registry; weekly audit reviews",
+          "display_name": "existing before the registry; weekly audit reviews",
+          "website_url": "existing before the registry; weekly audit reviews",
+          "install_agent_id": "existing before the registry; weekly audit reviews",
+          "install_room_id": "existing before the registry; weekly audit reviews",
+          "install_command_id": "existing before the registry; weekly audit reviews",
+          "registry_handoff_attempt": "existing before the registry; weekly audit reviews",
+          "registry_squire_relayed_attempt": "existing before the registry; weekly audit reviews",
+          "force_relogin_provider": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_deletion_notices": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "workspace_name": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_deletions": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "workspace_name": "existing before the registry; weekly audit reviews",
+          "deleted_by": "existing before the registry; weekly audit reviews",
+          "deleted_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_join_notification_devices": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "notification_id": "existing before the registry; weekly audit reviews",
+          "device_token": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_join_notifications": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "joining_identity_id": "existing before the registry; weekly audit reviews",
+          "text": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_skill_uses": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "skill_id": "existing before the registry; weekly audit reviews",
+          "skill_version": "existing before the registry; weekly audit reviews",
+          "room_id": "existing before the registry; weekly audit reviews",
+          "request_id": "existing before the registry; weekly audit reviews",
+          "requester_identity_id": "existing before the registry; weekly audit reviews",
+          "agent_id": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_skill_versions": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "skill_id": "existing before the registry; weekly audit reviews",
+          "version": "existing before the registry; weekly audit reviews",
+          "markdown": "existing before the registry; weekly audit reviews",
+          "content_hash": "existing before the registry; weekly audit reviews",
+          "source_job_id": "existing before the registry; weekly audit reviews",
+          "source_message_ids": "existing before the registry; weekly audit reviews",
+          "repository": "existing before the registry; weekly audit reviews",
+          "target_commit": "existing before the registry; weekly audit reviews",
+          "path": "existing before the registry; weekly audit reviews",
+          "extractor_version": "existing before the registry; weekly audit reviews",
+          "model": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "source_deleted_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspace_skills": {
+        "module": "Institutional memory and skills",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "workspace_id": "existing before the registry; weekly audit reviews",
+          "slug": "existing before the registry; weekly audit reviews",
+          "description": "existing before the registry; weekly audit reviews",
+          "state": "existing before the registry; weekly audit reviews",
+          "current_version": "existing before the registry; weekly audit reviews",
+          "revision": "existing before the registry; weekly audit reviews",
+          "source_room_id": "existing before the registry; weekly audit reviews",
+          "repository": "existing before the registry; weekly audit reviews",
+          "target_commit": "existing before the registry; weekly audit reviews",
+          "path": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "last_served_at": "existing before the registry; weekly audit reviews",
+          "curated_at": "existing before the registry; weekly audit reviews",
+          "code_content_hash": "existing before the registry; weekly audit reviews",
+          "anchor_checked_at": "existing before the registry; weekly audit reviews",
+          "anchor_stale_at": "existing before the registry; weekly audit reviews",
+          "anchor_stale_reason": "existing before the registry; weekly audit reviews",
+          "embedding": "existing before the registry; weekly audit reviews",
+          "embedding_model": "existing before the registry; weekly audit reviews",
+          "embedding_version": "existing before the registry; weekly audit reviews",
+          "embedded_at": "existing before the registry; weekly audit reviews",
+          "kind": "existing before the registry; weekly audit reviews",
+          "deleted_at": "existing before the registry; weekly audit reviews",
+          "deleted_by": "existing before the registry; weekly audit reviews",
+          "deleted_source_message_ids": "existing before the registry; weekly audit reviews",
+          "creator_agent_id": "existing before the registry; weekly audit reviews",
+          "owner_agent_id": "existing before the registry; weekly audit reviews",
+          "ownership_initialized": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "workspaces": {
+        "module": "Access and membership",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "about": "existing before the registry; weekly audit reviews",
+          "avatar": "existing before the registry; weekly audit reviews",
+          "visibility": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "allow_fix_sweep": "existing before the registry; weekly audit reviews",
+          "internal": "existing before the registry; weekly audit reviews",
+          "weight_tier_rules": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "x_ad_daily": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "day": "existing before the registry; weekly audit reviews",
+          "level": "existing before the registry; weekly audit reviews",
+          "entity_id": "existing before the registry; weekly audit reviews",
+          "name": "existing before the registry; weekly audit reviews",
+          "campaign_id": "existing before the registry; weekly audit reviews",
+          "ad_group_id": "existing before the registry; weekly audit reviews",
+          "currency": "existing before the registry; weekly audit reviews",
+          "spend_micros": "existing before the registry; weekly audit reviews",
+          "impressions": "existing before the registry; weekly audit reviews",
+          "link_clicks": "existing before the registry; weekly audit reviews",
+          "source": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "x_ad_signups": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "identity_id": "existing before the registry; weekly audit reviews",
+          "twclid": "existing before the registry; weekly audit reviews",
+          "campaign_id": "existing before the registry; weekly audit reviews",
+          "ad_id": "existing before the registry; weekly audit reviews",
+          "ad_group_id": "existing before the registry; weekly audit reviews",
+          "captured_at": "existing before the registry; weekly audit reviews",
+          "created_at": "existing before the registry; weekly audit reviews",
+          "conversion_id": "existing before the registry; weekly audit reviews",
+          "event_id": "existing before the registry; weekly audit reviews",
+          "sent_at": "existing before the registry; weekly audit reviews",
+          "attempts": "existing before the registry; weekly audit reviews",
+          "next_attempt_at": "existing before the registry; weekly audit reviews",
+          "delivery_failed": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "x_ad_sync": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "id": "existing before the registry; weekly audit reviews",
+          "completed_at": "existing before the registry; weekly audit reviews",
+          "failed_at": "existing before the registry; weekly audit reviews",
+          "next_attempt_at": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "x_site_visit_daily": {
+        "module": "Operations and release",
+        "reason": "existing before the registry; weekly audit reviews",
+        "columns": {
+          "day": "existing before the registry; weekly audit reviews",
+          "site_visits": "existing before the registry; weekly audit reviews",
+          "by_ad": "existing before the registry; weekly audit reviews",
+          "all_site_visits": "existing before the registry; weekly audit reviews"
+        }
+      }
+    },
+    "jsonb": {
+      "drawing": {},
+      "private_payload": {
+        "kind": "existing before the registry; weekly audit reviews",
+        "authorId": "existing before the registry; weekly audit reviews",
+        "fromRoomId": "existing before the registry; weekly audit reviews",
+        "reportedGenerationId": "existing before the registry; weekly audit reviews",
+        "text": "existing before the registry; weekly audit reviews",
+        "originCornerId": "existing before the registry; weekly audit reviews",
+        "attachments": "existing before the registry; weekly audit reviews",
+        "reportedOutcome": "existing before the registry; weekly audit reviews"
+      },
+      "review_context": {
+        "reportIds": "existing before the registry; weekly audit reviews",
+        "headSha": "existing before the registry; weekly audit reviews",
+        "purpose": "existing before the registry; weekly audit reviews",
+        "pullRequest": "existing before the registry; weekly audit reviews",
+        "reviewerConfiguration": "existing before the registry; weekly audit reviews",
+        "cornerId": "existing before the registry; weekly audit reviews"
+      },
+      "wake_context": {},
+      "coalesced_attachments": {},
+      "script": {},
+      "mandate": {},
+      "cadence": {},
+      "workflow_run": {
+        "timer": "existing before the registry; weekly audit reviews",
+        "attempt": "existing before the registry; weekly audit reviews"
+      },
+      "reply_message_ids": {},
+      "trace": {},
+      "access_policy": {},
+      "soul": {},
+      "model_catalog": {},
+      "commands": {},
+      "schedule_ids": {},
+      "usage_snapshot": {},
+      "squire_report": {
+        "reportedAt": "existing before the registry; weekly audit reviews"
+      },
+      "squire_work": {
+        "disconnected": "existing before the registry; weekly audit reviews",
+        "ops": "existing before the registry; weekly audit reviews",
+        "install": "existing before the registry; weekly audit reviews",
+        "generation": "existing before the registry; weekly audit reviews",
+        "signIn": "existing before the registry; weekly audit reviews",
+        "signedInApps": "existing before the registry; weekly audit reviews",
+        "reportedAt": "existing before the registry; weekly audit reviews"
+      },
+      "custom_tags": {},
+      "chosen_voices": {
+        "aura-2": "existing before the registry; weekly audit reviews"
+      },
+      "state": {},
+      "detail": {
+        "usd": "existing before the registry; weekly audit reviews"
+      },
+      "manifests": {},
+      "attachments": {},
+      "intent_verbatim": {},
+      "criteria": {},
+      "non_goals": {},
+      "brief_references": {},
+      "approval_basis": {},
+      "lifecycle": {
+        "pr": "existing before the registry; weekly audit reviews",
+        "checks": "existing before the registry; weekly audit reviews",
+        "checksSummary": "existing before the registry; weekly audit reviews",
+        "branch": "existing before the registry; weekly audit reviews",
+        "mergeQueue": "existing before the registry; weekly audit reviews",
+        "mergeRecovery": "existing before the registry; weekly audit reviews",
+        "checkRefreshRetry": "existing before the registry; weekly audit reviews"
+      },
+      "plan": {},
+      "event_subscriptions": {},
+      "identity_profile": {},
+      "kinds": {},
+      "receipt": {
+        "platform": "existing before the registry; weekly audit reviews",
+        "releaseVersion": "existing before the registry; weekly audit reviews",
+        "runtimeVersion": "existing before the registry; weekly audit reviews"
+      },
+      "occurrences": {},
+      "provider_identity": {},
+      "payload": {
+        "roomId": "existing before the registry; weekly audit reviews",
+        "cornerParentId": "existing before the registry; weekly audit reviews",
+        "workspaceId": "existing before the registry; weekly audit reviews",
+        "messageId": "existing before the registry; weekly audit reviews",
+        "agentId": "existing before the registry; weekly audit reviews",
+        "requestId": "existing before the registry; weekly audit reviews",
+        "traceId": "existing before the registry; weekly audit reviews",
+        "databaseAt": "existing before the registry; weekly audit reviews",
+        "identityId": "existing before the registry; weekly audit reviews"
+      },
+      "checkpoint": {},
+      "dropped_counts": {},
+      "proposal": {
+        "source": "existing before the registry; weekly audit reviews"
+      },
+      "context": {
+        "evidenceMessageIds": "existing before the registry; weekly audit reviews",
+        "priorSkill": "existing before the registry; weekly audit reviews",
+        "candidates": "existing before the registry; weekly audit reviews"
+      },
+      "event": {},
+      "body": {
+        "observedAt": "existing before the registry; weekly audit reviews",
+        "connectionId": "existing before the registry; weekly audit reviews",
+        "never-seen": "existing before the registry; weekly audit reviews",
+        "POST": "existing before the registry; weekly audit reviews"
+      },
+      "reactions": {},
+      "activity": {
+        "confirmed": "existing before the registry; weekly audit reviews"
+      },
+      "card": {
+        "roleClasses": "existing before the registry; weekly audit reviews",
+        "roleBindings": "existing before the registry; weekly audit reviews",
+        "runId": "existing before the registry; weekly audit reviews",
+        "status": "existing before the registry; weekly audit reviews",
+        "silenceKind": "existing before the registry; weekly audit reviews",
+        "requestId": "existing before the registry; weekly audit reviews",
+        "agentId": "existing before the registry; weekly audit reviews",
+        "grants": "existing before the registry; weekly audit reviews",
+        "attemptId": "existing before the registry; weekly audit reviews",
+        "sourceMessageId": "existing before the registry; weekly audit reviews",
+        "appId": "existing before the registry; weekly audit reviews",
+        "offerId": "existing before the registry; weekly audit reviews",
+        "toState": "existing before the registry; weekly audit reviews",
+        "outcome": "existing before the registry; weekly audit reviews",
+        "contents": "existing before the registry; weekly audit reviews",
+        "headSha": "existing before the registry; weekly audit reviews",
+        "seq": "existing before the registry; weekly audit reviews",
+        "sourceRoomId": "existing before the registry; weekly audit reviews",
+        "connectKind": "existing before the registry; weekly audit reviews",
+        "connectorId": "existing before the registry; weekly audit reviews",
+        "text": "existing before the registry; weekly audit reviews",
+        "action": "existing before the registry; weekly audit reviews",
+        "agent": "existing before the registry; weekly audit reviews",
+        "approvalId": "existing before the registry; weekly audit reviews",
+        "permissionId": "existing before the registry; weekly audit reviews",
+        "requester": "existing before the registry; weekly audit reviews",
+        "ownerId": "existing before the registry; weekly audit reviews",
+        "appKey": "existing before the registry; weekly audit reviews",
+        "connectorType": "existing before the registry; weekly audit reviews",
+        "cornerId": "existing before the registry; weekly audit reviews",
+        "machineId": "existing before the registry; weekly audit reviews",
+        "freeAgentClosed": "existing before the registry; weekly audit reviews",
+        "name": "existing before the registry; weekly audit reviews",
+        "purpose": "existing before the registry; weekly audit reviews",
+        "tool": "existing before the registry; weekly audit reviews",
+        "repository": "existing before the registry; weekly audit reviews",
+        "prompt": "existing before the registry; weekly audit reviews",
+        "connectorName": "existing before the registry; weekly audit reviews",
+        "harness": "existing before the registry; weekly audit reviews",
+        "title": "existing before the registry; weekly audit reviews",
+        "to": "existing before the registry; weekly audit reviews",
+        "kind": "existing before the registry; weekly audit reviews",
+        "requesterId": "existing before the registry; weekly audit reviews",
+        "receiptHint": "existing before the registry; weekly audit reviews",
+        "workflowSlug": "existing before the registry; weekly audit reviews",
+        "starterVersion": "existing before the registry; weekly audit reviews",
+        "attempt": "existing before the registry; weekly audit reviews",
+        "starterOnboarding": "existing before the registry; weekly audit reviews",
+        "onboardingManual": "existing before the registry; weekly audit reviews",
+        "onboardingUserId": "existing before the registry; weekly audit reviews",
+        "onboardingRunId": "existing before the registry; weekly audit reviews",
+        "videoPreview": "existing before the registry; weekly audit reviews",
+        "youtubeUploadUsed": "existing before the registry; weekly audit reviews",
+        "youtubeUploadAttempt": "existing before the registry; weekly audit reviews",
+        "state": "existing before the registry; weekly audit reviews",
+        "savingAt": "existing before the registry; weekly audit reviews",
+        "savingAttempt": "existing before the registry; weekly audit reviews",
+        "fromState": "existing before the registry; weekly audit reviews",
+        "commandId": "existing before the registry; weekly audit reviews",
+        "trigger": "existing before the registry; weekly audit reviews"
+      },
+      "legacy_event": {
+        "turnGenerationId": "existing before the registry; weekly audit reviews"
+      },
+      "system_event": {
+        "object": "existing before the registry; weekly audit reviews",
+        "verb": "existing before the registry; weekly audit reviews",
+        "kind": "existing before the registry; weekly audit reviews",
+        "subject": "existing before the registry; weekly audit reviews"
+      },
+      "source_client": {},
+      "push_outcomes": {},
+      "recipients": {},
+      "scope": {},
+      "web_keys": {},
+      "options": {},
+      "direct_participants": {},
+      "redirects": {},
+      "result": {},
+      "lines": {},
+      "usage": {},
+      "schedule": {},
+      "hosts": {},
+      "connection_metadata": {
+        "vaultCreatedAt": "existing before the registry; weekly audit reviews"
+      },
+      "grants": {},
+      "status_steps": {},
+      "pending_ops": {},
+      "sign_in": {
+        "attemptId": "existing before the registry; weekly audit reviews",
+        "url": "existing before the registry; weekly audit reviews"
+      },
+      "registry_manifest": {},
+      "weight_tier_rules": {},
+      "by_ad": {}
+    }
+  }
+}

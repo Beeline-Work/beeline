@@ -4483,14 +4483,18 @@ export class DaemonService {
       if (this.commandTransaction) {
         return (
           await database.query<CommittedMessageLiveRow>(
-            `WITH inserted AS (
+            `WITH new_messages AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,
                  reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
                ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3))
-               ON CONFLICT(id) DO UPDATE SET id=messages.id
+               ON CONFLICT(id) DO NOTHING
                RETURNING *
+             ), inserted AS (
+               SELECT * FROM new_messages UNION ALL
+               SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+                 AND NOT EXISTS(SELECT 1 FROM new_messages)
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
                FROM inserted WHERE agent_commands.id=$13
@@ -4509,14 +4513,18 @@ export class DaemonService {
       }
       return (
         await database.query<CommittedMessageLiveRow>(
-          `WITH inserted AS (
+          `WITH new_messages AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                (SELECT selected_model FROM agents WHERE agent_id=$3))
-             ON CONFLICT(id) DO UPDATE SET id=messages.id
+             ON CONFLICT(id) DO NOTHING
              RETURNING *
+           ), inserted AS (
+             SELECT * FROM new_messages UNION ALL
+             SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+               AND NOT EXISTS(SELECT 1 FROM new_messages)
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
              author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
@@ -4604,7 +4612,7 @@ export class DaemonService {
              SELECT count(*) recovered_count,
                (jsonb_agg(to_jsonb(recovered_public))->0) recovered_row
              FROM recovered_public
-           ), inserted AS (
+           ), new_messages AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
@@ -4612,8 +4620,12 @@ export class DaemonService {
                  writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
-             ON CONFLICT(id) DO UPDATE SET id=messages.id
+             ON CONFLICT(id) DO NOTHING
              RETURNING *
+           ), inserted AS (
+             SELECT * FROM new_messages UNION ALL
+             SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+               AND NOT EXISTS(SELECT 1 FROM new_messages)
            ), completed AS (
              UPDATE agent_commands command SET
                state='complete',completed_at=now(),result_message_id=inserted.id

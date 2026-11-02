@@ -19,6 +19,21 @@ export function mentionReplyId(key: string): string {
   return createHash('sha256').update(`rooms-mcp-message:${key}`).digest('hex');
 }
 
+const serverMentionInputs = new WeakSet<object>();
+
+/** Normalize transport metadata before the ordinary phone reply writer runs. */
+export async function prepareMentionReplyInput(db: SqlDatabase, member: string,
+  input: { roomId: string; parentMessageId: string; messageId?: string }): Promise<void> {
+  const key = await mentionReplyKey(db, member, input.roomId, input.parentMessageId);
+  if (!key) return;
+  input.messageId = mentionReplyId(key);
+  serverMentionInputs.add(input);
+}
+
+export function isMentionReplyInput(input: object): boolean {
+  return serverMentionInputs.has(input);
+}
+
 /** Private, current membership-scoped reminder accompanying tool results. */
 export async function owedMentions(db: SqlDatabase, member: string) {
   const rows = (await db.query<{room_id: string; message_id: string}>(`SELECT mention.room_id,mention.message_id

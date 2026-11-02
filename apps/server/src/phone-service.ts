@@ -1,4 +1,4 @@
-import { mentionReplyKey, mentionReplyId } from './owed-mentions.js';
+import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
@@ -4195,6 +4195,7 @@ export class PhoneService {
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
+        await prepareMentionReplyInput(this.database, viewerId, input as Input<'sendRoomReply'>);
         const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
         await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
@@ -5226,8 +5227,7 @@ export class PhoneService {
     if (!parent.rows[0] || !(await this.hasRoomAccess(input.roomId, author)))
       throw new Error('reply parent is not in this room');
     await this.assertRoomIsWritable(input.roomId, author);
-    const mentionKey = await mentionReplyKey(this.database, author, input.roomId, input.parentMessageId);
-    const id = mentionKey ? mentionReplyId(mentionKey) : input.messageId ?? messageId();
+    const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     // A reply in a DM addresses the agent it answers without naming it. That
     // is the DM's own doing, not a tag: `routeHumanMessage` wakes every
@@ -5261,7 +5261,7 @@ export class PhoneService {
          WHERE id=$1 AND room_id=$2 AND author_id=$3 AND (text=$4 OR $8::boolean)
            AND (attachments=$5::jsonb OR $8::boolean)
            AND reply_to_message_id=$6 AND root_message_id=$7`,
-          [...values, Boolean(mentionKey)],
+          [...values, isMentionReplyInput(input)],
         );
         if (!retry.rowCount) throw new Error('messageId is invalid');
         return {

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { clearOwedMention } from './owed-mentions.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -243,7 +244,11 @@ export class RoomsMcpAgentTools {
     private readonly objects?: ObjectService,
   ) {}
 
+  private readonly postReplyRouting = new AsyncLocalStorage<unknown>();
+
   private exec(member: string, op: string, input: Args): Promise<unknown> {
+    const replyTo = this.postReplyRouting.getStore();
+    if (op === 'postCornerMessage' && replyTo !== undefined) input.replyTo = replyTo;
     return this.daemon.execute(op as never, input as never, member) as Promise<unknown>;
   }
 
@@ -358,6 +363,7 @@ export class RoomsMcpAgentTools {
     const exec = (op: string, input: Args) => this.exec(member, op, defined(input));
     const turn = <T>(run: (turn: McpTurn, context: Args) => Promise<T>, target = addressArg(args.address)) =>
       this.inTurn(member, target, run);
+    return this.postReplyRouting.run(args.replyTo, async () => {
     switch (name) {
       case 'read': return this.read(member, args, exec, turn);
       case 'search':
@@ -396,7 +402,7 @@ export class RoomsMcpAgentTools {
       case 'send_operator_system_dm': return turn((_, context) => exec('sendOperatorSystemDm', { ...context, agentId: member, recipients: args.recipients, text: args.text }));
       case 'read_operator_system_dm': return turn((_, context) => exec('readOperatorSystemDm', { ...context, agentId: member, sendId: args.sendId }));
       case 'dispatch_release': return turn((_, context) => exec('dispatchRoomWorkflow', { ...context, inputs: args.inputs }));
-      case 'post': return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text, replyTo: args.replyTo }));
+      case 'post': return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text }));
       case 'post_artifact': return this.postArtifact(member, args, exec);
       case 'connect': return turn((_, context) => {
         if (args.mode === 'status') return exec('readAgentWorkbench', { roomId: context.roomId });
@@ -425,6 +431,7 @@ export class RoomsMcpAgentTools {
       }
     }
     throw new McpToolError(`unknown tool: ${name}`);
+    });
   }
 
   private async read(member: string, args: Args, exec: (op: string, input: Args) => Promise<unknown>,

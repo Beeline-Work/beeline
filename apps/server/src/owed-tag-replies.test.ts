@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -19,7 +19,7 @@ const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-
 const id = () => randomBytes(32).toString('hex');
 
 describe('owed Room tags', () => {
-  let db: PgliteDatabase, phone: PhoneService, mcp: RoomsMcp, daemon: DaemonService;
+  let db: PgliteDatabase, phone: PhoneService, mcp: RoomsMcp, daemon: DaemonService, live: LiveHub;
   const principal = (memberId = member): McpPrincipal => ({ hash: '', client_id: 'test', identity_id: owner, member_id: memberId, scope: 'rooms:read rooms:write' });
   const call = (name: string, args: Record<string, unknown> = {}, memberId = member) =>
     (mcp as unknown as { call(p: McpPrincipal, n: string, a: Record<string, unknown>): Promise<any> }).call(principal(memberId), name, args);
@@ -38,7 +38,7 @@ describe('owed Room tags', () => {
     for (const who of [owner, member, other, helper]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,$2,$3,'member')`, [workspace, room, who]);
     await db.query(`INSERT INTO rooms_mcp_clients(id,name,redirects,callback_url) VALUES('test','Test','[]','https://example.com/wake'),('other','Other','[]',NULL)`);
     await db.query(`INSERT INTO rooms_mcp_members(client_id,owner_id,member_id,model_label,profile_set) VALUES('test',$1,$2,'Muse',true),('other',$1,$3,'Pidoong',true)`, [owner, member, other]);
-    const live = new LiveHub(); phone = new PhoneService(db, 'http://localhost', undefined, undefined, live);
+    live = new LiveHub(); phone = new PhoneService(db, 'http://localhost', undefined, undefined, live);
     daemon = new DaemonService(db, live);
     mcp = new RoomsMcp(new RoomsMcpOAuth(db, 'http://localhost', new TokenAuth(db, async () => { throw new Error('unused'); })), phone, live, daemon);
   }, 60_000);
@@ -107,6 +107,39 @@ describe('owed Room tags', () => {
     const result = await daemon.execute('getOwedMentions', {}, helper);
     expect(result.owedMentions.some(m => m.messageId === message)).toBe(true);
     expect((await daemon.execute('getOwedMentions', {}, member)).owedMentions.some(m => m.messageId === message)).toBe(false);
+  });
+  it('C7 helper operation piggybacks owed context and keeps its result if the lookup fails', async () => {
+    const { createBeelineServer } = await import('./server.js');
+    const token = 'local-owed-' + id();
+    await db.query('INSERT INTO daemon_tokens(token_hash,agent_id) VALUES($1,$2)', [createHash('sha256').update(token).digest('hex'), helper]);
+    const server = createBeelineServer({ database: db, auth: new TokenAuth(db, async () => { throw new Error('unused'); }), phone, daemon, live, mediaMaximumBytes: 1024 });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const message = await tag(helper);
+    const execute = vi.spyOn(daemon, 'execute');
+    const call = (context: boolean) => fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/v1/daemon/operations/getAgentCommands`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(context ? { 'x-beeline-tool-result': '1' } : {}) },
+      body: JSON.stringify({ roomId: room }),
+    });
+    let fault: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      const response = await call(true);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result._beelineOwedMentions.some((m: any) => m.messageId === message)).toBe(true);
+      expect((await (await call(false)).json())._beelineOwedMentions).toBeUndefined();
+      const query = db.query.bind(db);
+      fault = vi.spyOn(db, 'query').mockImplementation(((sql: string, values?: unknown[]) => {
+        if (sql.includes('SELECT mention.room_id,mention.message_id')) throw new Error('fixture: owed lookup unavailable');
+        return query(sql, values);
+      }) as typeof db.query);
+      const fallback = await call(true);
+      expect(fallback.status).toBe(200);
+      expect(await fallback.json()).toMatchObject({ commandProtocol: 1, commands: expect.any(Array) });
+      expect(execute.mock.calls.map(([operation]) => operation)).toEqual(['getAgentCommands', 'getAgentCommands', 'getAgentCommands']);
+    } finally {
+      fault?.mockRestore(); execute.mockRestore(); server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
   it('C8 server key deduplicates initial sends and retries independently for each tagged member', async () => {
     const message = await tag(); await recordMcpMention(db, other, room, message);

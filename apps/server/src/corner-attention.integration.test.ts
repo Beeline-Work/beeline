@@ -976,9 +976,7 @@ it('Reproduction HEADER-STATE-5: a queued reviewer stays review until that comma
 });
 
 it('Reproduction HEADER-STATE-4: pending CI wins over a human question with a hold', async () => {
-  await post('scope-question', '@owner Which scope should I implement?');
-  await db.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable,blocking)
-    VALUES($1,$2,'scope-question',now(),true,true) ON CONFLICT DO NOTHING`, [C,HUMAN]);
+  await post('scope-question', 'needs-decision: @owner Which scope should I implement?');
   await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
   await ci('pending');
   expect(await state()).toBe('review');

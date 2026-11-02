@@ -162,14 +162,13 @@ describe('Postgres live fanout', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
       [corner, WORKSPACE, ROOM, AUTHOR],
     );
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-x',$1,$2,'question')`,
-      [corner, AUTHOR]);
-    await database.query(
-      `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
-       VALUES($1,$2,'owed-x',now(),$3,true)
-       ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
-      [corner, AUTHOR, expiresAt]);
+    const agent='e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`,[agent]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,AUTHOR]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES('owed-x',$1,$2,'Choose','card','choice',$3::jsonb)`,[corner,agent,
+      JSON.stringify({mode:'question',status:'open',requester:{pubkey:AUTHOR},expiresAt:expiresAt.getTime()})]);
   }
 
   it('publishes owner-scoped install, vault and agent commits without an idle read', async () => {
@@ -1105,10 +1104,8 @@ describe('Postgres live fanout', () => {
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-1',$1,$2,'question')`,
       [corner, agent]);
     await expectNudge(() => database.query(
-      `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
-       VALUES($1,$2,'owed-1',now(),now()+interval '1 hour',true)
-       ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
-      [corner, reader]));
+      `UPDATE messages SET presentation='card',card_type='choice',card=$1::jsonb WHERE id='owed-1'`,
+      [JSON.stringify({mode:'question',status:'open',requester:{pubkey:reader}})]));
     const textNudges = () => parent.filter(event => event.type === 'invalidate' && event.reason === 'corner-text');
     const priorTitleNudges = textNudges().length;
     await expectNudge(() => database.query(`UPDATE rooms SET name='renamed' WHERE id=$1`, [corner]));
@@ -1180,7 +1177,7 @@ describe('Postgres live fanout', () => {
         event.type === 'invalidate' && event.reason === 'corner-status'));
   });
 
-  it('delivers one parent nudge for an owed refresh that rewrites many rows', async () => {
+  it('OWED-DERIVED: coalesces state notifications when a transaction edits several owed inputs', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, live, () => client, 1);
@@ -1190,26 +1187,92 @@ describe('Postgres live fanout', () => {
     const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccd';
     const agent = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
-      [corner, WORKSPACE, ROOM, AUTHOR],
-    );
-    for (const id of ['owed-a', 'owed-b', 'owed-c'])
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'question')`,
-        [id, corner, agent]);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    client.payloads.length = 0;
-    await database.transaction(async (db) => {
-      await db.query(`DELETE FROM corner_owed WHERE corner_id=$1`, [corner]);
-      for (const id of ['owed-a', 'owed-b', 'owed-c'])
-        await db.query(
-          `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable)
-           VALUES($1,$2,$3,now(),true)`,
-          [corner, AUTHOR, id]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+      VALUES($1,$2,$3,$4,'fix')`, [corner,WORKSPACE,ROOM,AUTHOR]);
+    for (const id of ['owed-a','owed-b','owed-c'])
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'question')`,[id,corner,agent]);
+    await new Promise(resolve => setTimeout(resolve,50));
+    client.payloads.length=0;
+    await database.transaction(async db => {
+      await db.query(`UPDATE messages SET text='needs-decision: choose' WHERE room_id=$1`,[corner]);
     });
-    await eventually(() => client.payloads.some((raw) => raw.includes('"corner_owed"')));
-    expect(client.payloads.filter((raw) => raw.includes('"corner_owed"'))).toHaveLength(1);
+    await eventually(() => client.payloads.some(raw => JSON.parse(raw).owedChanged));
+    expect(client.payloads.filter(raw => JSON.parse(raw).owedChanged)).toHaveLength(1);
+    expect((await database.query('SELECT * FROM corner_owed')).rows).toEqual([]);
+  });
+
+  it('OWED-DERIVED: source changes refresh state and parent on every machine with zero stored owed rows', async () => {
+    const machines=[new LiveHub(),new LiveHub()];
+    const events:LiveEvent[][]=[[],[]];
+    for(const [i,live] of machines.entries()) {
+      const client=new PgliteListenClient(database);
+      const listener=new PostgresLiveListener(database,live,()=>client,1);
+      listeners.push(listener);live.subscribeAll(event=>events[i]!.push(event));
+      void listener.run();await eventually(()=>client.listenerCount('notification')===1);
+    }
+    const corner='cccccccc-cccc-4ccc-8ccc-cccccccccccd';
+    const agent='e'.repeat(64), returned='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`,[agent]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name)
+      VALUES($1,$3,$4,'Corner'),($2,$3,NULL,'Return Room')`,[corner,returned,WORKSPACE,ROOM]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$4,'owner'),($1,$3,$4,'owner')`,[WORKSPACE,ROOM,returned,AUTHOR]);
+    await database.query(`INSERT INTO agent_commands(id,room_id,agent_id,reason,private_payload,turn_request_id,root_command_id,root_source_message_id,agent_depth,action,state)
+      VALUES('returned-report',$1,$2,'report',$3::jsonb,'returned-report','returned-report','returned-report',0,'input','complete')`,[corner,agent,JSON.stringify({originCornerId:corner})]);
+    const refresh=async(write:()=>Promise<unknown>)=>{
+      for(const list of events)await settle(list);
+      await write();
+      for(const list of events)await eventually(()=>
+        list.some(e=>e.type==='invalidate'&&e.roomId===corner&&e.reason==='postgres:corner_state')&&
+        list.some(e=>e.type==='invalidate'&&e.roomId===ROOM&&e.reason==='corner-status'));
+      expect((await database.query('SELECT * FROM corner_owed')).rows).toEqual([]);
+    };
+    await refresh(()=>database.query(`INSERT INTO messages(id,room_id,author_id,text,request_id)
+      VALUES('returned-item',$1,$2,'needs-decision: @author choose','returned-report')`,[returned,agent]));
+    await refresh(()=>database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('returned-answer',$1,$2,'Yes')`,[returned,AUTHOR]));
+    await refresh(()=>database.query(`UPDATE messages SET deleted_at=now() WHERE id='returned-answer'`));
+    const returnCorner='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name)
+      VALUES($1,$2,$3,'Return corner')`,[returnCorner,WORKSPACE,returned]);
+    await refresh(()=>database.query(`UPDATE messages SET room_id=$1 WHERE id='returned-item'`,[returnCorner]));
+    await refresh(()=>database.query(`UPDATE identities SET handle='changed' WHERE id=$1`,[AUTHOR]));
+    await refresh(()=>database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,[returned,AUTHOR]));
+    await refresh(()=>database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,[returned,AUTHOR]));
+    const grant='99999999-9999-4999-8999-999999999999';
+    await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'host','example.com','docs',$2,$4,'pending')`,[grant,agent,WORKSPACE,corner]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES('forwarded-grant',$1,$2,'Allow','card','grant-request',$3::jsonb)`,[returned,agent,
+      JSON.stringify({sourceRoomId:corner,grants:[{grantId:grant}]})]);
+    await refresh(()=>database.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`,[grant]));
+    await database.query(`INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+      VALUES('permission',$1,$2,'request','{}','pending')`,[corner,AUTHOR]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES('forwarded-permission',$1,$2,'Allow','card','permission',$3::jsonb)`,[returned,agent,
+      JSON.stringify({sourceRoomId:corner,permissionId:'permission'})]);
+    await refresh(()=>database.query(`UPDATE permission_authority SET status='authorized' WHERE permission_id='permission'`));
+    await refresh(()=>database.query(`UPDATE messages SET card=jsonb_set(card,'{sourceRoomId}','null') WHERE id='forwarded-permission'`));
+    await refresh(()=>database.query(`DELETE FROM messages WHERE id='forwarded-grant'`));
+  });
+
+  it('OWED-DERIVED: schedules only unresolved owed deadlines in open corners', async () => {
+    const corner = 'cccccccc-cccc-4ccc-8ccc-ccccccccccce';
+    await insertExpiringOwed(new Date(Date.now()+60_000));
+    const expiry = new DeadlineExpiry(database);
+    expect(await expiry.runOnce()).toBeGreaterThan(50_000);
+    await database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"answered"') WHERE id='owed-x'`);
+    expect(await expiry.runOnce()).toBeNull();
+    // Ordinary replies use their creation time plus 24 hours, with no card deadline.
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES('owed-source',$1,$2,'Source',now()-interval '2 days')`,[corner,AUTHOR]);
+    await database.query(`UPDATE messages SET presentation='message',card_type=NULL,card=NULL,
+      reply_to_message_id='owed-source',created_at=now()-interval '24 hours'+interval '1 minute'
+      WHERE id='owed-x'`);
+    expect(await expiry.runOnce()).toBeGreaterThan(50_000);
+    await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1',[corner]);
+    expect(await expiry.runOnce()).toBeNull();
+    expect((await database.query('SELECT * FROM corner_owed')).rows).toEqual([]);
   });
 
   it('nudges the parent Room on every machine when the leader sees an owed item expire', async () => {
@@ -1227,7 +1290,7 @@ describe('Postgres live fanout', () => {
     }
     const expiresAt = new Date(Date.now() + 60_000);
     await insertExpiringOwed(expiresAt);
-    // A new owed row wakes the leader so it can re-arm for the new deadline.
+    // A source message wakes the leader so it can re-arm for the new deadline.
     await eventually(() => wakes.every((count) => count >= 1));
     const clock = new SkewedClockDatabase(database);
     const expiry = new DeadlineExpiry(clock);

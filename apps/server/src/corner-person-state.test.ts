@@ -1,3 +1,4 @@
+import { cornerOwedItemsSql } from './corner-owed.js';
 import { VoiceService } from './voice-service.js';
 import { systemLine } from './system-line.js';
 import { randomUUID } from 'node:crypto';
@@ -64,7 +65,9 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       SELECT room_id,$1,created_at,id FROM messages WHERE id='ask'`,
       [person],
     );
-    const owed = (await db.query('SELECT * FROM corner_owed')).rows;
+    const readOwed = () => db.query(`SELECT * FROM (${cornerOwedItemsSql('$1::uuid')}) owed`, [corner]);
+    const owed = (await readOwed()).rows;
+    expect((await db.query('SELECT * FROM corner_owed')).rows).toEqual([]);
     const readMarks = (await db.query('SELECT * FROM room_read_marks')).rows;
     expect(owed).toHaveLength(1);
     expect(await migrateCornerPersonState(db)).toBe(1);
@@ -80,7 +83,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
         created_at: new Date('2020-01-01T00:00:00Z'),
       },
     ]);
-    expect((await db.query('SELECT * FROM corner_owed')).rows).toEqual(owed);
+    expect((await readOwed()).rows).toEqual(owed);
     expect((await db.query('SELECT * FROM room_read_marks')).rows).toEqual(readMarks);
     // The release removes stored rosters after preserving sparse preferences.
     await migrate(db);
@@ -165,7 +168,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       daemon.execute('listEventSubscriptions', { roomId: corner }, agent),
     ).rejects.toThrow();
     expect(await resolveCurrentMemberMentions(db, corner, '@agent hello', person)).toEqual([]);
-    expect((await db.query('SELECT * FROM corner_owed')).rowCount).toBe(0);
+    expect((await readOwed()).rowCount).toBe(0);
     await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1', [room]);
     expect(await daemon.execute('listEventSubscriptions', { roomId: corner }, agent)).toEqual({
       kinds: ['schedule-ran'],

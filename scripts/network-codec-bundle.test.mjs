@@ -31,8 +31,10 @@ test('trusted phone owner excludes daemon/response registries within its bundle 
     assert.doesNotMatch(file, /generated-wire-shapes|generated-phone-input-shapes|route-codecs|routes\.ts$/);
   assert.ok(Object.keys(result.metafile.inputs).includes('packages/net/src/private/generated-owner-input-shapes.ts'));
   const bytes = result.outputFiles[0].contents;
-  assert.ok(bytes.length <= 64 * 1024, `owner bundle grew to ${bytes.length} bytes`);
-  assert.ok(gzipSync(bytes).length <= 16 * 1024, 'owner gzip budget exceeded');
+  // Owner decision 2026-11-02 (instruction 034): measured full phone core
+  // plus fixed margin. This remains a hard aggregate consumer limit.
+  assert.ok(bytes.length <= 90112, `owner bundle grew to ${bytes.length} bytes`);
+  assert.ok(gzipSync(bytes).length <= 24576, 'owner gzip budget exceeded');
 });
 
 

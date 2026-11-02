@@ -115,3 +115,16 @@ has 260 nodes. The difference includes main's existing removal of the fallback
 reviewer enum. Each branch is generated from its own authoritative types.
 Combined helper6, consumer bundle3, net build/types, codegen freshness and the
 router158/phone72 scanner gates pass. The staged full phone gate still fails.
+
+## Owner decision, instruction 034
+
+The owner selected a new hard phone-consumer limit of **90112 raw / 24576 gzip**
+bytes (measured complete staged core plus fixed margin). Helper limits remain
+**65536 / 16384**, and the input-observer limits remain **32768 / 8192**. This
+explicit decision supersedes the earlier phone-size blocker. The full staged
+phone measures 81850 / 23444 and fits; future growth still fails the gate.
+
+Keep the consumer split: it removes the unused full registry from helper builds.
+Do not adopt the diagnostic-code or transition-table prototypes: neither made
+the implementation simpler. Their production source was never retained.
+This resolves only the bundle gate, not cohort, migration or T7 closure.

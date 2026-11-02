@@ -128,6 +128,11 @@
       "types": "./dist/helper-turn-ownership.d.ts",
       "import": "./dist/helper-turn-ownership.js",
       "default": "./dist/helper-turn-ownership.js"
+    },
+    "./helper-model-receipt": {
+      "types": "./dist/helper-model-receipt.d.ts",
+      "import": "./dist/helper-model-receipt.js",
+      "default": "./dist/helper-model-receipt.js"
     }
   },
   "scripts": {

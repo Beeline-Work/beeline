@@ -1,4 +1,5 @@
 import type { CommandActivationInput, CommandActivationSnapshot } from './helper-activation.js';
+import type { OwnedModelCredential } from './helper-model.js';
 import type { UsageAccountPublicationResult, UsageAccountReference, UsageWriteSource } from './helper-usage.js';
 import type { TurnReplay } from './turn-replay.js';
 import type { SquireApprovalDetails } from './approval-copy.js';
@@ -319,7 +320,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly modelCredential?: OwnedModelCredential; readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;

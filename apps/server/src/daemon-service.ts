@@ -1,5 +1,6 @@
 import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, ownedTurnOperationSupported, registerOwnedEffectFence } from './turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
+import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
@@ -421,7 +422,40 @@ class AccessDeniedError extends Error {
   }
 }
 
+declare const ownedModelClaimBrand: unique symbol;
+/** Process-local negotiated registration capability. Never a request argument
+ * on the wire, bearer, activation snapshot or client held-state record. */
+export type OwnedModelClaimCapability = Readonly<{ readonly [ownedModelClaimBrand]: true }>;
+type OwnedModelConfiguration = Readonly<{ credentials: OwnedModelCredentials; ready(): boolean }>;
+export type OwnedModelNegotiation = Readonly<{ freeAgent: boolean; capability?: OwnedModelClaimCapability }>;
+
 export class DaemonService {
+  private ownedModel?: OwnedModelConfiguration;
+  private readonly modelClaims = new WeakMap<object, { agentId: string; source: HelperTurnOwnershipSource; configuration: OwnedModelConfiguration }>();
+  /** Root installs this only after schema/signer/helper rollout proof. Absent
+   * configuration keeps free-agent claims on their existing legacy path. */
+  setOwnedModel(configuration: OwnedModelConfiguration | undefined): void { this.ownedModel = configuration; }
+  ownedModelReady(): boolean { return this.ownedModel?.ready() === true; }
+
+  async negotiateOwnedModel(agentId: string, source: HelperTurnOwnershipSource, installed: boolean): Promise<OwnedModelNegotiation> {
+    const free = (await this.database.query<{ eligible: boolean }>(`SELECT removed_at IS NULL AND state='running'
+      AND model_token_hash IS NOT NULL eligible FROM free_agents WHERE agent_id=$1`, [agentId])).rows[0];
+    if (!free) return { freeAgent: false };
+    const configuration = this.ownedModel;
+    if (!installed || !free.eligible || !configuration?.ready()) return { freeAgent: true };
+    await assertCurrentTurnOwner(this.database, agentId, source);
+    const capability = Object.freeze({}) as OwnedModelClaimCapability;
+    this.modelClaims.set(capability, { agentId, source: Object.freeze({ ...source }), configuration });
+    return { freeAgent: true, capability };
+  }
+
+  private modelClaimCredentials(capability: OwnedModelClaimCapability | undefined, agentId: string,
+    source: HelperTurnOwnershipSource): OwnedModelCredentials {
+    const claim = capability && this.modelClaims.get(capability), configuration = this.ownedModel;
+    if (!claim || !configuration || claim.configuration !== configuration || !configuration.ready() || claim.agentId !== agentId ||
+        claim.source.connectionId !== source.connectionId || claim.source.epoch !== source.epoch) throw new OwnedModelRefusal();
+    return configuration.credentials;
+  }
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
@@ -544,6 +578,7 @@ export class DaemonService {
     input: Input<Name>,
     authenticatedAgentId: string,
     turnOwner?: HelperTurnOwnershipSource,
+    modelClaim?: OwnedModelClaimCapability,
   ): Promise<Output<Name>> {
     if (turnOwner && name !== 'claimAgentCommand' && name !== 'postAgentTurnReceipt' && name !== 'acknowledgeAgentCommand' && name !== 'getAgentCommands')
       throw new Error('Turn ownership operation unavailable');
@@ -1352,18 +1387,26 @@ export class DaemonService {
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
             String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '', turnOwner)
             .catch((error: unknown) => {
+              if (isOwnedModelUnknownGenerationError(error)) throw new OwnedModelUnknownGeneration();
               // Commit stale cancellations before refusing a cached helper claim.
               if (error instanceof StaleWakeClaimRefused) return error;
               throw error;
             });
           if (row instanceof StaleWakeClaimRefused) return row;
+          let modelCredential: Awaited<ReturnType<OwnedModelCredentials['issueInTransaction']>> | undefined;
+          if (turnOwner && (row.action === 'input' || row.action === 'resume') &&
+              (await db.query('SELECT 1 FROM free_agents WHERE agent_id=$1', [authenticatedAgentId])).rowCount) {
+            const credentials = this.modelClaimCredentials(modelClaim, authenticatedAgentId, turnOwner);
+            modelCredential = await credentials.issueInTransaction(db, { agentId: authenticatedAgentId, commandId: row.id,
+              generationId: row.generation_id!, source: turnOwner });
+          }
           const activity = row.reason === 'computer_activity' ? (await db.query<{
             text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
           }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
           const source = row.coalesced_context !== null && row.coalesced_context !== undefined
             ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, [row.id])).commands[0]?.source
             : undefined;
-          return { row, activity, source };
+          return { row, activity, source, modelCredential };
         });
         if (claimed instanceof StaleWakeClaimRefused) {
           claimed.log();
@@ -1371,6 +1414,7 @@ export class DaemonService {
         }
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
+          ...(claimed.modelCredential ? { modelCredential: claimed.modelCredential } : {}),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
           ...(claimed.row.coalesced_context !== null && claimed.row.coalesced_context !== undefined
             ? { coalescedContext: claimed.row.coalesced_context } : {}),

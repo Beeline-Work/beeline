@@ -1,3 +1,5 @@
+import { encodeOwnedModelReceipt } from '@beeline/api-contract/helper-model-receipt';
+import { OwnedModelStream } from './owned-model-stream.js';
 import { commandOwnerLiveSql } from './turn-ownership.js';
 import { freeAgentModelTakesImages, imageInput, withoutImageData } from './free-agent-image-input.js';
 import { Writable } from 'node:stream';
@@ -9,7 +11,7 @@ import { warnFreeAgentOwner } from './free-agent-warning.js';
 import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-agents.js';
 import { FreeAgentPromptCache, promptTextBytes } from './free-agent-prompt-budget.js';
 import { OwnedModelAttempts, OwnedModelUnknownPayload, type OwnedModelAttemptReceipt, type OwnedModelEvidence, type OwnedModelReservation } from './owned-model-attempt.js';
-import { OwnedModelCredentials, type AuthenticatedOwnedModel } from './owned-model-credential.js';
+import { OwnedModelCredentials, OwnedModelUnknownGeneration, type AuthenticatedOwnedModel } from './owned-model-credential.js';
 import { CommandRefusalError } from './command-refusal.js';
 
 const promptCache = new FreeAgentPromptCache();
@@ -565,7 +567,8 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     });
   } catch (error) {
     if (error instanceof CommandRefusalError) sendJson(response, error.status, { error: {
-      code: error instanceof OwnedModelAllowanceRefusal ? 'owned_model_allowance' : error instanceof OwnedModelUnknownPayload ? 'owned_model_unknown' : 'owned_model_refused', message: error.message,
+      code: error instanceof OwnedModelAllowanceRefusal ? 'owned_model_allowance' :
+        error instanceof OwnedModelUnknownPayload || error instanceof OwnedModelUnknownGeneration ? 'owned_model_unknown' : 'owned_model_refused', message: error.message,
     } });
     else sendJson(response, 503, { error: { code: 'owned_model_unknown', message: 'Model request admission is uncertain; do not resubmit.' } });
     return true;
@@ -618,21 +621,28 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
       return true;
     }
     if (!upstream.body) { ownedOutcome(response, admitted.receipt); return true; }
-    const reader = upstream.body.getReader(), decoder = new TextDecoder(), usage = new StreamUsageReader();
-    let whole = '', bytes = 0, complete = false, reported: Usage | undefined;
+    const reader = upstream.body.getReader(), decoder = new TextDecoder(), usage = new StreamUsageReader(), filtered = new OwnedModelStream();
+    let whole = '', bytes = 0, complete = false, reported: Usage | undefined, answer: Record<string, unknown> | undefined;
+    let receipt: OwnedModelAttemptReceipt | undefined;
     response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' });
     try {
       for (;;) {
         const next = await waitOwned(reader.read(), abort.signal); if (next.done) { complete = true; break; }
         bytes += next.value.byteLength; if (bytes > MAX_REQUEST_BYTES) throw new Error('Owned model response exceeds capacity');
         const text = decoder.decode(next.value, { stream: true });
-        if (stream) usage.push(text); else whole += text;
-        response.write(next.value);
+        if (stream) {
+          usage.push(text);
+          for (const frame of filtered.push(text)) response.write(frame);
+        } else whole += text;
       }
-      if (stream) { reported = usage.usage; complete &&= usage.done; }
-      else {
-        const result = JSON.parse(whole) as { usage?: Usage; choices?: unknown };
-        reported = result.usage; complete &&= Array.isArray(result.choices);
+      const trailing = decoder.decode();
+      if (stream) {
+        usage.push(trailing); for (const frame of filtered.push(trailing)) response.write(frame);
+        reported = usage.usage; complete &&= filtered.complete();
+      } else {
+        answer = JSON.parse(whole + trailing) as Record<string, unknown>;
+        if (!answer || typeof answer !== 'object' || Array.isArray(answer)) throw new Error('Invalid owned model answer');
+        delete answer.id; reported = answer.usage as Usage | undefined; complete &&= Array.isArray(answer.choices);
       }
     } catch { complete = false; }
     finally { if (!complete) { abort.abort(); void reader.cancel().catch(() => {}); } reader.releaseLock(); }
@@ -641,14 +651,19 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     // A usage object before a lost delimiter does not prove final billing.
     if (observed && complete && !abort.signal.aborted) {
       try {
-        await attempts.settleUsage(actor, id, observed, 'succeeded', settle);
+        receipt = await attempts.settleUsage(actor, id, observed, 'succeeded', settle);
         promptCache.observe(cacheKey, cacheBody, Math.min(Math.max(0, Number((reported ?? usage.usage)?.prompt_tokens) || 0),
           Math.max(0, Number((reported ?? usage.usage)?.prompt_tokens_details?.cached_tokens) || 0)), now.getTime());
       } catch { complete = false; }
     }
     // Even a clean stream without valid usage leaves conservative UNKNOWN and
     // its original reservation. A lost answer is never reconstructed/replayed.
-    if (!complete) response.destroy(); else response.end();
+    if (!complete || !receipt || receipt.state !== 'succeeded') response.destroy();
+    else {
+      const terminal = encodeOwnedModelReceipt(token, receipt);
+      if (stream) response.end(filtered.terminal(terminal));
+      else response.end(JSON.stringify({ ...answer, id: terminal }));
+    }
     return true;
   } finally {
     clearTimeout(timer); response.removeListener('close', close); release?.();

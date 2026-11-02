@@ -74,9 +74,16 @@ export type OwnedModelKeyring = Readonly<{
 export class OwnedModelRefusal extends CommandRefusalError {
   constructor() { super('Owned model authority is unavailable', 403); }
 }
+export const OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE = 'Owned model outcome UNKNOWN blocks a new command generation';
 export class OwnedModelUnknownGeneration extends CommandRefusalError {
   readonly state = 'unknown';
-  constructor() { super('This command has a prior model outcome UNKNOWN; do not start another generation.', 409); }
+  constructor() { super(OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE, 409); }
+}
+/** Exact persisted floor refusal, including legacy SQL callers that do not
+ * know the credential adapter. Never reinterpret another constraint failure. */
+export function isOwnedModelUnknownGenerationError(error: unknown): boolean {
+  return error instanceof OwnedModelUnknownGeneration || Boolean(error && typeof error === 'object' &&
+    (error as { code?: unknown }).code === '23514' && (error as { message?: unknown }).message === OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE);
 }
 const scalar = (value: unknown, max = 256): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -196,7 +203,7 @@ export class OwnedModelCredentials {
         value.agentModel !== current.agent_model || value.modelTokenHash !== current.model_token_hash ||
         value.expiresMs <= Number(current.now_ms) || !fixedEqual(Buffer.from(hash(token), 'hex'), Buffer.from(row.token_hash, 'hex')))
       throw new OwnedModelRefusal();
-    return Object.freeze({ v: 1, token, expiresAt: value.expiresMs / 1000 });
+    return Object.freeze({ v: 1, token, expiresAt: Math.floor(value.expiresMs / 1000) });
   }
 
   async authenticate(database: SqlDatabase, token: string): Promise<AuthenticatedOwnedModel> {

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
-import { OwnedModelCredentials, OwnedModelUnknownGeneration } from './owned-model-credential.js';
+import { OwnedModelCredentials, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-credential.js';
 import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './test-fixtures/owned-model.js';
 import { ROUTER_AUTHORITY_LOCK, ROUTER_PROJECTION_SCHEMA } from './router-projection-schema.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
@@ -270,6 +270,7 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
       const owner = new OwnedModelAttempts(f.left, f.credentials);
       first = owner.reserve(f.actor, ONE, payload(), async tx => { const value = await reserve(tx); reserved.resolve(); await release.promise; return value; });
       void first.catch(error => { early = error; reserved.resolve(); }); await reserved.promise; if (early) throw early;
+      const issue = vi.spyOn(f.credentials, 'issueInTransaction');
       next = f.right.transaction(async tx => {
         pid.resolve(Number((await tx.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid));
         await tx.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL WHERE id='synthetic-command'`);
@@ -278,8 +279,9 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
         return f.credentials.issueInTransaction(tx, { agentId: MODEL_AGENT, commandId: 'synthetic-command', generationId: 'next-generation',
           source: { connectionId: 'synthetic-connection', epoch: 1 } });
       });
-      const rejected = expect(next).rejects.toBeInstanceOf(OwnedModelUnknownGeneration);
+      const rejected = expect(next).rejects.toMatchObject({ code: '23514', message: OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE });
       await blocked(f.admin, await pid.promise); release.resolve(); expect((await first).permit).toBeDefined(); await rejected;
+      expect(issue).not.toHaveBeenCalled(); // persisted SQL floor protects old callers without this hook
       expect((await f.left.query('SELECT generation_id,state FROM agent_commands')).rows).toEqual([{ generation_id: 'synthetic-generation', state: 'claimed' }]);
       expect((await f.left.query(`SELECT 1 FROM agent_command_generation_owners WHERE generation_id='next-generation'`)).rowCount).toBe(0);
       expect((await f.left.query('SELECT * FROM owned_model_credentials')).rowCount).toBe(1);

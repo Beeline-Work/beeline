@@ -16,7 +16,7 @@ import type { WebSocket } from 'ws';
 import { isTransientDatabaseConnectionError } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { ConnectionPresence } from './connection-presence.js';
-import type { DaemonService } from './daemon-service.js';
+import type { DaemonService, OwnedModelClaimCapability } from './daemon-service.js';
 import type { HelperVersionGate } from './helper-version-gate.js';
 import { helperVersionBelowMinimum } from './helper-version-gate.js';
 import type { LiveHub, LiveTrace } from './live.js';
@@ -132,6 +132,7 @@ export class DaemonAgentSession {
   #claimed = false;
   #forUpdate = false;
   #turnOwnershipAccepted = false;
+  #ownedModelCapability?: OwnedModelClaimCapability;
   readonly #projections = new Set<Promise<unknown>>();
   #checkpointPending = false;
 
@@ -141,6 +142,7 @@ export class DaemonAgentSession {
   get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
   get activationContextV1():boolean{return this.presence.activationContextV1===true&&helperActivationEnabled()&&this.epoch!==undefined;}
   get turnOwnershipV1():boolean{return this.#turnOwnershipAccepted&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
+  get ownedModelV1():boolean{return this.turnOwnershipV1&&this.#ownedModelCapability!==undefined&&this.deps.daemon.ownedModelReady();}
 
   constructor(
     private readonly deps: DaemonLiveDependencies,
@@ -154,6 +156,7 @@ export class DaemonAgentSession {
       usageAccountV1?:boolean;
       activationContextV1?:boolean;
       turnOwnershipV1?:boolean;
+      ownedModelV1?:boolean;
     } = {},
   ) {
     const { live, database } = deps;
@@ -279,7 +282,11 @@ export class DaemonAgentSession {
         return;
       }
       this.epoch = epoch;
-      this.#turnOwnershipAccepted = this.presence.turnOwnershipV1 === true && turnOwnershipEnabled();
+      const requested = this.presence.turnOwnershipV1 === true && turnOwnershipEnabled();
+      const model = requested ? await this.deps.daemon.negotiateOwnedModel(this.agentId,
+        { connectionId: this.connectionId, epoch }, this.presence.ownedModelV1 === true) : undefined;
+      this.#ownedModelCapability = model?.capability;
+      this.#turnOwnershipAccepted = requested && (model?.freeAgent !== true || model.capability !== undefined);
       this.deps.registry.settled(this);
       if(this.presence.usageAccountV1&&helperUsageEnabled())this.usageOwnerId=(await this.deps.database.query<{owner_id:string|null}>(
         'SELECT owner_id FROM agents WHERE agent_id=$1',[this.agentId])).rows[0]?.owner_id??undefined;
@@ -358,6 +365,7 @@ export class DaemonAgentSession {
     if (this.#closed) return;
     this.#forUpdate = forUpdate;
     this.#closed = true;
+    this.#ownedModelCapability = undefined;
     for (const release of this.#wakeReleases.splice(0)) release();
     for (const release of this.#releases.values()) release();
     this.#releases.clear();
@@ -388,7 +396,7 @@ export class DaemonAgentSession {
         const input = helperTurnCodecs(operation).params.parse(item.input);
         if ('agentId' in input && input.agentId !== this.agentId) throw new Error('Turn registration mismatch');
         const source = { connectionId: this.connectionId, epoch: this.epoch };
-        const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source));
+        const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source, this.#ownedModelCapability));
         const reply = { type: 'turn-result', requestId: item.requestId, result };
         if (Buffer.byteLength(JSON.stringify(reply)) > HELPER_TURN_MAX_FRAME_BYTES) throw new Error('Turn reply capacity');
         await this.deps.daemon.fenceOwnedTurnReply(this.agentId, source, input, () => {
@@ -906,6 +914,7 @@ export function serveMachineSocket(
           ...(item.usageAccountV1===true?{usageAccountV1:true}:{}),
           ...(item.activationContextV1===true?{activationContextV1:true}:{}),
           ...(item.turnOwnershipV1===true?{turnOwnershipV1:true}:{}),
+          ...(item.ownedModelV1===true?{ownedModelV1:true}:{}),
         },
       );
       sessions.set(agentId, session);
@@ -921,6 +930,7 @@ export function serveMachineSocket(
         agentId,
         capabilities: { initialSnapshotsV1: true, discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true && !session.turnOwnershipV1,
           ...(session.turnOwnershipV1 ? {turnOwnershipV1:true,turnConnectionId:session.connectionId,turnConnectionEpoch:session.epoch} : {}),
+          ...(session.ownedModelV1 ? {ownedModelV1:true} : {}),
           ...(session.overlayV1?{overlayV1:true}:{}),
           ...(session.activationContextV1?{activationContextV1:true,activationConnectionId:session.connectionId,activationConnectionEpoch:session.epoch}:{}),
           ...(session.usageAccountV1?{usageAccountV1:true,usageOwnerId:session.usageOwnerId,usageConnectionId:session.connectionId,usageConnectionEpoch:session.epoch}:{}) },

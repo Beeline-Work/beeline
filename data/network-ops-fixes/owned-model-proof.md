@@ -31,3 +31,31 @@ retry ownership; pinned image modality evidence (current path is text-only);
 current-authority owner-warning delivery; permanent-record storage policy and
 whole-workload/WAL/compatibility proofs. These tests do not close the complete
 model-route finding or authorize rollout.
+
+## Unselected claim and terminal continuation evidence
+
+The real negotiated claim transaction can issue a bounded generation credential;
+registration carries only capability evidence, and Stop/ack replies carry no
+bearer. An additive generation-write floor prevents legacy claim paths from
+bypassing a prior UNKNOWN. Claim7/socket4, credential19/attempt13/PostgreSQL11
+and strict helper-turn codec3 passed before terminal transport integration.
+
+Selected model responses now strip every upstream completion ID and withhold
+finish/DONE until the actual settlement transaction commits. A bounded HMAC
+receipt binds the request, credential and durable usage outcome. JSON is bounded
+and held until commit too. Stream4 and actual HTTP/quota16 pass, including actual
+rollback and missing terminal delimiter; no answer or credential enters the
+attempt ledger. The existing legacy provider path remains unchanged.
+
+The new uninstalled Body files owner uses immutable private generation files,
+a bounded durable request journal and exclusive admission. Only authenticated
+success can clear UNKNOWN. The supported Pi extension denies before fallible
+header work, replaces unproven completion with an error before tool execution,
+and disables both retry layers. Receipt codec10, private files19, actual pinned
+Pi10 and Body/server typechecks pass. Synthetic loopback tests use isolated
+credentials and resources; they cover caught/absent hooks, forged/first IDs,
+EOF, 429/500 and transport loss without tools or dependent provider attempts.
+
+Actual Body generation lifecycle/configuration integration, installed cohort
+negotiation, source/migration floors, images and cost gates remain OPEN. These
+leaves are not installed or selected in production and close no whole finding.

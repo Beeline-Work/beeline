@@ -1,7 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from './database.js';
-import { OwnedModelCredentials, OwnedModelUnknownGeneration } from './owned-model-credential.js';
+import { OwnedModelCredentials, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-credential.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { MODEL_AGENT, MODEL_CLAIM, MODEL_KEY, MODEL_ROOM, MODEL_SOURCE, ownedModelFixture } from './test-fixtures/owned-model.js';
 
@@ -100,7 +100,7 @@ describe('opaque immutable owned-model credential primitive', () => {
       await tx.query(`UPDATE agent_commands SET state='claimed',generation_id='next-generation',claimed_at=clock_timestamp(),
         turn_owner_connection_id=$2,turn_owner_epoch=$3 WHERE id=$1`, [MODEL_CLAIM.commandId, MODEL_SOURCE.connectionId, MODEL_SOURCE.epoch]);
       return credentials.issueInTransaction(tx, { ...MODEL_CLAIM, generationId: 'next-generation' });
-    })).rejects.toBeInstanceOf(OwnedModelUnknownGeneration);
+    })).rejects.toMatchObject({ code: '23514', message: OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE });
     expect((await db.query(`SELECT state,generation_id FROM agent_commands WHERE id=$1`, [MODEL_CLAIM.commandId])).rows)
       .toEqual([{ state: 'pending', generation_id: null }]);
     expect((await db.query(`SELECT 1 FROM agent_command_generation_owners WHERE generation_id='next-generation'`)).rowCount).toBe(0);

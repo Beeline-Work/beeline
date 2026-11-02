@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
-import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, type AuthenticatedOwnedModel, type OwnedModelBinding } from './owned-model-credential.js';
+import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE, type AuthenticatedOwnedModel, type OwnedModelBinding } from './owned-model-credential.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { assertCurrentTurnOwner } from './turn-ownership.js';
 
@@ -38,6 +38,24 @@ END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS beeline_owned_model_attempt_immutable ON owned_model_attempts;
 CREATE TRIGGER beeline_owned_model_attempt_immutable BEFORE UPDATE OR DELETE ON owned_model_attempts
  FOR EACH ROW EXECUTE FUNCTION beeline_owned_model_attempt_immutable();
+-- Once installed, this meaning survives admission-off or an older compatible
+-- caller. Legacy model tokens cannot reclaim a new generation to evade UNKNOWN.
+-- Pending requeue, Stop, exact current recovery and ordinary progress remain legal.
+CREATE OR REPLACE FUNCTION beeline_fence_unknown_model_generation() RETURNS trigger AS $$
+BEGIN
+ IF NEW.action IN ('input','resume') AND NEW.state='claimed' AND
+   (TG_OP='INSERT' OR ROW(NEW.state,NEW.generation_id,NEW.turn_owner_connection_id,NEW.turn_owner_epoch,NEW.action)
+     IS DISTINCT FROM ROW(OLD.state,OLD.generation_id,OLD.turn_owner_connection_id,OLD.turn_owner_epoch,OLD.action)) AND
+   EXISTS(SELECT 1 FROM owned_model_attempts attempt WHERE attempt.command_id=NEW.id AND attempt.state='unknown'
+     AND attempt.generation_id IS DISTINCT FROM NEW.generation_id) THEN
+   RAISE EXCEPTION '${OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE}' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS beeline_fence_unknown_model_generation ON agent_commands;
+CREATE TRIGGER beeline_fence_unknown_model_generation
+ BEFORE INSERT OR UPDATE OF state,generation_id,turn_owner_connection_id,turn_owner_epoch,action ON agent_commands
+ FOR EACH ROW EXECUTE FUNCTION beeline_fence_unknown_model_generation();
 `;
 
 /** Canonical server-pinned semantic input/final payload. Only digests reach

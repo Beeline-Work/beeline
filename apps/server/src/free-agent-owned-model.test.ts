@@ -1,3 +1,4 @@
+import { readOwnedModelReceipt } from '@beeline/api-contract/helper-model-receipt';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -126,10 +127,49 @@ describe('actual owned model endpoint and actual quota adapter', () => {
 
   it('keeps the conservative reservation when a complete answer has no valid usage', async () => {
     reply = () => Response.json({ choices: [{ message: { role: 'assistant', content: 'synthetic answer without billing evidence' } }] });
-    const first = await call(); expect(first.status).toBe(200); await first.text();
+    await call().then(response=>response.text()).catch(()=>{});
     expect((await f.db.query('SELECT state,evidence FROM owned_model_attempts')).rows).toEqual([{ state: 'unknown', evidence: null }]);
     expect(Number((await counters()).usage[0]?.tokens)).toBeGreaterThan(0);
     expect((await f.db.query(`SELECT kind FROM free_agent_events WHERE kind='model_usage'`)).rowCount).toBe(0);
+  });
+
+  it('withholds SDK terminal evidence until the actual settlement transaction commits and strips every upstream ID', async () => {
+    const entered=deferred<void>(), release=deferred<void>();
+    options.database={query:(sql,args)=>f.db.query(sql,args),transaction:work=>f.db.transaction(tx=>work({
+      transaction:nested=>tx.transaction(nested),query:async(sql,args)=>{
+        const result=await tx.query(sql,args);
+        if(sql.includes('UPDATE owned_model_attempts SET')){entered.resolve();await release.promise;}
+        return result;
+      },
+    }))};
+    reply=()=>new Response('data: {"id":"forged-first","choices":[{"delta":{"content":"synthetic"},"finish_reason":null}]}\n\n'+
+      'data: {"id":"forged-last","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"cost":0.00002}}\n\n'+
+      'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
+    const response=await call({...input,stream:true}),reader=response.body!.getReader();
+    try{
+      const first=await reader.read();const before=new TextDecoder().decode(first.value);await entered.promise;
+      expect(before).not.toContain('forged');expect(before).not.toContain('bfmr_');expect(before).not.toContain('[DONE]');
+      release.resolve();let tail='';for(;;){const next=await reader.read();if(next.done)break;tail+=new TextDecoder().decode(next.value);}
+      const frames=tail.split('\n').filter(line=>line.startsWith('data: {')).map(line=>JSON.parse(line.slice(6)));
+      const receipt=frames.find(frame=>frame.id)?.id;
+      expect(readOwnedModelReceipt(receipt,f.issued.token,ONE)).toMatchObject({requestId:ONE,state:'succeeded',evidence:{kind:'usage',tokens:13}});
+      expect(readOwnedModelReceipt(receipt,f.issued.token,TWO)).toBeNull();expect(tail).toContain('[DONE]');
+    }finally{release.resolve();reader.releaseLock();}
+  });
+
+  it.each(['missing-done','settlement-failure'])('emits no terminal receipt for %s even after a provider finish',async mode=>{
+    if(mode==='settlement-failure')options.database={query:(sql,args)=>f.db.query(sql,args),transaction:work=>f.db.transaction(tx=>work({
+      transaction:nested=>tx.transaction(nested),query:(sql,args)=>sql.includes('UPDATE owned_model_attempts SET')?
+        Promise.reject(new Error('synthetic settlement rollback')):tx.query(sql,args),
+    }))};
+    reply=()=>new Response('data: {"id":"forged","choices":[{"delta":{"content":"synthetic"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"cost":0.00002}}\n\n'+
+      (mode==='missing-done'?'':'data: [DONE]\n\n'),{headers:{'content-type':'text/event-stream'}});
+    let observed='';await call({...input,stream:true}).then(async response=>{const reader=response.body!.getReader();
+      try{for(;;){const next=await reader.read();if(next.done)break;observed+=new TextDecoder().decode(next.value);}}finally{reader.releaseLock();}
+    }).catch(()=>{});
+    expect(observed).not.toContain('bfmr_');expect(observed).not.toContain('[DONE]');expect(observed).not.toContain('forged');
+    expect((await f.db.query('SELECT state,evidence FROM owned_model_attempts')).rows).toEqual([{state:'unknown',evidence:null}]);
+    expect(calls).toHaveLength(1);
   });
 
   it('keeps the selected text-only cohort explicit without image metadata reads or quota admission', async () => {

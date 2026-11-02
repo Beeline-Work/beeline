@@ -8452,7 +8452,7 @@ export class PhoneService {
          WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
         [gone, DELETED_ACCOUNT_IDENTITY_ID],
       );
-      // Corner records, workflow transfers and installed apps are shared
+      // Corner records and installed apps are shared
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
         ['messages', 'deleted_by'],
@@ -8467,9 +8467,6 @@ export class PhoneService {
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
         ['corner_merge_holds', 'set_by_agent_id'],
-        ['workflow_owner_transfers', 'actor_id'],
-        ['workflow_owner_transfers', 'previous_owner_id'],
-        ['workflow_owner_transfers', 'new_owner_id'],
       ])
         if ((await database.query<{ present: boolean }>(`SELECT to_regclass($1) IS NOT NULL present`, [table])).rows[0]!.present)
           await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
@@ -8529,7 +8526,6 @@ export class PhoneService {
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_mandates WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM permission_authority WHERE principal_id=ANY($1)`, [gone]);
-      await database.query(`DELETE FROM mission_authority WHERE principal_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [gone]);
       await database.query(`DELETE FROM invites WHERE created_by=ANY($1)`, [gone]);
       await database.query(

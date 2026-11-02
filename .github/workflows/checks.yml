@@ -83,7 +83,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 # Superseded PR heads cancel here; dispatch and merge-group runs stay independent.
 concurrency:
@@ -398,9 +397,6 @@ jobs:
       - name: Keep each module's sinks in their owner files
         env:
           ARCHITECTURE_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
-          ARCHITECTURE_PR: ${{ github.event.pull_request.number }}
-          ARCHITECTURE_HEAD: ${{ github.event.pull_request.head.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
           node --test scripts/check-architecture.test.mjs
@@ -412,7 +408,7 @@ jobs:
               git show "$ARCHITECTURE_BASE:scripts/$file" > "$runner/$file" 2>/dev/null || rm -f "$runner/$file"
             done
           fi
-          if [ -n "$ARCHITECTURE_PR" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             node "$runner/check-architecture.mjs" --root . --base "$ARCHITECTURE_BASE"
           else
             node "$runner/check-architecture.mjs" --root .

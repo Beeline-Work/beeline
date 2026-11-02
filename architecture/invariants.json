@@ -237,8 +237,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1889,
-    "unusedTotal": 260,
+    "bootstrapTotal": 1806,
+    "unusedTotal": 191,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -513,7 +513,6 @@
           "model_catalog": "existing before the registry; weekly audit reviews",
           "model_unavailable": "existing before the registry; weekly audit reviews",
           "commands": "existing before the registry; weekly audit reviews",
-          "schedule_ids": "existing before the registry; weekly audit reviews",
           "yolo_mode": "existing before the registry; weekly audit reviews",
           "yolo_set_by": "existing before the registry; weekly audit reviews",
           "yolo_set_at": "existing before the registry; weekly audit reviews",
@@ -561,38 +560,6 @@
           "created_at": "existing before the registry; weekly audit reviews"
         }
       },
-      "beeline_agent_pairing_claim_memberships": {
-        "module": "Agent types",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "token_hash": "existing before the registry; weekly audit reviews",
-          "community_id": "existing before the registry; weekly audit reviews",
-          "channel_id": "existing before the registry; weekly audit reviews",
-          "agent_pubkey": "existing before the registry; weekly audit reviews",
-          "joined_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "beeline_agent_pairing_claims": {
-        "module": "Agent types",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "token_hash": "existing before the registry; weekly audit reviews",
-          "community_id": "existing before the registry; weekly audit reviews",
-          "workspace_id": "existing before the registry; weekly audit reviews",
-          "minter_pubkey": "existing before the registry; weekly audit reviews",
-          "agent_pubkey": "existing before the registry; weekly audit reviews",
-          "claimed_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "beeline_materializer_reservations": {
-        "module": "Operations and release",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "consumer": "existing before the registry; weekly audit reviews",
-          "state": "existing before the registry; weekly audit reviews",
-          "updated_at": "existing before the registry; weekly audit reviews"
-        }
-      },
       "beeline_release_steps": {
         "module": "Operations and release",
         "reason": "existing before the registry; weekly audit reviews",
@@ -600,18 +567,6 @@
           "name": "existing before the registry; weekly audit reviews",
           "completed_at": "existing before the registry; weekly audit reviews",
           "detail": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "beeline_room_read_marks": {
-        "module": "Access and membership",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "community_id": "existing before the registry; weekly audit reviews",
-          "room_id": "existing before the registry; weekly audit reviews",
-          "viewer_pubkey": "existing before the registry; weekly audit reviews",
-          "message_created_at": "existing before the registry; weekly audit reviews",
-          "message_id": "existing before the registry; weekly audit reviews",
-          "updated_at": "existing before the registry; weekly audit reviews"
         }
       },
       "chat_dismissals": {
@@ -734,7 +689,8 @@
           "finished_at": "existing before the registry; weekly audit reviews",
           "last_error": "existing before the registry; weekly audit reviews",
           "require_containment": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_brief_revisions": {
         "module": "Corner state machine",
@@ -769,21 +725,45 @@
           "commissioned_by": "existing before the registry; weekly audit reviews",
           "objective": "existing before the registry; weekly audit reviews",
           "lifecycle": "existing before the registry; weekly audit reviews",
-          "plan": "existing before the registry; weekly audit reviews",
-          "request_id": "existing before the registry; weekly audit reviews",
-          "open_idempotency_key": "existing before the registry; weekly audit reviews",
-          "feature_branch": "existing before the registry; weekly audit reviews",
-          "close_requested": "existing before the registry; weekly audit reviews",
+          "plan": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "request_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "open_idempotency_key": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "feature_branch": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "close_requested": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "kind": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews",
           "locked": "existing before the registry; weekly audit reviews",
           "worker_agent_id": "existing before the registry; weekly audit reviews",
-          "opened_from_corner_id": "existing before the registry; weekly audit reviews",
+          "opened_from_corner_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "workflow_state": "existing before the registry; weekly audit reviews",
           "workflow_outcome": "existing before the registry; weekly audit reviews",
-          "merge_attempt_head": "existing before the registry; weekly audit reviews",
+          "merge_attempt_head": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "reviewer_agent_id": "existing before the registry; weekly audit reviews",
-          "title_generated": "existing before the registry; weekly audit reviews"
+          "title_generated": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          }
         }
       },
       "corner_follows": {
@@ -861,7 +841,8 @@
           "created_at": "existing before the registry; weekly audit reviews",
           "message_id": "existing before the registry; weekly audit reviews",
           "commander_id": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_validation_stages": {
         "module": "Corner state machine",
@@ -921,16 +902,6 @@
           "device_id": "existing before the registry; weekly audit reviews",
           "receipt": "existing before the registry; weekly audit reviews",
           "reported_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "feedback_issue_comments": {
-        "module": "Rooms and messages",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "repository": "existing before the registry; weekly audit reviews",
-          "issue_number": "existing before the registry; weekly audit reviews",
-          "comment_id": "existing before the registry; weekly audit reviews",
-          "updated_at": "existing before the registry; weekly audit reviews"
         }
       },
       "feedback_items": {
@@ -1110,10 +1081,7 @@
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
           "delivery_id": "existing before the registry; weekly audit reviews",
-          "event_type": "existing before the registry; weekly audit reviews",
-          "payload": "existing before the registry; weekly audit reviews",
-          "received_at": "existing before the registry; weekly audit reviews",
-          "processed_at": "existing before the registry; weekly audit reviews"
+          "received_at": "existing before the registry; weekly audit reviews"
         }
       },
       "helper_release_notifications": {
@@ -1167,29 +1135,6 @@
           "provider": "existing before the registry; weekly audit reviews",
           "subject": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "import_items": {
-        "module": "Rooms and messages",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "import_id": "existing before the registry; weekly audit reviews",
-          "source_type": "existing before the registry; weekly audit reviews",
-          "source_id": "existing before the registry; weekly audit reviews",
-          "imported_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "import_runs": {
-        "module": "Rooms and messages",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "import_id": "existing before the registry; weekly audit reviews",
-          "source_fingerprint": "existing before the registry; weekly audit reviews",
-          "state": "existing before the registry; weekly audit reviews",
-          "checkpoint": "existing before the registry; weekly audit reviews",
-          "started_at": "existing before the registry; weekly audit reviews",
-          "completed_at": "existing before the registry; weekly audit reviews",
-          "error": "existing before the registry; weekly audit reviews"
         }
       },
       "institutional_context_serves": {
@@ -1467,18 +1412,6 @@
           "migrated_at": "existing before the registry; weekly audit reviews"
         }
       },
-      "legacy_room_events": {
-        "module": "Rooms and messages",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "id": "existing before the registry; weekly audit reviews",
-          "room_id": "existing before the registry; weekly audit reviews",
-          "kind": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews",
-          "raw_page_candidate": "existing before the registry; weekly audit reviews",
-          "conversation_candidate": "existing before the registry; weekly audit reviews"
-        }
-      },
       "link_oauth_accounts": {
         "module": "Tools and connectors",
         "reason": "existing before the registry; weekly audit reviews",
@@ -1612,18 +1545,6 @@
           "event_woken": "existing before the registry; weekly audit reviews",
           "agent_model": "existing before the registry; weekly audit reviews",
           "source_client": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "mission_authority": {
-        "module": "Work authority",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "mission_id": "existing before the registry; weekly audit reviews",
-          "room_id": "existing before the registry; weekly audit reviews",
-          "principal_id": "existing before the registry; weekly audit reviews",
-          "exercise": "existing before the registry; weekly audit reviews",
-          "status": "existing before the registry; weekly audit reviews",
-          "generation": "existing before the registry; weekly audit reviews"
         }
       },
       "mobile_store_minimums": {
@@ -1926,8 +1847,6 @@
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
           "device_token": "existing before the registry; weekly audit reviews",
-          "cleared_through": "existing before the registry; weekly audit reviews",
-          "cleared_through_room": "existing before the registry; weekly audit reviews",
           "sent_at": "existing before the registry; weekly audit reviews"
         }
       },
@@ -2029,7 +1948,10 @@
           "reviewer_agent_id": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews",
-          "reviewer_fallback_ids": "existing before the registry; weekly audit reviews"
+          "reviewer_fallback_ids": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          }
         }
       },
       "rooms_mcp_admission": {
@@ -2296,15 +2218,6 @@
           "singleton": "existing before the registry; weekly audit reviews",
           "last_wake_at": "existing before the registry; weekly audit reviews",
           "last_daily_wake_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "service_review_notice_deliveries": {
-        "module": "Operations and release",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "identity_id": "existing before the registry; weekly audit reviews",
-          "provider_id": "existing before the registry; weekly audit reviews",
-          "sent_at": "existing before the registry; weekly audit reviews"
         }
       },
       "service_review_visits": {
@@ -2610,19 +2523,6 @@
         "columns": {
           "name": "existing before the registry; weekly audit reviews",
           "completed_at": "existing before the registry; weekly audit reviews"
-        }
-      },
-      "workflow_owner_transfers": {
-        "module": "Saved workflows",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "id": "existing before the registry; weekly audit reviews",
-          "workflow_id": "existing before the registry; weekly audit reviews",
-          "room_id": "existing before the registry; weekly audit reviews",
-          "actor_id": "existing before the registry; weekly audit reviews",
-          "previous_owner_id": "existing before the registry; weekly audit reviews",
-          "new_owner_id": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews"
         }
       },
       "workspace_app_routes": {
@@ -2999,7 +2899,6 @@
       "soul": {},
       "model_catalog": {},
       "commands": {},
-      "schedule_ids": {},
       "usage_snapshot": {},
       "squire_report": {
         "reportedAt": "existing before the registry; weekly audit reviews"
@@ -3017,7 +2916,6 @@
       "chosen_voices": {
         "aura-2": "existing before the registry; weekly audit reviews"
       },
-      "state": {},
       "detail": {
         "usd": "existing before the registry; weekly audit reviews"
       },
@@ -3048,18 +2946,6 @@
       },
       "occurrences": {},
       "provider_identity": {},
-      "payload": {
-        "roomId": "existing before the registry; weekly audit reviews",
-        "cornerParentId": "existing before the registry; weekly audit reviews",
-        "workspaceId": "existing before the registry; weekly audit reviews",
-        "messageId": "existing before the registry; weekly audit reviews",
-        "agentId": "existing before the registry; weekly audit reviews",
-        "requestId": "existing before the registry; weekly audit reviews",
-        "traceId": "existing before the registry; weekly audit reviews",
-        "databaseAt": "existing before the registry; weekly audit reviews",
-        "identityId": "existing before the registry; weekly audit reviews"
-      },
-      "checkpoint": {},
       "dropped_counts": {},
       "proposal": {
         "source": "existing before the registry; weekly audit reviews"

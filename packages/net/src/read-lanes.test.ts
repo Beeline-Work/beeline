@@ -47,6 +47,23 @@ describe('local read lanes (P2)', () => {
     lanes.demand(request,{},permit);await drain();
     expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:2}});expect(reads).toBe(1);
   });
+  it('a Room head without an inactive source feed hides on departure and uses only a fresh focus miss',async()=>{
+    const room={family:'room-head',roomId:'room-a',workspaceId:'w'} as const;let reads=0;
+    const lanes=new ReadLanes(identity,()=>true);lanes.connected(1,['room-head'],async()=>({...snapshot(),value:{revision:++reads}}));
+    const release=lanes.demand(room,{},permit);await drain();expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:1}});
+    release();expect(lanes.peek(room)).toMatchObject({state:'PARKED',value:null,cut:null,error:expect.stringContaining('Retry')});
+    // Another Workspace batch says nothing about this filtered-out Room.
+    await lanes.accept({...batch(1,2),facts:[]});expect(reads).toBe(1);expect(lanes.peek(room).value).toBeNull();
+    lanes.demand(room,{},permit);expect(lanes.peek(room).value).toBeNull();await drain();
+    expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:2}});expect(reads).toBe(2);
+  });
+  it('healthy Room foreground observation reuses its token without a read and exposes the existing Retry',async()=>{
+    const room={family:'room-head',roomId:'room-a',workspaceId:'w'} as const,token={};let reads=0;
+    const lanes=new ReadLanes(identity,()=>true);lanes.connected(1,['room-head'],async()=>({...snapshot(),value:{revision:++reads}}));
+    const release=lanes.demand(room,token,permit);await drain();release();lanes.demand(room,token,permit);await drain();
+    expect(reads).toBe(1);expect(lanes.peek(room)).toMatchObject({state:'PARKED',value:null,error:expect.stringContaining('Retry')});
+    lanes.retry(room,permit);await drain();expect(reads).toBe(2);expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:2}});
+  });
   it('a real disconnected cache miss and a parked lane still require fresh owner admission',async()=>{
     let reads=0;const execute=async()=>{reads++;return snapshot(reads);};const lanes=setup(execute);
     let release=lanes.demand(request,{},permit);await drain();release();lanes.disconnected();

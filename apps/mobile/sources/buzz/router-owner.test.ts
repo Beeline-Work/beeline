@@ -213,3 +213,21 @@ it('retains committed profile selection before initialization and owns one cell 
   await routerOwnerNegotiated({ generation: 2, families: [], usageCellV1: true, executeUsageCell, execute: async () => snapshot() });
   await settle(); expect(executeUsageCell).toHaveBeenCalledTimes(2);
 });
+
+it('a healthy Room foreground resumes observation without a new pass and exposes explicit Retry for its unverified head',async()=>{
+  const room={family:'room-head' as const,roomId:'11111111-1111-4111-8111-111111111111',workspaceId:'w'};
+  const roomScopes=[...scopes,{authorityScope:'room:11111111-1111-4111-8111-111111111111',epoch:'1'}];
+  const current={...snapshot(),family:'room-head',scope:'11111111-1111-4111-8111-111111111111',value:{room:{id:'11111111-1111-4111-8111-111111111111'},messages:[]},
+    authority:{scopes:roomScopes,digest:hash(roomScopes)},atomicGroup:'room-head:room:ada'} as unknown as RouterSnapshot<'room-head'>;
+  const execute=vi.fn(async()=>current);
+  routerOwnerNavigation({routes:[{key:'room',name:'beeline/chat/[channelId]',params:{channelId:'11111111-1111-4111-8111-111111111111',communityId:'w'}}]});
+  const lane=acquireRouterLane(room,()=>true,()=>{});
+  await routerOwnerNegotiated({generation:1,families:['room-head'],execute});await settle();
+  expect(lane.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(1);
+  fixture.state='background';fixture.events.forEach(listener=>listener('background'));
+  fixture.state='active';fixture.events.forEach(listener=>listener('active'));await settle();
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(lane.current()).toMatchObject({state:'PARKED',value:null,error:expect.stringContaining('Retry')});
+  retryRouterLane(room);await settle();expect(execute).toHaveBeenCalledTimes(2);expect(lane.current().state).toBe('LIVE');
+  lane.release();
+});

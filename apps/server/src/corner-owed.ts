@@ -279,12 +279,12 @@ DECLARE corner uuid;
 BEGIN
   IF TG_TABLE_NAME='agent_commands' THEN
     IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' THEN RETURN NULL; END IF;
-    SELECT id INTO corner FROM rooms WHERE id::text=NEW.private_payload->>'fromRoomId';
+    SELECT id INTO corner FROM rooms WHERE NEW.private_payload->>'fromRoomId'=id::text;
   ELSE
     IF NEW.card_type='agent-command' AND NEW.card->>'kind'='report' THEN
       corner=NEW.room_id;
     ELSIF NEW.card->>'reportToId' IS NOT NULL THEN
-      SELECT id INTO corner FROM rooms WHERE id::text=${humanReportCornerSql('NEW')};
+      SELECT id INTO corner FROM rooms WHERE ${humanReportCornerSql('NEW')}=id::text;
     ELSE RETURN NULL;
     END IF;
   END IF;

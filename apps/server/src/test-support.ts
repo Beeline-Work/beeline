@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { ensureSystemIdentity } from './system-line.js';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
+import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -228,15 +229,16 @@ export async function recordCornerRun(
   db: SqlDatabase, cornerId: string, toState: string, outcome?: string,
 ): Promise<void> {
   await ensureSystemIdentity(db);
-  await db.query(
-    `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-     SELECT $1,corner.id,$5,'handed off','card','corner-workflow-handoff',
-       jsonb_build_object('runId',corner.id::text,'toState',$3::text,'outcome',$4::text,
-         'seq',COALESCE((SELECT max((card->>'seq')::int) FROM messages
-           WHERE room_id=corner.id AND card_type='corner-workflow-handoff'),0)+1)
-     FROM rooms corner WHERE corner.id=$2`,
-    [`run-${randomUUID()}`, cornerId, toState, outcome ?? null, SYSTEM_IDENTITY_ID],
-  );
+  const seq = (await db.query<{ seq: number }>(
+    `SELECT COALESCE(max((card->>'seq')::int),0)+1 seq FROM messages WHERE room_id=$1 AND card_type=$2`,
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
+  )).rows[0]!.seq;
+  await systemLine(db, {
+    roomId: cornerId, authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' },
+    verb: 'handed off', object: toState, presentation: 'card', cardType: CORNER_LIFECYCLE_CARD_TYPE,
+    card: { runId: cornerId, toState, outcome: outcome ?? null, seq },
+  });
 }
 
 /** Seed durable opening provenance without queueing work or a visible transcript. */

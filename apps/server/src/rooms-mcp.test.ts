@@ -2193,6 +2193,21 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       return (await db.query<{ worker_active: boolean }>(`SELECT activity.worker_active FROM rooms c
         JOIN corner_facts f ON f.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
     }
+    // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
+    // its work while it ran; created agents' narration lands as corner activity.
+    it('R-MCP-PROGRESS: post progress:true records a progress line in the corner, not a message', async () => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      expect(await ok(client, 'post', { address: corner, text: 'Read the brief; running the tests next.', progress: true }))
+        .toEqual({ recorded: true, address: corner });
+      const rows = (await db.query<{ presentation: string; text: string; activity: { kind: string; title: string; text: string }[] | null }>(
+        `SELECT presentation,text,activity FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at`, [corner, member])).rows;
+      expect(rows).toEqual([{ presentation: 'activity', text: '', activity: [{ kind: 'output', title: 'Update', text: 'Read the brief; running the tests next.' }] }]);
+      // The one-call turn closed, and no wake was queued for anyone.
+      expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND status='working'`, [corner, member])).rowCount).toBe(0);
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id<>$2 AND state='pending'`, [corner, member])).rowCount).toBe(0);
+      expect((await call(client, 'post', { address: ROOM, text: 'not a corner', progress: true })).text).toContain('progress lines go in a corner');
+    });
     it.each(['corner', 'parent'])('R1: reports a corner objective through the %s address and clears working', async address => {
       const { client, member } = await connected();
       const corner = await reportCorner(member);

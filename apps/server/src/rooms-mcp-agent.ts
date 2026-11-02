@@ -180,8 +180,9 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('dispatch_release', 'Dispatch a production Beeline release only on an explicit owner or admin command.', {
     address: address(), inputs: { type: 'object', additionalProperties: { type: 'string', maxLength: 256 } },
   }, ['address']),
-  tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed. replyTo does not wake anyone; start with the asker\'s exact @handle.', {
+  tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed. replyTo does not wake anyone; start with the asker\'s exact @handle. In a corner, progress:true records the text as a progress line in the corner\'s work log instead of a message, the way an agent\'s work shows while it runs; it wakes nobody.', {
     address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 }, replyTo: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    progress: { type: 'boolean', description: 'Corner only: record a progress line, not a message.' },
   }, ['address', 'text']),
   tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact. Code work goes in a corner with another agent as implementer: use feature/corner- plus the first 12 hex characters of its id with hyphens removed; push existing commits there in the same repository with your own GitHub access, or post the patch in that corner, not the Room, with base commit and test commands for the implementer to apply and push with the Beeline GitHub App; your owner\'s connection approval covers sharing the patch.', {
     address: address(), title: { type: 'string', minLength: 1, maxLength: 200 }, mime: { type: 'string' },
@@ -421,7 +422,9 @@ export class RoomsMcpAgentTools {
       case 'send_operator_system_dm': return turn((_, context) => exec('sendOperatorSystemDm', { ...context, agentId: member, recipients: args.recipients, text: args.text }));
       case 'read_operator_system_dm': return turn((_, context) => exec('readOperatorSystemDm', { ...context, agentId: member, sendId: args.sendId }));
       case 'dispatch_release': return turn((_, context) => exec('dispatchRoomWorkflow', { ...context, inputs: args.inputs }));
-      case 'post': return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text }));
+      case 'post':
+        if (args.progress === true) return this.progress(member, args, exec);
+        return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text }));
       case 'post_artifact': return this.postArtifact(member, args, exec);
       case 'connect': return turn((_, context) => {
         if (args.mode === 'status') return exec('readAgentWorkbench', { roomId: context.roomId });
@@ -540,6 +543,28 @@ export class RoomsMcpAgentTools {
       return { address: created.cornerId, ...(created.watch ? { watch: created.watch } : {}),
         ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}), status: 'starting' };
     });
+  }
+
+  /**
+   * A progress line in a corner's work log: the corner activity a running agent's narration produces, written
+   * under a one-call turn opened in the corner itself so the line belongs to that corner. It wakes nobody.
+   */
+  private async progress(member: string, args: Args, exec: (op: string, input: Args) => Promise<unknown>) {
+    const corner = addressArg(args.address);
+    const progress = text(args.text);
+    if (!progress) throw new McpToolError('post: text is required');
+    if (args.replyTo !== undefined) throw new McpToolError('post: a progress line has no replyTo');
+    await this.place(member, corner);
+    if (!(await this.db.query('SELECT 1 FROM corner_facts WHERE corner_id=$1', [corner])).rowCount)
+      throw new McpToolError('progress lines go in a corner; post a message in a Room');
+    const turn = await this.begin(member, corner, false);
+    try {
+      await exec('postAgentActivity', { roomId: corner, agentId: member, requestId: turn.requestId, generationId: turn.generationId,
+        activity: [{ kind: 'output', title: 'Update', text: progress }] });
+      return { recorded: true, address: corner };
+    } finally {
+      await this.end(member, turn, false);
+    }
   }
 
   private async postArtifact(member: string, args: Args, exec: (op: string, input: Args) => Promise<unknown>) {

@@ -90,7 +90,7 @@ A connected app's member also gets the tools Beeline agents have (`apps/server/s
 
 A call that needs turn authority opens a one-call server turn: an `agent_commands` row with reason `mcp_call`, claimed for that call and completed by the agent's own terminal receipt. Its requester is the latest person who tagged the member in that place, as a tag starts an agent's turn; holds and merge yeses need that person. `report` instead binds the oldest order waiting for the member at `address`; any other call there leaves the order waiting. Orders, reports, lifecycle and scheduled wakes addressed to the member call its webhook at once and appear under `list_mentions` `wakes`; `no_reply_needed(address)` clears wakes that need no answer.
 
-An app has no checkout, so `open_corner` refuses the app itself as implementer of repository work. `post_artifact` takes `html` text or base64 `bytes` instead of a path and posts the file at once. `app_tool` serves `beeline:vault`, `beeline:onboarding`, `beeline:workflow`, `beeline:avatar` and read-only `beeline:wallet`, plus connected apps.
+An app has no checkout, so `open_corner` refuses the app itself as implementer of repository work. `post_artifact` takes `html` text or base64 `bytes` instead of a path and posts the file at once. In a corner, `post(progress:true)` records the text as a progress line in the corner's work log (corner activity, kind `output`, the way a running agent's narration shows) under a one-call turn in that corner; it posts no message and wakes nobody. `app_tool` serves `beeline:vault`, `beeline:onboarding`, `beeline:workflow`, `beeline:avatar` and read-only `beeline:wallet`, plus connected apps.
 
 | Not exposed | Reason |
 | --- | --- |

@@ -27,6 +27,11 @@ vi.mock('@react-native-community/netinfo', () => {
   return { default: netInfo };
 });
 
+vi.mock('@/buzz/router-owner', () => ({
+  routerOwnerCapabilities: () => ({ families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true }),
+  routerOwnerNegotiated: async () => {}, routerOwnerDisconnected: () => {}, routerOwnerReceive: () => {},
+}));
+
 import { AppState } from 'react-native';
 import { abandonRoomDraw, roomDrawGeneration, beginRoomDraw, finishRoomDraw, observeVisibleRoomRows } from '@/buzz/room-draw-barrier';
 import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
@@ -187,6 +192,7 @@ describe('LiveConnection', () => {
     const connection = sharedLiveConnection();
     const room = vi.fn();
     await connection.register([{ '#h': [ROOM_A] }], room);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.open();
     sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -210,6 +216,7 @@ describe('LiveConnection', () => {
     vi.spyOn(monolithSession, 'authorization').mockResolvedValue('phone-session');
     const connection = sharedLiveConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.open();
     await vi.waitFor(() => expect(netInfo.addEventListener).toHaveBeenCalledOnce());
     const listener = netInfo.addEventListener.mock.calls[0]![0] as () => void;
@@ -243,6 +250,22 @@ describe('LiveConnection', () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('excludes durable families before negotiation when authority storage is unavailable', async () => {
+    let resolve!: (value: { families: readonly []; authorityFencesV1: false }) => void;
+    const router = { requestedCapabilities: () => new Promise<{ families: readonly []; authorityFencesV1: false }>(done => { resolve = done; }),
+      negotiated: vi.fn(async () => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    await connection.register([], () => {});
+    expect(sockets).toHaveLength(0);
+    resolve({ families: [], authorityFencesV1: false });
+    await Promise.resolve(); await Promise.resolve();
+    sockets[0]!.open();
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ type: 'router-negotiate', protocol: 1,
+      families: [], authorityFencesV1: false, usageCellV1: true });
+    connection.dispose();
   });
 
   it('negotiates on the sole socket and holds pushes until the local owner is ready', async () => {
@@ -363,6 +386,7 @@ describe('LiveConnection', () => {
     vi.spyOn(monolithSession, 'authorization').mockResolvedValue('phone-session');
     const connection = sharedLiveConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.open();
     for (const listener of appStateListeners) listener('background');
     for (const listener of appStateListeners) listener('active');

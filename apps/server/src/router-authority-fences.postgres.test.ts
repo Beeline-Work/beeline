@@ -30,15 +30,16 @@ describe.skipIf(!postgresUrl)('P6 independent authority control final enqueue',(
         transaction:nested=>tx.transaction(nested),query:async(sql,args)=>{const result=await tx.query(sql,args);
           if(sql.includes('pg_advisory_xact_lock_shared')){reached.resolve();await releaseFence.promise;}return result;},
       }))};
-      const live=new LiveHub();release=await subscribeAuthorityFences(observed,live,VIEWER,frame=>{frames.push(frame);sent.resolve();return undefined;},reason=>{throw new Error(reason);});
+      const live=new LiveHub();release=await subscribeAuthorityFences(observed,live,VIEWER,frame=>{frames.push(frame);if(frame.mode==='advance')sent.resolve();return undefined;},reason=>{throw new Error(reason);});
       await writer.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`,[VIEWER,ROOM]);
       live.journalChanged([`authority:${VIEWER}`]);await reached.promise;
       await expect(writer.transaction(async tx=>{await tx.query("SET LOCAL lock_timeout='100ms'");
         await tx.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id=$2`,[VIEWER,ROOM]);
       })).rejects.toMatchObject({code:'55P03'});
       expect(frames).toHaveLength(0);releaseFence.resolve();await sent.promise;
-      expect(frames).toHaveLength(1);expect(frames[0]).toMatchObject({kind:'authority-fence',scope:ROOM,authorityScope:`room:${ROOM}`});
-      expect(frames[0]).not.toHaveProperty('cut');expect(frames[0]).not.toHaveProperty('to');
+      expect(frames).toHaveLength(2);expect(frames[0]).toMatchObject({kind:'authority-fence',scope:ROOM,authorityScope:`room:${ROOM}`,mode:'deny'});
+      expect(frames[1]).toMatchObject({mode:'advance',authorityScope:`reader:${VIEWER}:workspace:${WORKSPACE}:visibility`});
+      for(const frame of frames){expect(frame).not.toHaveProperty('cut');expect(frame).not.toHaveProperty('to');}
       await writer.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id=$2`,[VIEWER,ROOM]);
       const granted=await readRouterAuthority(database,{family:'room-head',workspaceId:WORKSPACE,roomId:ROOM},VIEWER);
       expect(BigInt(granted.scopes.find(item=>item.authorityScope===`room:${ROOM}`)!.epoch)).toBeGreaterThan(BigInt(frames[0]!.authority.scopes[0].epoch));

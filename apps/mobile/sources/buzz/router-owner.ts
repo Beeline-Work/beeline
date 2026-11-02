@@ -10,7 +10,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { AppState } from 'react-native';
-import { routerLaneStorage } from './surface-storage';
+import { routerLaneStorage, routerAuthorityStorageReady } from './surface-storage';
 import { installMediaCacheConnection, installLegacyMediaCacheConnection, suspendMediaCacheConnection, receiveMediaAuthorityRemoval, invalidateMediaCacheDemand, activeMediaObjectIds } from './media-cache-connection';
 
 export type RouterFamilyMode = 'pending' | 'legacy' | 'router';
@@ -32,6 +32,7 @@ let readerOrigin: string | undefined;
 let committedUsageProfile: string | null = null;
 let usageProfilePending = false;
 let stopFences: (() => void) | undefined;
+let stopFloors: (() => void) | undefined;
 let lanes: ReadLanes | undefined;
 let negotiation: Negotiation | undefined;
 let initialized: Promise<void> | undefined;
@@ -44,6 +45,10 @@ const slotNames = new WeakMap<Slot, string>();
 let nextSlotName = 0;
 const notify = () => { for (const listener of listeners) listener(); };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
+function advanceMediaAuthority(scope: string, epoch: string): void {
+  // Media's existing fence is inclusive; a floor retires only lower epochs.
+  if (BigInt(epoch) > 0n) receiveMediaAuthorityRemoval(scope, (BigInt(epoch) - 1n).toString());
+}
 const empty: LaneView = Object.freeze({ state: 'ABSENT', value: null, cut: null, error: null });
 
 function validValue(request: LaneRequest, value: unknown): boolean {
@@ -81,6 +86,7 @@ async function initialize(): Promise<void> {
       receiveMediaAuthorityRemoval(scope, epoch);
       void lanes?.revoke(scope, epoch, false);
     });
+    stopFloors = storage.subscribeFloors((scope, epoch) => { advanceMediaAuthority(scope, epoch); void lanes?.advance(scope, epoch, false); });
     if (AppState.currentState === 'background' || AppState.currentState === 'inactive') admission.background();
   });
 }
@@ -172,6 +178,13 @@ export function routerOwnerArtifactAction(action: MediaAction, objectId: string)
 export function routerOwnerListPanel(visible: boolean): void {
   if (listPanelVisible === visible) return;
   listPanelVisible = visible; reconcile();
+}
+
+/** Advertise persistent authority support before the server selects families.
+ * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
+export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean } {
+  const ready = routerAuthorityStorageReady();
+  return { families: ready ? ['room-list', 'needs-you-count', 'room-head'] : [], authorityFencesV1: ready };
 }
 
 /** Sole transport owner calls this only after authentication and negotiation.
@@ -282,14 +295,21 @@ export function routerOwnerReceive(value: unknown): void {
     if (!negotiation.authorityFencesV1 || authorityUnavailable) return;
     const domain = value.authorityScope;
     if (typeof value.scope !== 'string' || value.scope.length > 256 || typeof domain !== 'string' ||
-        ![ `room:${value.scope}`, `object:${value.scope}`, `reader:${principal}:workspace:${value.scope}` ].includes(domain) ||
+        ![ `room:${value.scope}`, `object:${value.scope}`, `reader:${principal}:workspace:${value.scope}`, `reader:${principal}:workspace:${value.scope}:visibility` ].includes(domain) ||
+        (value.mode !== undefined && value.mode !== 'deny' && value.mode !== 'advance') ||
         !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
         utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
     const epoch = (value.authority as LaneSnapshot['authority']).scopes.find(scope => scope.authorityScope === domain)?.epoch;
     if (!epoch) { failAuthority(); return; }
     // A content-free current-authority fence carries no data coverage/cursor.
-    receiveMediaAuthorityRemoval(domain, epoch);
-    void lanes?.revoke(domain, epoch).catch(failAuthority);
+    if (value.mode === 'advance') {
+      advanceMediaAuthority(domain, epoch);
+      void lanes?.advance(domain, epoch).catch(failAuthority);
+    }
+    else {
+      receiveMediaAuthorityRemoval(domain, epoch);
+      void lanes?.revoke(domain, epoch).catch(failAuthority);
+    }
     return;
   }
   if (value.kind === 'router-unavailable' && value.stream === `authority:${principal}`) { failAuthority(); return; }
@@ -382,6 +402,7 @@ subscribeClientReset(() => {
   instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; authorityUnavailable = false; assembly.reset();
   for (const slot of slots) { release(slot); slot.generation = undefined; }
   stopFences?.(); stopFences = undefined;
+  stopFloors?.(); stopFloors = undefined;
   mediaDemand?.disconnected(); mediaDemand = undefined;
   usageDemand?.disconnected(); usageDemand = undefined; readerOrigin = undefined; committedUsageProfile = null; usageProfilePending = false;
   admission = undefined; lanes?.reset(); lanes = undefined; initialized = undefined; navigation.reset(); notify();

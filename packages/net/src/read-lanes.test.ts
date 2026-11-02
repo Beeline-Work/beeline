@@ -36,7 +36,41 @@ describe('local read lanes (P2)', () => {
     expect(lanes.peek(request).state).toBe('INACTIVE_CACHED');
     lanes.demand(request, {}, permit);
     await drain();
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
+    expect(lanes.peek(request).state).toBe('LIVE');
+  });
+  it('reactivates a continuously updated inactive cache without a new read',async()=>{
+    let reads=0;const lanes=setup(async()=>{reads++;return snapshot();});
+    const release=lanes.demand(request,{},permit);await drain();release();
+    await lanes.accept(batch(1,2));
+    expect(lanes.peek(request)).toMatchObject({state:'INACTIVE_CACHED',value:{count:2},cut:{through:2}});
+    lanes.demand(request,{},permit);await drain();
+    expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:2}});expect(reads).toBe(1);
+  });
+  it('a real disconnected cache miss and a parked lane still require fresh owner admission',async()=>{
+    let reads=0;const execute=async()=>{reads++;return snapshot(reads);};const lanes=setup(execute);
+    let release=lanes.demand(request,{},permit);await drain();release();lanes.disconnected();
+    lanes.connected(2,[request.family],execute);expect(reads).toBe(1);expect(lanes.peek(request).value).toBeNull();
+    release=lanes.demand(request,{},permit);await drain();expect(reads).toBe(2);
+    lanes.unavailable('workspace:w',request.family);release();
+    expect(lanes.peek(request).state).toBe('PARKED');
+    lanes.demand(request,{},permit);await drain();expect(reads).toBe(3);
+  });
+  it('never reclassifies revoked content as a reusable inactive cache',async()=>{
+    let reads=0;const lanes=setup(async()=>{reads++;return snapshot();});
+    const release=lanes.demand(request,{},permit);await drain();await lanes.revoke(authority.scopes[0]!.authorityScope,'2');release();
+    expect(lanes.peek(request)).toMatchObject({state:'REVOKED',value:null});
+    lanes.demand(request,{},permit);await drain();
+    expect(reads).toBe(2);expect(lanes.peek(request).value).toBeNull();
+  });
+  it('does not reuse a cache whose in-flight group commit was discarded on departure',async()=>{
+    let writes=0,reads=0,started!:()=>void,finish!:()=>void;
+    const writing=new Promise<void>(done=>{started=done;}),released=new Promise<void>(done=>{finish=done;});
+    const lanes=new ReadLanes(identity,()=>true,{write:async()=>{if(++writes===2){started();await released;}},fence:async()=>{},remove:async()=>{}});
+    lanes.connected(1,[request.family],async()=>{reads++;return snapshot(reads);});
+    const release=lanes.demand(request,{},permit);await drain();
+    const applying=lanes.accept(batch(1,2));await writing;release();finish();await applying;
+    expect(lanes.peek(request).state).toBe('PARKED');lanes.demand(request,{},permit);await drain();expect(reads).toBe(2);
   });
   it('coalesces roomId-only and Workspace-known heads, rejecting contradictory scope', async () => {
     let reads = 0;
@@ -215,6 +249,67 @@ describe('local read lanes (P2)', () => {
       payload: { kind: 'authority', scope: 'w', authorityScope: 'reader:ada:workspace:w', allowed: false } }] });
     await lanes.accept(batch(2, 3));
     expect(lanes.peek(request)).toMatchObject({ state: 'REVOKED', value: null });
+  });
+});
+
+describe('precise minimum authority epochs without read admission',()=>{
+  const visibility='reader:ada:workspace:w:visibility';
+  const certified=(epoch:string,through=1):LaneSnapshot=>({...snapshot(through),authority:{digest:`certificate-${epoch}`,
+    scopes:[...authority.scopes,{authorityScope:visibility,epoch}]}});
+  const replacement=(epoch:string,from=1,to=2):LaneBatch=>({...batch(from,to),facts:[{atomicGroup:'needs:w:ada',authority:certified(epoch).authority,
+    payload:{kind:'scope-replace',family:request.family,scope:'w',value:{count:to}}}]});
+  it('hides stale aggregates, keeps an unrelated Room visible, and accepts equal-epoch facts without another read',async()=>{
+    let reads=0;const room={family:'room-head',roomId:'room-a',workspaceId:'w'} as const;
+    const lanes=new ReadLanes(identity,()=>true);
+    lanes.connected(1,['needs-you-count','room-head'],async input=>{reads++;return input.family==='room-head'
+      ?{...snapshot(),value:{room:'still allowed'},authority:{digest:'room',scopes:[...authority.scopes,{authorityScope:'room:room-a',epoch:'1'}]}}:certified('1');});
+    lanes.demand(request,{},permit);lanes.demand(room,{},permit);await drain();
+    await lanes.advance(visibility,'2');
+    expect(lanes.peek(request)).toMatchObject({state:'OPENING',value:null,cut:{through:1}});
+    expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{room:'still allowed'}});expect(reads).toBe(2);
+    await lanes.accept(replacement('2'));
+    expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:2},cut:{through:2}});
+    await lanes.advance(visibility,'2');await lanes.advance(visibility,'1');
+    expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:2}});expect(reads).toBe(2);
+  });
+  it('rejects an older late first snapshot while allowing a current first snapshot at the floor',async()=>{
+    let resolve!:(value:LaneSnapshot)=>void,reads=0;
+    const lanes=new ReadLanes(identity,()=>true);
+    lanes.connected(1,[request.family],async()=>{reads++;return new Promise(done=>{resolve=done;});});
+    lanes.demand(request,{},permit);await drain();await lanes.advance(visibility,'2');resolve(certified('1'));await drain();
+    expect(lanes.peek(request)).toMatchObject({state:'PARKED',value:null});expect(reads).toBe(1);
+    const current=new ReadLanes(identity,()=>true);await current.advance(visibility,'2',false);
+    current.connected(1,[request.family],async()=>certified('2'));current.demand(request,{},permit);await drain();
+    expect(current.peek(request)).toMatchObject({state:'LIVE',value:{count:1}});
+  });
+  it('does not advance coverage for an unrelated fact while awaiting an authoritative replacement',async()=>{
+    const lanes=new ReadLanes(identity,()=>true);lanes.connected(1,[request.family],async()=>certified('1'));
+    lanes.demand(request,{},permit);await drain();await lanes.advance(visibility,'2');
+    await lanes.accept({...replacement('2'),facts:[]});
+    expect(lanes.peek(request)).toMatchObject({value:null,cut:{through:1}});
+    await lanes.accept(replacement('2',1,3));expect(lanes.peek(request)).toMatchObject({state:'LIVE',cut:{through:3}});
+  });
+  it('hides the whole count/cell group before notifying or waiting for durable floor storage',async()=>{
+    let finish!:()=>void,stored=false;const persisted=new Promise<void>(done=>{finish=done;});
+    const lanes=new ReadLanes(identity,()=>true,{write:async()=>{},fence:async()=>{},remove:async()=>{},
+      floor:async()=>{await persisted;stored=true;}});
+    const tray={family:'needs-you',workspaceId:'w'} as const;
+    lanes.connected(1,['needs-you','needs-you-count'],async()=>certified('1'));
+    lanes.demand(request,{},permit);lanes.demand(tray,{},permit);await drain();
+    let observing=false;const observed:unknown[][]=[];
+    lanes.subscribe(request,()=>{if(observing)observed.push([lanes.peek(request).value,lanes.peek(tray).value]);});
+    lanes.subscribe(tray,()=>{if(observing)observed.push([lanes.peek(request).value,lanes.peek(tray).value]);});
+    observing=true;const pending=lanes.advance(visibility,'2');
+    expect(observed).toEqual([[null,null],[null,null]]);expect(stored).toBe(false);
+    finish();await pending;expect(stored).toBe(true);
+  });
+  it('cannot paint a stale snapshot whose asynchronous storage write completes after the floor',async()=>{
+    let started!:()=>void,finish!:()=>void;const writing=new Promise<void>(done=>{started=done;});
+    const released=new Promise<void>(done=>{finish=done;});let reads=0;
+    const lanes=new ReadLanes(identity,()=>true,{write:async()=>{started();await released;},floor:async()=>{},fence:async()=>{},remove:async()=>{}});
+    lanes.connected(1,[request.family],async()=>{reads++;return certified('1');});lanes.demand(request,{},permit);
+    await writing;await lanes.advance(visibility,'2');finish();await drain();
+    expect(lanes.peek(request)).toMatchObject({state:'PARKED',value:null});expect(reads).toBe(1);
   });
 });
 

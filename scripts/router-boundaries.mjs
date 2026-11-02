@@ -99,6 +99,7 @@ const OWNER_CALLERS = {
   routerOwnerNavigation: ['buzz/use-router-navigation.ts'],
   routerOwnerListPanel: ['components/SidebarNavigator.tsx'],
   admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
+  routerOwnerCapabilities: ['sync/transport/live-connection.ts'],
   routerOwnerNegotiated: ['sync/transport/live-connection.ts'],
   routerOwnerDisconnected: ['sync/transport/live-connection.ts'],
   routerOwnerReceive: ['sync/transport/live-connection.ts'],

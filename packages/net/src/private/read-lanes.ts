@@ -18,12 +18,17 @@ export type LaneStorage = {
   write(key: string, encoded: string): Promise<void>;
   /** Fences are outside response LRU. This completes before a removal publishes. */
   fence(scope: string, epoch: string): Promise<void>;
+  /** Minimum allowed authority epoch; equality remains authorized. */
+  floor?(scope:string,epoch:string):Promise<void>;
   remove(key: string): Promise<void>;
 };
 type Owner = { permit: LanePermit; active: boolean };
 type Entry = {
   key: string; request: LaneRequest; expectedWorkspace?: string; view: LaneView; owners: Map<object, Owner>;
   snapshot?: LaneSnapshot; flight?: Promise<void>; revision: number; connection: number;
+  /** Content-free continuity retained while an authority floor hides data. */
+  baseline?:Omit<LaneSnapshot,'value'>;
+  covered:boolean;committing:number;
   pending: LaneBatch[]; pendingBytes: number; future: LaneBatch[]; futureBytes: number; listeners: Set<() => void>;
 };
 const ABSENT_VIEW: LaneView = Object.freeze({ state: 'ABSENT', value: null, error: null, cut: null });
@@ -40,6 +45,7 @@ const scopeOf = (request: LaneRequest): string => request.family === 'room-head'
 export class ReadLanes {
   private readonly entries = new Map<string, Entry>();
   private readonly fences = new Map<string, string>();
+  private readonly floors = new Map<string,string>();
   private readonly joined = new WeakMap<object, { key: string; entry: Entry }>();
   private generation = -1;
   private session = 0;
@@ -62,9 +68,10 @@ export class ReadLanes {
   supports(family: LaneFamily): boolean { return this.families.has(family); }
   peek(request: LaneRequest): LaneView {
     const entry = this.entries.get(this.key(request));
+    const installed=entry?.snapshot??entry?.baseline;
     if (entry && request.family === 'room-head' && request.workspaceId &&
         (entry.expectedWorkspace && entry.expectedWorkspace !== request.workspaceId ||
-         entry.snapshot && entry.snapshot.cut.stream !== `workspace:${request.workspaceId}`)) throw new Error('Room Workspace mismatch');
+         installed && installed.cut.stream !== `workspace:${request.workspaceId}`)) throw new Error('Room Workspace mismatch');
     return entry?.view ?? absent();
   }
   subscribe(request: LaneRequest, listener: () => void): () => void {
@@ -97,7 +104,8 @@ export class ReadLanes {
     this.families.clear();
     for (const entry of this.entries.values()) {
       entry.revision += 1; entry.flight = undefined; entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
-      entry.snapshot = undefined;
+      entry.snapshot = undefined;entry.baseline=undefined;
+      entry.covered=false;
       this.publish(entry, { ...absent(), state: 'PARKED', error: 'Connection interrupted; Retry.' });
     }
   }
@@ -114,15 +122,23 @@ export class ReadLanes {
     if (!previous) this.joined.set(token, { key, entry });
     const owner: Owner = { permit, active: true };
     entry.owners.set(token, owner);
+    if(permit.isCurrent()&&entry.view.state==='INACTIVE_CACHED'&&entry.snapshot&&entry.covered&&
+      entry.connection===this.generation&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length&&
+      this.supports(request.family)&&this.authorized(entry.snapshot.authority))
+      this.publish(entry,{state:'LIVE',value:entry.snapshot.value,cut:entry.snapshot.cut,error:null});
     if (permit.isCurrent() && !entry.flight && entry.view.state !== 'LIVE' && !previous && this.supports(request.family)) this.open(entry);
     return () => {
       if (entry.owners.get(token) !== owner) return;
       owner.active = false; entry.owners.delete(token);
       if (!liveOwner(entry)) {
+        const reusable=entry.view.state==='LIVE'&&entry.covered&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length;
+        if(!reusable)entry.covered=false;
         // A pending reply can no longer paint or restore authority.
         entry.revision += 1; entry.flight = undefined;
         entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
-        this.publish(entry, { ...entry.view, state: entry.snapshot ? 'INACTIVE_CACHED' : 'ABSENT' });
+        const state=entry.view.state==='PARKED'||entry.view.state==='REVOKED'?entry.view.state:
+          reusable?'INACTIVE_CACHED':entry.snapshot?'PARKED':'ABSENT';
+        this.publish(entry, { ...entry.view, state,error:state==='PARKED'?(entry.view.error??'Connection interrupted; Retry.'):entry.view.error });
       }
       this.evict();
     };
@@ -181,7 +197,7 @@ export class ReadLanes {
           else { entry.pending.push(batch); entry.pendingBytes += size; }
           continue;
         }
-        const held = entry.snapshot;
+        const held = entry.snapshot??entry.baseline;
         if (!held || held.cut.stream !== batch.to.stream) continue;
         if (!sameStream(held.cut, batch.to)) { this.park(entry, 'Projection version changed; Retry.'); continue; }
         if (batch.to.through <= held.cut.through) continue;
@@ -211,7 +227,7 @@ export class ReadLanes {
       await this.installGroups(installs, session);
       const ready = new Map<string, LaneBatch>();
       for (const entry of this.entries.values()) {
-        const cut = entry.snapshot?.cut;
+        const cut = entry.snapshot?.cut??entry.baseline?.cut;
         if (!cut || entry.view.state === 'PARKED' || entry.view.state === 'REVOKED') continue;
         entry.future = entry.future.filter(future => {
           if (future.from.through > cut.through) return true;
@@ -231,6 +247,36 @@ export class ReadLanes {
       (entry.snapshot?.cut.stream ?? `workspace:${entry.request.workspaceId}`) === stream) this.park(entry, reason);
   }
 
+  /** Retire only strictly older certificates. Keep no hidden content, make no
+   * read, and retain only continuity needed for an ordinary fresh replacement.
+   * This is distinct from a current denial and does not create a pass. */
+  async advance(scope:string,epoch:string,persist=true):Promise<void>{
+    if(!/^\d+$/.test(epoch))return;
+    const held=this.floors.get(scope);
+    if(held&&BigInt(held)>=BigInt(epoch))return;
+    this.floors.set(scope,epoch);
+    const removals:string[]=[],changed:Entry[]=[];
+    for(const entry of this.entries.values()){
+      const snapshot=entry.snapshot??entry.baseline;
+      const installed=snapshot?.authority.scopes.find(authority=>authority.authorityScope===scope);
+      if(!installed||/^\d+$/.test(installed.epoch)&&BigInt(installed.epoch)>=BigInt(epoch))continue;
+      entry.revision++;entry.flight=undefined;
+      entry.covered=false;
+      entry.pending=[];entry.pendingBytes=0;entry.future=[];entry.futureBytes=0;
+      if(entry.snapshot){const {value:_value,...baseline}=entry.snapshot;entry.baseline=baseline;}
+      entry.snapshot=undefined;
+      entry.view=Object.freeze({state:liveOwner(entry)?'OPENING':'INACTIVE_CACHED',value:null,error:null,cut:snapshot!.cut});
+      changed.push(entry);
+      removals.push(entry.key);
+    }
+    for(const entry of changed)this.notify(entry);
+    if(persist&&this.storage){
+      if(!this.storage.floor)throw new Error('Authority floor storage unavailable.');
+      await this.storage.floor(scope,epoch);
+    }
+    for(const key of removals)await this.storage?.remove(key);
+  }
+
   /** Content-free durable fence adoption (including another local web tab).
    * No pass is created and no snapshot is requested.
    */
@@ -240,22 +286,26 @@ export class ReadLanes {
     if (held && BigInt(held) >= BigInt(epoch)) return;
     this.fences.set(scope, epoch);
     // Purge immediately; disk failure must never preserve visible content.
-    const removals: string[] = [];
+    const removals: string[] = [],changed:Entry[]=[];
     for (const entry of this.entries.values()) {
-      const installed = entry.snapshot?.authority.scopes.find(authority => authority.authorityScope === scope);
+      const snapshot=entry.snapshot??entry.baseline;
+      const installed = snapshot?.authority.scopes.find(authority => authority.authorityScope === scope);
       // An older ordered removal cannot erase a subsequently authorized grant.
       // Unknown/older pending baselines remain fenced below.
       if (installed && /^\d+$/.test(installed.epoch) && BigInt(installed.epoch) > BigInt(epoch)) continue;
       const roomId = scope.startsWith('room:') ? scope.slice('room:'.length) : undefined;
       const workspacePrefix = `reader:${this.identity.principal}:workspace:`;
       const workspaceId = scope.startsWith(workspacePrefix) ? scope.slice(workspacePrefix.length) : undefined;
-      if (!entry.snapshot?.authority.scopes.some(authority => authority.authorityScope === scope) &&
+      if (!snapshot?.authority.scopes.some(authority => authority.authorityScope === scope) &&
           !(roomId && entry.request.family === 'room-head' && entry.request.roomId === roomId) &&
           !(workspaceId && (entry.request.workspaceId === workspaceId || entry.snapshot?.cut.stream === `workspace:${workspaceId}`))) continue;
-      entry.revision += 1; entry.snapshot = undefined; entry.flight = undefined;
-      this.publish(entry, { ...absent(), state: 'REVOKED', error: 'Access removed.' });
+      entry.revision += 1; entry.snapshot = undefined; entry.baseline=undefined;entry.flight = undefined;
+      entry.covered=false;
+      entry.pending=[];entry.pendingBytes=0;entry.future=[];entry.futureBytes=0;
+      entry.view=Object.freeze({ ...absent(), state: 'REVOKED', error: 'Access removed.' });changed.push(entry);
       removals.push(entry.key);
     }
+    for(const entry of changed)this.notify(entry);
     if (persist) await this.storage?.fence(scope, epoch);
     for (const key of removals) await this.storage?.remove(key);
   }
@@ -263,7 +313,7 @@ export class ReadLanes {
   reset(): void {
     this.session += 1; this.disconnected();
     for (const entry of this.entries.values()) { entry.snapshot = undefined; this.publish(entry, absent()); }
-    this.entries.clear(); this.fences.clear();
+    this.entries.clear(); this.fences.clear();this.floors.clear();
   }
 
   private entry(request: LaneRequest): Entry {
@@ -272,12 +322,13 @@ export class ReadLanes {
     if (!entry) {
       if (request.family === 'room-head' ? !request.roomId : !request.workspaceId) throw new Error('invalid lane scope');
       entry = { key, request: Object.freeze({ ...request }), view: absent(), owners: new Map(), revision: 0,
-        connection: -1, pending: [], pendingBytes: 0, future: [], futureBytes: 0, listeners: new Set() };
+        connection: -1,covered:false,committing:0, pending: [], pendingBytes: 0, future: [], futureBytes: 0, listeners: new Set() };
       this.entries.set(key, entry); this.evict();
     }
     if (request.family === 'room-head' && request.workspaceId) {
+      const installed=entry.snapshot??entry.baseline;
       if (entry.expectedWorkspace && entry.expectedWorkspace !== request.workspaceId ||
-          entry.snapshot && entry.snapshot.cut.stream !== `workspace:${request.workspaceId}`) throw new Error('Room Workspace mismatch');
+          installed && installed.cut.stream !== `workspace:${request.workspaceId}`) throw new Error('Room Workspace mismatch');
       entry.expectedWorkspace = request.workspaceId;
     }
     return entry;
@@ -286,6 +337,7 @@ export class ReadLanes {
     const execute = this.executor;
     if (!execute || !liveOwner(entry) || entry.flight) return;
     const revision = ++entry.revision; const session = this.session; const generation = this.generation;
+    entry.covered=false;
     entry.connection = generation;
     this.publish(entry, { state: 'OPENING', value: entry.view.value, error: null, cut: entry.view.cut });
     const current = () => session === this.session && generation === this.generation && revision === entry.revision && liveOwner(entry);
@@ -319,7 +371,9 @@ export class ReadLanes {
   private authorized(authority: LaneAuthority): boolean {
     return !!authority.digest && authority.scopes.length > 0 && authority.scopes.length <= 8 &&
       authority.scopes.every(scope => !!scope.authorityScope && !!scope.epoch &&
-        (!this.fences.has(scope.authorityScope) || /^\d+$/.test(scope.epoch) && /^\d+$/.test(this.fences.get(scope.authorityScope)!) && BigInt(scope.epoch) > BigInt(this.fences.get(scope.authorityScope)!)));
+        /^\d+$/.test(scope.epoch) &&
+        (!this.floors.has(scope.authorityScope)||BigInt(scope.epoch)>=BigInt(this.floors.get(scope.authorityScope)!))&&
+        (!this.fences.has(scope.authorityScope) || BigInt(scope.epoch) > BigInt(this.fences.get(scope.authorityScope)!)));
   }
   private async installGroups(installs: readonly { entry: Entry; snapshot: LaneSnapshot }[], session: number): Promise<void> {
     const groups = new Map<string, typeof installs[number][]>();
@@ -327,15 +381,23 @@ export class ReadLanes {
       const group = groups.get(install.snapshot.atomicGroup) ?? []; group.push(install); groups.set(install.snapshot.atomicGroup, group);
     }
     for (const [group, items] of groups) {
+      if(items.some(({snapshot})=>!this.authorized(snapshot.authority))){
+        for(const {entry}of items)this.park(entry,'Authority changed; Retry.');continue;
+      }
       const versions = items.map(({ entry }) => entry.revision);
       const encoded = JSON.stringify({ schema: 1, identity: this.identity, group,
         entries: items.map(({ entry, snapshot }) => ({ key: entry.key, request: entry.request, snapshot })) });
-      await this.storage?.write(JSON.stringify([this.identity.origin, this.identity.principal, group]), encoded);
+      for(const {entry}of items)entry.committing++;
+      try{await this.storage?.write(JSON.stringify([this.identity.origin, this.identity.principal, group]), encoded);}
+      finally{for(const {entry}of items)entry.committing--;}
       if (session !== this.session) return;
       if (items.some(({ entry }, index) => entry.revision !== versions[index])) continue;
+      if(items.some(({snapshot})=>!this.authorized(snapshot.authority))){
+        for(const {entry}of items)this.park(entry,'Authority changed; Retry.');continue;
+      }
       // Commit the complete group before notifying a single UI observer.
       for (const { entry, snapshot } of items) {
-        entry.snapshot = snapshot;
+        entry.snapshot = snapshot;entry.baseline=undefined;entry.covered=true;
         entry.view = { state: liveOwner(entry) ? 'LIVE' : 'INACTIVE_CACHED', value: snapshot.value, cut: snapshot.cut, error: null };
       }
       for (const { entry } of items) this.notify(entry);
@@ -343,6 +405,7 @@ export class ReadLanes {
     this.evict();
   }
   private park(entry: Entry, error: string): void {
+    entry.covered=false;
     entry.revision += 1; entry.flight = undefined; entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
     this.publish(entry, { ...entry.view, state: 'PARKED', error });
   }

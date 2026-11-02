@@ -36,6 +36,7 @@ export async function readRouterCertificate(db: SqlDatabase, args: RouterSnapsho
   const input = await resolveRouterInput(db,args);
   const parent=input.roomId?(await db.query<{parent_id:string|null}>(`SELECT parent_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0]?.parent_id:undefined;
   const scopes = [`reader:${viewer}:workspace:${input.workspaceId}`,
+    ...(!input.roomId?[`reader:${viewer}:workspace:${input.workspaceId}:visibility`]:[]),
     ...(input.roomId ? [`room:${input.roomId}`] : []),...(parent?[`room:${parent}`]:[])];
   const rows = await db.query<{ scope: string; epoch: string }>(
     `SELECT scope,epoch::text FROM router_authority WHERE scope=ANY($1::text[]) ORDER BY scope`, [scopes]);

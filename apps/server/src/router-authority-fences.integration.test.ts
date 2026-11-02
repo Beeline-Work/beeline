@@ -6,6 +6,8 @@ import {routerSocketProtocol} from './router-socket.js';
 import {readRouterAuthority,fenceRouterEnqueue} from './router-projections.js';
 import {currentAuthorityFence,subscribeAuthorityFences} from './router-authority-fences.js';
 import {readMediaMetadata} from './phone-media.js';
+import {ReadLanes} from '../../../packages/net/src/private/read-lanes.js';
+import {buildRouterSnapshot} from './router-projections.js';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 const VIEWER='a'.repeat(64),OWNER='b'.repeat(64);
 const WORKSPACE='11111111-1111-4111-8111-111111111111',ROOM='22222222-2222-4222-8222-222222222222';
@@ -66,17 +68,17 @@ describe('independent authority control without data coverage',()=>{
     const granted=await readRouterAuthority(db,input,VIEWER);
     expect(BigInt(granted.scopes.find(item=>item.authorityScope===`room:${ROOM}`)!.epoch))
       .toBeGreaterThan(BigInt(fence!.authority.scopes[0]!.epoch));
-    // Aggregate Room-list/Needs-you certificates depend on the reader's
-    // Workspace generation too, even though the denied resource is precise.
-    expect(BigInt(granted.scopes.find(item=>item.authorityScope.startsWith('reader:'))!.epoch))
-      .toBeGreaterThan(BigInt(initial.scopes.find(item=>item.authorityScope.startsWith('reader:'))!.epoch));
+    // True Workspace permission remains stable; aggregate visibility has
+    // its own generation and never hides an unrelated Room-head.
+    expect(granted.scopes.find(item=>item.authorityScope.startsWith('reader:')))
+      .toEqual(initial.scopes.find(item=>item.authorityScope.startsWith('reader:')));
     expect(await currentAuthorityFence(db,VIEWER,ROOM,`room:${ROOM}`)).toBeUndefined();
   });
   it('new attachment references advance beyond an earlier object denial without denying authorized owners',async()=>{
     await db.query(`UPDATE messages SET attachments='[]'::jsonb WHERE id='file'`);
     const fence=await currentAuthorityFence(db,VIEWER,OBJECT,`object:${OBJECT}`);
     expect(fence).toBeDefined();
-    expect(await currentAuthorityFence(db,OWNER,OBJECT,`object:${OBJECT}`)).toBeUndefined();
+    expect(await currentAuthorityFence(db,OWNER,OBJECT,`object:${OBJECT}`)).toMatchObject({mode:'advance'});
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES('regrant',$1,$2,'Again',$3::jsonb)`,[CHILD,OWNER,JSON.stringify([{url:`/v1/media/${OBJECT}`}])]);
     const metadata=await readMediaMetadata(db,OBJECT,VIEWER);
     expect(BigInt(metadata.authority.scopes.find(item=>item.authorityScope===`object:${OBJECT}`)!.epoch))
@@ -89,6 +91,42 @@ describe('independent authority control without data coverage',()=>{
     await expect(fenceRouterEnqueue(db,input,VIEWER,initial,()=>{delivered++;return undefined;})).rejects.toThrow('authority');
     expect(delivered).toBe(0);
     expect(await currentAuthorityFence(db,VIEWER,WORKSPACE,`reader:${VIEWER}:workspace:${WORKSPACE}`)).toBeUndefined();
+    expect(await currentAuthorityFence(db,VIEWER,WORKSPACE,`reader:${VIEWER}:workspace:${WORKSPACE}:visibility`))
+      .toMatchObject({mode:'advance',authorityScope:`reader:${VIEWER}:workspace:${WORKSPACE}:visibility`});
+  });
+  it('wire visibility floors hide revoked aggregate rows while an unrelated Room stays live and a pushed replacement restores the aggregate',async()=>{
+    const unrelated='55555555-5555-4555-8555-555555555555';
+    await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Unrelated')`,[unrelated,WORKSPACE,OWNER]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,unrelated,VIEWER]);
+    const aggregate={family:'room-list' as const,workspaceId:WORKSPACE},room={family:'room-head' as const,roomId:unrelated,workspaceId:WORKSPACE};
+    const phone=new PhoneService(db,'https://example.test'),lanes=new ReadLanes({origin:'https://example.test',principal:VIEWER,sessionEpoch:1},()=>true);
+    let reads=0,opened!:()=>void,controlled!:()=>void;
+    const opening=new Promise<void>(done=>{opened=done;}),control=new Promise<void>(done=>{controlled=done;});
+    lanes.connected(1,['room-list','room-head'],async request=>{reads++;return buildRouterSnapshot(db,request,VIEWER,(tx,input,viewer)=>phone.buildRouterValue(tx,input,viewer));});
+    const check=()=>{if(lanes.peek(aggregate).state==='LIVE'&&lanes.peek(room).state==='LIVE')opened();};
+    lanes.subscribe(aggregate,check);lanes.subscribe(room,check);lanes.demand(aggregate,{}, {isCurrent:()=>true});lanes.demand(room,{}, {isCurrent:()=>true});await opening;
+    const before=lanes.peek(aggregate).cut!;
+    expect((lanes.peek(aggregate).value as {chats:{room:{id:string}}[]}).chats.map(chat=>chat.room.id)).toContain(ROOM);
+    const live=new LiveHub(),protocol=routerSocketProtocol(db,VIEWER,raw=>{
+      const frame=JSON.parse(raw);if(frame.kind!=='authority-fence')return;
+      if(frame.mode==='advance')void lanes.advance(frame.authorityScope,frame.authority.scopes[0].epoch).then(controlled);
+      else void lanes.revoke(frame.authorityScope,frame.authority.scopes[0].epoch);
+    },{families:[],listenerReady:()=>true},{live,phone,rooms:()=>[],mediaMetadataV1:true});
+    try{
+      await protocol.handle({type:'router-negotiate',protocol:1,families:[],authorityFencesV1:true});
+      await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`,[VIEWER,ROOM]);
+      live.journalChanged([`authority:${VIEWER}`]);await control;
+      expect(lanes.peek(aggregate)).toMatchObject({state:'OPENING',value:null,cut:before});
+      expect(lanes.peek(room).state).toBe('LIVE');expect(reads).toBe(2);
+      const fresh=await buildRouterSnapshot(db,aggregate,VIEWER,(tx,input,viewer)=>phone.buildRouterValue(tx,input,viewer));
+      if(fresh.family!=='room-list')throw new Error('Expected Room-list projection');
+      expect(fresh.value.chats.map(chat=>chat.room.id)).not.toContain(ROOM);
+      expect(fresh.value.chats.map(chat=>chat.room.id)).toContain(unrelated);
+      await lanes.accept({from:before,to:fresh.cut,facts:[{atomicGroup:fresh.atomicGroup,authority:fresh.authority,
+        payload:{kind:'scope-replace',family:'room-list',scope:WORKSPACE,value:fresh.value}}]});
+      expect(lanes.peek(aggregate)).toMatchObject({state:'LIVE',value:fresh.value});
+      expect(lanes.peek(room).state).toBe('LIVE');expect(reads).toBe(2);
+    }finally{protocol.close();}
   });
   it('coalesces revoke/regrant before the final fence without emitting a false current denial',async()=>{
     const live=new LiveHub(),frames:unknown[]=[];let ready!:()=>void;
@@ -99,7 +137,7 @@ describe('independent authority control without data coverage',()=>{
       live.journalChanged([`authority:${VIEWER}`]);
       await db.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id=$2`,[VIEWER,ROOM]);
       ready();await db.query('SELECT 1');await new Promise<void>(done=>setImmediate(done));await db.query('SELECT 1');
-      expect(frames).toEqual([]);
+      expect(frames).toHaveLength(1);expect(frames[0]).toMatchObject({mode:'advance'});
     }finally{ready();release();}
   });
   it('parks authority delivery immediately on committed-listener loss without polling or repair reads',async()=>{

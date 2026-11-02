@@ -33,7 +33,7 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
     const result=await snapshot();
     expect(result.family).toBe('needs-you');
     expect(result.value).toMatchObject({count:1,items:[{messageId:'ask'}]});
-    expect(result.authority.scopes).toHaveLength(1);
+    expect(result.authority.scopes).toHaveLength(2);
     expect((await database.query(`SELECT count(*)::int n FROM needs_you_marks`)).rows[0]!.n).toBe(before);
     expect(result.cut.through).toBe(Number((await database.query(`SELECT sequence FROM live_streams WHERE id=$1`,[`workspace:${WORKSPACE}`])).rows[0]!.sequence));
   });

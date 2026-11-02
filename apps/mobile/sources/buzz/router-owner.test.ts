@@ -5,8 +5,9 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { RouterSnapshot, RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 const fixture = vi.hoisted(() => ({
+  authorityReady: true,
   state: 'active', events: [] as ((state: string) => void)[],
-  storage: { write: vi.fn(async () => {}), fence: vi.fn(async () => {}), remove: vi.fn(async () => {}), subscribeFences: () => () => {} },
+  storage: { floor: vi.fn(async () => {}), subscribeFloors: () => () => {}, write: vi.fn(async () => {}), fence: vi.fn(async () => {}), remove: vi.fn(async () => {}), subscribeFences: () => () => {} },
 }));
 vi.mock('react-native', () => ({ AppState: { get currentState() { return fixture.state; }, addEventListener: (_event: string, listener: (state: string) => void) => {
   fixture.events.push(listener); return { remove: () => {} };
@@ -14,10 +15,10 @@ vi.mock('react-native', () => ({ AppState: { get currentState() { return fixture
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'ada' }), getEffectiveRelayUrl: async () => 'https://example.test',
 }));
-vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage }));
+vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage, routerAuthorityStorageReady: () => fixture.authorityReady }));
 import { resetClientState } from '@/sync/client-reset';
 import { acquireRouterLane, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
-  routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
+  routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
 const scopes = [{ authorityScope: 'reader:ada:workspace:w', epoch: '1' }];
@@ -27,9 +28,15 @@ const snapshot = (value = 1): RouterSnapshot<'needs-you-count'> => ({ kind: 'sna
   authority, atomicGroup: 'needs:w:ada' });
 const navigation = (key = 'channels') => ({ routes: [{ key, name: 'beeline/channels' }] });
 const settle = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(); };
-beforeEach(() => { fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
+beforeEach(() => { fixture.authorityReady = true; fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
 
 describe('real mobile router owner', () => {
+  it('requests no projected families without durable authority storage', () => {
+    fixture.authorityReady = false;
+    expect(routerOwnerCapabilities()).toEqual({ families: [], authorityFencesV1: false });
+    fixture.authorityReady = true;
+    expect(routerOwnerCapabilities()).toEqual({ families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true });
+  });
   it('mount alone creates no pass; committed navigation admits one count-only read', async () => {
     const execute = vi.fn(async (_input: RouterSnapshotInput) => snapshot());
     const lane = acquireRouterLane(request, () => true, () => {});
@@ -138,6 +145,26 @@ describe('real mobile router owner', () => {
     await settle();
     expect(mediaCertificateCurrent(media!)).toBe(false);
     expect(executeMetadata).toHaveBeenCalledTimes(1); expect(execute).not.toHaveBeenCalled();
+  });
+  it('advances object authority without denying metadata at the current epoch', async () => {
+    const objectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const mediaScopes = [{ authorityScope: `object:${objectId}`, epoch: '2' }];
+    const executeMetadata = vi.fn(async () => ({ objectId, sha256: 'a'.repeat(64), size: 1,
+      mimeType: 'image/png', expiresAt: Date.now() + 60_000, authority: { scopes: mediaScopes, digest: hash(mediaScopes) } }));
+    routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: 'room', communityId: 'w' } }] });
+    await routerOwnerNegotiated({ generation: 1, families: [], execute: async () => snapshot(), executeMetadata, mediaMetadataV1: true, authorityFencesV1: true });
+    routerOwnerArtifactViewport('room', [objectId]);
+    const media = await mediaMetadataFor('https://example.test', 'ada', objectId);
+    routerOwnerReceive({ kind: 'authority-fence', mode: 'advance', scope: objectId,
+      authorityScope: mediaScopes[0]!.authorityScope, authority: { scopes: mediaScopes, digest: hash(mediaScopes) } });
+    await settle();
+    expect(mediaCertificateCurrent(media!)).toBe(true);
+    const next = [{ authorityScope: mediaScopes[0]!.authorityScope, epoch: '3' }];
+    routerOwnerReceive({ kind: 'authority-fence', mode: 'advance', scope: objectId,
+      authorityScope: next[0]!.authorityScope, authority: { scopes: next, digest: hash(next) } });
+    await settle();
+    expect(mediaCertificateCurrent(media!)).toBe(false);
+    expect(executeMetadata).toHaveBeenCalledTimes(1);
   });
   it('adopts content-free authority independently of data cuts and fails closed on authority feed loss', async () => {
     const execute = vi.fn(async () => snapshot());

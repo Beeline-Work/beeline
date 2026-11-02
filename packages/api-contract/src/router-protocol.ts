@@ -16,6 +16,9 @@ export type RouterAuthorityCertificate = {
 export const ROUTER_MAX_AUTHORITY_FENCE_BYTES = 4096;
 export type RouterAuthorityFence = {
   readonly kind:'authority-fence'; readonly scope:string; readonly authorityScope:string;
+  /** Deny excludes this epoch too; advance excludes only older certificates.
+   * Missing mode is the initial protocol's deny control. */
+  readonly mode?:'deny'|'advance';
   readonly authority:RouterAuthorityCertificate;
 };
 export type RouterValues = {

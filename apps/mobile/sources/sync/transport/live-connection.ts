@@ -71,6 +71,7 @@ type Registration = {
 type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 
 type RouterOwnerBridge = {
+  requestedCapabilities?: () => Promise<{ families: readonly RouterFamily[]; authorityFencesV1: boolean }>;
   negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
   disconnected: () => void;
   receive: (frame: RouterPushFrame | RouterUnavailable | RouterAuthorityFence) => void;
@@ -661,6 +662,9 @@ export class LiveConnection {
     const generation = this.generation;
     try {
       const token = await this.deps.authorization();
+      const requested = this.deps.router?.requestedCapabilities
+        ? await this.deps.router.requestedCapabilities()
+        : { families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true };
       if (generation !== this.generation) return;
       if (this.registrations.size === 0 && this.requests.size === 0) {
         setConnectionState('disconnected');
@@ -676,7 +680,7 @@ export class LiveConnection {
         setConnectionState('connected');
         this.socketEpoch += 1;
         if (this.deps.router) next.send(JSON.stringify({ type: 'router-negotiate', protocol: 1,
-          families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, usageCellV1: true }));
+          families: requested.families, authorityFencesV1: requested.authorityFencesV1, usageCellV1: true }));
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
         this.sendWorkspaceSync();
@@ -1097,6 +1101,7 @@ function productionRouterBridge(): RouterOwnerBridge {
   let pending: Promise<typeof import('@/buzz/router-owner')> | undefined;
   const load = () => pending ??= import('@/buzz/router-owner');
   return {
+    requestedCapabilities: async () => (await load()).routerOwnerCapabilities(),
     negotiated: async next => {
       const current = ++epoch;
       const owner = await load();

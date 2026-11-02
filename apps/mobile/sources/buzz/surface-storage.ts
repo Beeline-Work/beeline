@@ -92,70 +92,229 @@ export function clearMobileSurfaceStorage(): void {
 
 const ROUTER_GROUP_PREFIX = 'router.group.';
 const ROUTER_FENCE_PREFIX = 'router.fence.';
+const ROUTER_FLOOR_PREFIX = 'router.floor.';
+const ROUTER_DENY_PREFIX = 'router.deny.';
 const routerFenceListeners = new Set<(key: string, epoch: string) => void>();
+const routerFloorListeners = new Set<(key: string, epoch: string) => void>();
 const MAX_ROUTER_READER_BYTES = 32 * 1024 * 1024;
+const epochValue = (value: string): string | undefined => /^\d{1,30}$/.test(value) ? BigInt(value).toString() : undefined;
+type StoredAuthority = { authorityScope: string; epoch: string };
+/** Native MMKV critical sections are synchronous in the sole JS owner. Web
+ * needs an origin-scoped cross-tab lock for compare+persist+scrub atomicity.
+ * Other legacy response consumers retain their existing storage behavior.
+ */
+export function routerAuthorityStorageReady(): boolean {
+  return web === null || !!web.storage && typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
+}
 
 /** Router groups use the existing response store, with one encoded atomic
- * data+cut+authority envelope. Fences have a separate namespace outside LRU.
- * Private response restore remains hidden until fresh server authorization.
+ * data+cut+authority envelope. Denials and minimum floors live outside LRU.
+ * Floors use immutable epoch keys: competing tabs cannot overwrite a higher
+ * floor with a lower read/modify/write result. Older keys compact only after
+ * the dominating epoch key is durable.
  */
 export function routerLaneStorage(origin: string, principal: string) {
-  const owner = encodeURIComponent(JSON.stringify([new URL(origin).origin, principal]));
+  const canonicalOrigin = new URL(origin).origin;
+  const owner = encodeURIComponent(JSON.stringify([canonicalOrigin, principal]));
   const groupPrefix = `${ROUTER_GROUP_PREFIX}${owner}.`;
   const fencePrefix = `${ROUTER_FENCE_PREFIX}${owner}.`;
+  const floorPrefix = `${ROUTER_FLOOR_PREFIX}${owner}.`;
+  const denyPrefix = `${ROUTER_DENY_PREFIX}${owner}.`;
+  const floorSeen = new Map<string, string>();
+  const fenceSeen = new Map<string, string>();
   const groupKey = (key: string) => `${groupPrefix}${encodeURIComponent(key)}`;
   const fenceKey = (scope: string) => `${fencePrefix}${encodeURIComponent(scope)}`;
+  const floorBase = (scope: string) => `${floorPrefix}${encodeURIComponent(scope)}.`;
+  const denyBase = (scope: string) => `${denyPrefix}${encodeURIComponent(scope)}.`;
+  const transaction = <T>(work: () => T): Promise<T> => {
+    if (!web) { try { return Promise.resolve(work()); } catch (error) { return Promise.reject(error); } }
+    if (!routerAuthorityStorageReady()) return Promise.reject(new Error('Cross-tab authority storage is unavailable.'));
+    try { return navigator.locks.request(`beeline.router.authority.${owner}`, { mode: 'exclusive' }, work); }
+    catch (error) { return Promise.reject(error); }
+  };
+  // Authority storage never swallows denied reads/writes: an unreadable fence
+  // cannot be interpreted as permission to save a stale private envelope.
+  const read = (key: string) => web?.storage ? web.storage.getItem(`${RESPONSE_NAMESPACE}${key}`) ?? undefined : responses.getString(key);
+  const write = (key: string, value: string) => {
+    if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${key}`, value); else responses.set(key, value);
+  };
+  const remove = (key: string) => {
+    if (web?.storage) web.storage.removeItem(`${RESPONSE_NAMESPACE}${key}`); else responses.delete(key);
+  };
+  const keys = (): string[] => {
+    if (!web?.storage) return responses.getAllKeys();
+    const result: string[] = [];
+    for (let index = 0; index < web.storage.length; index++) {
+      const key = web.storage.key(index);
+      if (key?.startsWith(RESPONSE_NAMESPACE)) result.push(key.slice(RESPONSE_NAMESPACE.length));
+    }
+    return result;
+  };
+  const maximum = (map: Map<string, string>, scope: string, epoch: string) => {
+    const previous = map.get(scope);
+    if (!previous || BigInt(previous) < BigInt(epoch)) map.set(scope, epoch);
+    return map.get(scope)!;
+  };
+  const metadataRecord = (prefix: string, key: string): { scope: string; epoch: string } | undefined => {
+    if (!key.startsWith(prefix)) return;
+    const suffix = key.slice(prefix.length); const split = suffix.lastIndexOf('.');
+    if (split < 1) return;
+    const epoch = epochValue(suffix.slice(split + 1)); if (epoch === undefined) return;
+    try {
+      const scope = decodeURIComponent(suffix.slice(0, split));
+      return scope && scope.length <= 256 ? { scope, epoch } : undefined;
+    } catch { return; }
+  };
+  const floorRecord = (key: string) => metadataRecord(floorPrefix, key);
+  const floors = (): ReadonlyMap<string, string> => {
+    for (const key of keys()) {
+      const record = floorRecord(key);
+      // The immutable key is itself the durable lower bound; a corrupted
+      // redundant value must never lower that bound.
+      if (record) maximum(floorSeen, record.scope, record.epoch);
+    }
+    return floorSeen;
+  };
+  const denials = (): ReadonlyMap<string, string> => {
+    for (const key of keys()) {
+      const record = metadataRecord(denyPrefix, key);
+      if (record) maximum(fenceSeen, record.scope, record.epoch);
+      else if (key.startsWith(fencePrefix)) {
+        const value = read(key); const epoch = value === undefined ? undefined : epochValue(value);
+        if (epoch === undefined) continue;
+        try { maximum(fenceSeen, decodeURIComponent(key.slice(fencePrefix.length)), epoch); } catch { /* Invalid legacy key. */ }
+      }
+    }
+    return fenceSeen;
+  };
+  const authorities = (encoded: string): readonly StoredAuthority[] => {
+    const value: unknown = JSON.parse(encoded);
+    if (!value || typeof value !== 'object') throw new Error('Invalid router consistency group.');
+    const envelope = value as { schema?: unknown; identity?: { origin?: unknown; principal?: unknown }; entries?: unknown };
+    if (envelope.schema !== 1 || envelope.identity?.origin !== canonicalOrigin || envelope.identity?.principal !== principal ||
+        !Array.isArray(envelope.entries) || !envelope.entries.length || envelope.entries.length > 256)
+      throw new Error('Invalid router consistency group.');
+    return envelope.entries.flatMap(entry => {
+      const scopes = entry?.snapshot?.authority?.scopes;
+      if (!Array.isArray(scopes) || !scopes.length || scopes.length > 8) throw new Error('Invalid router authority.');
+      return scopes.map((scope: unknown) => {
+        if (!scope || typeof scope !== 'object') throw new Error('Invalid router authority.');
+        const item = scope as Partial<StoredAuthority>;
+        if (typeof item.authorityScope !== 'string' || !item.authorityScope || item.authorityScope.length > 256 ||
+            typeof item.epoch !== 'string') throw new Error('Invalid router authority.');
+        const epoch = epochValue(item.epoch); if (epoch === undefined) throw new Error('Invalid router authority.');
+        return { authorityScope: item.authorityScope, epoch };
+      });
+    });
+  };
+  const scrub = (scope: string, epoch: string, inclusive: boolean) => {
+    for (const key of keys()) {
+      if (!key.startsWith(groupPrefix)) continue;
+      const encoded = read(key); if (!encoded) continue;
+      try {
+        if (authorities(encoded).some(authority => authority.authorityScope === scope &&
+            (inclusive ? BigInt(authority.epoch) <= BigInt(epoch) : BigInt(authority.epoch) < BigInt(epoch)))) remove(key);
+      } catch { remove(key); }
+    }
+  };
+  const check = (scopes: readonly StoredAuthority[]) => {
+    const minima = floors(); denials();
+    for (const scope of scopes) {
+      const stored = read(fenceKey(scope.authorityScope));
+      const denial = stored === undefined ? fenceSeen.get(scope.authorityScope) : epochValue(stored);
+      if (stored !== undefined && denial === undefined) throw new Error('Invalid stored authority fence.');
+      if (denial !== undefined) maximum(fenceSeen, scope.authorityScope, denial);
+      const denied = fenceSeen.get(scope.authorityScope); const minimum = minima.get(scope.authorityScope);
+      if (denied !== undefined && BigInt(scope.epoch) <= BigInt(denied) || minimum !== undefined && BigInt(scope.epoch) < BigInt(minimum))
+        throw new Error('Router authority is older than its durable fence.');
+    }
+  };
   return {
-    write: async (key: string, encoded: string): Promise<void> => {
+    write: async (key: string, encoded: string): Promise<void> => transaction(() => {
       const length = new TextEncoder().encode(encoded).length;
       if (length > 1024 * 1024) throw new Error('Router consistency group exceeds storage budget.');
-      // Actual local storage writes are synchronous/atomic for this one key.
-      if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${groupKey(key)}`, encoded);
-      else responses.set(groupKey(key), encoded);
-      const keys = responses.getAllKeys().filter(candidate => candidate.startsWith(groupPrefix));
-      let total = keys.reduce((sum, candidate) => sum + new TextEncoder().encode(responses.getString(candidate) ?? '').length, 0);
-      for (const candidate of keys) {
+      const scopes = authorities(encoded); check(scopes);
+      const target = groupKey(key); write(target, encoded);
+      try { check(scopes); }
+      catch (error) {
+        // A competing tab may already have installed a newer same-key group.
+        if (read(target) === encoded) remove(target);
+        throw error;
+      }
+      const held = keys().filter(candidate => candidate.startsWith(groupPrefix));
+      let total = held.reduce((sum, candidate) => sum + new TextEncoder().encode(read(candidate) ?? '').length, 0);
+      for (const candidate of held) {
         if (total <= MAX_ROUTER_READER_BYTES) break;
-        if (candidate === groupKey(key)) continue;
-        total -= new TextEncoder().encode(responses.getString(candidate) ?? '').length;
-        responses.delete(candidate);
+        if (candidate === target) continue;
+        total -= new TextEncoder().encode(read(candidate) ?? '').length; remove(candidate);
       }
-    },
-    fence: async (scope: string, epoch: string): Promise<void> => {
-      const key = fenceKey(scope);
-      const previous = responses.getString(key);
-      if (previous && /^\d+$/.test(previous) && BigInt(previous) >= BigInt(epoch)) return;
-      if (web?.storage) web.storage.setItem(`${RESPONSE_NAMESPACE}${key}`, epoch);
-      else responses.set(key, epoch);
-      // A received fence dominates all older coherent envelopes, even after
-      // process death. Purge matching groups without restoring their content.
-      for (const candidate of responses.getAllKeys()) {
-        if (!candidate.startsWith(groupPrefix)) continue;
-        const encoded = responses.getString(candidate);
-        if (!encoded) continue;
-        try {
-          const envelope = JSON.parse(encoded) as { entries?: { snapshot?: { authority?: { scopes?: { authorityScope: string; epoch?: string }[] } } }[] };
-          if (envelope.entries?.some(entry => entry.snapshot?.authority?.scopes?.some(authority => authority.authorityScope === scope &&
-            (!authority.epoch || !/^\d+$/.test(authority.epoch) || BigInt(authority.epoch) <= BigInt(epoch)))))
-            responses.delete(candidate);
-        } catch { responses.delete(candidate); }
+    }),
+    fence: async (scope: string, value: string): Promise<void> => transaction(() => {
+      const epoch = epochValue(value); if (!scope || scope.length > 256 || epoch === undefined) throw new Error('Invalid authority fence.');
+      const key = fenceKey(scope); const stored = read(key);
+      const previous = stored === undefined ? undefined : epochValue(stored);
+      if (stored !== undefined && previous === undefined) throw new Error('Invalid stored authority fence.');
+      denials();
+      const candidate = maximum(fenceSeen, scope, epoch);
+      if (read(`${denyBase(scope)}${candidate}`) === undefined) write(`${denyBase(scope)}${candidate}`, candidate);
+      const next = denials().get(scope)!;
+      if (read(key) !== next) write(key, next);
+      scrub(scope, next, true);
+      for (const key of keys()) {
+        const record = metadataRecord(denyPrefix, key);
+        if (record?.scope === scope && BigInt(record.epoch) < BigInt(next)) remove(key);
       }
-    },
+    }),
+    floor: async (scope: string, value: string): Promise<void> => transaction(() => {
+      const epoch = epochValue(value); if (!scope || scope.length > 256 || epoch === undefined) throw new Error('Invalid authority floor.');
+      const previous = floors().get(scope);
+      const current = maximum(floorSeen, scope, previous !== undefined && BigInt(previous) > BigInt(epoch) ? previous : epoch);
+      if (read(`${floorBase(scope)}${current}`) === undefined) write(`${floorBase(scope)}${current}`, current);
+      // A competing tab may have persisted a higher epoch during this write.
+      const next = floors().get(scope) ?? current;
+      scrub(scope, next, false);
+      for (const key of keys()) {
+        const record = floorRecord(key);
+        if (record?.scope === scope && BigInt(record.epoch) < BigInt(next)) remove(key);
+      }
+    }),
     remove: async (_key: string): Promise<void> => {
-      // Group membership may span several datum keys. The fence operation
-      // above purges every matching group in one storage event, not by LRU key.
+      // A consistency group may contain several datum keys. Metadata scrubs
+      // remove the affected whole envelope, never one member's data/coverage.
     },
     subscribeFences: (listener: (scope: string, epoch: string) => void): (() => void) => {
-      const receive = (key: string, epoch: string) => {
-        if (!key.startsWith(fencePrefix) || !/^\d+$/.test(epoch)) return;
-        try { listener(decodeURIComponent(key.slice(fencePrefix.length)), epoch); } catch { /* Invalid foreign key. */ }
+      const receive = (key: string, value: string) => {
+        try {
+          const record = metadataRecord(denyPrefix, key);
+          if (!record && !key.startsWith(fencePrefix)) return;
+          const epoch = record?.epoch ?? epochValue(value); if (epoch === undefined) return;
+          const scope = record?.scope ?? decodeURIComponent(key.slice(fencePrefix.length));
+          if (!scope || scope.length > 256) return;
+          maximum(fenceSeen, scope, epoch); const next = denials().get(scope)!;
+          void transaction(() => scrub(scope, denials().get(scope) ?? next, true)).catch(() => {});
+          listener(scope, next);
+        } catch { /* Invalid foreign key. */ }
       };
       routerFenceListeners.add(receive);
-      for (const key of responses.getAllKeys()) {
-        const epoch = responses.getString(key);
-        if (epoch) receive(key, epoch);
+      for (const [scope, epoch] of denials()) {
+        void transaction(() => scrub(scope, denials().get(scope) ?? epoch, true)).catch(() => {});
+        listener(scope, epoch);
       }
       return () => { routerFenceListeners.delete(receive); };
+    },
+    subscribeFloors: (listener: (scope: string, epoch: string) => void): (() => void) => {
+      const receive = (key: string, _value: string) => {
+        const record = floorRecord(key); if (!record) return;
+        maximum(floorSeen, record.scope, record.epoch); const next = floors().get(record.scope)!;
+        void transaction(() => scrub(record.scope, floors().get(record.scope) ?? next, false)).catch(() => {});
+        listener(record.scope, next);
+      };
+      routerFloorListeners.add(receive);
+      for (const [scope, epoch] of floors()) {
+        void transaction(() => scrub(scope, floors().get(scope) ?? epoch, false)).catch(() => {});
+        listener(scope, epoch);
+      }
+      return () => { routerFloorListeners.delete(receive); };
     },
   };
 }
@@ -163,8 +322,10 @@ export function routerLaneStorage(origin: string, principal: string) {
 if (web?.storage && typeof window.addEventListener === 'function') {
   const shared = web.storage;
   window.addEventListener('storage', event => {
-    if (event.storageArea !== shared || !event.key?.startsWith(`${RESPONSE_NAMESPACE}${ROUTER_FENCE_PREFIX}`) || !event.newValue) return;
+    if (event.storageArea !== shared || !event.key?.startsWith(RESPONSE_NAMESPACE) || event.newValue === null) return;
     const key = event.key.slice(RESPONSE_NAMESPACE.length);
-    for (const listener of routerFenceListeners) listener(key, event.newValue);
+    if (key.startsWith(ROUTER_FENCE_PREFIX) || key.startsWith(ROUTER_DENY_PREFIX))
+      for (const listener of routerFenceListeners) listener(key, event.newValue);
+    if (key.startsWith(ROUTER_FLOOR_PREFIX)) for (const listener of routerFloorListeners) listener(key, event.newValue);
   });
 }

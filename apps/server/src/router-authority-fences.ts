@@ -9,9 +9,12 @@ import { routerAuthority, RouterProjectionUnavailable } from './router-projectio
 /** Only principal-addressed, DB-authored causes enter this actor. No client
  * inventories, subscriptions or read lanes select its authority audience. */
 export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:string,domain:string):Promise<RouterAuthorityFence|undefined>{
-  let allowed:boolean;
+  let allowed:boolean,mode:'deny'|'advance'='deny';
   const workspacePrefix=`reader:${viewer}:workspace:`;
-  if(domain.startsWith(workspacePrefix)){
+  if(domain.startsWith(workspacePrefix)&&domain.endsWith(':visibility')){
+    if(scope!==domain.slice(workspacePrefix.length,-':visibility'.length))return undefined;
+    allowed=true;mode='advance';
+  }else if(domain.startsWith(workspacePrefix)){
     const workspace=domain.slice(workspacePrefix.length);
     if(scope!==workspace)return undefined;
     allowed=Boolean((await db.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
@@ -24,11 +27,12 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
   }else if(domain===`object:${scope}`){
     try{await authorizedMediaMetadata(db,scope,viewer);allowed=true;}
     catch(error){if(!(error instanceof PhoneOperationError)||error.status!==404)throw error;allowed=false;}
+    if(allowed)mode='advance';
   }else return undefined;
-  if(allowed)return undefined;
+  if(allowed&&mode==='deny')return undefined;
   const row=(await db.query<{epoch:string}>(`SELECT epoch::text FROM router_authority WHERE scope=$1`,[domain])).rows[0];
   if(!row)throw new RouterProjectionUnavailable('authority');
-  const frame:RouterAuthorityFence={kind:'authority-fence',scope,authorityScope:domain,
+  const frame:RouterAuthorityFence={kind:'authority-fence',scope,authorityScope:domain,mode,
     authority:routerAuthority([{authorityScope:domain,epoch:row.epoch}])};
   if(Buffer.byteLength(JSON.stringify(frame))>ROUTER_MAX_AUTHORITY_FENCE_BYTES)throw new RouterProjectionUnavailable('budget');
   return frame;

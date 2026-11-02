@@ -17,7 +17,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_router_authority() RETURNS trigger AS $$
-DECLARE item jsonb; previous jsonb; workspace text; person text; room text;
+DECLARE item jsonb; previous jsonb; workspace text; person text; room text; affected_reader text;
 BEGIN
   IF TG_OP='UPDATE' THEN
     IF TG_TABLE_NAME='memberships' THEN
@@ -36,8 +36,19 @@ BEGIN
     workspace := item->>'workspace_id'; person := item->>'identity_id';
     room := CASE WHEN TG_TABLE_NAME='rooms' THEN item->>'id' ELSE item->>'room_id' END;
     IF TG_TABLE_NAME='memberships' AND workspace IS NOT NULL AND person IS NOT NULL THEN
-      INSERT INTO router_authority(scope) VALUES('reader:'||person||':workspace:'||workspace)
-      ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
+      IF room IS NULL THEN
+        INSERT INTO router_authority(scope) VALUES('reader:'||person||':workspace:'||workspace)
+        ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
+      END IF;
+      INSERT INTO router_authority(scope) VALUES('reader:'||person||':workspace:'||workspace||':visibility')
+        ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
+    ELSIF TG_TABLE_NAME='rooms' THEN
+      FOR affected_reader IN SELECT DISTINCT identity_id FROM memberships
+        WHERE room_id::text=room OR room_id::text=item->>'parent_id'
+      LOOP
+        INSERT INTO router_authority(scope) VALUES('reader:'||affected_reader||':workspace:'||workspace||':visibility')
+          ON CONFLICT(scope) DO UPDATE SET epoch=router_authority.epoch+1;
+      END LOOP;
     END IF;
     IF room IS NOT NULL THEN
       INSERT INTO router_authority(scope) VALUES('room:'||room)
@@ -75,11 +86,15 @@ BEGIN
       person:=item->>'identity_id';room:=item->>'room_id';
       PERFORM beeline_authority_hint(person,COALESCE(room,workspace),
         CASE WHEN room IS NULL THEN 'reader:'||person||':workspace:'||workspace ELSE 'room:'||room END);
+      PERFORM beeline_authority_hint(person,workspace,'reader:'||person||':workspace:'||workspace||':visibility');
     ELSE
       room:=item->>'id';parent:=item->>'parent_id';
       FOR person IN SELECT DISTINCT identity_id FROM memberships
         WHERE room_id::text=room OR room_id::text=parent
-      LOOP PERFORM beeline_authority_hint(person,room,'room:'||room); END LOOP;
+      LOOP
+        PERFORM beeline_authority_hint(person,room,'room:'||room);
+        PERFORM beeline_authority_hint(person,workspace,'reader:'||person||':workspace:'||workspace||':visibility');
+      END LOOP;
     END IF;
   END LOOP;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;RETURN NEW;
@@ -93,6 +108,9 @@ CREATE TRIGGER beeline_router_authority_capture AFTER INSERT OR UPDATE OR DELETE
 FOR EACH ROW EXECUTE FUNCTION beeline_router_authority_capture();
 INSERT INTO router_authority(scope)
   SELECT DISTINCT 'reader:'||identity_id||':workspace:'||workspace_id FROM memberships
+  ON CONFLICT DO NOTHING;
+INSERT INTO router_authority(scope)
+  SELECT DISTINCT 'reader:'||identity_id||':workspace:'||workspace_id||':visibility' FROM memberships
   ON CONFLICT DO NOTHING;
 INSERT INTO router_authority(scope) SELECT 'room:'||id FROM rooms ON CONFLICT DO NOTHING;
 INSERT INTO live_streams(id) SELECT 'workspace:'||id FROM workspaces ON CONFLICT DO NOTHING;

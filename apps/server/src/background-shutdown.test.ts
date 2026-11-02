@@ -130,7 +130,7 @@ describe('background shutdown', () => {
     expect(repairStart).toBeGreaterThan(-1);
     const recurring = source.slice(repairStart);
     const cycle = recurring.slice(0, recurring.indexOf('const leader = new BackgroundLeader'));
-    expect(cycle).toContain('githubJobs.recoverUnfinishedMergeClaims()');
+    expect(cycle).not.toContain('recoverUnfinishedMergeClaims');
     expect(cycle).toContain('githubJobs.reconcileMergedCorners()');
     expect(source).not.toContain('recoveredCornerMerges');
     expect(source).not.toContain('reconciledMergedCorners');

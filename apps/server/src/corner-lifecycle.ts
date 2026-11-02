@@ -125,7 +125,6 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
         pushed: 'checks',
         rechecked: 'checks',
         merge_refused: 'implement',
-        merge_unconfirmed: 'review',
       },
     },
     landed: { does: 'The change has landed.', kind: 'terminal', status: 'done' },
@@ -154,7 +153,6 @@ export type CornerEvent =
   | { kind: 'checks-pending' }
   /** A yes on this head: a reviewer's PASS or a person's order, landed by the caller. */
   | { kind: 'approval'; headSha: string; by: 'reviewer' | 'person' }
-  | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string; confirmedUnmerged?: boolean }
   | { kind: 'merged'; contents: Record<string, unknown> }
   | { kind: 'pull-request-closed'; number: number }
@@ -605,17 +603,6 @@ async function applyEvent(
     }
     case 'approval':
       return approvalRecorded(db, cornerId, corner, transition, event);
-    case 'merge-unconfirmed':
-      if (!transition.allows('merge_unconfirmed')) return no('merge recovery already escalated');
-      await transition.take('merge_unconfirmed');
-      await ensureSystemIdentity(db);
-      const unconfirmed = await systemLine(db, {
-        roomId: cornerId, authorId: SYSTEM_IDENTITY_ID, subject: GITHUB_SUBJECT, verb: 'could not confirm the merge of',
-        object: `pull request #${event.number}`, consequence: `${event.error} · merge outcome is unconfirmed`,
-      });
-      if (corner.worker_agent_id)
-        await wake(db, cornerId, corner.worker_agent_id, unconfirmed.id, 'corner_merge_unconfirmed');
-      return OK;
     case 'merge-refused':
       return mergeRefused(db, cornerId, corner, transition, event);
     case 'merged':
@@ -1185,19 +1172,12 @@ async function mergeRefused(
   event: Extract<CornerEvent, { kind: 'merge-refused' }>,
 ): Promise<Applied> {
   if (corner.lifecycle.pr?.headSha !== event.headSha) return no('the head moved');
-  if (event.confirmedUnmerged) {
-    await db.query(
-      `UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
-       WHERE corner_id=$1 AND merge_attempt_head=$2`,
-      [cornerId, event.headSha],
-    );
-  }
   if (!transition.allows('merge_refused')) return no('not landing');
   await transition.take('merge_refused', { headSha: event.headSha, reason: event.reason });
   const pullRequest = corner.lifecycle.pr;
   const line = await systemLine(db, {
     // Confirmed refusals can recur on one head; each needs its own wake source.
-    // Deduplicate unresolved refusal notices while leaving the claim recoverable.
+    // Deduplicate refusals whose outcome GitHub could not yet confirm.
     id: event.confirmedUnmerged ? undefined : createHash('sha256')
       .update(`beeline:${cornerId}:github:merge-refused:${event.headSha}`)
       .digest('hex'),
@@ -1400,13 +1380,14 @@ export async function cornerMergeGate(
 }
 
 /**
- * Claims one unresolved merge attempt for this head, under the run lock and only
- * while the gate is open on that head. Returns false when the head was
- * already claimed or the corner moved on, so concurrent `merge_corner`
- * calls and redelivered events never merge a head twice. Stale unfinished claims are
- * recovered only after reading GitHub to establish whether the merge landed.
+ * Rechecks local merge authority under the run lock after the live gate read,
+ * immediately before GitHub is asked to merge: the corner is open, the head
+ * is unchanged, the brief still assigns repository work, a yes stands on this
+ * head and no hold stands. Nothing is stored. GitHub's expected-head merge
+ * merges a pull request at most once; a concurrent second attempt reads the
+ * live pull request and confirms the merge instead of reporting a refusal.
  */
-export async function claimCornerMergeAttempt(
+export async function confirmCornerMergeAuthority(
   database: SqlDatabase,
   cornerId: string,
   headSha: string,
@@ -1420,67 +1401,12 @@ export async function claimCornerMergeAttempt(
     if (!corner) return blocked('the corner no longer exists');
     if (corner.archived) return blocked('the corner is archived');
     if (!pr?.number) return blocked('the corner has no pull request');
-    if (pr.headSha !== headSha) return blocked('the pull request head changed before the merge claim');
-    // Recheck local authority at claim after the earlier gate read.
-    // No provider request belongs in this transaction.
+    if (pr.headSha !== headSha) return blocked('the pull request head changed before the merge');
     // A brief revised during the GitHub read is seen here: revisions take this lock.
     await assertCornerBriefAllowsMerge(db, cornerId);
     const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
     if (!gate.open) return blocked(gate.evidenceMissing ? 'missing review attachments: attach the screenshots or files claimed by the verdict' : gate.held ? 'a hold stands' : 'no yes on this head');
-    const claimed = await db.query(
-      `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
-       WHERE corner_id=$1
-         AND lifecycle->'pr'->>'headSha'=$2
-         AND merge_attempt_head IS DISTINCT FROM $2
-       RETURNING 1`,
-      [cornerId, headSha],
-    );
-    return claimed.rowCount > 0 || blocked('a merge attempt for this head is still awaiting GitHub confirmation');
-  });
-}
-
-/** Five minutes exceeds the 15-second provider read timeout by a wide margin. */
-const MERGE_CLAIM_GRACE_SECONDS = 300;
-
-/** Shared by the background scan and its revalidation under the run lock. */
-export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: string) {
-  return (await db.query<{ corner_id: string; number: number; head_sha: string }>(
-    `SELECT fact.corner_id,(fact.lifecycle->'pr'->>'number')::int number,
-            fact.merge_attempt_head head_sha
-     FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE fact.workflow_state IN ('implement','checks','review','ask_human') AND corner.archived_at IS NULL
-       AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
-       AND NOT (fact.lifecycle ? 'mergeQueue')
-       AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
-       AND (COALESCE((fact.lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision,
-             extract(epoch FROM fact.updated_at)+$1) <= extract(epoch FROM clock_timestamp())
-         OR (fact.lifecycle ? 'mergeRecovery' AND EXISTS (SELECT 1 FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
-           WHERE m.room_id=fact.corner_id AND m.presentation='message'
-             AND m.created_at > to_timestamp((fact.lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision))))
-       AND ($2::uuid IS NULL OR fact.corner_id=$2)`,
-    [MERGE_CLAIM_GRACE_SECONDS, cornerId ?? null],
-  )).rows;
-}
-
-/** Clear only the unfinished claim whose provider state was just read. */
-export async function clearUnfinishedCornerMergeClaim(
-  database: SqlDatabase, cornerId: string, headSha: string, number: number,
-) {
-  return database.transaction(async db => {
-    await lockCornerLifecycle(db, cornerId);
-    const corner = await loadCorner(db, cornerId);
-    const claim = (await unfinishedCornerMergeClaims(db, cornerId))[0];
-    if (!corner || claim?.head_sha !== headSha || claim.number !== number) return;
-    const gate = await cornerMergeGate(db, cornerId, { number: claim.number, headSha });
-    const run = await loadCornerLifecycleState(db, cornerId);
-    const refused = run?.toState === 'ask_human' || run?.outcome === 'merge_unconfirmed';
-    if (refused)
-      await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha, reason: 'GitHub confirmed the pull request has not merged' });
-    await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now() WHERE corner_id=$1`, [cornerId]);
-    // Only a fresh land attempt can act on an open gate, with a fresh GitHub read
-    // (live checks) and claim. A closed gate, or a head just handed back as
-    // refused, still clears the stale claim for later recovery.
-    return !refused && gate.open;
+    return true;
   });
 }
 

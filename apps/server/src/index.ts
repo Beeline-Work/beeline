@@ -556,11 +556,8 @@ async function main() {
     if (githubJobs) await backgroundJobs.run('github-pending-checks', () =>
       githubJobs.refreshOpenPendingChecks());
     const now = Date.now();
-    // Merges happen throughout a leader's tenure. Keep retrying missed
-    // webhooks and claims whose grace/backoff deadline was not due at boot.
+    // Merges happen throughout a leader's tenure. Keep catching missed merge webhooks.
     if (githubJobs) {
-      await backgroundJobs.run('corner-merge-recovery', () =>
-        githubJobs.recoverUnfinishedMergeClaims());
       await backgroundJobs.run('github-merged-corners', () =>
         githubJobs.reconcileMergedCorners());
     }

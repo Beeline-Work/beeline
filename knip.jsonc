@@ -373,6 +373,10 @@
         "scripts/coverage-map-setup.mjs",
       ],
     },
+    "packages/net": {
+      // tsc executes the negative admission type assertions in this entry.
+      "entry": ["src/index.ts", "src/admission.typecheck.ts"],
+    },
     "packages/buzz-client": {
       "entry": ["src/index.ts"],
     },

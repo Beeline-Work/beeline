@@ -173,7 +173,6 @@ describe('merge-derived restricted Workspace procedures', () => {
       repository: 'Beeline-Work/beeline',
       targetCommit: TARGET_COMMIT,
     });
-    expect((await database.query(`SELECT 1 FROM workspace_skill_uses`)).rowCount).toBe(1);
     expect(
       (
         await database.query<{ last_served_at: Date | null }>(

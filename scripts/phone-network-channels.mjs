@@ -4,7 +4,7 @@
 // with its fate. The list may only shrink: a new call site, or a list that grew
 // against the base commit, fails CI.
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
@@ -289,7 +289,7 @@ function lineAt(text, index) {
 }
 
 /** Network call sites in one source file: `[{ kind, line }]`. */
-export function scanSource(file, text) {
+export function scanSource(file, text, networkLibraries = NETWORK_LIBRARIES) {
   const hits = [];
   const add = (kind, source, pattern) => {
     for (const match of source.matchAll(pattern)) hits.push({ kind, line: lineAt(source, match.index) });
@@ -308,7 +308,7 @@ export function scanSource(file, text) {
   // A new host is a new channel even through an existing call (the hedged backup origin was one).
   for (const match of code.matchAll(/['"`](?:https?|wss?):\/\/([a-zA-Z0-9.-]+)/g))
     hits.push({ kind: `origin:${match[1].toLowerCase()}`, line: lineAt(code, match.index) });
-  for (const name of NETWORK_LIBRARIES) {
+  for (const name of networkLibraries) {
     const quoted = name.replace(/[/.@-]/g, '\\$&');
     const imports = new RegExp(
       `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|^\\s*import\\s+)['"]${quoted}(?:/[^'"]*)?['"]`,
@@ -340,10 +340,66 @@ function walk(root, relative, files) {
   }
 }
 
+const SPECIFIERS = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)['"]([^'"]+)['"]/gm;
+
+function sourceFor(root, candidate) {
+  const base = candidate.replace(/\.(?:m?js|jsx)$/, '');
+  for (const option of [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`, candidate])
+    if (existsSync(path.join(root, option)) && JS_FILE.test(option)) return option;
+  return undefined;
+}
+
+/** The shared-package source a phone import loads, from the package's exports map. */
+function packageEntry(root, specifier, packageRoots) {
+  const match = specifier.match(/^@beeline\/([^/]+)(\/.*)?$/);
+  if (!match) return undefined;
+  const directory = `packages/${match[1]}`;
+  if (!packageRoots.some((scanned) => scanned.startsWith(`${directory}/`))) return undefined;
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(root, directory, 'package.json'), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  const target = manifest.exports?.[`.${match[2] ?? ''}`];
+  const built = typeof target === 'string' ? target : target?.import ?? target?.default;
+  if (typeof built !== 'string') return undefined;
+  return sourceFor(root, path.posix.join(directory, built.replace(/^\.\/dist\//, 'src/')));
+}
+
+/**
+ * Shared-package files the phone bundles: everything reachable by import from
+ * the phone tree, limited to the package roots the list says it covers.
+ */
+function phonePackageFiles(root, phoneFiles, packageRoots) {
+  const seen = new Set();
+  const queue = [];
+  const visit = (file, text) => {
+    const code = stripSource(text, { blankStrings: false })
+      .replace(/^\s*(?:import|export)\s+type\b[^;]*;/gm, '');
+    for (const [, specifier] of code.matchAll(SPECIFIERS)) {
+      const next = specifier.startsWith('.')
+        ? (file.startsWith('packages/') ? sourceFor(root, path.posix.join(path.posix.dirname(file), specifier)) : undefined)
+        : packageEntry(root, specifier, packageRoots);
+      if (next && !seen.has(next) && packageRoots.some((scanned) => next.startsWith(`${scanned}/`))) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  };
+  for (const file of phoneFiles) if (JS_FILE.test(file)) visit(file, readFileSync(path.join(root, file), 'utf8'));
+  while (queue.length) {
+    const file = queue.shift();
+    visit(file, readFileSync(path.join(root, file), 'utf8'));
+  }
+  return [...seen];
+}
+
 /** Every network call site in the phone app, keyed `file::kind`. */
-export function scanPhoneTree(root) {
+export function scanPhoneTree(root, packageRoots = JSON.parse(readFileSync(path.join(root, ALLOWLIST_PATH), 'utf8')).packageRoots ?? []) {
   const files = [];
   for (const start of SCAN_ROOTS) walk(root, start, files);
+  files.push(...phonePackageFiles(root, files.filter((file) => !TEST_FILE.test(file)), packageRoots));
   const sites = new Map();
   for (const file of files.sort()) {
     if (SKIP_FILES.has(file) || TEST_FILE.test(file)) continue;
@@ -401,8 +457,16 @@ export function judgeChannels(sites, allowlist, baseAllowlist) {
     if (!sites.has(key)) errors.push(`${ALLOWLIST_PATH}: ${key} has no call sites left. Remove the entry.`);
   if (baseAllowlist) {
     const before = new Map((baseAllowlist.entries ?? []).map((entry) => [keyOf(entry), entry]));
+    // Covering a shared package the phone bundles inventories its existing
+    // sites; that is wider coverage, not a new channel. Coverage never shrinks.
+    const coveredBefore = baseAllowlist.packageRoots ?? [];
+    const newlyCovered = (allowlist.packageRoots ?? []).filter((root) => !coveredBefore.includes(root));
+    for (const root of coveredBefore)
+      if (!(allowlist.packageRoots ?? []).includes(root))
+        errors.push(`${ALLOWLIST_PATH}: packageRoots no longer covers ${root}. Phone coverage may only grow.`);
     for (const [key, entry] of allowed) {
       const was = before.get(key);
+      if (!was && newlyCovered.some((root) => entry.file.startsWith(`${root}/`))) continue;
       if (!was) errors.push(`${ALLOWLIST_PATH}: ${key} is new. The list of phone network channels may only shrink.`);
       else if (entry.count > was.count)
         errors.push(`${ALLOWLIST_PATH}: ${key} grew from ${was.count} to ${entry.count}. The list of phone network channels may only shrink.`);

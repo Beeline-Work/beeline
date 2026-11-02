@@ -15,7 +15,8 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 /** A throwaway copy of the phone sources, the list and the checker. */
 function copyOfRepo(name) {
   const root = path.join(scratch, name);
-  for (const part of ['apps/mobile/sources', 'apps/mobile/modules', 'apps/mobile/index.ts', ALLOWLIST_PATH, 'scripts/phone-network-channels.mjs', 'scripts/check-phone-network-channels.mjs'])
+  const packages = allowlist.packageRoots.flatMap((root) => [root, path.posix.join(path.posix.dirname(root), 'package.json')]);
+  for (const part of ['apps/mobile/sources', 'apps/mobile/modules', 'apps/mobile/index.ts', ALLOWLIST_PATH, 'scripts/phone-network-channels.mjs', 'scripts/check-phone-network-channels.mjs', ...packages])
     cpSync(path.join(repo, part), path.join(root, part), {
       recursive: true,
       filter: (source) => !['node_modules', 'build', '.gradle'].includes(path.basename(source)),
@@ -250,4 +251,30 @@ test('a stale entry must be removed once its call site is gone', () => {
   const sites = scanPhoneTree(repo);
   sites.delete('apps/mobile/sources/buzz/store-update.ts::fetch');
   assert.ok(judgeChannels(sites, allowlist).some((error) => /store-update\.ts::fetch has no call sites left/.test(error)));
+});
+
+test('shared-package code the phone bundles is scanned; code it never imports is not', () => {
+  const root = copyOfRepo('package-reach');
+  write(root, 'packages/buzz-client/src/unbundled.ts', "export const ping = () => fetch('https://example.com/ping');\n");
+  assert.equal(runCheck(root).status, 0);
+  write(root, 'packages/buzz-client/src/index.ts',
+    `${readFileSync(path.join(root, 'packages/buzz-client/src/index.ts'), 'utf8')}export * from './unbundled.js';\n`);
+  const result = runCheck(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /new phone network call site \(fetch\) at packages\/buzz-client\/src\/unbundled\.ts:1/);
+});
+
+test('covering a new package lists its existing sites without growing the list; coverage never shrinks', () => {
+  const sites = scanPhoneTree(repo);
+  const base = structuredClone(allowlist);
+  base.packageRoots = base.packageRoots.filter((root) => root !== 'packages/buzz-client/src');
+  base.entries = base.entries.filter((entry) => !entry.file.startsWith('packages/buzz-client/src/'));
+  assert.deepEqual(judgeChannels(sites, allowlist, base), []);
+  const listedBefore = structuredClone(allowlist);
+  const authFetch = listedBefore.entries.findIndex((entry) => entry.file === 'packages/buzz-client/src/auth-json.ts');
+  listedBefore.entries.splice(authFetch, 1);
+  assert.ok(judgeChannels(sites, allowlist, listedBefore).some((error) => /auth-json\.ts::fetch is new/.test(error)));
+  const narrowed = structuredClone(allowlist);
+  narrowed.packageRoots = narrowed.packageRoots.filter((root) => root !== 'packages/nostr/src');
+  assert.ok(judgeChannels(sites, narrowed, allowlist).some((error) => /no longer covers packages\/nostr\/src/.test(error)));
 });

@@ -1,3 +1,4 @@
+import { backfillCornerObjectives } from './corner-objective.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
@@ -63,7 +64,7 @@ import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
-import { cancelArchivedCornerAssignments } from './corner-close.js';
+import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
@@ -239,7 +240,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 45;
+export const REQUIRED_SCHEMA_VERSION = 46;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1002,8 +1003,8 @@ ALTER TABLE agents ADD CONSTRAINT agents_model_unavailable_check
 ALTER TABLE agents ALTER COLUMN access_policy SET DEFAULT '{"type":"everyone"}'::jsonb;
 -- Consent moved from a mid-conversation ask to one up-front owner choice, so yolo is
 -- now the default for a NEW agent. Unlike the access_policy default change above,
--- existing rows are flipped too (backfillYoloModeDefault): leaving them behind after
--- the last default change left agents refusing everyone for hours. The two hard
+-- existing rows were flipped once too: leaving them behind after the last default
+-- change left agents refusing everyone for hours. The two hard
 -- stops (a command naming a credential file; a script nobody has read) are outside
 -- yolo's scope gate and are unaffected. An owner or workspace admin can still turn
 -- an agent's yolo back off from the members page.
@@ -2100,6 +2101,7 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 );
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS objective text;
 -- Structured authority was added after the original opaque content field.
 -- Rows from before it keep null authority fields and read back as their
 -- build_spec alone.
@@ -3101,6 +3103,16 @@ CREATE TABLE IF NOT EXISTS wallet_balance_snapshots (
   PRIMARY KEY (identity_id, chain, asset)
 );
 
+CREATE TABLE IF NOT EXISTS operation_outcomes_hourly (
+  hour timestamptz NOT NULL,
+  op text NOT NULL,
+  status int NOT NULL,
+  code text NOT NULL,
+  release text NOT NULL,
+  count bigint NOT NULL,
+  PRIMARY KEY (hour,op,status,code,release)
+);
+
 -- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
 -- report_feedback call and a person's @system tag or Report issue action land
 -- here. The saved feedback-triage workflow reads this table through a
@@ -3607,6 +3619,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('corner objectives', () => workflowBackfillOnce(
+    database, 'corner-objectives-brief-v1', backfillCornerObjectives));
   await dataStep('push outbox cutover', () => workflowBackfillOnce(
     database, 'push-outbox-v1', backfillPushOutbox));
   await dataStep('free agent connection guide', () =>
@@ -3631,6 +3645,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'webhook-retention-v1', compactWebhookDeliveries));
   await dataStep('archived corner assignments', () =>
     workflowBackfillOnce(database, 'archived-corner-assignments-v1', cancelArchivedCornerAssignments));
+  await dataStep('stale closed corner stops', () =>
+    workflowBackfillOnce(database, 'closed-corner-stops-v1', cancelStaleClosedCornerStops));
   await dataStep('archived corner wakes', () =>
     workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
   await dataStep('completed command turns', () =>
@@ -3777,7 +3793,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
       WHERE trigger_kind='curator' AND status IN ('pending','retry','claimed')`);
   });
   await backfillAgentHandles(database);
-  await dataStep('yolo default', () => backfillYoloModeDefault(database));
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
   await dataStep('registry apps', () => backfillRegistryApps(database));
   await dataStep('grant policy', () => upgradeGrantPolicy(database));
@@ -4089,21 +4104,6 @@ export async function backfillInstitutionalMemoryRollout(database: SqlDatabase):
     console.log(
       `backfillInstitutionalMemoryRollout: advanced ${advanced.rowCount}, enrolled ${enrolled.rowCount} Workspace rollout(s)`,
     );
-  return changed;
-}
-
-/**
- * Flips every existing agent to the new yolo default. Explicit and unconditional —
- * the access_policy default change left old rows behind and the captain's agents
- * spent hours silently refusing people; this time the migration itself moves them,
- * and logs exactly how many rows it touched so a deploy's logs carry the count.
- */
-export async function backfillYoloModeDefault(database: SqlDatabase): Promise<number> {
-  const changed = await boundedMigrationUpdate(database, 'yolo default',
-    `UPDATE agents SET yolo_mode=true WHERE agent_id IN (
-       SELECT agent_id FROM agents WHERE yolo_mode=false ORDER BY agent_id LIMIT $1)`,
-  );
-  console.log(`backfillYoloModeDefault: flipped ${changed} agent row(s) to yolo_mode=true`);
   return changed;
 }
 

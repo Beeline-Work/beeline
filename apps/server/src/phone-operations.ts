@@ -60,6 +60,7 @@ export function createPhoneOperationDispatcher(
   options: ServerOptions,
   readLimits: PhoneReadLimits,
   legacyOperation: PhoneService['execute'],
+  errorStatus: (error: unknown) => number,
 ) {
   const execute = async (name: string, input: Record<string, unknown>, viewerId: string,
     invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
@@ -203,7 +204,7 @@ export function createPhoneOperationDispatcher(
     }
   };
 
-  return async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
+  const dispatch = async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
     invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
     if (!viewerId) refuse(401, 'phone_token_required');
     if (!PHONE_OPERATION_NAMES.has(name as never)) refuse(404, 'unknown_phone_operation');
@@ -227,6 +228,19 @@ export function createPhoneOperationDispatcher(
       });
     }
     return result;
+  };
+  return async (...args: Parameters<typeof dispatch>): Promise<unknown> => {
+    try {
+      const result = await dispatch(...args);
+      options.operationOutcomes?.record(args[0], 200, '');
+      return result;
+    } catch (error) {
+      const explicit = error instanceof PhoneOperationError ? error.payload.code ?? error.payload.error : undefined;
+      const code = typeof explicit === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(explicit)
+        ? explicit : error instanceof Error ? error.constructor.name : 'Error';
+      options.operationOutcomes?.record(args[0], errorStatus(error), code);
+      throw error;
+    }
   };
 }
 

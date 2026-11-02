@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
-import { RoomsMcpEvents } from './rooms-mcp-events.js';
+import { MCP_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
 import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -429,7 +429,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     )).toEqual([]);
     expect(JSON.parse((await queued(report!.id))[0]!.body).data).toMatchObject({
       kind: 'report', reason: 'report', text: 'done: the report reached the commander',
-      next: 'Handle it, then call no_reply_needed with this address if nothing needs posting.',
+      next: MCP_WAKE_HINT,
     });
     expect(await deliverMcpMemberWebhooks(db, transport)).toBe(2);
     expect(received).toHaveLength(3);
@@ -2106,6 +2106,39 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(loaded.markdown).toContain('Read the saved instructions.');
       const read = await ok(client, 'read', { address: ROOM, facet: 'procedure', slug: 'mcp-procedure' });
       expect(read).toEqual(loaded);
+      const described = await ok(client, 'app_tool', { address: ROOM, app: 'beeline:workflow', tool: 'describe', args: { slug: 'mcp-procedure' } });
+      expect(described).toEqual(loaded);
+    });
+    // Reproduction (R-MCP-ACK-ONE): no_reply_needed(address) marked every non-order wake at the address handled,
+    // including wakes the app had not seen, and could not clear a wake whose claim had expired.
+    it('R-MCP-ACK-ONE: no_reply_needed with commandId marks only that wake handled', async () => {
+      const { client, member } = await connected();
+      const wake = (text: string) => createAgentCommand(db, { roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'report',
+        privatePayload: { kind: 'report', authorId: AGENT, fromRoomId: ROOM, text } });
+      const first = (await wake('done: first'))!, second = (await wake('done: second'))!;
+      const order = (await createAgentCommand(db, { roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'order',
+        privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Do the thing' } }))!;
+      expect((await call(client, 'no_reply_needed', { address: ROOM, commandId: order.id })).text).toContain('answer it with report');
+      expect(await ok(client, 'no_reply_needed', { address: ROOM, commandId: first.id })).toEqual({ cleared: 1 });
+      const ids = () => ok(client, 'list_mentions', {}).then(page => (page.wakes as { id: string }[]).map(item => item.id));
+      expect(await ids()).toEqual(expect.arrayContaining([second.id, order.id]));
+      expect(await ids()).not.toContain(first.id);
+      // A wake whose claim expired is still listed, so it can be cleared.
+      await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()-interval '1 minute' WHERE id=$1`, [second.id]);
+      expect(await ids()).toContain(second.id);
+      expect(await ok(client, 'no_reply_needed', { address: ROOM })).toEqual({ cleared: 1 });
+      expect(await ids()).toEqual([order.id]);
+    });
+    // Reproduction (R-MCP-LIMITS): search advertised limit 20 while the server refuses anything above 10.
+    it('R-MCP-LIMITS: every advertised search limit is accepted', async () => {
+      const { client, member } = await connected();
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      // A person's tag gives the app's turn a requester, as it does for an agent.
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} what did the release migration change?` }, USER);
+      const search = (await client.listTools()).tools.find(tool => tool.name === 'search')!;
+      const maximum = (search.inputSchema.properties as Record<string, { maximum?: number }>).limit!.maximum!;
+      for (const scope of ['history', 'memory'])
+        await ok(client, 'search', { address: ROOM, scope, query: 'release migration', limit: maximum });
     });
     it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
       const surface = await import('../../body/src/minimal-tool-surface.js');
@@ -2122,6 +2155,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => exposed.has(name))).toEqual([]);
       // Every exclusion names a real agent tool, so the table cannot hide a typo.
       expect(Object.keys(MCP_AGENT_EXCLUSIONS).filter(name => !agentTools.has(name))).toEqual([]);
+      // Reproduction (R-MCP-ROUTES): names alone hid that beeline:workflow had no describe action, which the
+      // helper's start description tells agents to call first. Every helper app action is listed or excluded.
+      for (const [app, routes] of Object.entries(surface.CAPABILITY_ROUTES)) {
+        const listed = await call(client, 'app_tool', { address: ROOM, app: `beeline:${app}` });
+        const actions = listed.error ? [] : (JSON.parse(listed.text).data.tools as { name: string }[]).map(entry => entry.name);
+        const missingActions = Object.entries(routes).filter(([action, op]) => !actions.includes(action) && !MCP_AGENT_EXCLUSIONS[op]);
+        expect(missingActions, app).toEqual([]);
+      }
     });
     it('R-MCP-EXCLUDED: refuses wallet spending and host grants with a plain reason', async () => {
       const { client } = await connected();
@@ -2193,6 +2234,21 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       return (await db.query<{ worker_active: boolean }>(`SELECT activity.worker_active FROM rooms c
         JOIN corner_facts f ON f.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
     }
+    // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
+    // its work while it ran; created agents' narration lands as corner activity.
+    it('R-MCP-PROGRESS: post progress:true records a progress line in the corner, not a message', async () => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      expect(await ok(client, 'post', { address: corner, text: 'Read the brief; running the tests next.', progress: true }))
+        .toEqual({ recorded: true, address: corner });
+      const rows = (await db.query<{ presentation: string; text: string; activity: { kind: string; title: string; text: string }[] | null }>(
+        `SELECT presentation,text,activity FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at`, [corner, member])).rows;
+      expect(rows).toEqual([{ presentation: 'activity', text: '', activity: [{ kind: 'output', title: 'Update', text: 'Read the brief; running the tests next.' }] }]);
+      // The one-call turn closed, and no wake was queued for anyone.
+      expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND status='working'`, [corner, member])).rowCount).toBe(0);
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id<>$2 AND state='pending'`, [corner, member])).rowCount).toBe(0);
+      expect((await call(client, 'post', { address: ROOM, text: 'not a corner', progress: true })).text).toContain('progress lines go in a corner');
+    });
     it.each(['corner', 'parent'])('R1: reports a corner objective through the %s address and clears working', async address => {
       const { client, member } = await connected();
       const corner = await reportCorner(member);

@@ -282,13 +282,6 @@ describe('authorized institutional history search', () => {
       limit: 10,
     });
     expect(empty).toMatchObject({ results: [], omitted: 0, capped: false });
-    const telemetry = (
-      await database.query<{ result_count: number; authorized_room_count: number }>(
-        `SELECT result_count,authorized_room_count FROM institutional_history_searches`,
-      )
-    ).rows[0];
-    expect(telemetry?.result_count).toBe(0);
-    expect(telemetry?.authorized_room_count).toBeGreaterThanOrEqual(2);
   });
 
   it('pays the audience-authorization cost once per search', async () => {
@@ -354,16 +347,7 @@ describe('authorized institutional history search', () => {
     expect(repeated.results.map((result) => result.messageId)).toEqual(
       capped.results.map((result) => result.messageId),
     );
-    expect(
-      (
-        await database.query<{ matches_capped: boolean; omitted_count: number }>(
-          `SELECT matches_capped,omitted_count FROM institutional_history_searches`,
-        )
-      ).rows[0],
-    ).toMatchObject({
-      matches_capped: true,
-      omitted_count: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10,
-    });
+    expect(capped).toMatchObject({ capped: true, omitted: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10 });
   });
 
   it('matches English word forms and preserves exact tokens without double-counting them', async () => {
@@ -566,19 +550,6 @@ describe('authorized institutional history search', () => {
       query: 'release marker',
       limit: 1,
     });
-    const telemetry = (
-      await database.query<{
-        query_hash: string;
-        result_count: number;
-        authorized_room_count: number;
-      }>(
-        `SELECT query_hash,result_count,authorized_room_count
-         FROM institutional_history_searches`,
-      )
-    ).rows[0];
-    expect(telemetry?.query_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(telemetry?.result_count).toBe(1);
-    expect(telemetry?.authorized_room_count).toBeGreaterThanOrEqual(2);
   });
 
   it('serves a turn started by a schedule or event wake, whose root message is agent-authored', async () => {

@@ -154,7 +154,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems, markNeedsYouSeen } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, countNeedsYouProjection, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -1122,10 +1122,11 @@ export class PhoneService {
       if (!input.roomId) throw new Error('roomId is required for room-head');
       return reader.readRoom(input.roomId, viewerId);
     }
+    if(input.family==='needs-you-count')return {count:await countNeedsYouProjection(reader.database,input.workspaceId,viewerId)};
     await reader.requireWorkspaceMember(input.workspaceId, viewerId);
     const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
       (row) => identity(row, reader.publicOrigin), false);
-    return input.family === 'needs-you-count' ? { count: items.length } : { count: items.length, items };
+    return { count: items.length, items };
   }
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {

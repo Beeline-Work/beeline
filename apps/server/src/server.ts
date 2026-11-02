@@ -1088,7 +1088,10 @@ export function createBeelineServer(options: ServerOptions): Server {
       let routerNegotiating = false;
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
         async (name, args, ...rest) => {
-          if (name === 'readRouterSnapshot') routerProtocol.requireSnapshot(args);
+          if (name === 'readRouterSnapshot') {
+            routerProtocol.requireSnapshot(args);
+            if (rest[4] === undefined) return routerProtocol.snapshot(args as unknown as Parameters<typeof routerProtocol.snapshot>[0]);
+          }
           if (name === 'readAgentUsageCell') routerProtocol.requireUsage();
           return dispatchPhoneOperation(name, args, ...rest);
         }, sendLive, requestErrorStatus, principal.familyId,

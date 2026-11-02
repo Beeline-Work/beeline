@@ -1,0 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { scanRouterTree, judgeInventory, baselineInventory, INVENTORY } from './router-boundaries.mjs';
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const args = process.argv.slice(2);
+const base = args.indexOf('--base');
+if (base !== -1 && (!args[base + 1] || args[base + 1].startsWith('-'))) throw new Error('--base needs a trusted git ref');
+const { sites, errors } = scanRouterTree(root);
+const inventory = JSON.parse(readFileSync(path.join(root, INVENTORY), 'utf8'));
+errors.push(...judgeInventory(sites, inventory, base === -1 ? undefined : baselineInventory(root, args[base + 1], sites)));
+for (const error of errors) console.error(error);
+if (errors.length) process.exitCode = 1;
+else console.log(`Router boundaries passed: ${sites.size} legacy boundaries inventoried; no production opt-in.`);

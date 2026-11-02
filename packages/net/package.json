@@ -1,0 +1,14 @@
+{
+  "name": "@beeline/net",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --minWorkers=1 --maxWorkers=2"
+  },
+  "dependencies": { "@beeline/api-contract": "*" },
+  "devDependencies": { "typescript": "^5.6.3", "vitest": "^2.1.4" }
+}

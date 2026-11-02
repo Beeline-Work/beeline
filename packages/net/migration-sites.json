@@ -1,0 +1,1277 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "id": "apps/auth/src/external-fetch.ts::fetch",
+      "file": "apps/auth/src/external-fetch.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/auth/src/oidc.ts::fetch",
+      "file": "apps/auth/src/oidc.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/auth/src/server-test-fixture.ts::import:node:http",
+      "file": "apps/auth/src/server-test-fixture.ts",
+      "kind": "import:node:http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/auth/src/server-test-fixture.ts::import:node:net",
+      "file": "apps/auth/src/server-test-fixture.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/auth/src/server-test-fixture.ts::fetch",
+      "file": "apps/auth/src/server-test-fixture.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/auth/src/store.ts::import:pg",
+      "file": "apps/auth/src/store.ts",
+      "kind": "import:pg",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/body/src/agent-corner-checkout.ts::fetch",
+      "file": "apps/body/src/agent-corner-checkout.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/agent-runtime.ts::fetch",
+      "file": "apps/body/src/agent-runtime.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/agent-sign-in.ts::fetch",
+      "file": "apps/body/src/agent-sign-in.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/android-emulator-lease.ts::import:node:net",
+      "file": "apps/body/src/android-emulator-lease.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/attachment-delivery.ts::fetch",
+      "file": "apps/body/src/attachment-delivery.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/attachment-delivery.ts::fetch-impl",
+      "file": "apps/body/src/attachment-delivery.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/browser-share-host.ts::import:node:net",
+      "file": "apps/body/src/browser-share-host.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/browser-share-host.ts::fetch",
+      "file": "apps/body/src/browser-share-host.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/browser-share.ts::import:ws",
+      "file": "apps/body/src/browser-share.ts",
+      "kind": "import:ws",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/browser-share.ts::fetch",
+      "file": "apps/body/src/browser-share.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/browser-share.ts::websocket",
+      "file": "apps/body/src/browser-share.ts",
+      "kind": "websocket",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/claude-sign-in.ts::fetch",
+      "file": "apps/body/src/claude-sign-in.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/connect-command.ts::fetch-impl",
+      "file": "apps/body/src/connect-command.ts",
+      "kind": "fetch-impl",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/connect-command.ts::fetch",
+      "file": "apps/body/src/connect-command.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/connector-squire.ts::fetch",
+      "file": "apps/body/src/connector-squire.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/corner-emulator.ts::import:node:net",
+      "file": "apps/body/src/corner-emulator.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/daemon-api-client.ts::fetch",
+      "file": "apps/body/src/daemon-api-client.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/daemon-api-client.ts::fetch-impl",
+      "file": "apps/body/src/daemon-api-client.ts",
+      "kind": "fetch-impl",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/device-pairing.ts::fetch",
+      "file": "apps/body/src/device-pairing.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/free-agent-vm.ts::fetch",
+      "file": "apps/body/src/free-agent-vm.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/free-agent-vm.ts::fetch-impl",
+      "file": "apps/body/src/free-agent-vm.ts",
+      "kind": "fetch-impl",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/grant-runner.ts::import:node:http",
+      "file": "apps/body/src/grant-runner.ts",
+      "kind": "import:node:http",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/institutional-context.ts::fetch",
+      "file": "apps/body/src/institutional-context.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/kernel-lock.ts::import:node:net",
+      "file": "apps/body/src/kernel-lock.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/legacy-daemon-migration.ts::fetch",
+      "file": "apps/body/src/legacy-daemon-migration.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/legacy-daemon-migration.ts::fetch-impl",
+      "file": "apps/body/src/legacy-daemon-migration.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/live-link.ts::import:ws",
+      "file": "apps/body/src/live-link.ts",
+      "kind": "import:ws",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/machine-control.ts::import:node:net",
+      "file": "apps/body/src/machine-control.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/machine-link.ts::import:ws",
+      "file": "apps/body/src/machine-link.ts",
+      "kind": "import:ws",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/machine-link.ts::websocket",
+      "file": "apps/body/src/machine-link.ts",
+      "kind": "websocket",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/mcp-route-class.ts::import:node:net",
+      "file": "apps/body/src/mcp-route-class.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/network-family-bootstrap.ts::import:node:net",
+      "file": "apps/body/src/network-family-bootstrap.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/openrouter-history.ts::fetch",
+      "file": "apps/body/src/openrouter-history.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/openrouter-key-usage.ts::fetch-impl",
+      "file": "apps/body/src/openrouter-key-usage.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/openrouter-key-usage.ts::fetch",
+      "file": "apps/body/src/openrouter-key-usage.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/openrouter-routing.ts::fetch",
+      "file": "apps/body/src/openrouter-routing.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/provider-key-check.ts::fetch",
+      "file": "apps/body/src/provider-key-check.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/provider-webhooks.ts::fetch",
+      "file": "apps/body/src/provider-webhooks.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/read-only-mcp.ts::fetch",
+      "file": "apps/body/src/read-only-mcp.ts",
+      "kind": "fetch",
+      "count": 8,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/recovery-cli.ts::fetch",
+      "file": "apps/body/src/recovery-cli.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/registry-mcp.ts::import:node:net",
+      "file": "apps/body/src/registry-mcp.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/registry-mcp.ts::fetch",
+      "file": "apps/body/src/registry-mcp.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/repository-cache-repair.ts::fetch",
+      "file": "apps/body/src/repository-cache-repair.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/resource-mcp-facade.ts::fetch",
+      "file": "apps/body/src/resource-mcp-facade.ts",
+      "kind": "fetch",
+      "count": 4,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/resource-mcp-facade.ts::fetch-impl",
+      "file": "apps/body/src/resource-mcp-facade.ts",
+      "kind": "fetch-impl",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/room-github-auth.ts::import:node:http",
+      "file": "apps/body/src/room-github-auth.ts",
+      "kind": "import:node:http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/room-github-auth.ts::import:node:net",
+      "file": "apps/body/src/room-github-auth.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/self-update-cli.ts::fetch",
+      "file": "apps/body/src/self-update-cli.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/self-update.ts::fetch-impl",
+      "file": "apps/body/src/self-update.ts",
+      "kind": "fetch-impl",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/self-update.ts::fetch",
+      "file": "apps/body/src/self-update.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/sentry.ts::import:@sentry/node",
+      "file": "apps/body/src/sentry.ts",
+      "kind": "import:@sentry/node",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/session-join/beeline-api.ts::fetch",
+      "file": "apps/body/src/session-join/beeline-api.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/session-join/bridge.ts::import:node:net",
+      "file": "apps/body/src/session-join/bridge.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/session-join/claude.ts::import:node:net",
+      "file": "apps/body/src/session-join/claude.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/session-join/command.ts::fetch",
+      "file": "apps/body/src/session-join/command.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/squire-broker-link.test-support.ts::import:node:net",
+      "file": "apps/body/src/squire-broker-link.test-support.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/squire-broker-link.ts::import:node:net",
+      "file": "apps/body/src/squire-broker-link.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/squire-host.ts::import:node:net",
+      "file": "apps/body/src/squire-host.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/squire-task-relay.ts::import:node:http",
+      "file": "apps/body/src/squire-task-relay.ts",
+      "kind": "import:node:http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/squire-task-relay.ts::fetch",
+      "file": "apps/body/src/squire-task-relay.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/storage-owners.ts::fetch",
+      "file": "apps/body/src/storage-owners.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/body/src/storage-report.ts::fetch",
+      "file": "apps/body/src/storage-report.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M5"
+    },
+    {
+      "id": "apps/mobile/modules/voice-background-audio/android/src/main/java/app/usebeeline/voicebackgroundaudio/VoiceStopRequests.kt::native-http",
+      "file": "apps/mobile/modules/voice-background-audio/android/src/main/java/app/usebeeline/voicebackgroundaudio/VoiceStopRequests.kt",
+      "kind": "native-http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/modules/voice-background-audio/ios/VoiceBackgroundAudioModule.swift::native-http",
+      "file": "apps/mobile/modules/voice-background-audio/ios/VoiceBackgroundAudioModule.swift",
+      "kind": "native-http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx::ota-update",
+      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
+      "kind": "ota-update",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/app/_layout.tsx::import:posthog-react-native",
+      "file": "apps/mobile/sources/app/_layout.tsx",
+      "kind": "import:posthog-react-native",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/github-auth-session.ts::fetch",
+      "file": "apps/mobile/sources/auth/github-auth-session.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/github-auth-session.ts::import:@tauri-apps/plugin-http",
+      "file": "apps/mobile/sources/auth/github-auth-session.ts",
+      "kind": "import:@tauri-apps/plugin-http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/github-auth-session.ts::fetch-impl",
+      "file": "apps/mobile/sources/auth/github-auth-session.ts",
+      "kind": "fetch-impl",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/google-auth-session.ts::fetch",
+      "file": "apps/mobile/sources/auth/google-auth-session.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/monolith-session.ts::fetch",
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/monolith-session.ts::import:@tauri-apps/plugin-http",
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "import:@tauri-apps/plugin-http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/monolith-session.ts::fetch-impl",
+      "file": "apps/mobile/sources/auth/monolith-session.ts",
+      "kind": "fetch-impl",
+      "count": 7,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/signin-funnel.ts::fetch",
+      "file": "apps/mobile/sources/auth/signin-funnel.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/auth/signin-funnel.ts::import:@tauri-apps/plugin-http",
+      "file": "apps/mobile/sources/auth/signin-funnel.ts",
+      "kind": "import:@tauri-apps/plugin-http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/artifact-link.ts::session-fetch",
+      "file": "apps/mobile/sources/buzz/artifact-link.ts",
+      "kind": "session-fetch",
+      "count": 4,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/sentry.ts::import:@sentry/react-native",
+      "file": "apps/mobile/sources/buzz/sentry.ts",
+      "kind": "import:@sentry/react-native",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/speech-transcription.ts::session-fetch",
+      "file": "apps/mobile/sources/buzz/speech-transcription.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/store-update.ts::fetch",
+      "file": "apps/mobile/sources/buzz/store-update.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/use-voice-call.ts::import:livekit-client",
+      "file": "apps/mobile/sources/buzz/use-voice-call.ts",
+      "kind": "import:livekit-client",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/voice-transport.native.ts::import:livekit-client",
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "import:livekit-client",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/voice-transport.native.ts::import:@livekit/react-native",
+      "file": "apps/mobile/sources/buzz/voice-transport.native.ts",
+      "kind": "import:@livekit/react-native",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/voice-transport.ts::import:livekit-client",
+      "file": "apps/mobile/sources/buzz/voice-transport.ts",
+      "kind": "import:livekit-client",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/buzz/web-chunk-recovery.web.ts::fetch",
+      "file": "apps/mobile/sources/buzz/web-chunk-recovery.web.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/components/buzz/VaultSaveCard.tsx::session-fetch",
+      "file": "apps/mobile/sources/components/buzz/VaultSaveCard.tsx",
+      "kind": "session-fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/components/buzz/VoicePreviewPlayer.native.tsx::import:react-native-webview",
+      "file": "apps/mobile/sources/components/buzz/VoicePreviewPlayer.native.tsx",
+      "kind": "import:react-native-webview",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/components/buzz/sandbox-webview.ts::import:react-native-webview",
+      "file": "apps/mobile/sources/components/buzz/sandbox-webview.ts",
+      "kind": "import:react-native-webview",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/hooks/useUpdates.ts::ota-update",
+      "file": "apps/mobile/sources/hooks/useUpdates.ts",
+      "kind": "ota-update",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/push/buzz-push-registration.ts::push-token",
+      "file": "apps/mobile/sources/push/buzz-push-registration.ts",
+      "kind": "push-token",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/sync/transport/live-connection.ts::websocket",
+      "file": "apps/mobile/sources/sync/transport/live-connection.ts",
+      "kind": "websocket",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/sync/transport/monolith-rig-transport.ts::session-fetch",
+      "file": "apps/mobile/sources/sync/transport/monolith-rig-transport.ts",
+      "kind": "session-fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/test/browserControlsProof.ts::computed-import",
+      "file": "apps/mobile/sources/test/browserControlsProof.ts",
+      "kind": "computed-import",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/track/tracking.ts::import:posthog-react-native",
+      "file": "apps/mobile/sources/track/tracking.ts",
+      "kind": "import:posthog-react-native",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/utils/consoleLogging.ts::fetch",
+      "file": "apps/mobile/sources/utils/consoleLogging.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/utils/readFileBytes.ts::fetch",
+      "file": "apps/mobile/sources/utils/readFileBytes.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/sources/utils/readFileBytes.web.ts::fetch",
+      "file": "apps/mobile/sources/utils/readFileBytes.web.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/mobile/src-tauri/src/lib.rs::global-object",
+      "file": "apps/mobile/src-tauri/src/lib.rs",
+      "kind": "global-object",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "apps/server/src/apns-push.ts::import:node:http2",
+      "file": "apps/server/src/apns-push.ts",
+      "kind": "import:node:http2",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/company-logos.ts::import:node:https",
+      "file": "apps/server/src/company-logos.ts",
+      "kind": "import:node:https",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/company-mcp-discovery.ts::import:node:https",
+      "file": "apps/server/src/company-mcp-discovery.ts",
+      "kind": "import:node:https",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/composio-apps.ts::fetch",
+      "file": "apps/server/src/composio-apps.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/computer-session.ts::import:node:net",
+      "file": "apps/server/src/computer-session.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/computer-session.ts::import:ws",
+      "file": "apps/server/src/computer-session.ts",
+      "kind": "import:ws",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/computer-session.ts::fetch",
+      "file": "apps/server/src/computer-session.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/computer-session.ts::websocket",
+      "file": "apps/server/src/computer-session.ts",
+      "kind": "websocket",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/database.ts::import:pg",
+      "file": "apps/server/src/database.ts",
+      "kind": "import:pg",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/firebase-push.ts::import:firebase-admin",
+      "file": "apps/server/src/firebase-push.ts",
+      "kind": "import:firebase-admin",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/fly-machines.ts::fetch",
+      "file": "apps/server/src/fly-machines.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/fly-machines.ts::fetch-impl",
+      "file": "apps/server/src/fly-machines.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/free-agent-image-input.ts::fetch",
+      "file": "apps/server/src/free-agent-image-input.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/free-agent-model-proxy.ts::fetch",
+      "file": "apps/server/src/free-agent-model-proxy.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/index.ts::fetch",
+      "file": "apps/server/src/index.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/institutional-memory-embeddings.ts::fetch",
+      "file": "apps/server/src/institutional-memory-embeddings.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/link-agent-wallet.ts::fetch",
+      "file": "apps/server/src/link-agent-wallet.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/mcp-registry.ts::fetch",
+      "file": "apps/server/src/mcp-registry.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/object-storage.ts::import:aws4fetch",
+      "file": "apps/server/src/object-storage.ts",
+      "kind": "import:aws4fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/object-storage.ts::global-object",
+      "file": "apps/server/src/object-storage.ts",
+      "kind": "global-object",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/operator-dashboard-services.ts::fetch",
+      "file": "apps/server/src/operator-dashboard-services.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/operator-dashboard-services.ts::fetch-impl",
+      "file": "apps/server/src/operator-dashboard-services.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/operator-finances.ts::fetch",
+      "file": "apps/server/src/operator-finances.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/operator-finances.ts::fetch-impl",
+      "file": "apps/server/src/operator-finances.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/postgres-live.ts::import:pg",
+      "file": "apps/server/src/postgres-live.ts",
+      "kind": "import:pg",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/rooms-mcp-logos.ts::import:node:https",
+      "file": "apps/server/src/rooms-mcp-logos.ts",
+      "kind": "import:node:https",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/rooms-mcp-members.ts::import:node:net",
+      "file": "apps/server/src/rooms-mcp-members.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/rooms-mcp-members.ts::import:node:https",
+      "file": "apps/server/src/rooms-mcp-members.ts",
+      "kind": "import:node:https",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/rooms-mcp.ts::import:@modelcontextprotocol/sdk",
+      "file": "apps/server/src/rooms-mcp.ts",
+      "kind": "import:@modelcontextprotocol/sdk",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/sentry-telegram.ts::fetch",
+      "file": "apps/server/src/sentry-telegram.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/sentry.ts::import:@sentry/node",
+      "file": "apps/server/src/sentry.ts",
+      "kind": "import:@sentry/node",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/server.ts::import:node:http",
+      "file": "apps/server/src/server.ts",
+      "kind": "import:node:http",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/server.ts::import:ws",
+      "file": "apps/server/src/server.ts",
+      "kind": "import:ws",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/speech-transcription.ts::fetch",
+      "file": "apps/server/src/speech-transcription.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/speech-transcription.ts::fetch-impl",
+      "file": "apps/server/src/speech-transcription.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-providers.ts::import:ws",
+      "file": "apps/server/src/voice-providers.ts",
+      "kind": "import:ws",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-providers.ts::websocket",
+      "file": "apps/server/src/voice-providers.ts",
+      "kind": "websocket",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-providers.ts::fetch",
+      "file": "apps/server/src/voice-providers.ts",
+      "kind": "fetch",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-providers.ts::fetch-impl",
+      "file": "apps/server/src/voice-providers.ts",
+      "kind": "fetch-impl",
+      "count": 3,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-room-runtime.ts::import:livekit-server-sdk",
+      "file": "apps/server/src/voice-room-runtime.ts",
+      "kind": "import:livekit-server-sdk",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-room-runtime.ts::import:@livekit/rtc-node",
+      "file": "apps/server/src/voice-room-runtime.ts",
+      "kind": "import:@livekit/rtc-node",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/voice-service.ts::import:livekit-server-sdk",
+      "file": "apps/server/src/voice-service.ts",
+      "kind": "import:livekit-server-sdk",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/web-push.ts::import:web-push",
+      "file": "apps/server/src/web-push.ts",
+      "kind": "import:web-push",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/web-push.ts::import:node:https",
+      "file": "apps/server/src/web-push.ts",
+      "kind": "import:node:https",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/web-push.ts::import:node:net",
+      "file": "apps/server/src/web-push.ts",
+      "kind": "import:node:net",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/x-ad-reports.ts::fetch",
+      "file": "apps/server/src/x-ad-reports.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/x-ads.ts::fetch",
+      "file": "apps/server/src/x-ads.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "apps/server/src/x-site-visits.ts::fetch",
+      "file": "apps/server/src/x-site-visits.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M2"
+    },
+    {
+      "id": "packages/api-contract/src/upload-object.ts::fetch",
+      "file": "packages/api-contract/src/upload-object.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/api-contract/src/x-attribution.ts::global-object",
+      "file": "packages/api-contract/src/x-attribution.ts",
+      "kind": "global-object",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/buzz-client/src/auth-json.ts::fetch",
+      "file": "packages/buzz-client/src/auth-json.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/buzz-client/src/http.ts::fetch",
+      "file": "packages/buzz-client/src/http.ts",
+      "kind": "fetch",
+      "count": 2,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/buzz-client/src/nip05.ts::fetch",
+      "file": "packages/buzz-client/src/nip05.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/buzz-client/src/nip05.ts::fetch-impl",
+      "file": "packages/buzz-client/src/nip05.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/buzz-client/src/room-view.ts::fetch",
+      "file": "packages/buzz-client/src/room-view.ts",
+      "kind": "fetch",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    },
+    {
+      "id": "packages/buzz-client/src/room-view.ts::fetch-impl",
+      "file": "packages/buzz-client/src/room-view.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "compatibility": "legacy-only",
+      "phase": "M4"
+    }
+  ]
+}

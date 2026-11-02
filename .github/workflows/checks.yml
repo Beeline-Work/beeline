@@ -390,6 +390,8 @@ jobs:
           git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
           node --test scripts/phone-network-channels.test.mjs
           node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
+          node --test scripts/router-boundaries.test.mjs
+          node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
       # `npx turbo run typecheck` misses two of the three legs the root script
       # runs: the isolated mobile app (its own tsconfig and node_modules, which
       # turbo does not see) and tsconfig.scripts.json. This gate is unfiltered
@@ -441,6 +443,10 @@ jobs:
           node --test scripts/external-request-deadlines.test.mjs
           npm test -w @beeline/auth -- --run src/external-fetch.test.ts
           npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx'
+      - name: Prove local network admission
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm test -w @beeline/net -- src/router-pass.test.ts
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
       - name: Protect Room navigation responsiveness

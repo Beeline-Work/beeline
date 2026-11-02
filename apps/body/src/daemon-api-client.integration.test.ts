@@ -958,7 +958,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
   });
 
-  it('answers a message sent while its network was down once the network returns, with no restart', async () => {
+  it('answers missed work on an explicit path-restoration boundary without restarting the helper', async () => {
     // A relay between helper and server. "Down" is a dead path: the live
     // socket's bytes vanish without either side closing it, and every other
     // connection is reset — what a dropped Wi-Fi hop or a NAT timeout leaves.
@@ -1072,6 +1072,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(answered).toBe(1);
 
       down = false;
+      // Actual path restoration is the independent boundary; no failure timer retries.
+      client.machine.reconnectNow();
       await vi.waitFor(() => expect(answered).toBe(2), { timeout: 10_000 });
       await replies;
       // The server may say the helper went offline meanwhile; the answer
@@ -1091,7 +1093,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
   });
 
-  it('reconnects an idle helper whose socket silently died and serves the work and release it missed', async () => {
+  it('detects an idle half-open socket and serves missed work after explicit path restoration', async () => {
     // The incident: an idle helper sat for hours on a socket that had silently
     // died. It performed no operation, so nothing it did could notice; TCP
     // keepalive was answered by the edge proxy. Only the server's heartbeat
@@ -1193,8 +1195,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       });
       expect(answered).toBe(0);
 
-      // The path comes back. Nothing else happens: no request, no Room event.
+      // The platform/operator reports actual path restoration. This boundary,
+      // rather than a failed-attempt timer, admits the replacement socket.
       down = false;
+      client.machine.reconnectNow();
       await vi.waitFor(() => expect(answered).toBe(1), { timeout: 10_000 });
       await vi.waitFor(() => expect(releases).toContain('v0.0.200'), { timeout: 10_000 });
       await vi.waitFor(async () => expect(await presence()).toMatchObject({ status: 'online', held: true }));

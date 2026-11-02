@@ -341,8 +341,8 @@ test('merge groups execute both consolidated server shard steps', () => {
   assert.equal(steps.length, 2);
   for (const step of steps) {
     const expression = String(step.if).replace(/^\$\{\{\s*|\s*\}\}$/g, '');
-    const enabled = new Function('github', 'inputs', 'cancelled', `return (${expression});`)(
-      { event_name: 'merge_group' }, { suite: '' }, () => false,
+    const enabled = new Function('github', 'inputs', 'cancelled', 'steps', `return (${expression});`)(
+      { event_name: 'merge_group' }, { suite: '' }, () => false, { workspace: { outcome: 'success' } },
     );
     assert.equal(enabled, true, step.name);
   }

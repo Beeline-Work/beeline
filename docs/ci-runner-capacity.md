@@ -64,10 +64,12 @@ Detection precedes a cache-only producer on the reserved control listener.
 Preparation installs/builds once and publishes verified exact-commit builds
 before shared tests start. Linux consumers wait for preparation rather than
 independent shared-test completion, and the workspace lane restores its
-root/mobile/build caches once for all five checks. Consumers require those
-lockfile/manifest-keyed root/mobile and exact-commit build caches; a failed
-producer cannot fan out cold installs/builds. Compiled outputs never fall back
-to another commit. Build cache v2 uses explicit dist globs and validates API
+root/mobile/build caches once for all five checks. Consumers require the
+lockfile/manifest-keyed root/mobile dependency caches, so a failed producer
+cannot fan out cold installs. Exact-commit build caches can disappear after
+preparation or before a failed-job rerun; a miss rebuilds the checked-out
+commit with one Turbo task at a time and verifies API exports before use or
+publication. Compiled outputs never fall back to another commit. Build cache v2 uses explicit dist globs and validates API
 exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
 not repeat it. Required check names and platform routes remain unchanged.
 

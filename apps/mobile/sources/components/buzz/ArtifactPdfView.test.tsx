@@ -34,7 +34,7 @@ vi.mock('react-native-unistyles', () => ({
       }),
   },
 }));
-vi.mock('@/buzz/artifact-link', () => ({ artifactBase64: mocks.artifactBase64 }));
+vi.mock('@/buzz/artifact-link', () => ({ artifactBase64: mocks.artifactBase64, subscribeArtifactBytesPurge: () => () => {} }));
 // The generated document has its own suite; stubbing the loader keeps the
 // megabyte of vendored pdf.js source out of a component render.
 vi.mock('@/buzz/artifact-pdf', async (importOriginal) => ({

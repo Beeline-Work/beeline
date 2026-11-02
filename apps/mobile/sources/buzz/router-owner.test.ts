@@ -1,3 +1,4 @@
+import { mediaMetadataFor, mediaCertificateCurrent } from './media-cache-connection';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
@@ -15,7 +16,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage }));
 import { resetClientState } from '@/sync/client-reset';
 import { acquireRouterLane, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
-  routerFamilyMode, routerOwnerReceive, retryRouterLane } from './router-owner';
+  routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
 const scopes = [{ authorityScope: 'reader:ada:workspace:w', epoch: '1' }];
@@ -93,19 +94,68 @@ describe('real mobile router owner', () => {
   });
   it('purges a server-shaped Workspace removal through the exact denied authority domain', async () => {
     const execute = vi.fn(async () => snapshot());
-    routerOwnerNavigation(navigation());
+    routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: 'room', communityId: 'w' } }] });
     const lane = acquireRouterLane(request, () => true, () => {});
-    await routerOwnerNegotiated({ generation: 1, families: ['needs-you-count'], execute }); await settle();
+    const objectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const mediaScopes = [{ authorityScope: `object:${objectId}`, epoch: '1' }, ...scopes];
+    const executeMetadata = vi.fn(async () => ({ objectId, sha256: 'a'.repeat(64), size: 1,
+      mimeType: 'image/png', expiresAt: Date.now() + 60_000, authority: { scopes: mediaScopes, digest: hash(mediaScopes) } }));
+    await routerOwnerNegotiated({ generation: 1, families: ['needs-you-count'], execute,
+      authorityFencesV1: true, mediaMetadataV1: true, executeMetadata }); await settle();
+    routerOwnerArtifactViewport('room', [objectId]);
+    const media = await mediaMetadataFor('https://example.test', 'ada', objectId);
+    expect(mediaCertificateCurrent(media!)).toBe(true);
     const removedScopes = [{ authorityScope: 'reader:ada:workspace:w', epoch: '2' }];
     const facts = [{ atomicGroup: 'workspace-authority', authority: { digest: hash(removedScopes), scopes: removedScopes },
       payload: { kind: 'authority', scope: 'w', authorityScope: 'reader:ada:workspace:w', allowed: false } }];
     const frame = { batchId: 'revoke', from: snapshot().cut, to: snapshot(2).cut, partCount: 1, contentDigest: hash(facts) };
     routerOwnerReceive({ ...frame, kind: 'push-part', partIndex: 0, facts });
+    expect(mediaCertificateCurrent(media!)).toBe(true);
     routerOwnerReceive({ ...frame, kind: 'push-commit' });
     await settle();
     expect(lane.current()).toMatchObject({ state: 'REVOKED', value: null });
     expect(fixture.storage.fence).toHaveBeenCalledWith('reader:ada:workspace:w', '2');
+    expect(mediaCertificateCurrent(media!)).toBe(false);
+    expect(executeMetadata).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenCalledTimes(1);
+    lane.release();
+  });
+  it('purges a metadata-only object without a read-family subscription or invented data cut', async () => {
+    const execute = vi.fn(async () => snapshot());
+    const objectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const mediaScopes = [{ authorityScope: `object:${objectId}`, epoch: '1' }];
+    const executeMetadata = vi.fn(async () => ({ objectId, sha256: 'a'.repeat(64), size: 1,
+      mimeType: 'image/png', expiresAt: Date.now() + 60_000, authority: { scopes: mediaScopes, digest: hash(mediaScopes) } }));
+    routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: 'room', communityId: 'w' } }] });
+    await routerOwnerNegotiated({ generation: 1, families: [], execute, executeMetadata, mediaMetadataV1: true, authorityFencesV1: true });
+    routerOwnerArtifactViewport('room', [objectId]);
+    const media = await mediaMetadataFor('https://example.test', 'ada', objectId);
+    expect(mediaCertificateCurrent(media!)).toBe(true);
+    const removed = [{ authorityScope: `object:${objectId}`, epoch: '2' }];
+    routerOwnerReceive({ kind: 'authority-fence', scope: objectId, authorityScope: removed[0]!.authorityScope,
+      authority: { scopes: removed, digest: hash(removed) } });
+    await settle();
+    expect(mediaCertificateCurrent(media!)).toBe(false);
+    expect(executeMetadata).toHaveBeenCalledTimes(1); expect(execute).not.toHaveBeenCalled();
+  });
+  it('adopts content-free authority independently of data cuts and fails closed on authority feed loss', async () => {
+    const execute = vi.fn(async () => snapshot());
+    routerOwnerNavigation(navigation());
+    const lane = acquireRouterLane(request, () => true, () => {});
+    await routerOwnerNegotiated({ generation: 1, families: ['needs-you-count'], authorityFencesV1: true, execute }); await settle();
+    const before = lane.current().cut;
+    const removed = [{ authorityScope: 'reader:ada:workspace:w', epoch: '2' }];
+    routerOwnerReceive({ kind: 'authority-fence', scope: 'w', authorityScope: removed[0]!.authorityScope,
+      authority: { scopes: removed, digest: hash(removed) } });
+    await settle();
+    expect(before?.through).toBe(1);
+    expect(lane.current()).toMatchObject({ state: 'REVOKED', cut: null, value: null });
+    expect(fixture.storage.fence).toHaveBeenCalledWith(removed[0]!.authorityScope, '2');
+    expect(execute).toHaveBeenCalledTimes(1);
+    routerOwnerReceive({ kind: 'router-unavailable', stream: 'authority:ada', families: [], reason: 'listener' });
+    retryRouterLane(request); await settle();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(lane.current().value).toBeNull();
     lane.release();
   });
   it('malformed wire never throws, creates a pass, or issues a read', async () => {

@@ -76,7 +76,7 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
     const frames:string[]=[];
     const protocol=routerSocketProtocol(database,VIEWER,frame=>frames.push(frame));
     await protocol.handle({type:'router-negotiate',protocol:1,families:['room-list','needs-you']});
-    expect(JSON.parse(frames[0]!)).toEqual({type:'router-capabilities',protocol:1,families:[],commandDedupV1:false,mediaMetadataV1:false});
+    expect(JSON.parse(frames[0]!)).toEqual({type:'router-capabilities',protocol:1,families:[],commandDedupV1:false,mediaMetadataV1:false,authorityFencesV1:false});
     expect(()=>protocol.requireSnapshot(input)).toThrow('router_family_unavailable');
     protocol.close();
   });

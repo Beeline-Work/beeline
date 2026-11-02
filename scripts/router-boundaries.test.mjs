@@ -145,3 +145,19 @@ test('owner admission cannot escape through aliases, reexports or namespace acce
   assert.deepEqual(inspectSource('apps/mobile/sources/feature.ts',
     'import { routerFamilyMode } from "@/buzz/router-owner";').errors, []);
 });
+
+
+test('features cannot install a substitute media or usage executor', () => {
+  for (const source of [
+    'import { installMediaCacheConnection as replace } from "@/buzz/media-cache-connection";',
+    'import { receiveMediaAuthorityRemoval } from "./buzz/media-cache-connection";',
+    'export * from "@/buzz/media-cache-connection";',
+    'import * as media from "@/buzz/media-cache-connection";',
+    'const usage = require("@/buzz/agent-usage-cell");',
+    'import { setUsageCellProfile as mint } from "@/buzz/agent-usage-cell";',
+  ]) assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length, source);
+  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-owner.ts',
+    'import { installMediaCacheConnection } from "./media-cache-connection";').errors, []);
+  assert.deepEqual(inspectSource('apps/mobile/sources/components/File.tsx',
+    'import { mediaMetadataFor } from "@/buzz/media-cache-connection";').errors, []);
+});

@@ -721,7 +721,7 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
-    if (payload.table === 'router_source') return;
+    if (payload.table === 'router_source' || payload.table === 'router_authority') return;
     if(payload.table===X_SIGNUP_DELIVERY_TABLE){this.xSignupDeliveryWake?.();return;}
     if(payload.table===SERVER_LEASE_EVIDENCE_TABLE){
       if(payload.instanceId && payload.renewedAt!==undefined)this.serverLeaseEvidence?.(payload.instanceId,payload.renewedAt,payload.removed===true);
@@ -838,7 +838,13 @@ export class PostgresLiveListener {
     while (!this.stopped) {
       let disconnect!: () => void;
       const disconnected = new Promise<void>((resolve) => {
-        disconnect = resolve;
+        let released=false;
+        disconnect = () => {
+          if(released)return;released=true;
+          this.connected=false;
+          this.live.projectionUnavailable();
+          resolve();
+        };
       });
       const client = this.clientFactory();
       this.active = client;

@@ -1,3 +1,5 @@
+import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
+import { routerOwnerArtifactViewport } from '@/buzz/router-owner';
 import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
@@ -836,6 +838,7 @@ export function BuzzChatSurface({
       let releaseView: (() => void) | undefined;
       const updateViewing = (viewing: boolean) => {
         if (!decodedId) return;
+        setArtifactViewportActive(decodedId, viewing);
         if (viewing) releaseView ??= sharedLiveConnection().view(decodedId);
         else {
           releaseView?.();
@@ -3045,6 +3048,8 @@ export function BuzzChatSurface({
       const visibleRows = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
+      routerOwnerArtifactViewport(decodedId, artifactObjectIdsFromVisibleRows(visibleRows));
+      observeArtifactRows(decodedId, visibleRows.flatMap(messageBoundaryIds));
       transcriptPositions.observeVisibleRows(visibleRows);
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
@@ -3059,7 +3064,7 @@ export function BuzzChatSurface({
       // report scrolls to it again.
       scrollController.observeVisibleRows(visibleRows);
     },
-    [advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
+    [decodedId, advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
   );
   // The viewport pass above owns the read boundary, but it does not run when
   // an arrival only changes which row is NEWEST while the list already rests

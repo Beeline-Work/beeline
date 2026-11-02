@@ -93,6 +93,11 @@
       "types": "./dist/router-command.d.ts",
       "import": "./dist/router-command.js",
       "default": "./dist/router-command.js"
+    },
+    "./media-metadata": {
+      "types": "./dist/media-metadata.d.ts",
+      "import": "./dist/media-metadata.js",
+      "default": "./dist/media-metadata.js"
     }
   },
   "scripts": {

@@ -50,3 +50,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F14/F18 staged Body migration removes retry clocks from command acquisition, Room bootstrap, MCP reads and failed helper startup. Tests cover parked failures, one incident replacement, source-revision recovery and existing isolated update drains. Remaining recurring providers/ownership proof and all released cohorts remain open.
 
 - F15 staged member stream passes24-hour idle/committed-source, persisted-delivery-before-cursor, HTTP capability/listener gating and real PostgreSQL revocation contention proofs. Existing MCP140 and join8 compatibility cases pass. Autonomous activation requires the server capability; old Body polling remains open.
+
+- F07/F23 staged media work uses closed viewport/action admission, socket metadata, shared immutable flights and bounded native/web stores. Old-server recovery and disconnect downgrade protection are tested; authority-only frames purge bytes without inventing a data cut. Server read-family activation remains gated on precise aggregate cache purge; runtime40 latency/physical cache and external sandbox traffic proofs remain open.

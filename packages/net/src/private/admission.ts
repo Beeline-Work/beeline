@@ -9,6 +9,9 @@ const policies = {
   'phone.readRoom': { mode: 'read', screen: 'Room' },
   'phone.readChats': { mode: 'read', screen: 'AppShell' },
   'phone.readRouterSnapshot': { mode: 'read', screen: 'AppShell' as 'AppShell' | 'Room' },
+  'phone.readMediaMetadata': { mode: 'read', screen: 'Room' },
+  'phone.readMediaLink': { mode: 'read-action', action: 'OpenArtifactBrowser' },
+  'phone.readMediaPlayback': { mode: 'read-action', action: 'RunArtifact' },
   'phone.sendRoomMessage': { mode: 'command', action: 'SendMessage' },
   'phone.sendRoomReply': { mode: 'command', action: 'SendMessage' },
 } as const;
@@ -30,6 +33,10 @@ type Residency = {
   generation: number; screen: Screen; signature: string; lifetime: { active: boolean };
   passes: readonly object[]; keys: readonly string[];
 };
+export type MediaAction = 'OpenArtifact' | 'CopyArtifact' | 'SaveArtifact' | 'OpenArtifactBrowser' | 'RunArtifact';
+type MediaOperation = 'phone.readMediaMetadata' | 'phone.readMediaLink' | 'phone.readMediaPlayback';
+type MediaResidency = { generation: number; roomId: string; lifetime: { active: boolean };
+  seen: Set<string>; visible: Map<string, { active: boolean }> };
 
 /** Private trusted-owner machinery; no feature import, socket, clock or scheduler.
  * CREATED -> ACTIVE -> SPENT; blur/return/reset -> REVOKED. Never reactivated.
@@ -46,6 +53,8 @@ export class AdmissionOwner {
   private lastConnection = -1;
   private recoveryLifetime = { active: false };
   private foreground = true;
+  private mediaResidency?: MediaResidency;
+  private lastMediaConnection = -1;
   private readonly diagnostics: string[] = [];
 
   constructor(identity: Identity) { this.identity = Object.freeze({ ...identity }); }
@@ -59,15 +68,95 @@ export class AdmissionOwner {
     this.lastResidencies.clear();
     this.retiredResidencies.clear();
     this.lastConnection = -1;
+    this.mediaResidency = undefined;
+    this.lastMediaConnection = -1;
   }
 
   background(): void { this.foreground = false; this.blur(); this.recoveryLifetime.active = false; }
   foregrounded(): void { this.foreground = true; } // No minting, read or reconnect.
   blur(): void {
+    this.clearMediaFocus();
     for (const [owner, residency] of this.residencies) {
       residency.lifetime.active = false; this.retiredResidencies.set(owner, residency);
     }
     this.residencies.clear();
+  }
+
+  /** Only the committed navigation owner establishes this Room lifetime.
+   * Returning foreground resumes observation but never remints seen objects.
+   */
+  mediaFocus(generation: number, roomId: string): void {
+    this.validateGeneration(generation);
+    if (!this.foreground || !roomId) return this.deny('inactive media focus');
+    const prior = this.mediaResidency;
+    if (prior?.generation === generation && prior.roomId === roomId) {
+      if (!prior.lifetime.active) prior.lifetime = { active: true };
+      return;
+    }
+    if (prior && generation <= prior.generation) return this.deny('stale media focus');
+    this.clearMediaFocus();
+    this.mediaResidency = { generation, roomId, lifetime: { active: true }, seen: new Set(), visible: new Map() };
+  }
+  clearMediaFocus(): void {
+    const owner = this.mediaResidency;
+    if (!owner) return;
+    owner.lifetime.active = false;
+    for (const lifetime of owner.visible.values()) lifetime.active = false;
+    owner.visible.clear();
+  }
+  mediaVisible(generation: number, roomId: string, objectIds: readonly string[]): readonly {
+    objectId: string; pass: Pass<'phone.readMediaMetadata'>;
+  }[] {
+    const owner = this.mediaResidency;
+    if (!this.foreground || !owner?.lifetime.active || owner.generation !== generation || owner.roomId !== roomId)
+      return this.deny('inactive media viewport');
+    const ids = new Set(objectIds);
+    if (ids.size > 128) return this.deny('media viewport quota');
+    const requests = [...ids].map(objectId => ({ route: 'phone.readMediaMetadata' as const, input: { objectId } }));
+    for (const request of requests) this.validateRequests([request]);
+    if (owner.seen.size + [...ids].filter(id => !owner.seen.has(id)).length > 512) return this.deny('media residency quota');
+    for (const [id, lifetime] of owner.visible) if (!ids.has(id)) { lifetime.active = false; owner.visible.delete(id); }
+    const passes: { objectId: string; pass: Pass<'phone.readMediaMetadata'> }[] = [];
+    for (const request of requests) {
+      if (owner.seen.has(request.input.objectId)) continue;
+      owner.seen.add(request.input.objectId);
+      const lifetime = { active: true }; owner.visible.set(request.input.objectId, lifetime);
+      passes.push({ objectId: request.input.objectId, pass: this.mint(request, lifetime) });
+    }
+    return passes;
+  }
+  /** The sole negotiated connection owner supplies only currently displayed
+   * keys already admitted by this navigation's real viewport or action.
+   */
+  mediaRecovery(connection: number, generation: number, roomId: string,
+    requests: readonly Requests<'phone.readMediaMetadata' | 'phone.readMediaPlayback'>[]) {
+    this.validateGeneration(connection);
+    const owner = this.mediaResidency;
+    if (!this.foreground || !owner?.lifetime.active || owner.generation !== generation || owner.roomId !== roomId ||
+        connection <= this.lastMediaConnection || requests.length > 256) return this.deny('inactive media recovery');
+    const keys = new Set<string>();
+    for (const request of requests) {
+      this.validateRequests([request]);
+      const key = this.key(request); if (keys.has(key)) return this.deny('duplicate media recovery'); keys.add(key);
+    }
+    this.lastMediaConnection = connection;
+    return requests.map(request => this.mint(request, owner.lifetime));
+  }
+  /** The existing action's synchronous prefix spends before its first await.
+   * Completion belongs to its focused Room; returning the handler ends minting.
+   */
+  mediaTap<K extends MediaOperation, T>(generation: number, roomId: string, action: MediaAction,
+    request: Request<K>, handler: (pass: Pass<K>) => T): T {
+    const owner = this.mediaResidency;
+    const operation = action === 'OpenArtifactBrowser' ? 'phone.readMediaLink' : action === 'RunArtifact'
+      ? 'phone.readMediaPlayback' : ['OpenArtifact', 'CopyArtifact', 'SaveArtifact'].includes(action) ? 'phone.readMediaMetadata' : undefined;
+    if (!this.foreground || !owner?.lifetime.active || owner.generation !== generation || owner.roomId !== roomId ||
+        request.route !== operation && !(action === 'RunArtifact' && request.route === 'phone.readMediaMetadata'))
+      return this.deny('inactive media action');
+    this.validateRequests([request as Requests<PolicyId>]);
+    const lifetime = { active: true }; const pass = this.mint(request, lifetime);
+    this.states.get(pass)!.completionLifetime = owner.lifetime;
+    try { return handler(pass); } finally { lifetime.active = false; }
   }
 
   focus<S extends Screen>(generation: number, screen: S, requests: readonly Requests<ScreenRoute<S>>[]): readonly Pass<ScreenRoute<S>>[] {
@@ -239,4 +328,5 @@ export { RouterBatchAssembly } from './batch-assembly.js';
 export { NavigationOwner } from './navigation-owner.js';
 export type { NavigationState, NavigationResidency } from './navigation-owner.js';
 export { CommandIntents } from './command-intents.js';
+export { MediaDemandOwner } from './media-demand-owner.js';
 export type { CommandIntent, CommandIntentStorage, CommandPartition, CommandAttempt, AdmittedCommand, IntentOperation, IntentState } from './command-intents.js';

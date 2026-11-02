@@ -1,6 +1,7 @@
+import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -9,48 +10,34 @@ import {
   ARTIFACT_MAX_PREVIEW_HEIGHT,
   artifactCapabilities,
   artifactFormat,
-  createInitialLoadGuard,
   mediaIdFromUrl,
-  wrapArtifactMarkup,
 } from '@/buzz/artifact';
+import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import {
-  artifactPreviewCachePath,
-  probeArtifactPreview,
-  snapshotArtifactPreview,
-} from '@/buzz/artifact-preview-cache';
-import {
-  ARTIFACT_PDF_BASE_URL,
-  ARTIFACT_PDF_RENDER_TIMEOUT_MS,
-  loadPdfViewerDocument,
-  pdfRenderedSignalGuard,
-} from '@/buzz/artifact-pdf';
-import {
-  artifactBase64,
-  artifactPdfLocalUri,
-  fetchArtifactBytes,
+  artifactImageSource,
+  releaseArtifactImageSource,
+  subscribeArtifactBytesPurge,
   fetchArtifactText,
   openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
 import { withAlpha } from '@/buzz/groknight';
 import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
-import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
-import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
-import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { currentViewerConversation } from '@/buzz/viewer-conversation';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { Modal } from '@/modal';
 
-const PREVIEW_SNAPSHOT_DELAY_MS = 1200;
 
 /** Reopen the same artifact surface from a card or transcript reference. */
 export function openArtifactViewer(attachment: AttachmentReference, isDesktop = false,
   roomId = currentViewerConversation()?.roomId, authorHandle = attachment.author,
   photoAttachments?: readonly AttachmentReference[]) {
   const format = artifactFormat(attachment.mimeType);
+  const objectId = mediaIdFromUrl(attachment.url);
+  if (objectId) routerOwnerArtifactAction(format === 'game' ? 'RunArtifact' : 'OpenArtifact', objectId);
   // A picture is not a document: every surface opens the same centered
   // full-screen viewer, so desktop reads an image the way mobile does. The
   // work pane keeps its documents — its sandboxed iframe is the right shape
@@ -83,23 +70,18 @@ export function openArtifactViewer(attachment: AttachmentReference, isDesktop = 
 }
 
 /**
- * The artifact card IS the preview (mock 1b): the page itself rendered on the
- * device, cropped to a fixed height, script off, non-interactive, rendered
- * once when the card mounts into the transcript window and snapshotted to an
- * image cached on the device keyed by object id. Every later mount shows the
- * cached image — no second render on scroll. Title as caption with author and
- * size; footer `Open in browser` (leaves-Beeline mark) on the left and `Open`
- * (chevron) on the right; no
- * status label — if it is in front of you it is ready. The existing expired
- * treatment (the plain attachment card) covers the page-is-gone case upstream,
- * so this component only ever renders a live artifact.
+ * Visible cards use a bounded excerpt or a server-produced thumbnail. Full
+ * document rendering belongs to the existing Open action. Hidden transcript
+ * rows retain the same frame without starting a byte request.
  */
 export const ArtifactCard = React.memo(function ArtifactCard({
   attachment,
   authorHandle,
   isDesktop = false,
   photoAttachments,
+  visible = true,
 }: {
+  visible?: boolean;
   attachment: AttachmentReference;
   authorHandle?: string;
   isDesktop?: boolean;
@@ -172,7 +154,9 @@ export const ArtifactCard = React.memo(function ArtifactCard({
         style={styles.previewPress}
         testID={`artifact-preview-${activeAttachment.name}`}
       >
-        {format === 'markdown' ? (
+        {!visible ? (
+          <View style={styles.previewPlaceholder} testID="artifact-preview-loading"><Text style={styles.docGlyph}>▧</Text></View>
+        ) : format === 'markdown' ? (
           <ArtifactMarkdownPreview attachment={activeAttachment} />
         ) : format === 'text' ? (
           <View style={styles.preview}>
@@ -233,17 +217,6 @@ export const ArtifactCard = React.memo(function ArtifactCard({
                 </Pressable>
               </View>
             ) : null}
-          </View>
-        ) : format === 'pdf' && Platform.OS === 'web' ? (
-          // The work pane's host has no WebView to snapshot, so the desktop
-          // card paints page one in the frame itself.
-          <View style={styles.preview}>
-            <ArtifactPdfView
-              attachment={activeAttachment}
-              mode="preview"
-              testID="artifact-preview-pdf"
-            />
-            <View style={styles.previewFade} pointerEvents="none" />
           </View>
         ) : (
           <ArtifactSandboxPreview
@@ -319,147 +292,49 @@ function ArtifactCardShell({
 type SandboxPreviewFormat = 'html' | 'svg' | 'pdf';
 
 /**
- * The on-device render of the page itself in the script-off sandbox: rendered
- * once, snapshotted to the device cache keyed by object id. HTML/SVG ride the
- * wrapped markup source; an iOS PDF rides a cache file URI (page one), and an
- * Android PDF rides the generated pdf.js document, which is what lets the same
- * cached-thumbnail path serve a PDF card there too.
+ * The existing preview frame paints a bounded server-produced thumbnail.
+ * Full markup/PDF rendering starts only through the existing Open action.
  */
 export function ArtifactSandboxPreview({
   attachment,
-  format,
 }: {
   attachment: AttachmentReference;
   format: SandboxPreviewFormat;
 }) {
-  const viewRef = useRef<View>(null);
-  const [snapshotPath, setSnapshotPath] = useState<string | null>(null);
-  const [rendering, setRendering] = useState(false);
-  const [documentHtml, setDocumentHtml] = useState<string | null>(null);
-  const [pdfDocument, setPdfDocument] = useState(false);
-  const [pdfUri, setPdfUri] = useState<string | null>(null);
-  const guardRef = useRef(createInitialLoadGuard());
+  const recovery = useArtifactRecoveryGeneration();
+  const [source, setSource] = useState<Awaited<ReturnType<typeof artifactImageSource>> | null>(null);
   useEffect(() => {
-    let live = true;
-    void (async () => {
-      const cached = await probeArtifactPreview(attachment.url);
-      if (!live) return;
-      if (cached) {
-        setSnapshotPath(cached);
-        return;
-      }
-      try {
-        if (format === 'pdf' && Platform.OS === 'ios') {
-          setPdfUri(await artifactPdfLocalUri(attachment));
-        } else if (format === 'pdf') {
-          const pdfBase64 = await artifactBase64(attachment);
-          setDocumentHtml(
-            await loadPdfViewerDocument({ pdfBase64, mode: 'preview', signalRendered: true }),
-          );
-          setPdfDocument(true);
-        } else {
-          const bytes = await fetchArtifactBytes(attachment);
-          setDocumentHtml(wrapArtifactMarkup(new TextDecoder().decode(bytes), format));
-        }
-        if (live) setRendering(true);
-      } catch {
-        if (live) setRendering(false);
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, [attachment, format]);
-  const capture = useCallback(async () => {
-    const path = await snapshotArtifactPreview(attachment.url, viewRef);
-    if (path) {
-      setSnapshotPath(path);
-      setRendering(false);
-    }
-  }, [attachment.url]);
-  // A page whose cue never arrives still captures once, late; the in-flight
-  // marker in the cache module keeps the timer and the cue from doubling. The
-  // pdf.js document gets the longer backstop because it is allowed to spend up
-  // to its own render timeout before it gives up and paints the failure line —
-  // firing at 1.2s there would cache the blank page it had not finished yet.
-  useEffect(() => {
-    if (!rendering) return;
-    const timer = setTimeout(
-      () => void capture(),
-      pdfDocument
-        ? ARTIFACT_PDF_RENDER_TIMEOUT_MS + PREVIEW_SNAPSHOT_DELAY_MS
-        : PREVIEW_SNAPSHOT_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [capture, pdfDocument, rendering]);
-  const WebView = useSandboxWebView();
-  if (snapshotPath) {
-    return (
-      <View style={styles.preview} testID="artifact-preview-snapshot">
-        <Image
-          accessibilityIgnoresInvertColors
-          resizeMode="cover"
-          source={{ uri: snapshotPath }}
-          style={styles.previewImage}
-        />
-        <View style={styles.previewFade} />
-      </View>
-    );
-  }
-  if (rendering && WebView) {
-    const source = pdfUri
-      ? { uri: pdfUri }
-      : documentHtml
-        ? { html: documentHtml, ...(pdfDocument ? { baseUrl: ARTIFACT_PDF_BASE_URL } : {}) }
-        : null;
-    if (source) {
-      // Markup and the iOS PDF have painted by the time the load ends, so the
-      // load event is the cue to snapshot. The pdf.js document has not — it
-      // paints well after its own load — so it says when it is done, through a
-      // navigation the guard refuses on its way past. Snapshotting on load
-      // there would cache a blank page as the thumbnail.
-      const guard = pdfDocument
-        ? pdfRenderedSignalGuard(guardRef.current, () => void capture())
-        : guardRef.current;
-      return (
-        <View
-          ref={viewRef}
-          collapsable={false}
-          style={styles.preview}
-          testID="artifact-preview-render"
-        >
-          <WebView
-            {...artifactWebViewProps({ source, guard, javaScript: pdfDocument })}
-            onLoadEnd={pdfDocument ? undefined : () => void capture()}
-            pointerEvents="none"
-            style={styles.previewWeb}
-          />
-          <View style={styles.previewFade} pointerEvents="none" />
-        </View>
-      );
-    }
-  }
-  return (
-    <View style={styles.previewPlaceholder} testID="artifact-preview-loading">
-      <Text style={styles.docGlyph}>▧</Text>
-    </View>
-  );
+    let live = true; let loaded: Awaited<ReturnType<typeof artifactImageSource>> | null = null;
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); releaseArtifactImageSource(loaded); setSource(null); });
+    // A server-produced bounded thumbnail is the only binary preview. Whole
+    // HTML/SVG/PDF bytes belong to the existing explicit Open action.
+    void artifactImageSource(attachment, { signal: controller.signal, preview: true, thumbnail: true }).then(value => {
+      loaded = value; if (live && !controller.signal.aborted) setSource(value); else releaseArtifactImageSource(value);
+    }).catch(() => {});
+    return () => { live = false; controller.abort(); stopPurge(); releaseArtifactImageSource(loaded); };
+  }, [attachment, recovery]);
+  if (source) return <View style={styles.preview} testID="artifact-preview-snapshot"><Image source={source} resizeMode="cover" style={styles.previewImage} /></View>;
+  return <View style={styles.previewPlaceholder} testID="artifact-preview-loading"><Text style={styles.docGlyph}>▧</Text></View>;
 }
 
 /** Markdown renders through the app's own message renderer, cropped to the card. */
 export function ArtifactMarkdownPreview({ attachment }: { attachment: AttachmentReference }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [markdown, setMarkdown] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    void fetchArtifactText(attachment)
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setMarkdown(null); });
+    void fetchArtifactText(attachment, { signal: controller.signal, preview: true })
       .then((text) => {
-        if (live) setMarkdown(text);
+        if (live && !controller.signal.aborted) setMarkdown(text);
       })
       .catch(() => undefined);
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment]);
+  }, [attachment, recovery]);
   if (markdown == null) {
     return (
       <View style={styles.previewPlaceholder} testID="artifact-preview-loading">
@@ -584,4 +459,4 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 // Referenced by tests and the cache module's key derivation.
-export { artifactPreviewCachePath, mediaIdFromUrl };
+export { mediaIdFromUrl } from '@/buzz/artifact';

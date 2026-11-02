@@ -34,8 +34,9 @@ export async function resolveRouterInput(db: SqlDatabase, input: RouterSnapshotI
 }
 export async function readRouterCertificate(db: SqlDatabase, args: RouterSnapshotInput | ResolvedRouterSnapshotInput, viewer: string): Promise<RouterAuthorityCertificate> {
   const input = await resolveRouterInput(db,args);
+  const parent=input.roomId?(await db.query<{parent_id:string|null}>(`SELECT parent_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0]?.parent_id:undefined;
   const scopes = [`reader:${viewer}:workspace:${input.workspaceId}`,
-    ...(input.roomId ? [`room:${input.roomId}`] : [])];
+    ...(input.roomId ? [`room:${input.roomId}`] : []),...(parent?[`room:${parent}`]:[])];
   const rows = await db.query<{ scope: string; epoch: string }>(
     `SELECT scope,epoch::text FROM router_authority WHERE scope=ANY($1::text[]) ORDER BY scope`, [scopes]);
   if (rows.rows.length !== scopes.length) throw new RouterProjectionUnavailable('authority');
@@ -60,7 +61,10 @@ export async function deniedRouterAuthorityScope(db: SqlDatabase, args: RouterSn
   const workspace=await db.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
     AND room_id IS NULL AND removed_at IS NULL`,[input.workspaceId,viewer]);
   if(!workspace.rowCount)return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
-  if(input.roomId)return {scope:input.roomId,authorityScope:`room:${input.roomId}`};
+  if(input.roomId){
+    const parent=(await db.query<{parent_id:string|null}>(`SELECT parent_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0]?.parent_id;
+    return {scope:parent??input.roomId,authorityScope:`room:${parent??input.roomId}`};
+  }
   return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
 }
 async function currentCertificateScopes(db:SqlDatabase,expected:RouterAuthorityCertificate):Promise<RouterAuthorityCertificate>{
@@ -177,7 +181,8 @@ export class RouterProjectionDrain {
     };
     const unlisten = this.live.subscribeJournal(streams => { if (streams.includes(stream)) { dirty=true; void drain(); } });
     const unresync = this.live.subscribeResync(() => { dirty=true; void drain(); });
-    const release = () => { stopped=true; unlisten(); unresync(); };
+    const unhealth=this.live.subscribeProjectionUnavailable(()=>{if(!stopped){release();unavailable('listener');}});
+    const release = () => { stopped=true; unlisten(); unresync(); unhealth(); };
     try { position = await readRouterCut(this.database, workspace); void drain(); return release; }
     catch (error) { release(); throw error; }
   }

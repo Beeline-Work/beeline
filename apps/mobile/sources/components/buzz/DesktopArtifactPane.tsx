@@ -1,3 +1,4 @@
+import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React, { useEffect, useState } from 'react';
@@ -10,6 +11,7 @@ import { artifactFormat, wrapArtifactMarkup } from '@/buzz/artifact';
 import {
   fetchArtifactBytes,
   fetchArtifactText,
+  subscribeArtifactBytesPurge,
   openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
@@ -143,21 +145,25 @@ export function DesktopArtifactFrame({
   attachment: AttachmentReference;
   format: 'html' | 'svg';
 }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [html, setHtml] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    void fetchArtifactBytes(attachment)
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setHtml(null); setFailed(true); });
+    setHtml(null); setFailed(false);
+    void fetchArtifactBytes(attachment, { signal: controller.signal })
       .then((bytes) => {
-        if (live) setHtml(wrapArtifactMarkup(new TextDecoder().decode(bytes), format));
+        if (live && !controller.signal.aborted) setHtml(wrapArtifactMarkup(new TextDecoder().decode(bytes), format));
       })
       .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment, format]);
+  }, [attachment, format, recovery]);
   if (failed) {
     return (
       <View style={styles.placeholder} testID="desktop-artifact-failed">
@@ -189,21 +195,25 @@ export function DesktopArtifactFrame({
 }
 
 function DesktopArtifactMarkdown({ attachment }: { attachment: AttachmentReference }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    void fetchArtifactText(attachment)
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setMarkdown(null); setFailed(true); });
+    setMarkdown(null); setFailed(false);
+    void fetchArtifactText(attachment, { signal: controller.signal })
       .then((text) => {
-        if (live) setMarkdown(text);
+        if (live && !controller.signal.aborted) setMarkdown(text);
       })
       .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment]);
+  }, [attachment, recovery]);
   if (failed) {
     return (
       <View style={styles.placeholder} testID="desktop-artifact-failed">

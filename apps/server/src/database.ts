@@ -1,4 +1,5 @@
 import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
+import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
 import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
 import { SERVER_LEASE_DEADLINE_SCHEMA } from './server-lease-deadlines.js';
 import { COMMAND_COMPLETION_SCHEMA } from './command-completion.js';
@@ -245,7 +246,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 48;
+export const REQUIRED_SCHEMA_VERSION = 49;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3603,6 +3604,7 @@ export async function migrate(
   await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
   await ddlScript('X signup delivery deadlines', X_SIGNUP_DELIVERY_SCHEMA);
+  await ddlScript('media authority domains', MEDIA_AUTHORITY_SCHEMA);
   await ddlScript('command completion notifications', COMMAND_COMPLETION_SCHEMA);
   await ddlScript('MCP member stream', MCP_MEMBER_STREAM_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);

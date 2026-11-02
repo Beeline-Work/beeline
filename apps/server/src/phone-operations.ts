@@ -1,3 +1,5 @@
+import { readMediaMetadata } from './phone-media.js';
+import { runnableOrigin } from './runnable-artifact.js';
 import { captureCommandCoverage } from './router-command-coverage.js';
 import { ROUTER_FAMILIES, type RouterFamily } from '@beeline/api-contract/router-protocol';
 import { parseRouterCommandIdentity, type RouterCommandIdentity } from '@beeline/api-contract/router-command';
@@ -78,6 +80,16 @@ export function createPhoneOperationDispatcher(
     invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
+      case 'readMediaMetadata': return readMediaMetadata(options.database,uuid(input,'objectId'),viewerId);
+      case 'readMediaLink':
+      case 'readMediaPlayback': {
+        const objectId=uuid(input,'objectId');
+        if(!options.objectService)refuse(503,'object_storage_unavailable');
+        await readMediaMetadata(options.database,objectId,viewerId);
+        if(name==='readMediaLink')return found(await options.objectService.mediaLink(objectId));
+        const origin=runnableOrigin();if(!origin)refuse(503,'game_host_unavailable');
+        return found(await options.objectService.runnableLink(objectId,origin));
+      }
       case 'readRouterSnapshot': {
         if (!(ROUTER_FAMILIES as readonly unknown[]).includes(input.family)) refuse(400,'invalid_router_family');
         const family = input.family as RouterFamily;

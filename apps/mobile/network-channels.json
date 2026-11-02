@@ -102,9 +102,9 @@
     {
       "file": "apps/mobile/sources/buzz/artifact-link.ts",
       "kind": "session-fetch",
-      "count": 4,
+      "count": 3,
       "fate": "exception",
-      "why": "Attachment bytes and media links from /v1/media. File downloads stay on HTTP; the small /link and /play lookups can move later."
+      "why": "One authenticated immutable byte-download leaf; /link and /play HTTP remain only for servers without negotiated media metadata support."
     },
     {
       "file": "apps/mobile/sources/buzz/runtime-config.ts",

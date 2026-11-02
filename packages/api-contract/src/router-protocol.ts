@@ -12,6 +12,12 @@ export type RouterAuthorityCertificate = {
   readonly digest: string;
   readonly scopes: readonly { readonly authorityScope: string; readonly epoch: string }[];
 };
+/** Independent revocation control. This record never advances data coverage. */
+export const ROUTER_MAX_AUTHORITY_FENCE_BYTES = 4096;
+export type RouterAuthorityFence = {
+  readonly kind:'authority-fence'; readonly scope:string; readonly authorityScope:string;
+  readonly authority:RouterAuthorityCertificate;
+};
 export type RouterValues = {
   readonly 'room-list': ChatListView;
   readonly 'needs-you': { readonly count: number; readonly items: readonly NeedsYouItemView[] };
@@ -48,4 +54,6 @@ export type RouterCapabilities = {
   readonly protocol: 1; readonly families: readonly RouterFamily[];
   /** Negotiated independently from projections. */
   readonly commandDedupV1: boolean;
+  readonly mediaMetadataV1?: boolean;
+  readonly authorityFencesV1?: boolean;
 };

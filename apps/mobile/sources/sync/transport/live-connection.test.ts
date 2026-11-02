@@ -254,14 +254,16 @@ describe('LiveConnection', () => {
     await connection.register([], () => {});
     sockets[0]!.open();
     expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ type: 'router-negotiate', protocol: 1,
-      families: ['room-list', 'needs-you-count', 'room-head'] });
+      families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true });
     sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
     const frame = { kind: 'push-commit', batchId: 'batch' };
     sockets[0]!.emit(frame);
+    const fence = { kind: 'authority-fence', scope: 'object', authorityScope: 'object:object' };
+    sockets[0]!.emit(fence);
     expect(router.receive).not.toHaveBeenCalled();
     expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ generation: 1, families: ['room-list'] });
     ready(); await Promise.resolve();
-    expect(router.receive).toHaveBeenCalledExactlyOnceWith(frame);
+    expect(router.receive.mock.calls).toEqual([[frame], [fence]]);
     connection.dispose();
   });
 

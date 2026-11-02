@@ -1,3 +1,6 @@
+import type { MediaMetadata } from '@beeline/api-contract/media-metadata';
+import { fenceMediaMetadataEnqueue } from './phone-media.js';
+import { subscribeAuthorityFences } from './router-authority-fences.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
 import type { RouterFamily, RouterSnapshot, RouterSnapshotInput, RouterFact, RouterCapabilities } from '@beeline/api-contract/router-protocol';
 import { ROUTER_FAMILIES } from '@beeline/api-contract/router-protocol';
@@ -17,7 +20,7 @@ export interface RouterProjectionPolicy {
 }
 export function routerSocketProtocol(database: SqlDatabase, viewer: string,
   send: (frame: string) => unknown, policy?: RouterProjectionPolicy,
-  sources?: { live: LiveHub; phone: PhoneService; rooms: () => readonly string[] }) {
+  sources?: { live: LiveHub; phone: PhoneService; rooms: () => readonly string[]; mediaMetadataV1?:boolean }) {
   const releases: Array<() => void> = [];
   let stopped = false;
   let negotiated: readonly RouterFamily[] = [];
@@ -33,7 +36,15 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       negotiated = sources && policy?.listenerReady() ? ROUTER_FAMILIES.filter(f => requested.includes(f) && policy.families.includes(f)) : [];
       let releaseReady!: () => void;
       const ready = new Promise<void>(resolve => { releaseReady = resolve; });
+      let authorityFencesV1=message.authorityFencesV1===true&&Boolean(sources)&&policy?.listenerReady()===true
+        && (negotiated.length>0||sources?.mediaMetadataV1===true);
       try {
+      if(authorityFencesV1&&sources){
+        const release=await subscribeAuthorityFences(database,sources.live,viewer,frame=>{
+          if(!stopped)send(JSON.stringify(frame));return undefined;
+        },reason=>{if(!stopped)send(JSON.stringify({kind:'router-unavailable',stream:`authority:${viewer}`,families:[],reason}));},ready);
+        if(stopped)release();else releases.push(release);
+      }
       if (negotiated.length && sources) {
         const workspaces = await database.query<{workspace_id:string}>(
           `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`, [viewer]);
@@ -80,11 +91,12 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       } catch {
         const affected = negotiated;
         negotiated = [];
+        authorityFencesV1=false;
         for (const release of releases.splice(0)) release();
         send(JSON.stringify({kind:'router-unavailable',stream:'',families:affected,reason:'listener'}));
       }
       const capabilities: RouterCapabilities = { protocol: 1, families: negotiated,
-        commandDedupV1: policy?.commandDedupV1 === true };
+        commandDedupV1: policy?.commandDedupV1 === true,mediaMetadataV1:sources?.mediaMetadataV1===true&&authorityFencesV1,authorityFencesV1 };
       send(JSON.stringify({ type: 'router-capabilities', ...capabilities }));
       releaseReady();
       return true;
@@ -94,6 +106,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         throw new PhoneOperationError(409, { error: 'router_family_unavailable' });
     },
     async fenceReply(operation: string, args: Record<string, unknown>, result: unknown, enqueue: (safeResult?: unknown) => undefined): Promise<void> {
+      if(['readMediaMetadata','readMediaLink','readMediaPlayback'].includes(operation)){
+        await fenceMediaMetadataEnqueue(database,String(args.objectId),viewer,
+          operation==='readMediaMetadata'?(result as MediaMetadata).authority:undefined,()=>enqueue());return;
+      }
       if (operation !== 'readRouterSnapshot') { await fenceCommandReceiptEnqueue(database,viewer,result,enqueue); return; }
       this.requireSnapshot(args);
       const snapshot = result as RouterSnapshot;

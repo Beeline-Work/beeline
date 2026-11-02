@@ -74,6 +74,7 @@ vi.mock('react-native-safe-area-context', () => ({
   }),
 }));
 vi.mock('@/buzz/artifact-link', () => ({
+  subscribeArtifactBytesPurge: () => () => {},
   artifactImageSource: mocks.artifactImageSource,
   artifactPdfLocalUri: mocks.artifactPdfLocalUri,
   fetchArtifactBytes: mocks.fetchArtifactBytes,

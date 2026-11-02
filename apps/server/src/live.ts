@@ -412,6 +412,13 @@ export class LiveHub {
     return () => this.#events.off('resync', listener);
   }
 
+  subscribeProjectionUnavailable(listener:()=>void):()=>void {
+    this.#events.on('projection-unavailable',listener);
+    return ()=>this.#events.off('projection-unavailable',listener);
+  }
+
+  projectionUnavailable():void {this.#events.emit('projection-unavailable');}
+
   resync(): void {
     this.#events.emit('resync');
   }

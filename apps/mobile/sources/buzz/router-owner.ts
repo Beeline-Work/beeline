@@ -1,7 +1,7 @@
-import { AdmissionOwner, ReadLanes, RouterBatchAssembly, NavigationOwner,
-  type LaneFamily, type LaneRequest, type LaneSnapshot, type LaneView, type NavigationState, type AdmittedCommand } from '@beeline/net/owner';
+import { AdmissionOwner, ReadLanes, RouterBatchAssembly, NavigationOwner, MediaDemandOwner,
+  type MediaAction, type LaneFamily, type LaneRequest, type LaneSnapshot, type LaneView, type NavigationState, type AdmittedCommand } from '@beeline/net/owner';
 import { readChatListView, readRoomView } from '@beeline/api-contract/phone';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import type { MediaMetadata, MediaLink, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { RouterPushFrame, RouterSnapshotInput, RouterSnapshot } from '@beeline/api-contract/router-protocol';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
@@ -9,9 +9,12 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { AppState } from 'react-native';
 import { routerLaneStorage } from './surface-storage';
+import { installMediaCacheConnection, installLegacyMediaCacheConnection, suspendMediaCacheConnection, receiveMediaAuthorityRemoval, invalidateMediaCacheDemand, activeMediaObjectIds } from './media-cache-connection';
 
 export type RouterFamilyMode = 'pending' | 'legacy' | 'router';
 type Negotiation = { generation: number; families: readonly LaneFamily[];
+  authorityFencesV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
+  executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>;
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
 type Slot = { request: LaneRequest; consumers: Map<() => void, () => boolean>; listeners: Set<() => void>;
   generation?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
@@ -20,12 +23,15 @@ const listeners = new Set<() => void>();
 const slots = new Set<Slot>();
 const slotsByKey = new Map<string, Slot>();
 let admission: AdmissionOwner | undefined;
+let mediaDemand: MediaDemandOwner | undefined;
 let stopFences: (() => void) | undefined;
 let lanes: ReadLanes | undefined;
 let negotiation: Negotiation | undefined;
 let initialized: Promise<void> | undefined;
 let listPanelVisible = false;
 let modeKnown = false;
+let principal: string | undefined;
+let authorityUnavailable = false;
 let instance = 0;
 const slotNames = new WeakMap<Slot, string>();
 let nextSlotName = 0;
@@ -54,10 +60,19 @@ async function initialize(): Promise<void> {
   return initialized = Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, origin]) => {
     if (epoch !== clientResetGeneration() || !identity) return;
     const reader = { origin: new URL(origin).origin, principal: identity.publicKey, sessionEpoch: epoch };
+    principal = reader.principal;
     admission = new AdmissionOwner(reader);
+    mediaDemand = new MediaDemandOwner(admission, () => navigation.current() ?? null, invalidateMediaCacheDemand, activeMediaObjectIds);
     const storage = routerLaneStorage(reader.origin, reader.principal);
-    lanes = new ReadLanes(reader, validValue, storage);
-    stopFences = storage.subscribeFences((scope, epoch) => { void lanes?.revoke(scope, epoch, false); });
+    lanes = new ReadLanes(reader, validValue, { ...storage, fence: async (scope, epoch) => {
+      // ReadLanes calls this only after committed-batch and permission-domain validation.
+      receiveMediaAuthorityRemoval(scope, epoch);
+      await storage.fence(scope, epoch);
+    } });
+    stopFences = storage.subscribeFences((scope, epoch) => {
+      receiveMediaAuthorityRemoval(scope, epoch);
+      void lanes?.revoke(scope, epoch, false);
+    });
     if (AppState.currentState === 'background' || AppState.currentState === 'inactive') admission.background();
   });
 }
@@ -112,6 +127,7 @@ function focus(slot: Slot): void {
   for (const listener of slot.listeners) listener();
 }
 function reconcile(): void {
+  mediaDemand?.navigationChanged();
   for (const slot of [...slots]) {
     if (!slot.consumers.size && slot.generation !== navigation.current()?.generation) {
       release(slot); slots.delete(slot);
@@ -128,6 +144,13 @@ navigation.subscribe(reconcile);
 
 /** Real committed navigator state. This does not run a request by itself. */
 export function routerOwnerNavigation(state: NavigationState): void { navigation.observe(state); }
+/** Existing transcript viewport and synchronous artifact controls are the only callers. */
+export function routerOwnerArtifactViewport(roomId: string, objectIds: readonly string[]): void {
+  mediaDemand?.viewport(roomId, objectIds);
+}
+export function routerOwnerArtifactAction(action: MediaAction, objectId: string): void {
+  mediaDemand?.action(action, objectId);
+}
 /** Called by the desktop shell's actual layout owner, never by a data consumer. */
 export function routerOwnerListPanel(visible: boolean): void {
   if (listPanelVisible === visible) return;
@@ -141,7 +164,21 @@ export async function routerOwnerNegotiated(next: Negotiation): Promise<void> {
   const version = ++instance;
   await initialize();
   if (version !== instance) return;
-  negotiation = next; modeKnown = true;
+  negotiation = next; modeKnown = true; authorityUnavailable = false;
+  const media = mediaDemand;
+  if (next.mediaMetadataV1 && next.authorityFencesV1 && next.executeMetadata && media) {
+    media.connected(next.generation);
+    installMediaCacheConnection({ generation: next.generation, mediaMetadataV1: true,
+      joinedMetadata: objectId => media.satisfy('readMediaMetadata', objectId),
+      executeMetadata: objectId => media.dispatch('readMediaMetadata', objectId, input => next.executeMetadata!(input.objectId)),
+      ...(next.executeLink ? { executeLink: (objectId: string) => media.dispatch('readMediaLink', objectId, input => next.executeLink!(input.objectId)) } : {}),
+      ...(next.executePlayback ? { executePlayback: (objectId: string) => media.dispatch('readMediaPlayback', objectId, input => next.executePlayback!(input.objectId)) } : {}),
+    });
+  } else {
+    media?.disconnected();
+    if (next.mediaMetadataV1) suspendMediaCacheConnection();
+    else installLegacyMediaCacheConnection(next.generation);
+  }
   if (!lanes || !admission) { notify(); return; }
   // Connection recovery authority replaces expired screen authority exactly once
   // per demanded key, independently of component effects.
@@ -181,6 +218,7 @@ export async function routerOwnerNegotiated(next: Negotiation): Promise<void> {
   reconcile();
 }
 export function routerOwnerDisconnected(): void {
+  mediaDemand?.disconnected(); suspendMediaCacheConnection();
   instance += 1; negotiation = undefined; modeKnown = false; assembly.reset(); lanes?.disconnected(); notify();
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -207,6 +245,26 @@ function fact(value: unknown): boolean {
  */
 export function routerOwnerReceive(value: unknown): void {
   if (!negotiation || !record(value)) return;
+  const failAuthority = () => {
+    authorityUnavailable = true; assembly.reset(); lanes?.disconnected();
+    mediaDemand?.disconnected(); suspendMediaCacheConnection(); notify();
+  };
+  if (value.kind === 'authority-fence') {
+    if (!negotiation.authorityFencesV1 || authorityUnavailable) return;
+    const domain = value.authorityScope;
+    if (typeof value.scope !== 'string' || value.scope.length > 256 || typeof domain !== 'string' ||
+        ![ `room:${value.scope}`, `object:${value.scope}`, `reader:${principal}:workspace:${value.scope}` ].includes(domain) ||
+        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
+        utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
+    const epoch = (value.authority as LaneSnapshot['authority']).scopes.find(scope => scope.authorityScope === domain)?.epoch;
+    if (!epoch) { failAuthority(); return; }
+    // A content-free current-authority fence carries no data coverage/cursor.
+    receiveMediaAuthorityRemoval(domain, epoch);
+    void lanes?.revoke(domain, epoch).catch(failAuthority);
+    return;
+  }
+  if (value.kind === 'router-unavailable' && value.stream === `authority:${principal}`) { failAuthority(); return; }
+  if (authorityUnavailable) return;
   const stream = typeof value.stream === 'string' ? value.stream : record(value.to) && typeof value.to.stream === 'string' ? value.to.stream : undefined;
   const fail = () => { if (stream) for (const family of negotiation?.families ?? []) lanes?.unavailable(stream, family); };
   if (value.kind === 'router-unavailable') {
@@ -292,8 +350,9 @@ AppState.addEventListener('change', state => {
   } else if (state === 'active') { admission?.foregrounded(); navigation.foregrounded(); }
 });
 subscribeClientReset(() => {
-  instance += 1; modeKnown = false; negotiation = undefined; assembly.reset();
+  instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; authorityUnavailable = false; assembly.reset();
   for (const slot of slots) { release(slot); slot.generation = undefined; }
   stopFences?.(); stopFences = undefined;
+  mediaDemand?.disconnected(); mediaDemand = undefined;
   admission = undefined; lanes?.reset(); lanes = undefined; initialized = undefined; navigation.reset(); notify();
 });

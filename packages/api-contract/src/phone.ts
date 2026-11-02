@@ -43,3 +43,5 @@ export * from './mcp-starter-routine.js';
 
 export * from './router-protocol.js';
 export * from './router-command.js';
+
+export * from './media-metadata.js';

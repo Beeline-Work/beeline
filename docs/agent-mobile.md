@@ -45,3 +45,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 - Composer centering means the cap-to-baseline body, excluding descenders (`ConversationComposer.tsx`); native span line heights stay unset. Device/font-scale proof: `apps/mobile/evidence/composer-hint-center/README.md`.
 - **Identity marks are one component** (`IdentityMark.tsx`); an agent's face is server-assigned, never re-derived from a seed. The live ring paints outside the tile box, so a clipping ancestor must outset by it. Generated portraits (`postAgentAvatar`, `/v1/agent-avatars/`) are separate from photo overrides.
 - Drawn glyphs spread the platform-split props from `components/buzz/decorative-glyph.ts`/`.web.ts`; react-native-svg forwards unknown props to the element.
+
+## File byte ownership
+
+The closed viewport/action bridge is `buzz/router-owner.ts` plus `packages/net/src/private/media-demand-owner.ts`. Immutable file flights and local disk authority live in `buzz/artifact-byte-owner.ts`, `immutable-byte-cache.ts` and `artifact-byte-store.ts`; consumers share these through `ArtifactMedia` and existing Open/Save controls. `media-cache-connection.ts` distinguishes pending, explicitly negotiated legacy, and router modes. A disconnected capable connection cannot fall back to HTTP metadata. The network-router closure ledger records activation and native-runtime proof gates.

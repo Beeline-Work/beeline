@@ -147,6 +147,8 @@ export interface GitHubServerHooks {
 
 export interface ServerOptions {
   routerProjections?: RouterProjectionPolicy;
+  /** Enable only after the media authority schema/fence cohort is proved. */
+  mediaMetadataV1?:boolean;
   replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
   sentryWakeSecret?: string;
@@ -1062,7 +1064,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
       };
       const routerProtocol = routerSocketProtocol(options.database, principal.identityId, sendLive, options.routerProjections,
-        { live: options.live, phone: options.phone, rooms: () => [...releases.keys()] });
+        { live: options.live, phone: options.phone, rooms: () => [...releases.keys()],mediaMetadataV1:options.mediaMetadataV1===true && Boolean(options.objectService) });
       client.once('close', () => routerProtocol.close());
       let routerNegotiating = false;
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
@@ -2585,7 +2587,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
     invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
-    if (name === 'readRouterSnapshot') throw new PhoneOperationError(409, { error: 'router_socket_required' });
+    if (['readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
+      throw new PhoneOperationError(409, { error: 'router_socket_required' });
     const familyId = phoneFamilies.get(request);
     const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
     await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {

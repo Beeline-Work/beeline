@@ -7,6 +7,15 @@ export const ROUTER_PROJECTION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS router_authority (
   scope text PRIMARY KEY, epoch bigint NOT NULL DEFAULT 1
 );
+CREATE OR REPLACE FUNCTION beeline_authority_hint(person text, logical_scope text, authority_scope text) RETURNS void AS $$
+BEGIN
+  IF person IS NULL OR logical_scope IS NULL OR authority_scope IS NULL THEN RETURN; END IF;
+  PERFORM beeline_journal('authority:'||person,jsonb_build_object('kind','authority-change',
+    'scope',logical_scope,'authorityScope',authority_scope));
+  PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','router_authority','operation','UPDATE',
+    'roomId','','journalStreams',jsonb_build_array('authority:'||person))::text);
+END;
+$$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_router_authority() RETURNS trigger AS $$
 DECLARE item jsonb; previous jsonb; workspace text; person text; room text;
 BEGIN
@@ -45,6 +54,43 @@ FOR EACH ROW EXECUTE FUNCTION beeline_router_authority();
 DROP TRIGGER IF EXISTS beeline_router_authority ON rooms;
 CREATE TRIGGER beeline_router_authority BEFORE INSERT OR UPDATE OR DELETE ON rooms
 FOR EACH ROW EXECUTE FUNCTION beeline_router_authority();
+CREATE OR REPLACE FUNCTION beeline_router_authority_capture() RETURNS trigger AS $$
+DECLARE item jsonb; person text; room text; workspace text; parent text;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF TG_TABLE_NAME='memberships' THEN
+      IF ROW(NEW.workspace_id,NEW.room_id,NEW.identity_id,NEW.role,NEW.removed_at)
+        IS NOT DISTINCT FROM ROW(OLD.workspace_id,OLD.room_id,OLD.identity_id,OLD.role,OLD.removed_at) THEN RETURN NEW; END IF;
+    ELSE
+      IF ROW(NEW.workspace_id,NEW.parent_id,NEW.archived_at)
+        IS NOT DISTINCT FROM ROW(OLD.workspace_id,OLD.parent_id,OLD.archived_at) THEN RETURN NEW; END IF;
+    END IF;
+  END IF;
+  FOR item IN SELECT DISTINCT value FROM jsonb_array_elements(jsonb_build_array(
+    CASE WHEN TG_OP<>'DELETE' THEN to_jsonb(NEW) END,CASE WHEN TG_OP<>'INSERT' THEN to_jsonb(OLD) END))
+    WHERE value IS NOT NULL AND value<>'null'::jsonb
+  LOOP
+    workspace:=item->>'workspace_id';
+    IF TG_TABLE_NAME='memberships' THEN
+      person:=item->>'identity_id';room:=item->>'room_id';
+      PERFORM beeline_authority_hint(person,COALESCE(room,workspace),
+        CASE WHEN room IS NULL THEN 'reader:'||person||':workspace:'||workspace ELSE 'room:'||room END);
+    ELSE
+      room:=item->>'id';parent:=item->>'parent_id';
+      FOR person IN SELECT DISTINCT identity_id FROM memberships
+        WHERE room_id::text=room OR room_id::text=parent
+      LOOP PERFORM beeline_authority_hint(person,room,'room:'||room); END LOOP;
+    END IF;
+  END LOOP;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS beeline_router_authority_capture ON memberships;
+CREATE TRIGGER beeline_router_authority_capture AFTER INSERT OR UPDATE OR DELETE ON memberships
+FOR EACH ROW EXECUTE FUNCTION beeline_router_authority_capture();
+DROP TRIGGER IF EXISTS beeline_router_authority_capture ON rooms;
+CREATE TRIGGER beeline_router_authority_capture AFTER INSERT OR UPDATE OR DELETE ON rooms
+FOR EACH ROW EXECUTE FUNCTION beeline_router_authority_capture();
 INSERT INTO router_authority(scope)
   SELECT DISTINCT 'reader:'||identity_id||':workspace:'||workspace_id FROM memberships
   ON CONFLICT DO NOTHING;

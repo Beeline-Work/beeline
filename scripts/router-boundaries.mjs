@@ -135,6 +135,38 @@ function inspectOwnerAccess(file, source, errors) {
   visit(source);
 }
 
+// Installing a connection adapter or an authority receipt is trusted owner work.
+// Feature consumers may observe metadata/cells, but cannot replace their executor.
+function inspectConnectionOwners(file, source, errors) {
+  const modules = {
+    'media-cache-connection': new Set(['installMediaCacheConnection', 'installLegacyMediaCacheConnection',
+      'suspendMediaCacheConnection', 'receiveMediaAuthorityRemoval', 'invalidateMediaCacheDemand']),
+    'agent-usage-cell': new Set(['installUsageCellConnection', 'suspendUsageCellConnection', 'receiveUsageCell', 'setUsageCellProfile']),
+  };
+  if (file === MOBILE + 'buzz/router-owner.ts') return;
+  const target = specifier => {
+    if (!specifier || !ts.isStringLiteralLike(specifier)) return;
+    const resolved = specifier.text.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier.text))
+      : specifier.text.replace(/^@\//, MOBILE);
+    return Object.keys(modules).find(name => resolved.replace(/\.[cm]?[jt]sx?$/, '') === MOBILE + 'buzz/' + name);
+  };
+  const deny = () => errors.push(`${file}: connection installation belongs to the trusted router owner`);
+  function visit(node) {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && !node.isTypeOnly && !node.importClause?.isTypeOnly) {
+      const module = target(node.moduleSpecifier);
+      if (module) {
+        const names = node.importClause?.namedBindings;
+        if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) deny();
+        else for (const item of names.elements) if (!item.isTypeOnly && modules[module].has((item.propertyName ?? item.name).text)) deny();
+      }
+    }
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') && target(node.arguments[0])) deny();
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
 export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
@@ -158,6 +190,7 @@ export function inspectSource(file, text) {
     }
     commandAccess(source);
     inspectOwnerAccess(file, source, errors);
+    inspectConnectionOwners(file, source, errors);
     for (const entry of imports(file, text)) {
       if (entry.dynamic && !entry.specifier) hits.push({ kind: 'computed-import', line: 1 });
       const target = entry.specifier?.startsWith('.')

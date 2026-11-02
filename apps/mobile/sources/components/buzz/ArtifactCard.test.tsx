@@ -1,3 +1,4 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -8,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   modalShow: vi.fn(),
   modalAlert: vi.fn(),
   probeArtifactPreview: vi.fn(),
+  artifactImageSource: vi.fn(),
+  releaseArtifactImageSource: vi.fn(),
   snapshotArtifactPreview: vi.fn(),
   resetArtifactPreviewCache: vi.fn(),
   fetchArtifactBytes: vi.fn(),
@@ -73,13 +76,10 @@ vi.mock('react-native-unistyles', () => ({
 vi.mock('@/modal', () => ({
   Modal: { show: mocks.modalShow, alert: mocks.modalAlert },
 }));
-vi.mock('@/buzz/artifact-preview-cache', () => ({
-  artifactPreviewCachePath: (id: string) => `file:///cache/artifact-preview-${id}.png`,
-  probeArtifactPreview: mocks.probeArtifactPreview,
-  snapshotArtifactPreview: mocks.snapshotArtifactPreview,
-  resetArtifactPreviewCache: mocks.resetArtifactPreviewCache,
-}));
 vi.mock('@/buzz/artifact-link', () => ({
+  artifactImageSource: mocks.artifactImageSource,
+  releaseArtifactImageSource: mocks.releaseArtifactImageSource,
+  subscribeArtifactBytesPurge: () => () => {},
   artifactBase64: mocks.artifactBase64,
   artifactPdfLocalUri: mocks.artifactPdfLocalUri,
   fetchArtifactBytes: mocks.fetchArtifactBytes,
@@ -123,7 +123,6 @@ import { ArtifactCard } from './ArtifactCard';
 import { ChevronGlyph } from './ChevronGlyph';
 import { ExternalGlyph } from './ExternalGlyph';
 import { createInitialLoadGuard } from '@/buzz/artifact';
-import { ARTIFACT_PDF_BASE_URL, ARTIFACT_PDF_RENDERED_URL } from '@/buzz/artifact-pdf';
 
 (globalThis as never as { __artifactMocks: unknown }).__artifactMocks = mocks;
 
@@ -142,6 +141,8 @@ afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   webviewCreated.length = 0;
   mocks.platformOS.value = 'android';
+  mocks.artifactImageSource.mockReset().mockResolvedValue({ uri: 'file:///cache/bounded-thumb.png' });
+  mocks.releaseArtifactImageSource.mockClear();
   mocks.modalShow.mockClear();
   mocks.modalAlert.mockClear();
   mocks.probeArtifactPreview.mockReset();
@@ -206,7 +207,7 @@ async function flush(): Promise<void> {
   }
 }
 
-describe('the artifact card is the preview (mock 1b)', () => {
+describe('bounded artifact previews', () => {
   it('calls the runnable file type Interactive in the card caption', async () => {
     mocks.probeArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
     const renderer = render(<ArtifactCard attachment={artifactAttachment({
@@ -272,36 +273,24 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(hostNodes(renderer, 'artifact-open')).toHaveLength(hasOpen ? 1 : 0);
   });
 
-  it('shows the cached snapshot instead of re-rendering the page', async () => {
-    mocks.probeArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
+  it('uses the current bounded thumbnail without probing the old screenshot cache', async () => {
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
+    expect(mocks.artifactImageSource).toHaveBeenCalledWith(artifactAttachment(), { signal: expect.any(AbortSignal), preview: true, thumbnail: true });
+    expect(mocks.probeArtifactPreview).not.toHaveBeenCalled();
     expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
-    expect(
-      renderer.root.findAll((n: any) => typeof n.type === 'string' && n.type === 'Image'),
-    ).toHaveLength(1);
+    expect(renderer.root.findAll((n: any) => n.type === 'Image')).toHaveLength(1);
+    act(() => renderer.unmount());
   });
 
-  it('renders the page itself in the script-off sandbox once, then snapshots it', async () => {
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.fetchArtifactBytes.mockResolvedValue(
-      new TextEncoder().encode('<html><body><p>mock</p></body></html>'),
-    );
-    mocks.snapshotArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
+  it('keeps the existing placeholder when no bounded thumbnail exists', async () => {
+    mocks.artifactImageSource.mockRejectedValue(new Error('A bounded preview is unavailable.'));
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
-    const webview = renderer.root.findByProps({ testID: 'artifact-preview-render' });
-    expect(webview).toBeDefined();
-    // The delayed-capture timer is the fallback for a load-end that never
-    // fires; the WebView mock never calls onLoadEnd, so it is what fires here.
-    await act(async () => {
-      renderer.root.findByType('WebView').props.onLoadEnd();
-      await Promise.resolve();
-    });
-    expect(mocks.snapshotArtifactPreview).toHaveBeenCalledWith(
-      artifactAttachment().url,
-      expect.anything(),
-    );
+    expect(hostNodes(renderer, 'artifact-preview-loading')).toHaveLength(1);
+    expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
+    expect(webviewCreated).toHaveLength(0);
+    act(() => renderer.unmount());
   });
 
   it('renders markdown through the app message renderer', async () => {
@@ -320,86 +309,27 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(textOf(renderer)).toContain('Notes');
   });
 
-  // The audit found the Android card gave a PDF the file-style row and no
-  // thumbnail at all. It renders page one through the pdf.js document now, and
-  // snapshots it the same way markup is snapshotted.
-  it('previews a PDF on Android through the pdf.js document, page one only', async () => {
-    mocks.platformOS.value = 'android';
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.artifactBase64.mockResolvedValue('JVBERi0xLjQK');
-    mocks.loadPdfViewerDocument.mockResolvedValue('<!doctype html><html>pdf</html>');
-    const renderer = render(
-      <ArtifactCard
-        attachment={artifactAttachment({
-          mimeType: 'application/pdf',
-          name: 'spec.pdf',
-          title: 'Spec',
-        })}
-      />,
-    );
+  it.each(['android', 'ios', 'web'])('uses a bounded PDF thumbnail on %s without loading the PDF renderer', async platform => {
+    mocks.platformOS.value = platform;
+    const file = artifactAttachment({ mimeType: 'application/pdf', name: 'spec.pdf' });
+    const renderer = render(<ArtifactCard attachment={file} isDesktop={platform === 'web'} />);
     await flush();
-    expect(mocks.artifactPdfLocalUri).not.toHaveBeenCalled();
-    expect(mocks.loadPdfViewerDocument).toHaveBeenCalledWith({
-      pdfBase64: 'JVBERi0xLjQK',
-      mode: 'preview',
-      signalRendered: true,
-    });
-    expect(renderer.root.findByProps({ testID: 'artifact-preview-render' })).toBeDefined();
-    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(1);
-    expect(hostNodes(renderer, 'artifact-open-browser')).toHaveLength(1);
+    expect(mocks.artifactImageSource).toHaveBeenCalledWith(file, { signal: expect.any(AbortSignal), preview: true, thumbnail: true });
+    expect(mocks.artifactBase64).not.toHaveBeenCalled(); expect(mocks.artifactPdfLocalUri).not.toHaveBeenCalled();
+    expect(mocks.loadPdfViewerDocument).not.toHaveBeenCalled(); expect(webviewCreated).toHaveLength(0);
+    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(1); act(() => renderer.unmount());
   });
 
-  it('gives the Android PDF document a real origin and the script it is made of', async () => {
-    mocks.platformOS.value = 'android';
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.artifactBase64.mockResolvedValue('JVBERi0xLjQK');
-    mocks.loadPdfViewerDocument.mockResolvedValue('<!doctype html><html>pdf</html>');
-    render(
-      <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'application/pdf', name: 'spec.pdf' })}
-      />,
-    );
-    await flush();
-    const props = webviewCreated.at(-1)!;
-    expect(props.source).toEqual({
-      html: '<!doctype html><html>pdf</html>',
-      baseUrl: ARTIFACT_PDF_BASE_URL,
-    });
-    // The renderer itself is script; the rest of the sandbox table holds.
-    expect(props.javaScriptEnabled).toBe(true);
-    expect(props.originWhitelist).toEqual([]);
-    expect(props.allowFileAccess).toBe(false);
-    expect(Object.hasOwn(props, 'onMessage')).toBe(false);
-  });
-
-  // pdf.js paints well after the page's load event, so snapshotting on load
-  // would cache a blank thumbnail. The document says when it is done instead,
-  // through a navigation the guard refuses on its way past.
-  it('snapshots the PDF thumbnail on the page cue, not on load end', async () => {
-    mocks.platformOS.value = 'android';
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.artifactBase64.mockResolvedValue('JVBERi0xLjQK');
-    mocks.loadPdfViewerDocument.mockResolvedValue('<!doctype html><html>pdf</html>');
-    mocks.snapshotArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
-    const renderer = render(
-      <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'application/pdf', name: 'spec.pdf' })}
-      />,
-    );
-    await flush();
-    const webview = renderer.root.findByType('WebView');
-    expect(webview.props.onLoadEnd).toBeUndefined();
-    expect(mocks.snapshotArtifactPreview).not.toHaveBeenCalled();
-    const guard = webview.props.onShouldStartLoadWithRequest as (r: { url: string }) => boolean;
-    await act(async () => {
-      // The cue is a refused request; the refusal is the message.
-      expect(guard({ url: ARTIFACT_PDF_RENDERED_URL })).toBe(false);
-      await Promise.resolve();
-    });
-    expect(mocks.snapshotArtifactPreview).toHaveBeenCalledWith(
-      artifactAttachment().url,
-      expect.anything(),
-    );
+  it('overscan rows start no preview work and abort the request when they leave the viewport', async () => {
+    const file = artifactAttachment();
+    const renderer = render(<ArtifactCard attachment={file} visible={false} />);
+    await flush(); expect(mocks.artifactImageSource).not.toHaveBeenCalled();
+    act(() => renderer.update(<ArtifactCard attachment={file} visible />)); await flush();
+    const signal = mocks.artifactImageSource.mock.calls[0]![1].signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    act(() => renderer.update(<ArtifactCard attachment={file} visible={false} />));
+    expect(signal.aborted).toBe(true); expect(mocks.artifactImageSource).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
   });
 
   it.each([
@@ -423,23 +353,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(hostNodes(renderer, 'artifact-open')).toHaveLength(1);
   });
 
-  it('previews a PDF on iOS from the local cache file (first page)', async () => {
-    mocks.platformOS.value = 'ios';
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.artifactPdfLocalUri.mockResolvedValue('file:///cache/artifact-pdf-x.pdf');
-    const renderer = render(
-      <ArtifactCard
-        attachment={artifactAttachment({
-          mimeType: 'application/pdf',
-          name: 'spec.pdf',
-          title: 'Spec',
-        })}
-      />,
-    );
-    await flush();
-    expect(mocks.artifactPdfLocalUri).toHaveBeenCalled();
-    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(1);
-  });
+
 
   it('an unknown format falls back to the document card with open-in-browser only', async () => {
     const renderer = render(
@@ -578,21 +492,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
 
   // The desktop host has no WebView to snapshot, so the card paints page one in
   // the frame itself rather than caching a thumbnail.
-  it('previews a PDF on desktop in the frame, page one only', async () => {
-    mocks.platformOS.value = 'web';
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    const renderer = render(
-      <ArtifactCard
-        attachment={artifactAttachment({ mimeType: 'application/pdf', name: 'spec.pdf' })}
-        isDesktop
-      />,
-    );
-    await flush();
-    const pdf = renderer.root.findByType('ArtifactPdfView' as any);
-    expect(pdf.props.mode).toBe('preview');
-    expect(pdf.props.testID).toBe('artifact-preview-pdf');
-    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(1);
-  });
+
 
   it('Open in browser mints the signed link at tap time; Open full screen shows the viewer', async () => {
     mocks.probeArtifactPreview.mockResolvedValue(null);
@@ -632,21 +532,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(mocks.modalShow).toHaveBeenCalled();
   });
 
-  it('the sandbox props ride the preview render', async () => {
-    mocks.probeArtifactPreview.mockResolvedValue(null);
-    mocks.fetchArtifactBytes.mockResolvedValue(
-      new TextEncoder().encode('<html><body></body></html>'),
-    );
-    render(<ArtifactCard attachment={artifactAttachment()} />);
-    await flush();
-    expect(webviewCreated.length).toBeGreaterThan(0);
-    const props = webviewCreated[0]!;
-    expect(props.javaScriptEnabled).toBe(false);
-    expect(props.originWhitelist).toEqual([]);
-    expect(props.setSupportMultipleWindows).toBe(false);
-    expect(props.allowFileAccess).toBe(false);
-    expect(Object.hasOwn(props, 'onMessage')).toBe(false);
-  });
+
 
   it('the initial-load guard allows the first request and denies every later one', () => {
     const guard = createInitialLoadGuard();

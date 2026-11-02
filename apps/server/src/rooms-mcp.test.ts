@@ -2129,6 +2129,17 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(await ok(client, 'no_reply_needed', { address: ROOM })).toEqual({ cleared: 1 });
       expect(await ids()).toEqual([order.id]);
     });
+    // Reproduction (R-MCP-LIMITS): search advertised limit 20 while the server refuses anything above 10.
+    it('R-MCP-LIMITS: every advertised search limit is accepted', async () => {
+      const { client, member } = await connected();
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      // A person's tag gives the app's turn a requester, as it does for an agent.
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} what did the release migration change?` }, USER);
+      const search = (await client.listTools()).tools.find(tool => tool.name === 'search')!;
+      const maximum = (search.inputSchema.properties as Record<string, { maximum?: number }>).limit!.maximum!;
+      for (const scope of ['history', 'memory'])
+        await ok(client, 'search', { address: ROOM, scope, query: 'release migration', limit: maximum });
+    });
     it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
       const surface = await import('../../body/src/minimal-tool-surface.js');
       const agentTools = new Set([

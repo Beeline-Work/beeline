@@ -200,12 +200,15 @@ test('the required TYPECHECK gate executes the policy and its regression tests o
   );
   const job = workflow.jobs.typecheck;
   assert.equal(job.name, 'TYPECHECK');
-  const step = job.steps.find((step) => step.name === 'Enforce the shared UI component registry');
+  const step = job.steps.find(step => step.run === 'node scripts/run-ci-workspace-checks.mjs');
   assert.ok(step);
-  assert.match(step.run, /mobile-ui-policy.test.mjs/);
-  assert.match(step.run, /check-mobile-ui-components.mjs --base/);
-  assert.equal(step.env.UI_POLICY_BASE, '${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}');
   assert.equal(step.if, undefined);
+  const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
+  assert.match(tasks, /mobile-ui-policy.test.mjs/);
+  assert.match(tasks, /check-mobile-ui-components.mjs --base/);
+  assert.match(tasks, /export UI_POLICY_BASE="\$CI_BASE_SHA"/);
+  assert.equal(job.env.CI_BASE_SHA, '${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}');
+  assert.match(job.env.RUN_TYPECHECK, /github.event_name == 'pull_request'/);
 });
 
 test('spread props cannot hide newly hand-rolled buttons', () => {

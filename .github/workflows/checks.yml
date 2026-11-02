@@ -34,10 +34,11 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables. SERVER INTEGRATION takes the verdict from both pools'
+# the tiny suite tables. On PRs it also runs width and room-read latency
+# budgets outside the shared CPU quota. SERVER INTEGRATION takes the verdict from both pools'
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
-# takes the verdict from four runners across both pools and the isolated claim
-# latency budget. On a pull request those runners execute only the server test
+# takes the verdict from eight shards and the hosted claim-latency budget.
+# On a pull request those runners execute only the server test
 # files SELECT SERVER TESTS picked from the main coverage map
 # (server-coverage-map.yml) plus every test that reads source code as text; the
 # merge queue, dispatch runs and any change the map cannot describe run every
@@ -89,12 +90,25 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# One control listener uses one CPU; nine test listeners use at most two each.
+# The CI slice shares its ten-CPU hard cap across all ten jobs and every PR.
+env:
+  CI_TEST_WORKERS: '2'
+  UV_THREADPOOL_SIZE: '1'
+  TURBO_CONCURRENCY: '1'
+  ZSTD_NBTHREADS: '1'
+
 jobs:
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       code: ${{ steps.decide.outputs.code }}
       body: ${{ steps.decide.outputs.body }}
@@ -365,118 +379,131 @@ jobs:
             echo "server=$SERVER_MODULE mobile=$MOBILE_MODULE"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  typecheck:
-    name: TYPECHECK
-    if: ${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
-    needs: shared-package-tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: 'true'
-      - name: Enforce the shared UI component registry
-        env:
-          UI_POLICY_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
-        run: |
-          git fetch --no-tags --depth=1 origin "$UI_POLICY_BASE"
-          node --test scripts/mobile-ui-policy.test.mjs
-          node scripts/check-mobile-ui-components.mjs --base "$UI_POLICY_BASE"
-      - name: Allow no phone network channel besides the main live socket
-        env:
-          CHANNEL_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
-        run: |
-          git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
-          node --test scripts/phone-network-channels.test.mjs
-          node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
-          node --test scripts/router-boundaries.test.mjs
-          node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
-      # The base commit's copy of the guard judges the PR, so a PR cannot
-      # weaken its own check. A merge group was already judged as its PRs.
-      - name: Keep each module's sinks in their owner files
-        env:
-          ARCHITECTURE_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
-        run: |
-          git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
-          node --test scripts/check-architecture.test.mjs
-          runner=scripts
-          if git cat-file -e "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" 2>/dev/null; then
-            runner="$RUNNER_TEMP/architecture-guard"
-            mkdir -p "$runner"
-            for file in check-architecture.mjs architecture-invariants.mjs architecture-storage.mjs; do
-              git show "$ARCHITECTURE_BASE:scripts/$file" > "$runner/$file" 2>/dev/null || rm -f "$runner/$file"
-            done
-          fi
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            node "$runner/check-architecture.mjs" --root . --base "$ARCHITECTURE_BASE"
-          else
-            node "$runner/check-architecture.mjs" --root .
-          fi
-      # `npx turbo run typecheck` misses two of the three legs the root script
-      # runs: the isolated mobile app (its own tsconfig and node_modules, which
-      # turbo does not see) and tsconfig.scripts.json. This gate is unfiltered
-      # and advertises whole-workspace coverage, so it runs the whole script.
-      # turbo's typecheck task depends on ^build, so every workspace's dist/ is
-      # produced before its dependents — and before the mobile leg, which
-      # resolves @beeline/* from those dists exactly as Metro does.
-      - run: npm run typecheck
-      # Keep the primary gate aligned with the command a mobile developer runs
-      # from this directory. The root script also generates Expo route types;
-      # this second, literal invocation catches any drift in that wrapper.
-      - name: Typecheck the mobile app as developers do
-        working-directory: apps/mobile
-        run: npx tsc --noEmit
-      # Cheapest possible rot check, and it belongs on the one gate no path
-      # filter can skip: deleting a test that a workflow names touches no
-      # workflow file, so a filtered lane would never see it.
-      - name: Check no workflow names a deleted test
-        run: npm run lint:workflow-paths
-      # Runs on every pull request, after npm ci, so a filter that opens
-      # every suite again fails here even when the diff is not a workflow.
-      - name: Check path filters skip untouched suites
-        run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs
-      - name: Test nightly Checks orchestration
-        run: node --test scripts/nightly-checks.test.mjs
-
-  shared-package-tests:
-    name: SHARED PACKAGE TESTS
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: ubuntu-latest
+  prepare-workspace:
+    name: Prepare workspace caches
+    needs: changes
+    if: "!cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests')"
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: "1"
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
         with:
+          mobile: "true"
+
+  typecheck:
+    name: TYPECHECK
+    if: >-
+      !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') ||
+      contains(fromJSON('["all","typecheck","mobile-suite","dead-code","native-fingerprint","mobile-export-reachability"]'), inputs.suite))
+    needs:
+      - changes
+      - prepare-workspace
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-workspace"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    env:
+      CI_TEST_WORKERS: "1"
+      CI_BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
+      JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+      RUN_TYPECHECK: ${{ ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
+      RUN_MOBILE: |-
+        ${{ (
+          ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
+        ) }}
+      RUN_DEAD_CODE: ${{ (((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.code == 'true') || inputs.suite == 'all' || inputs.suite == 'dead-code') }}
+      RUN_NATIVE_FINGERPRINT: |-
+        ${{ (
+          ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && (needs.changes.outputs.nativeFingerprint == 'true' || needs.changes.outputs.mobileSuite == 'true')) ||
+          (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite'))
+        ) }}
+      RUN_MOBILE_EXPORT: |-
+        ${{ (
+          ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileExportReachability == 'true') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
+        ) }}
+    outputs:
+      typecheck: ${{ steps.checks.outputs['typecheck'] }}
+      mobile-suite: ${{ steps.checks.outputs['mobile-suite'] }}
+      dead-code: ${{ steps.checks.outputs['dead-code'] }}
+      native-fingerprint: ${{ steps.checks.outputs['native-fingerprint'] }}
+      mobile-export-reachability: ${{ steps.checks.outputs['mobile-export-reachability'] }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+      - uses: ./.github/actions/ci-workspace
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
+          mobile: "true"
+      - name: Flag store builds before merge
+        if: env.RUN_NATIVE_FINGERPRINT == 'true' && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
+          node scripts/pr-store-build.mjs "$PR_BASE_SHA"
+      - uses: actions/setup-java@v4
+        if: env.RUN_MOBILE == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Run two bounded workspace lanes
+        id: checks
+        run: node scripts/run-ci-workspace-checks.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workspace-check-timings
+          path: ${{ runner.temp }}/workspace-check-timings.json
+          if-no-files-found: ignore
+
+  shared-package-tests:
+    name: SHARED PACKAGE TESTS
+    needs: [changes, prepare-workspace]
+    if: "!cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests')"
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ci-workspace
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
           mobile: 'true'
       # buzz-client resolves @beeline/nostr and @beeline/api-contract from
       # built dist, the same as every app that imports those packages.
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
       - name: Keep the production log walk producing triage reports
-        run: node --test scripts/log-walk/*.test.mjs
+        run: node --test --test-concurrency=1 scripts/log-walk/*.test.mjs
       - name: Send ACP adapter failures to the fix loop
-        run: node --test scripts/acp-adapter-issue.test.mjs
+        run: node --test --test-concurrency=1 scripts/acp-adapter-issue.test.mjs
       - name: Keep the prompt-block analysis aggregate-only
-        run: node --test scripts/prompt-blocks-analysis.test.mjs
+        run: node --test --test-concurrency=1 scripts/prompt-blocks-analysis.test.mjs
       - name: Check the weekly Reason adapter port job
-        run: node --test scripts/reason-upstream-check.test.mjs
+        run: node --test --test-concurrency=1 scripts/reason-upstream-check.test.mjs
       - name: Protect nightly latency history and measured Loops publication
-        run: node --test scripts/latency-rig/nightly-*.test.mjs
+        run: node --test --test-concurrency=1 scripts/latency-rig/nightly-*.test.mjs
       - name: Block unbounded outside requests and waiting-screen regressions
         run: |
-          node --test scripts/external-request-deadlines.test.mjs
-          npm test -w @beeline/auth -- --run src/external-fetch.test.ts
-          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx'
+          node --test --test-concurrency=1 scripts/external-request-deadlines.test.mjs
+          npm test -w @beeline/auth -- --run src/external-fetch.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx' --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Prove local network admission
+        working-directory: packages/net
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        run: npm test -w @beeline/net -- src/router-pass.test.ts
+        run: npx vitest run src/router-pass.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Run hermetic shared-package tests
-        run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
+        run: npm test -w @beeline/nostr -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/api-contract -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/buzz-client -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Protect Room navigation responsiveness
         run: >-
-          npm test --prefix apps/mobile -- --run
+          npm test --prefix apps/mobile -- --run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           sources/buzz/transition-work.test.ts
           sources/buzz/room-transition-work.test.ts
           sources/buzz/surface-registry.test.ts
@@ -485,25 +512,25 @@ jobs:
 
   dead-code:
     name: DEAD CODE
+    needs:
+      - changes
+      - typecheck
     if: ${{ !cancelled() && (((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.code == 'true') || inputs.suite == 'all' || inputs.suite == 'dead-code') }}
-    needs: [changes, shared-package-tests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: "1"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: 'true'
-      # Mobile is intentionally outside the root npm workspaces. Knip still
-      # analyzes it as an explicit workspace and loads its local config graph.
-      - name: Reject new unused files or exports
-        run: timeout 5m npm run dead-code
-      - name: Prove an unused export fails the guard
-        run: timeout 5m npm run test:dead-code
+      - name: Take the verdict from the workspace lane that ran it
+        env:
+          CHECK_RESULT: ${{ needs.typecheck.outputs['dead-code'] }}
+        run: |
+          echo "DEAD CODE: $CHECK_RESULT (workspace lanes in TYPECHECK)"
+          test "$CHECK_RESULT" = success
 
   body-suite:
     name: BODY SUITE
-    needs: [changes, shared-package-tests]
+    needs: [changes, prepare-workspace]
     # `!cancelled()` lets the job evaluate its own condition when `changes`
     # was skipped (a dispatch); without it a skipped prerequisite skips this.
     if: >-
@@ -555,9 +582,9 @@ jobs:
       # auth services reach @beeline/auth/*.
       - name: Run the hermetic Body suite
         working-directory: apps/body
-        run: npx vitest run
+        run: npx vitest run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Prove free-agent boot refresh and startup deadlines
-        run: node --test infra/free-agent/entrypoint.test.mjs
+        run: node --test --test-concurrency=1 infra/free-agent/entrypoint.test.mjs
 
   mac-helper-acceptance:
     name: MAC HELPER ACCEPTANCE
@@ -605,7 +632,9 @@ jobs:
     name: SELECT SERVER TESTS
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 10
     permissions:
       contents: read
@@ -658,7 +687,7 @@ jobs:
 
   server-suite-shard:
     name: SERVER SUITE SHARD ${{ matrix.shard }}
-    needs: [changes, shared-package-tests, server-test-selection]
+    needs: [changes, prepare-workspace, server-test-selection]
     if: >-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
@@ -667,12 +696,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
       # Without a selection (merge queue, dispatch, selection failure) every
       # server test file runs.
       - name: Use this PR's server test selection
@@ -688,17 +719,16 @@ jobs:
       - name: Run the balanced server suite shard
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite != 'server-integration'
         working-directory: apps/server
-        run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/4
-      - name: Run two bounded integration batches
+        env:
+          # Move wall-clock budgets only when their existing hosted gate runs.
+          SERVER_HOSTED_TIMING: ${{ github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true' }}
+        run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8
+      - name: Run one bounded integration batch
         if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite == 'all' || inputs.suite == 'server-integration') }}
         working-directory: apps/server
         env:
           SHARD: ${{ matrix.shard }}
-        run: |
-          status=0
-          node scripts/run-integration-shard.mjs "$SHARD/8" || status=1
-          node scripts/run-integration-shard.mjs "$((SHARD + 4))/8" || status=1
-          exit "$status"
+        run: node scripts/run-integration-shard.mjs "$SHARD/8"
 
   coverage-map:
     name: SERVER COVERAGE MAP (on demand)
@@ -707,7 +737,7 @@ jobs:
 
   server-claim-latency:
     name: SERVER CLAIM LATENCY
-    needs: [changes, shared-package-tests]
+    needs: [changes, prepare-workspace]
     if: >-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
@@ -757,7 +787,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Require every shard and the claim latency budget to pass
@@ -779,7 +811,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Require every shard to pass
@@ -792,38 +826,25 @@ jobs:
 
   mobile-suite:
     name: MOBILE SUITE
-    needs: [changes, shared-package-tests]
-    if: >-
+    needs:
+      - changes
+      - typecheck
+    if: |-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: "1"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # Some mobile tests read recent history through real git; a depth-1
-          # checkout makes `git rev-parse HEAD~2` fail.
-          fetch-depth: 3
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: 'true'
-      - name: Run the mobile vitest suite
-        working-directory: apps/mobile
-        # Shared hosts expose all CPUs; keep each job's test worker count
-        # bounded instead of multiplying that count by ten runner services.
-        run: npx vitest run --maxWorkers=2 --minWorkers=2 --exclude sources/config/nativeFingerprint.test.ts
-      - name: Verify Android release shrinking mods
-        run: node --test scripts/android-shrinking.test.mjs
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Prove Android cached update integrity and retry
-        run: node --test scripts/android-ota-integrity.test.mjs
-      - name: Typecheck the mobile app
-        run: npm run mobile:typecheck
+      - name: Take the verdict from the workspace lane that ran it
+        env:
+          CHECK_RESULT: ${{ needs.typecheck.outputs['mobile-suite'] }}
+        run: |
+          echo "MOBILE SUITE: $CHECK_RESULT (workspace lanes in TYPECHECK)"
+          test "$CHECK_RESULT" = success
 
   # This is the one gate whose evidence exists nowhere else: a Metro export
   # resolves the real package-export graph, and no source-only unit test
@@ -833,60 +854,64 @@ jobs:
   # on production-squire that nobody remembers to fire.
   mobile-export-reachability:
     name: MOBILE-EXPORT REACHABILITY
-    needs: [changes, shared-package-tests]
-    if: >-
+    needs:
+      - changes
+      - typecheck
+    if: |-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: "1"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: 'true'
-      - name: Export Android bundle
-        working-directory: apps/mobile
-        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/mobile-export" --clear
-      # An export that resolved nothing still exits 0 in some Metro failure
-      # modes; the bundle file is the evidence.
-      - name: Prove the export produced an Android bundle
+      - name: Take the verdict from the workspace lane that ran it
+        env:
+          CHECK_RESULT: ${{ needs.typecheck.outputs['mobile-export-reachability'] }}
         run: |
-          set -euo pipefail
-          test -n "$(find "$RUNNER_TEMP/mobile-export/_expo/static/js/android" -name '*.hbc' -o -name '*.js' | head -n 1)"
-      - name: Reject transcript measurement code in the normal bundle
-        run: |
-          set -euo pipefail
-          if grep -aREl 'transcript-speed/|__transcriptSpeed|__transcriptBuild' "$RUNNER_TEMP/mobile-export/_expo/static/js/android"; then
-            echo 'Normal Android bundle contains transcript measurement code'
-            exit 1
-          fi
+          echo "MOBILE-EXPORT REACHABILITY: $CHECK_RESULT (workspace lanes in TYPECHECK)"
+          test "$CHECK_RESULT" = success
 
   # The production replay runs independently because it needs a cached scaled
   # database. The two verdict-only checks below it name tests already executed
   # by MOBILE SUITE and fail closed if that source suite was skipped.
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
-    needs: [changes, shared-package-tests]
+    needs: [changes, prepare-workspace]
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
-      - uses: actions/cache@v4
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
+      - uses: actions/cache/restore@v4
+        id: corpus
         with:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
       - name: Replay sanitized corpus and time production hot reads
+        id: replay
         env:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+      # Publish the expensive corpus before artifact upload or later cleanup.
+      - uses: actions/cache/save@v4
+        if: steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: ${{ steps.corpus.outputs.cache-primary-key }}
+      - name: Run server wall-clock budgets outside the shared quota
+        if: github.event_name == 'pull_request'
+        working-directory: apps/server
+        run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -897,21 +922,32 @@ jobs:
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')
-    runs-on: [self-hosted, beeline-prod-host]
+    # Dispatch on main warms the default-branch corpus cache for later PRs.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
-      - uses: actions/cache@v4
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
+      - uses: actions/cache/restore@v4
+        id: corpus
         with:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
       - name: Replay sanitized corpus and time production hot reads
+        id: replay
         env:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+      # Publish the expensive corpus before artifact upload or later cleanup.
+      - uses: actions/cache/save@v4
+        if: steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: ${{ steps.corpus.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -925,7 +961,9 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.frameBudget == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -958,7 +996,9 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.stateUpgrade == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -999,33 +1039,25 @@ jobs:
   # the author to bump the pin and ship a native build.
   native-fingerprint:
     name: NATIVE FINGERPRINT
-    needs: [changes, shared-package-tests]
-    if: >-
+    needs:
+      - changes
+      - typecheck
+    if: |-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && (needs.changes.outputs.nativeFingerprint == 'true' || needs.changes.outputs.mobileSuite == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: "1"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - name: Flag store builds before merge
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
+      - name: Take the verdict from the workspace lane that ran it
         env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CHECK_RESULT: ${{ needs.typecheck.outputs['native-fingerprint'] }}
         run: |
-          git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
-          node scripts/pr-store-build.mjs "$PR_BASE_SHA"
-      - uses: ./.github/actions/ci-workspace
-        with:
-          mobile: 'true'
-      - name: Compare the native fingerprint with the committed runtime pin
-        working-directory: apps/mobile
-        run: npm run fingerprint:check
-      - name: Run the native fingerprint regression in isolation
-        working-directory: apps/mobile
-        run: npx vitest run sources/config/nativeFingerprint.test.ts --maxWorkers=1 --minWorkers=1
+          echo "NATIVE FINGERPRINT: $CHECK_RESULT (workspace lanes in TYPECHECK)"
+          test "$CHECK_RESULT" = success
 
   # `packages/usebeeline/README.md` is the product README npm publishes; the root
   # README.md is a byte-for-byte copy so GitHub's front page shows the same text.
@@ -1042,7 +1074,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -1058,25 +1092,29 @@ jobs:
 
   app-link-associations:
     name: APP LINK ASSOCIATIONS
-    needs: [changes, shared-package-tests]
+    needs: [changes, prepare-workspace]
     if: >-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
       - name: Verify the committed app associations, Pages build, and bundle merge
-        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
+        run: node --test --test-concurrency=1 scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
       - name: Run the public website contract test
-        run: npm test -w @beeline/public-web-tests -- --run src/invite-web.test.ts
+        run: npm test -w @beeline/public-web-tests -- --run src/invite-web.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
 
   actionlint:
     name: ACTIONLINT
-    needs: [changes, shared-package-tests]
+    needs: [changes, prepare-workspace]
     if: >-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.workflows == 'true') ||
@@ -1110,11 +1148,11 @@ jobs:
       - name: Lint tracked shell scripts
         run: npm run lint:shell
       - name: Test the desktop signing credential gate
-        run: node --test scripts/desktop-signing.test.mjs
+        run: node --test --test-concurrency=1 scripts/desktop-signing.test.mjs
       - name: Test store upload identity, rerun store checks and Apple processing verification
-        run: node --test scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
+        run: node --test --test-concurrency=1 scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
+        run: node --test --test-concurrency=1 scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
       # Release state lives in the systems that own it and the published
       # GitHub Release record; artifacts and caches carry build outputs only.
       - name: Refuse release state in artifacts and caches

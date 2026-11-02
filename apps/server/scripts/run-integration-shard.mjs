@@ -32,7 +32,7 @@ function listTests(args = []) {
   const directory = mkdtempSync(join(tmpdir(), 'integration-shard-'));
   const output = join(directory, 'tests.json');
   try {
-    const result = spawnSync(process.execPath, [vitest, 'list', testFile, `--json=${output}`, ...args], {
+    const result = spawnSync(process.execPath, [vitest, 'list', testFile, '--maxWorkers=1', '--minWorkers=1', `--json=${output}`, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'ignore', 'inherit'],
     });

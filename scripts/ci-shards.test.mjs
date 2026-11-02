@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { balanceFiles } from '../apps/server/scripts/ci-shards.mjs';
@@ -29,20 +29,115 @@ test('empty timing data falls back safely and duplicate discovery fails closed',
 });
 
 test('isolated latency and voice suites remain covered exactly once outside parallel workers', () => {
-  const shards = [1, 2, 3, 4].map(position => {
-    const result = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', `${position}/4`, '--list'], {
+  const shards = Array.from({ length: 8 }, (_, index) => index + 1).map(position => {
+    const result = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', `${position}/8`, '--list'], {
       encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
     });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
   });
-  assert.deepEqual(shards[2].isolatedFiles.sort(), ['src/phone-service.read-room-latency.test.ts',
-    'src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts']);
+  const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
+    'src/phone-service.read-room-latency.test.ts'];
+  isolated.forEach((file, index) => assert.deepEqual(shards[index].isolatedFiles, [file]));
   const files = shards.flatMap(shard => [...shard.files, ...shard.isolatedFiles]);
   assert.equal(new Set(files).size, files.length);
   assert.equal(files.length, shards[0].totalFiles);
   for (const shard of shards) {
-    for (const file of shards[2].isolatedFiles) assert.equal(shard.files.includes(file), false);
+    for (const file of isolated) assert.equal(shard.files.includes(file), false);
+  }
+});
+
+test('PR timing suites move to the hosted gate with complete, disjoint coverage', () => {
+  const shards = Array.from({ length: 8 }, (_, index) => index + 1).map(position => {
+    const result = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', `${position}/8`, '--list'], {
+      encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, SERVER_HOSTED_TIMING: 'true', GITHUB_EVENT_NAME: 'pull_request' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  });
+  const hosted = ['src/production-corpus-width.test.ts', 'src/phone-service.read-room-latency.test.ts'];
+  for (const shard of shards) assert.deepEqual(shard.hostedFiles, hosted);
+  const local = shards.flatMap(shard => [...shard.files, ...shard.isolatedFiles]);
+  assert.deepEqual(shards[1].isolatedFiles, ['src/voice-room-runtime.test.ts']);
+  for (const file of hosted) assert.equal(local.includes(file), false);
+  assert.equal(new Set([...local, ...hosted]).size, shards[0].totalFiles);
+  assert.equal(local.length + hosted.length, shards[0].totalFiles);
+  const invalid = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', '1/8', '--list'], {
+    encoding: 'utf8', env: { ...process.env, SERVER_HOSTED_TIMING: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch' },
+  });
+  assert.notEqual(invalid.status, 0, 'dispatch cannot omit its local timing coverage');
+});
+
+test('grouping files in one fork retains module and mock isolation between files', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ci-fork-isolation-'));
+  try {
+    symlinkSync(new URL('../node_modules', import.meta.url), join(directory, 'node_modules'), 'dir');
+    const pids = join(directory, 'pids');
+    writeFileSync(join(directory, 'package.json'), '{"type":"module"}');
+    writeFileSync(join(directory, 'state.js'), "export const state = { count: 0 }; export const value = 'original';");
+    writeFileSync(join(directory, 'vitest.config.js'), 'export default { test: { isolate: true } };');
+    const fixture = `
+      import { appendFileSync } from 'node:fs';
+      import { expect, it, vi } from 'vitest';
+      import { state, value } from './state.js';
+      it('starts with independent module and mock state', async () => {
+        expect(state.count).toBe(0);
+        expect(value).toBe('original');
+        state.count++;
+        vi.doMock('./state.js', () => ({ state: { count: 99 }, value: 'mocked' }));
+        expect((await import('./state.js')).value).toBe('mocked');
+        appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n');
+      });
+    `;
+    for (const file of ['first.test.js', 'second.test.js']) writeFileSync(join(directory, file), fixture);
+    const result = spawnSync(process.execPath, [new URL('../node_modules/vitest/vitest.mjs', import.meta.url).pathname,
+      'run', '--root', directory, '--config', join(directory, 'vitest.config.js'),
+      '--maxWorkers=1', '--minWorkers=1', '--poolOptions.forks.singleFork', '--isolate'], {
+      encoding: 'utf8', timeout: 30_000,
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const ids = readFileSync(pids, 'utf8').trim().split('\n');
+    assert.equal(ids.length, 2);
+    assert.equal(new Set(ids).size, 1, 'both isolated files must reuse the same process');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('server test setup lets IPC run between microtask-only tests even with fake timers', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ci-event-loop-'));
+  try {
+    symlinkSync(new URL('../node_modules', import.meta.url), join(directory, 'node_modules'), 'dir');
+    writeFileSync(join(directory, 'package.json'), '{"type":"module"}');
+    const setup = new URL('../apps/server/scripts/test-event-loop.ts', import.meta.url).pathname;
+    writeFileSync(join(directory, 'vitest.config.js'),
+      `export default { test: { setupFiles: [${JSON.stringify(setup)}] } };`);
+    writeFileSync(join(directory, 'yield.test.js'), `
+      import { setImmediate, clearImmediate } from 'node:timers';
+      import { afterAll, expect, it, vi } from 'vitest';
+      let turns = 0, previous = -1, pending;
+      const tick = () => { turns++; pending = setImmediate(tick); };
+      pending = setImmediate(tick);
+      afterAll(() => { clearImmediate(pending); vi.useRealTimers(); });
+      for (let index = 0; index < 6; index++) it('yields after test ' + index, async () => {
+        expect(turns).toBeGreaterThan(previous);
+        previous = turns;
+        if (index === 2) vi.useFakeTimers();
+        for (let query = 0; query < 100; query++) await Promise.resolve();
+      });
+    `);
+    const command = [new URL('../node_modules/vitest/vitest.mjs', import.meta.url).pathname,
+      'run', '--root', directory, '--config', join(directory, 'vitest.config.js'),
+      '--maxWorkers=1', '--minWorkers=1'];
+    const result = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    writeFileSync(join(directory, 'vitest.config.js'), 'export default {};');
+    const unyielding = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 30_000 });
+    assert.notEqual(unyielding.status, 0, 'the fixture must detect starvation without the setup');
+    assert.match(unyielding.stdout + unyielding.stderr, /to be greater than/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

@@ -1,3 +1,4 @@
+import type { HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import type { AgentSignInLink, UsageRefreshOutcome } from '@beeline/api-contract/daemon';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -108,9 +109,9 @@ export type LiveEvent =
         | { type: 'message'; row: CommittedMessageLiveRow; startedAt?: number }
         | { type: 'turn'; row: CommittedTurnLiveRow; startedAt?: number };
     }
-  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; latestChunk?: string;
+  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; latestChunk?: string; overlayV1?:HelperOverlayFrame;
       /** Process-only marker for suppressing the same write echoed by LISTEN. */ localOrigin?: true }
-  | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
+  | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought';overlayV1?:HelperOverlayFrame }
   | {
       type: 'presence';
       roomId: string;
@@ -152,7 +153,7 @@ export class LiveHub {
     bytes: number;
     entries: Array<{ sequence: number; event: LiveEvent; bytes: number }>;
   }>();
-  readonly #recentOutputs = new Map<string, { text: string; latestChunk?: string;
+  readonly #recentOutputs = new Map<string, { text: string; latestChunk?: string; overlayKey?:string;
     source: 'local' | 'postgres'; at: number }>();
   readonly #localMessageInserts = new Map<string, number>();
   readonly #localTurnUpdates = new Map<string, { status: CommittedTurnLiveRow['status']; at: number }>();
@@ -245,11 +246,14 @@ export class LiveHub {
       const key = `${input.roomId}:${input.agentId}:${input.turnId}:${input.type}`;
       const source = input.localOrigin ? 'local' : 'postgres';
       const previous = this.#recentOutputs.get(key);
+      const metadata=input.overlayV1;
+      const overlayKey=metadata?JSON.stringify([metadata.v,metadata.type,metadata.commandId,metadata.turnGeneration,
+        metadata.runGeneration,metadata.revision,metadata.offset,metadata.viewingRevision]):undefined;
       const now = Date.now();
       if (previous && previous.source !== source && now - previous.at < 10_000 &&
-          previous.text === input.text && previous.latestChunk === input.latestChunk) return;
+          previous.text === input.text && previous.latestChunk === input.latestChunk && previous.overlayKey===overlayKey) return;
       this.#recentOutputs.delete(key);
-      this.#recentOutputs.set(key, { text: input.text, latestChunk: input.latestChunk,
+      this.#recentOutputs.set(key, { text: input.text, latestChunk: input.latestChunk,overlayKey,
         source, at: now });
       if (this.#recentOutputs.size > 512)
         this.#recentOutputs.delete(this.#recentOutputs.keys().next().value!);

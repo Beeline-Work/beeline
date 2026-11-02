@@ -2128,6 +2128,8 @@ export class MonolithCornerTurnLoop {
               // The corner-only work ledger below is independent of that lane.
               const stream = new AgentTurnStream({
                 api,
+                commandId:this.commandContext.current?.id,
+                turnGeneration:this.commandContext.generationId,
                 agentId: this.agent.publicKey,
                 roomId: cornerId,
                 requestId,

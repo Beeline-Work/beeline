@@ -1,3 +1,4 @@
+import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
@@ -833,14 +834,15 @@ export function createBeelineServer(options: ServerOptions): Server {
         familyId?: string;
       },
     ) => {
-      const sendLive = (payload: string) => {
-        if (client.readyState !== client.OPEN) return;
+      const sendLive = (payload: string):boolean => {
+        if (client.readyState !== client.OPEN) return false;
         if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
           liveErrors.overload++;
           client.close(1013, 'live backpressure');
-          return;
+          return false;
         }
         client.send(payload);
+        return true;
       };
       if (principal.kind !== 'phone') {
         watchConnectionEpochs();
@@ -892,8 +894,8 @@ export function createBeelineServer(options: ServerOptions): Server {
             if (!value) return;
             sendLive(JSON.stringify({ type: 'needs-you-delta', roomId: '',
               sourceRoomId: roomId, ...value }));
-          })).catch(() => sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
-          reason: 'needs-you-gap' })));
+          })).catch(() => {sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
+          reason: 'needs-you-gap' }));});
       };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
         if (event.type === 'resource-change') {
@@ -1011,16 +1013,18 @@ export function createBeelineServer(options: ServerOptions): Server {
             (sent.order === undefined || !('sequence' in sent.order) || order.epoch !== sent.order.epoch));
       };
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
-        sequence?: number, epoch?: string) => {
+        sequence?: number, epoch?: string):boolean => {
         const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
         const previous = draftWire.get(key);
-        if (previous?.text === event.text) return;
-        if (previous && event.text.startsWith(previous.text)) {
+        const overlay=event.overlayV1;
+        if (!overlay && previous?.text === event.text) return false;
+        if (previous && event.text.startsWith(previous.text) && (!overlay || overlay.type==='append')) {
           const revision = previous.revision + 1;
           const chunk = event.text.slice(previous.text.length);
           draftWire.set(key, { text: event.text, revision });
-          sendLive(JSON.stringify({
+          return sendLive(JSON.stringify({
             type: `${event.type}-append`, roomId: event.roomId,
+            ...(overlay?{overlayV1:overlay}:{}),
             agentId: event.agentId, turnId: event.turnId,
             revision, offset: previous.text.length,
             chunk,
@@ -1029,13 +1033,27 @@ export function createBeelineServer(options: ServerOptions): Server {
             ...(event.latestChunk !== undefined && event.latestChunk !== chunk
               ? { latestChunk: event.latestChunk } : {}),
           }));
-          return;
         }
         draftWire.set(key, { text: event.text, revision: 0 });
-        sendLive(JSON.stringify({ ...event, revision: 0,
+        return sendLive(JSON.stringify({ ...event, revision: 0,
           ...(sequence !== undefined ? { sequence } : {}),
           ...(epoch !== undefined ? { epoch } : {}) }));
       };
+      const enqueueHelperOverlay=(raw:LiveEvent):boolean=>{
+        if(client.readyState!==client.OPEN||!overlayViewer.canDeliver(raw))return false;
+        const event=overlayViewer.normalize(raw);
+        let sent=false;
+        if(event.type==='draft'||event.type==='thought')sent=sendDraft(event);
+        else if(event.type==='retract'){
+          draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
+          sent=sendLive(JSON.stringify(event));
+        }
+        if(sent)overlayViewer.delivered(event);
+        return sent;
+      };
+      const overlayViewer=new HelperOverlayViewer(event=>{
+        void fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
+      });
       socketSubscriptions.set(client, () => releases.size);
       let socketTasks = 0;
       let socketQueuedBytes = 0;
@@ -1275,6 +1293,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (event.type === 'draft') streamed.add(event.agentId);
                   if (event.type !== 'invalidate') {
                     if (client.readyState !== client.OPEN) return;
+                    if(helperOverlayEnabled() && 'overlayV1' in event && event.overlayV1){
+                      if(!viewedRooms.has(roomId)||!overlayViewer.accept(event))return;
+                      return fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
+                    }
                     if (event.type === 'draft' || event.type === 'thought') sendDraft(event, sequence, epoch);
                     else {
                       if (event.type === 'retract')
@@ -1491,7 +1513,10 @@ export function createBeelineServer(options: ServerOptions): Server {
               for (const event of snapshot) {
                 if (event.type === 'draft' && streamed.has(event.agentId)) continue;
                 if (client.readyState === client.OPEN &&
-                    (event.type === 'draft' || event.type === 'thought')) sendDraft(event);
+                    (event.type === 'draft' || event.type === 'thought')) {
+                  if(helperOverlayEnabled() && event.overlayV1)continue;
+                  sendDraft(event);
+                }
               }
               for (const event of options.live.presenceSnapshot(roomId)) {
                 if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
@@ -1504,13 +1529,31 @@ export function createBeelineServer(options: ServerOptions): Server {
             ROOM_ID_PATTERN.test(item.roomId) &&
             typeof item.viewing === 'boolean'
           ) {
+            if(helperOverlayEnabled()){
+              if(item.viewing && !viewedRooms.has(item.roomId))overlayViewer.enter(item.roomId);
+              else if(!item.viewing)overlayViewer.leave(item.roomId);
+            }
             if (item.viewing) viewedRooms.add(item.roomId);
             else viewedRooms.delete(item.roomId);
-            if (!phoneViewClosed)
-              await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
+            if (!phoneViewClosed){
+              try {
+                const revision=await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
+                if(helperOverlayEnabled() && item.viewing) {
+                  if(revision!==undefined)overlayViewer.commit(item.roomId,revision);
+                  else { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
+                }
+              } catch(error) {
+                if(helperOverlayEnabled() && item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
+                throw error;
+              }
+            }
             return;
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
+            if(helperOverlayEnabled()){
+              overlayViewer.leave(item.roomId);
+              if(viewedRooms.delete(item.roomId) && !phoneViewClosed)await phoneViewing.view(viewingSession,principal.identityId,item.roomId,false);
+            }
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
             previewRooms.delete(item.roomId);
@@ -1553,6 +1596,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const releasePhoneView = () => {
         if (phoneViewClosed) return;
         phoneViewClosed = true;
+        overlayViewer.clear();
         void phoneViewing.end(viewingSession).catch((error) =>
           console.error('[live] viewing release failed', error),
         );

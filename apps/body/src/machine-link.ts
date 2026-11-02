@@ -1,3 +1,4 @@
+import { HelperOverlayChannel } from './helper-overlay-channel.js';
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
 import { unknownServerEventLogger } from './unknown-server-event.js';
@@ -25,6 +26,7 @@ export interface AgentChannelHandlers {
  * can drop or refuse one agent without touching the others.
  */
 export class AgentChannel {
+  readonly overlay=new HelperOverlayChannel(frame=>this.send(frame),()=>this.isOpen());
   #wanted = false;
   #registered = false;
   /** A register frame is in flight on the current socket. */
@@ -68,6 +70,7 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.overlay.suspend();
     this.#clearIntakeDeadline();
     if (this.#registered) this.send({ type: 'unregister' });
     this.#registered = false;
@@ -98,7 +101,7 @@ export class AgentChannel {
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true,
     }))) this.#pending = false;
   }
 
@@ -108,6 +111,7 @@ export class AgentChannel {
       this.#pending = false;
       if (!this.#wanted || this.#registered) return;
       this.#registered = true;
+      this.overlay.negotiate((event.capabilities as {overlayV1?:unknown}|undefined)?.overlayV1===true);
       this.#intakeHeartbeat = Boolean(
         (event.capabilities as { intakeHeartbeat?: unknown } | undefined)?.intakeHeartbeat === true,
       );
@@ -153,11 +157,13 @@ export class AgentChannel {
       if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
+    if(this.#registered&&this.overlay.receive(event))return;
     if (this.#registered) this.handlers.onMessage(event);
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.overlay.suspend();
     this.#clearIntakeDeadline();
     this.#pending = false;
     if (this.#registered) this.#ended();
@@ -194,6 +200,7 @@ export class AgentChannel {
   }
 
   #ended(): void {
+    this.overlay.suspend();
     this.#registered = false;
     this.#clearIntakeDeadline();
     this.#recovered = false;

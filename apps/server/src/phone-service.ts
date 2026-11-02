@@ -1,3 +1,4 @@
+import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { buildRouterSnapshot } from './router-projections.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { RouterSnapshotInput, RouterValues, RouterFamily } from '@beeline/api-contract/router-protocol';
@@ -1517,7 +1518,7 @@ export class PhoneService {
     const rows = await this.database.query<{
       agent_id: string;
       turn_id: string;
-      body: { text?: unknown; latestChunk?: unknown } | null;
+      body: { text?: unknown; latestChunk?: unknown; overlayV1?:unknown } | null;
     }>(
       `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
        JOIN rooms r ON r.id=o.room_id AND r.parent_id IS NOT NULL
@@ -1529,6 +1530,9 @@ export class PhoneService {
     );
     return rows.rows.flatMap((row) => {
       const text = typeof row.body?.text === 'string' ? row.body.text : '';
+      const overlayV1=readHelperOverlayFrame(row.body?.overlayV1);
+      if(row.body?.overlayV1!==undefined && (!overlayV1 || overlayV1.roomId!==roomId ||
+          overlayV1.agentId!==row.agent_id || overlayV1.turnId!==row.turn_id || overlayV1.kind!=='draft'))return [];
       return text
         ? [
             {
@@ -1537,6 +1541,7 @@ export class PhoneService {
               agentId: row.agent_id,
               turnId: row.turn_id,
               text,
+              ...(overlayV1?{overlayV1}:{}),
               ...(typeof row.body?.latestChunk === 'string'
                 ? { latestChunk: row.body.latestChunk }
                 : {}),

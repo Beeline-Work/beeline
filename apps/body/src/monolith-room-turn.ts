@@ -1983,6 +1983,8 @@ export class MonolithRoomTurnLoop {
               // durable reply that dissolves it all live in `turn-stream.ts`.
               const stream = new AgentTurnStream({
                 api,
+                commandId:this.commandContext.current?.id,
+                turnGeneration:this.commandContext.generationId,
                 agentId: this.agent.publicKey,
                 roomId: this.options.roomId,
                 requestId: item.id,

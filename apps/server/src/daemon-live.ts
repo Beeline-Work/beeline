@@ -1,3 +1,5 @@
+import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
+import { applyHelperOverlay, helperOverlayEnabled, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { randomUUID } from 'node:crypto';
 import type { VaultSaveRelay } from './vault-save-relay.js';
 import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
@@ -122,6 +124,9 @@ export class DaemonAgentSession {
   readonly #projections = new Set<Promise<unknown>>();
   #checkpointPending = false;
 
+  readonly #overlayReleases=new Map<string,()=>void>();
+  get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
+
   constructor(
     private readonly deps: DaemonLiveDependencies,
     readonly agentId: string,
@@ -130,6 +135,7 @@ export class DaemonAgentSession {
       lifecycleId?: string;
       releaseVersion?: string;
       sourceSha?: string;
+      overlayV1?: boolean;
     } = {},
   ) {
     const { live, database } = deps;
@@ -271,6 +277,9 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
+    if(raw.type==='overlay-update'&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
+      this.deps.errors.overload++;this.transport.drop(1009,'overlay frame capacity exceeded');this.close();return;
+    }
     if (this.#tasks >= MAX_LIVE_SESSION_TASKS ||
         this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
       this.deps.errors.overload++;
@@ -315,6 +324,7 @@ export class DaemonAgentSession {
     for (const release of this.#wakeReleases.splice(0)) release();
     for (const release of this.#releases.values()) release();
     this.#releases.clear();
+    for(const release of this.#overlayReleases.values())release();this.#overlayReleases.clear();
     this.deps.registry.release(this);
     void this.#releaseConnection();
   }
@@ -329,7 +339,15 @@ export class DaemonAgentSession {
 
   async #process(item: Record<string, unknown>): Promise<void> {
     if (!this.transport.admit(item)) return;
+    if(item.type==='overlay-update'){
+      if(!this.overlayV1||typeof item.requestId!=='string'||item.requestId.length>128||this.epoch===undefined)return;
+      const result=await applyHelperOverlay(this.deps.database,this.agentId,{connectionId:this.connectionId,epoch:this.epoch},item.frame);
+      if(result.event){const event={...result.event,localOrigin:true as const};this.deps.live.publish(event);}
+      if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'overlay-ack',requestId:item.requestId,...result.ack});
+      return;
+    }
     if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
+      this.#overlayReleases.get(item.roomId)?.();this.#overlayReleases.delete(item.roomId);
       this.#releases.get(item.roomId)?.();
       this.#releases.delete(item.roomId);
       return;
@@ -366,6 +384,11 @@ export class DaemonAgentSession {
     const { live, daemon } = this.deps;
     const transport = this.transport;
     const agentId = this.agentId;
+    if(this.overlayV1&&!this.#overlayReleases.has(roomId)){
+      this.#overlayReleases.set(roomId,subscribeHelperOverlayDemand(this.deps.database,roomId,demand=>{
+        if(!this.#closed&&transport.isOpen())transport.send({type:'overlay-demand',...demand});
+      }));
+    }
     let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
     let replaying = false;
     let replayRequested = false;
@@ -500,6 +523,7 @@ export class DaemonAgentSession {
             : {}),
           ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
           ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+          ...(item.overlayV1===true?{overlayV1:true}:{}),
         });
       } catch (error) {
         console.error('[presence] startup announcement failed', error);
@@ -772,7 +796,9 @@ export function serveMachineSocket(
       send({
         type: 'registered',
         agentId,
-        capabilities: { discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true },
+        capabilities: { discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true,
+          ...(session.overlayV1?{overlayV1:true}:{}),
+        },
       });
     } catch (error) {
       deps.errors.internal++;

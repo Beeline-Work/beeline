@@ -1,3 +1,4 @@
+import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { X_SIGNUP_DELIVERY_TABLE } from './x-ads.js';
 import { SERVER_LEASE_EVIDENCE_TABLE } from './server-lease-deadlines.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
@@ -970,12 +971,20 @@ export class PostgresLiveListener {
       if (!row) return;
       if (payload.kind === 'draft' || payload.kind === 'thought') {
         if (typeof row.body.text !== 'string') return;
+        const overlayV1=readHelperOverlayFrame(row.body.overlayV1);
+        if(row.body.overlayV1!==undefined && (!overlayV1 || overlayV1.agentId!==payload.agentId ||
+            overlayV1.roomId!==payload.roomId || overlayV1.turnId!==payload.turnId || overlayV1.kind!==payload.kind))return;
+        if(overlayV1 && (overlayV1.type==='end'||overlayV1.type==='retract')){
+          this.live.publish({type:'retract',roomId:payload.roomId,agentId:payload.agentId,turnId:payload.turnId,kind:payload.kind,overlayV1});
+          return;
+        }
         this.live.publish({
           type: payload.kind,
           roomId: payload.roomId,
           agentId: payload.agentId,
           turnId: payload.turnId,
           text: row.body.text,
+          ...(overlayV1?{overlayV1}:{}),
           ...(typeof row.body.latestChunk === 'string'
             ? { latestChunk: row.body.latestChunk } : {}),
         });

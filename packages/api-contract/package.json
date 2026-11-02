@@ -98,6 +98,11 @@
       "types": "./dist/media-metadata.d.ts",
       "import": "./dist/media-metadata.js",
       "default": "./dist/media-metadata.js"
+    },
+    "./helper-overlay": {
+      "types": "./dist/helper-overlay.d.ts",
+      "import": "./dist/helper-overlay.js",
+      "default": "./dist/helper-overlay.js"
     }
   },
   "scripts": {

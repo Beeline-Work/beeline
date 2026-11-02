@@ -78,6 +78,11 @@ current source and records only owner end, preserving any existing outcome.
 No-attempt owner end creates no provider receipt. Focused parking16/socket7/
 Body13/codec4 pass; server and Body typechecks pass.
 
-Production installation, isolated generation child/control-file sandbox,
-current-main automatic-idle suppression and Awaiting confirmation UI remain
-open. These proofs do not authorize activation or close a whole finding.
+The shared corner idle predicate now suppresses automatic attention, delivery
+and claim while an exact-generation owner-end record retains a claimed command.
+The corner attention regression proves working presentation ends, no automatic
+commander command appears, and a new explicit human command can still be claimed.
+The original unresolved command and generation remain intact.
+
+Production installation, isolated generation child/control-file sandbox and
+Awaiting confirmation UI remain open. These proofs do not authorize activation or close a whole finding.

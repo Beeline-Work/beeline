@@ -68,7 +68,25 @@ runner11, actual-schema readiness runner7 and real PostgreSQL readiness-owner3
 pass. Backend loss between the final SELECT and COMMIT rolls back audit/source/
 publication changes. No additional listener, leader lease or retry timer exists.
 
-Reader health remains a separate activation gate: runner `live` only means its
-epoch and source heads were acquired. Both application servers must verify
-initial drain completion for the current owner epoch; an old persisted ready
-bit or a local-only healthy flag cannot certify takeover completion.
+Reader health now has one current aggregate-owner initial-drain receipt, bound
+to instance/generation/nonce and exact PostgreSQL backend identity. The existing
+runner publishes it only after readiness and both deadline domains finish their
+initial work, under the existing actual-COMMIT fence. `live` alone is still not
+health. Pure reads require this receipt, current lease/backend, matching source
+epochs with nonregressing heads, and no overdue pending deadline in the requested
+Workspace. Future/unrelated source changes do not invalidate that Workspace.
+Time only refuses admission; it never classifies cells.
+
+The partial Workspace/due/id index is included in the readiness audit floor.
+Real PostgreSQL health/ownership11 covers both pools, takeover, lease/backend
+loss, stream resets and rollback, all five overdue kinds, unrelated Workspaces,
+and physical access across33024 deadlines. Cold and generic plans use the
+index with <=16 probe buffers and no whole-cohort sort/scan. Runner7/existing11,
+source17+PostgreSQL3 and readiness19+PostgreSQL3/traversal1 pass. The root staged
+scalar reader proof6 still uses one SELECT; its full Tray integration is not yet
+in this published slice.
+
+Durable propagation of local runner revocation, active remote-cache loss
+propagation, final enqueue checks, complete catalog/
+source CPU/WAL/wire costs and cohort rollout remain OPEN. No production schema
+is installed or selected by these private proofs.

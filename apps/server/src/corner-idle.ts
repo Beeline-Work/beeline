@@ -42,6 +42,9 @@ export function cornerIdleSql(cornerId: string): string {
         to_timestamp(COALESCE(f.lifecycle->'checksSummary'->>'statusChangedAt',
           f.lifecycle->'checksSummary'->>'updatedAt')::double precision)))::text idle_since,
       (${cornerScheduledWaitSql('c')}
+        OR EXISTS(SELECT 1 FROM agent_commands unresolved JOIN agent_command_owner_ends ended_owner
+          ON ended_owner.command_id=unresolved.id AND ended_owner.generation_id=unresolved.generation_id
+          WHERE unresolved.room_id=c.id AND unresolved.state='claimed')
         OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL)
         OR EXISTS(SELECT 1 FROM agent_commands queued WHERE queued.room_id=c.id AND queued.action='input'
           AND (queued.state='pending' OR (queued.state='claimed' AND ${commandOwnerLiveSql('queued')}))

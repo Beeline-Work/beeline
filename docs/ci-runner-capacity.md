@@ -40,6 +40,11 @@ separate per-file workers: grouping mobile files exposed state held by native
 storage mocks despite module resets. Other Vitest commands use at most two
 workers, control jobs use one, and timing/integration tests retain one.
 Node test-file concurrency, Turbo tasks, libuv and Metro are also bounded.
+Server setup yields to Node's real event loop between tests: PGlite query
+chains otherwise starve worker IPC long enough to expire Vitest progress
+RPCs under the shared quota. `scripts/ci-shards.test.mjs` exercises this with
+microtask-only tests and fake timers; RPC deadlines and error reporting stay
+unchanged.
 
 The required TYPECHECK job executes two workspace lanes through
 `scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
@@ -88,8 +93,13 @@ The full per-job queue/setup/work breakdown is recorded in
 A bounded five-file server probe passed 40 tests in both fork modes. Grouping
 reduced CPU time from 71.6s to 60.7s (about 15%); one grouped worker took longer
 than two, motivating smaller parallel shards. This is a probe, not a passing
-end-to-end performance result. The consolidation profile still requires a measured real-PR run within
-fifteen minutes and subsequent concurrent-PR validation. Do not infer acceptance from configured quotas.
+end-to-end performance result. A later eight-shard consolidation run completed
+Linux checks in 24m22s, with two progress-RPC failures and a stale fingerprint
+workflow assertion. Its maximum sampled CI memory was 36.95 GiB, with no hard
+memory-limit/OOM events or helper restarts. The accepted initial landing target
+is now approximately 24 minutes at ten CPUs, followed by work toward twelve
+minutes or less on the same pool. A green real-PR measurement and subsequent
+concurrent-PR validation remain required; quotas alone do not prove capacity.
 
 Whole-host load includes independent Beeline agents, Gradle and emulators;
 record it as context. Abort trials on CI budget violations, sustained memory

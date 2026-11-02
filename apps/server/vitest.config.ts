@@ -5,6 +5,7 @@ export default defineConfig({
     testTimeout: 20_000,
     globalSetup: ['./scripts/test-database-setup.ts'],
     // CI on main records per-file function coverage for PR test selection.
-    setupFiles: process.env.SERVER_COVERAGE_MAP_DIR ? ['./scripts/coverage-map-setup.mjs'] : [],
+    setupFiles: ['./scripts/test-event-loop.ts',
+      ...(process.env.SERVER_COVERAGE_MAP_DIR ? ['./scripts/coverage-map-setup.mjs'] : [])],
   },
 });

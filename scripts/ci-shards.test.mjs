@@ -83,6 +83,42 @@ test('grouping files in one fork retains module and mock isolation between files
   }
 });
 
+test('server test setup lets IPC run between microtask-only tests even with fake timers', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ci-event-loop-'));
+  try {
+    symlinkSync(new URL('../node_modules', import.meta.url), join(directory, 'node_modules'), 'dir');
+    writeFileSync(join(directory, 'package.json'), '{"type":"module"}');
+    const setup = new URL('../apps/server/scripts/test-event-loop.ts', import.meta.url).pathname;
+    writeFileSync(join(directory, 'vitest.config.js'),
+      `export default { test: { setupFiles: [${JSON.stringify(setup)}] } };`);
+    writeFileSync(join(directory, 'yield.test.js'), `
+      import { setImmediate, clearImmediate } from 'node:timers';
+      import { afterAll, expect, it, vi } from 'vitest';
+      let turns = 0, previous = -1, pending;
+      const tick = () => { turns++; pending = setImmediate(tick); };
+      pending = setImmediate(tick);
+      afterAll(() => { clearImmediate(pending); vi.useRealTimers(); });
+      for (let index = 0; index < 6; index++) it('yields after test ' + index, async () => {
+        expect(turns).toBeGreaterThan(previous);
+        previous = turns;
+        if (index === 2) vi.useFakeTimers();
+        for (let query = 0; query < 100; query++) await Promise.resolve();
+      });
+    `);
+    const command = [new URL('../node_modules/vitest/vitest.mjs', import.meta.url).pathname,
+      'run', '--root', directory, '--config', join(directory, 'vitest.config.js'),
+      '--maxWorkers=1', '--minWorkers=1'];
+    const result = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    writeFileSync(join(directory, 'vitest.config.js'), 'export default {};');
+    const unyielding = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 30_000 });
+    assert.notEqual(unyielding.status, 0, 'the fixture must detect starvation without the setup');
+    assert.match(unyielding.stdout + unyielding.stderr, /to be greater than/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('a PR selection runs each selected file once and skips unselected integration batches', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'server-selection-')), 'selection.json');
   const wanted = ['apps/server/src/agent-access.test.ts', 'apps/server/src/phone-service.read-room-latency.test.ts',

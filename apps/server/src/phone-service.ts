@@ -257,7 +257,7 @@ import { cancelCornerAgentCommands, closeCornerPullRequestBestEffort, closeCorne
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
-import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
+import { answerStarPrompt, readStarPrompt } from './github-star-prompt.js';
 import { readVaultSaveCard } from '@beeline/api-contract/phone';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
@@ -5297,10 +5297,8 @@ export class PhoneService {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ reactions: Record<string, string[]>; agent_author: boolean }>(
-          `SELECT message.reactions,
-             EXISTS(SELECT 1 FROM identities author
-               WHERE author.id=message.author_id AND author.kind='agent') agent_author
+        await database.query<{ reactions: Record<string, string[]> }>(
+          `SELECT message.reactions
            FROM messages message
            JOIN memberships membership ON membership.room_id=message.room_id
              AND membership.identity_id=$3 AND membership.removed_at IS NULL
@@ -5317,10 +5315,7 @@ export class PhoneService {
       const reactions = { ...(row.reactions ?? {}) };
       const reactors = new Set(reactions[input.emoji] ?? []);
       if (reactors.has(viewerId)) reactors.delete(viewerId);
-      else {
-        reactors.add(viewerId);
-        if (input.emoji === '👍' && row.agent_author) await recordStarPromptWin(database, viewerId);
-      }
+      else reactors.add(viewerId);
       if (reactors.size) reactions[input.emoji] = [...reactors];
       else delete reactions[input.emoji];
       await database.query(`UPDATE messages SET reactions=$3::jsonb WHERE id=$1 AND room_id=$2`, [

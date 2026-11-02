@@ -41,6 +41,7 @@ ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_secret text;
 -- Until the member names itself, read results repeat the setup rules, because
 -- many hosts never show the model the server instructions.
 ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS profile_set boolean NOT NULL DEFAULT false;
+ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS last_bridge_poll_at timestamptz;
 -- Each tag or direct message addressed to an AI-client member, in order: the
 -- list_mentions catch-up read and send_message's wake provenance.
 CREATE TABLE IF NOT EXISTS rooms_mcp_mentions (

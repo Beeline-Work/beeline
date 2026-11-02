@@ -141,7 +141,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('stop', 'Stop the running turn of an agent you ordered, or one working in a corner you opened.', {
     address: address(), agent: { type: 'string', maxLength: 120 },
   }, ['address']),
-  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. address is the place the order came from (list_mentions names it). Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
+  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. Prefers an order at address, then your oldest pending order elsewhere; without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
     address: address(), status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
     text: { type: 'string', minLength: 1, maxLength: 16000 }, ask: { type: 'string', maxLength: 140 },
   }, ['address', 'status', 'text']),
@@ -259,11 +259,11 @@ export class RoomsMcpAgentTools {
   }
 
   /**
-   * Open a turn at a place. A report binds the oldest order waiting there.
+   * Open a turn at a place. A report prefers the addressed order, then the oldest accessible order.
    * Any other call gets its own command, whose requester is the latest person
    * who tagged this member there, the way a tag starts an agent's turn.
    */
-  private async begin(member: string, roomId: string, order: boolean): Promise<McpTurn> {
+  private async begin(member: string, roomId: string, order: boolean, target = roomId): Promise<McpTurn> {
     const generationId = `mcp:${randomUUID()}`;
     // Continue the wake chain behind the latest tag, as send_message does, so
     // tags in this turn count toward the same depth limit.
@@ -276,16 +276,29 @@ export class RoomsMcpAgentTools {
     const chain = incoming?.command;
     return this.db.transaction(async tx => {
       if (order) {
-        const bound = (await tx.query<{ id: string; turn_request_id: string }>(
+        const bound = (await tx.query<{ id: string; turn_request_id: string; room_id: string }>(
           `UPDATE agent_commands SET state='claimed',generation_id=$3,lease_expires_at=now()+interval '90 seconds',claimed_at=now()
-           WHERE id=(SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action IN ('input','resume')
-               AND private_payload->>'kind'='order'
-               AND (state='pending' OR (state='claimed' AND lease_expires_at<=now()))
-             ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING id,turn_request_id`, [roomId, member, generationId])).rows[0];
-        if (!bound) throw new McpToolError('no order is waiting for your report at this address; list_mentions names the places that ordered you');
-        await this.startTurn(tx, roomId, member, bound.turn_request_id, generationId);
-        return { roomId, requestId: bound.turn_request_id, generationId, commandId: bound.id, order: true };
+           WHERE id=(SELECT ordered.id FROM agent_commands ordered
+             JOIN rooms room ON room.id=ordered.room_id AND room.archived_at IS NULL
+             JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
+             WHERE ordered.agent_id=$2 AND ordered.action IN ('input','resume')
+               AND ordered.private_payload->>'kind'='order'
+               AND (ordered.state='pending' OR (ordered.state='claimed' AND ordered.lease_expires_at<=now()))
+             ORDER BY (ordered.room_id=$1) DESC,ordered.created_at,ordered.id LIMIT 1 FOR UPDATE OF ordered SKIP LOCKED)
+           RETURNING id,turn_request_id,room_id`, [target, member, generationId])).rows[0];
+        if (bound) {
+          await this.startTurn(tx, bound.room_id, member, bound.turn_request_id, generationId);
+          return { roomId: bound.room_id, requestId: bound.turn_request_id, generationId, commandId: bound.id, order: true };
+        }
+        const corner = (await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL AND archived_at IS NULL`, [target])).rowCount;
+        if (!corner) {
+          const orders = (await tx.query<{ room_id: string }>(`SELECT DISTINCT room_id FROM agent_commands
+            WHERE agent_id=$1 AND private_payload->>'kind'='order' AND state IN ('pending','claimed') ORDER BY room_id`, [member])).rows;
+          throw new McpToolError(`no order is waiting for your report; order addresses: ${orders.map(row => row.room_id).join(', ') || 'none'}; use a corner address to report to its commander`);
+        }
+        // Membership was checked by place(). A fresh corner turn follows the
+        // existing opening-commander route even after its order has completed.
+        roomId = target;
       }
       const requester = (await tx.query<{ id: string }>(
         `SELECT m.id FROM rooms_mcp_mentions mention JOIN messages m ON m.id=mention.message_id AND m.deleted_at IS NULL
@@ -334,7 +347,7 @@ export class RoomsMcpAgentTools {
   }
 
   private async inTurn<T>(member: string, target: string, run: (turn: McpTurn, context: Args) => Promise<T>, order = false): Promise<T> {
-    const turn = await this.begin(member, await this.place(member, target), order);
+    const turn = await this.begin(member, await this.place(member, target), order, target);
     let reported = false;
     try {
       const result = await run(turn, { roomId: turn.roomId, requestId: turn.requestId, generationId: turn.generationId });

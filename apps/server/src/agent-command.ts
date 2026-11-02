@@ -1359,6 +1359,17 @@ export async function routeAgentResult(
         if (mention.mcpCallbackUrl) {
           await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
           woken.push(mention.handle);
+        } else {
+          const live = (await db.query(`SELECT 1 FROM rooms_mcp_members member
+            JOIN rooms_mcp_connections connection ON connection.client_id=member.client_id
+              AND connection.identity_id=member.owner_id AND connection.revoked_at IS NULL
+            WHERE member.member_id=$1 AND (member.last_bridge_poll_at>now()-interval '60 seconds'
+              OR EXISTS(SELECT 1 FROM rooms_mcp_event_subscriptions subscription
+                JOIN rooms_mcp_event_deliveries delivery ON delivery.subscription_id=subscription.id AND delivery.message_id=$2
+                WHERE subscription.member_id=member.member_id AND subscription.expires_at>now()))`,
+          [mention.id, sourceId])).rowCount;
+          if (live) woken.push(mention.handle);
+          else notWoken.push({ handle: mention.handle, reason: 'no live wake route; sees it on next list_mentions' });
         }
       }
       continue;

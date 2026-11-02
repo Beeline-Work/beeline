@@ -219,7 +219,7 @@ export class RoomsMcp {
   private async finishPost(member: string, roomId: string, messageId: string, key: string | null) {
     const db = this.oauth.database;
     const routed = await routeMcpMemberPost(db, member, roomId, messageId);
-    const result = { messageId, woken: routed.woken,
+    const result = { messageId, woken: routed.woken, notWoken: routed.notWoken,
       ...(routed.routing === 'retrying' ? { routing: 'retrying' } : {}) };
     if (key)
       await db.query(`UPDATE rooms_mcp_idempotency SET message_id=$3,result=$4::jsonb
@@ -276,6 +276,7 @@ export class RoomsMcp {
       if (typeof wait !== 'number' || !Number.isInteger(wait) || wait < 0 || wait > 25) throw new Error('Invalid waitSeconds');
       const after = args.wakesAfter === undefined ? null : new Date(textArg(args.wakesAfter, 40));
       if (after && Number.isNaN(after.getTime())) throw new Error('Invalid wakesAfter');
+      if (wait > 0) await db.query('UPDATE rooms_mcp_members SET last_bridge_poll_at=now() WHERE member_id=$1', [member]);
       // A long poll checks its own index once a second; it never calls out to the client.
       const deadline = Date.now() + wait * 1000;
       for (;;) {

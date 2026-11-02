@@ -592,7 +592,7 @@ export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: s
 export async function routeMcpMemberPost(
   db: SqlDatabase, memberId: string, roomId: string, messageId: string,
   provenance: typeof mcpProvenance = mcpProvenance,
-): Promise<{ woken: string[]; routing: 'done' | 'retrying' }> {
+): Promise<{ woken: string[]; notWoken: { handle: string; reason: string }[]; routing: 'done' | 'retrying' }> {
   await db.query(
     `INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id) VALUES($1,$2,$3)
      ON CONFLICT(message_id) DO NOTHING`,
@@ -610,14 +610,14 @@ export async function routeMcpMemberPost(
     const delivery = await routeAgentResult(db, parent, messageId,
       { roomId, agentId: memberId, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
     await db.query('DELETE FROM rooms_mcp_pending_routes WHERE message_id=$1', [messageId]);
-    return { woken: delivery.woken, routing: 'done' };
+    return { ...delivery, routing: 'done' };
   } catch (error) {
     console.error('[rooms-mcp] wake routing failed; maintenance retries it', error);
     await db.query(
       'UPDATE rooms_mcp_pending_routes SET attempts=attempts+1,last_error=$2 WHERE message_id=$1',
       [messageId, String(error instanceof Error ? error.message : error).slice(0, 500)],
     ).catch(() => undefined);
-    return { woken: [], routing: 'retrying' };
+    return { woken: [], notWoken: [], routing: 'retrying' };
   }
 }
 

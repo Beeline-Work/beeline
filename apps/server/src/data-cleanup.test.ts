@@ -50,16 +50,12 @@ describe('release data cleanup', () => {
     expect(await sweepPendingAttachments(db)).toBe(0);
   });
 
-  it('expires old webhook ids and clears retained JSON in bounded migration batches', async () => {
-    await db.query(`INSERT INTO github_webhook_deliveries
-      (delivery_id,event_type,payload,received_at,processed_at) VALUES
-      ('old','push','{"large":"old"}',now()-interval '31 days',now()),
-      ('recent','push','{"large":"recent"}',now()-interval '1 day',now())`);
+  it('expires old webhook ids in bounded migration batches', async () => {
+    await db.query(`INSERT INTO github_webhook_deliveries(delivery_id,received_at) VALUES
+      ('old',now()-interval '31 days'),('recent',now()-interval '1 day')`);
     await compactWebhookDeliveries(db);
-    expect((await db.query(`SELECT delivery_id,payload,event_type,processed_at
-      FROM github_webhook_deliveries ORDER BY delivery_id`)).rows).toEqual([
-      { delivery_id: 'recent', payload: null, event_type: null, processed_at: null },
-    ]);
+    expect((await db.query(`SELECT delivery_id FROM github_webhook_deliveries ORDER BY delivery_id`)).rows)
+      .toEqual([{ delivery_id: 'recent' }]);
     await compactWebhookDeliveries(db);
     expect((await db.query(`SELECT count(*)::integer total FROM github_webhook_deliveries`)).rows[0])
       .toEqual({ total: 1 });

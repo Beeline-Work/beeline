@@ -7105,12 +7105,12 @@ describe('monolith integration', () => {
     expect(processWebhook).toHaveBeenCalledTimes(2);
     expect(
       (
-        await database.query<{ received: boolean; payload: unknown }>(
-          `SELECT received_at IS NOT NULL received,payload FROM github_webhook_deliveries WHERE delivery_id=$1`,
+        await database.query<{ received: boolean }>(
+          `SELECT received_at IS NOT NULL received FROM github_webhook_deliveries WHERE delivery_id=$1`,
           ['delivery-1'],
         )
       ).rows,
-    ).toEqual([{ received: true, payload: null }]);
+    ).toEqual([{ received: true }]);
   });
 
   it('never closes a corner from a helper remote-state heartbeat', async () => {

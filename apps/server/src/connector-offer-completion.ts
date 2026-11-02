@@ -23,6 +23,54 @@ export type CompletedConnectorOffer = {
   readonly agentId: string;
 };
 
+/** Failure is a decision too: release the open-offer slot and resume the agent. */
+export async function failConnectingOffers(
+  database: SqlDatabase,
+  target: { agentId: string; connectorId?: string } | { expired: true },
+): Promise<CompletedConnectorOffer[]> {
+  if ('expired' in target) {
+    await database.query(`UPDATE agents SET squire_work=(squire_work-'install'-'signIn') ||
+      '{"errorMessage":"Connection timed out. Retry to continue."}'::jsonb
+      WHERE squire_work->>'install'='true'
+        AND COALESCE((squire_work->>'reportedAt')::double precision,0)<extract(epoch FROM now())-900
+        AND EXISTS (SELECT 1 FROM connector_offers offer WHERE offer.agent_id=agents.agent_id
+          AND offer.status='connecting' AND COALESCE(offer.accepted_at,offer.created_at)<now()-interval '15 minutes')`);
+    await database.query(`UPDATE workspace_connectors connector SET status='error',
+      status_error='Connection timed out. Retry to continue.',sign_in=NULL,updated_at=now()
+      WHERE connector.status='installing' AND connector.updated_at<now()-interval '15 minutes'
+        AND EXISTS (SELECT 1 FROM connector_offers offer WHERE offer.connector_id=connector.id
+          AND offer.status='connecting' AND COALESCE(offer.accepted_at,offer.created_at)<now()-interval '15 minutes')`);
+  }
+  const offers = (await database.query<{ id: string; room_id: string; agent_id: string; command_id: string | null }>(
+    `SELECT offer.id,offer.room_id,offer.agent_id,offer.command_id FROM connector_offers offer
+     WHERE offer.status='connecting' AND ${'expired' in target
+       ? "COALESCE(offer.accepted_at,offer.created_at)<now()-interval '15 minutes'"
+       : target.connectorId
+         ? 'offer.connector_id=$1::uuid'
+         : `offer.connector_type='trusty-squire' AND EXISTS (SELECT 1 FROM agents reporting
+             JOIN agents offering ON offering.agent_id=offer.agent_id
+             WHERE reporting.agent_id=$1 AND reporting.owner_id=offering.owner_id
+               AND COALESCE(reporting.machine_id,reporting.agent_id)=offer.machine_id)`}
+     ORDER BY offer.created_at LIMIT 100 FOR UPDATE OF offer`,
+    'expired' in target ? [] : target.connectorId ? [target.connectorId] : [target.agentId],
+  )).rows;
+  const result: CompletedConnectorOffer[] = [];
+  for (const offer of offers) {
+    await database.query(`UPDATE connector_offers SET status='failed' WHERE id=$1`, [offer.id]);
+    await database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"failed"'::jsonb)
+      WHERE room_id=$1 AND card_type='connector-offer' AND card->>'offerId'=$2
+        AND card->>'status'='connecting'`, [offer.room_id, offer.id]);
+    await ensureSystemIdentity(database);
+    await systemLine(database, { roomId: offer.room_id, authorId: SYSTEM_IDENTITY_ID,
+      subject: { kind: 'system', name: 'Connector setup' }, verb: 'failed',
+      consequence: 'Retry the connection to continue', kind: 'connector-offer-decided',
+      ...(offer.command_id ? { commandId: offer.command_id } : {}), wakes: [offer.agent_id],
+      cardType: 'connector-offer-decision', card: { offerId: offer.id, status: 'failed' } });
+    result.push({ offerId: offer.id, roomId: offer.room_id, agentId: offer.agent_id });
+  }
+  return result;
+}
+
 /**
  * Settle every offer waiting on one connector row. The helper's connected
  * report is the boundary: before this function runs there is no decided line

@@ -2914,7 +2914,7 @@ CREATE TABLE IF NOT EXISTS connector_offers (
   reason text NOT NULL,
   machine_id text NOT NULL,
   status text NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','connecting','accepted','denied')),
+    CHECK (status IN ('pending','connecting','accepted','denied','failed')),
   message_id text REFERENCES messages(id) ON DELETE SET NULL,
   command_id text,
   accepted_by text REFERENCES identities(id),
@@ -2938,7 +2938,7 @@ ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_intent_check
 ALTER TABLE connector_offers ADD COLUMN IF NOT EXISTS provider text;
 ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_status_check;
 ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check
-  CHECK (status IN ('pending','connecting','accepted','denied'));
+  CHECK (status IN ('pending','connecting','accepted','denied','failed'));
 DROP INDEX IF EXISTS connector_offers_open_idx;
 CREATE UNIQUE INDEX connector_offers_open_idx
   ON connector_offers(room_id, connector_type) WHERE status IN ('pending','connecting');

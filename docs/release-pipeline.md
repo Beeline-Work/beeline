@@ -416,6 +416,13 @@ including cancellations before initialization. It uses trusted default-branch
 code on a hosted runner to file a GitHub issue labeled `release-failure`. A marker
 keyed by run ID and serialized delivery prevent duplicates across redelivery,
 reruns and closed issues. It never downloads or executes triggering artifacts.
+Failure issues record the failed job names. A successful preflight comments with
+its run link and closes earlier preflight issues. A successful unified release
+closes earlier unified-release issues only when every recorded failed job
+succeeded in that run; skipped jobs are not recovery. Older issues without job
+records require every component job to succeed, with none skipped. Issues created
+at or after the recovering run started stay open, and OTA success never closes a
+preflight issue. Recovery comments and closures are idempotent on redelivery.
 The existing saved `feedback-triage-steps` procedure's pull step includes all open
 issues with that label, without an age cutoff, alongside feedback and Sentry.
 This is the GitHub issue intake path, not a new server endpoint.

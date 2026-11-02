@@ -111,6 +111,7 @@ export function useConnectionState(): ConnectionState {
 }
 
 const BACKGROUND_CLOSE_DELAY_MS = 120_000;
+const HEALTH_CHALLENGE_DEADLINE_MS = 5_000;
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
 /** Parent-Room invalidations that name a corner change without its rows. */
@@ -169,6 +170,7 @@ export class LiveConnection {
   /** True only after this socket's `onopen`. A failed handshake stays false. */
   private socketReachedOpen = false;
   private recoverySpent = false;
+  private healthChallenge: { socket: WebSocket; timer: ReturnType<typeof setTimeout> } | undefined;
   private socketEpoch = 0;
   private routerState: 'waiting' | 'initializing' | 'ready' = 'waiting';
   private routerQueue: Array<RouterPushFrame | RouterUnavailable | RouterAuthorityFence> = [];
@@ -337,7 +339,8 @@ export class LiveConnection {
     const request = this.requests.get(frame.id);
     if (!request || request.socket !== socket) return true;
     if (frame.ok === true && Object.hasOwn(frame, 'result')) {
-      this.recoverySpent = false;
+      // An unrelated successful request does not prove every demanded lane
+      // caught up. Only a distinct external/user boundary resets this latch.
       request.resolve(frame.result);
     }
     else if (frame.ok === false && typeof frame.error?.code === 'string' &&
@@ -558,7 +561,36 @@ export class LiveConnection {
     this.backgroundSocketClosed = false;
     if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
     this.backgroundCloseTimer = undefined;
-    if (!this.socket || !isSocketOpen(this.socket)) this.reconnectNow();
+    this.checkBoundaryHealth();
+  }
+
+  /** An actual resume/path edge admits one application roundtrip, never a read.
+   * Concurrent edges join the pending challenge; only its failure spends the
+   * incident's one replacement. Existing servers already answer this frame. */
+  private checkBoundaryHealth(): void {
+    if (this.healthChallenge) return;
+    this.recoverySpent = false;
+    const socket = this.socket;
+    if (!socket || !isSocketOpen(socket)) {
+      this.reconnectNow();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (this.healthChallenge?.socket !== socket) return;
+      this.clearHealthChallenge();
+      if (this.socket === socket) this.reportRequestDeadlineMissed();
+    }, HEALTH_CHALLENGE_DEADLINE_MS);
+    this.healthChallenge = { socket, timer };
+    try { socket.send(JSON.stringify({ type: 'ping' })); }
+    catch {
+      this.clearHealthChallenge();
+      if (this.socket === socket) this.reportRequestDeadlineMissed();
+    }
+  }
+
+  private clearHealthChallenge(): void {
+    if (this.healthChallenge) clearTimeout(this.healthChallenge.timer);
+    this.healthChallenge = undefined;
   }
 
   private handleBackground(): void {
@@ -575,7 +607,7 @@ export class LiveConnection {
 
   private handleNetworkChange(): void {
     if (AppState.currentState !== 'active') return;
-    if (!this.socket || !isSocketOpen(this.socket)) this.reconnectNow();
+    this.checkBoundaryHealth();
   }
 
   /**
@@ -597,6 +629,7 @@ export class LiveConnection {
   }
 
   private dropConnection(): void {
+    this.clearHealthChallenge();
     this.resetRouterState();
     this.rejectRequests();
     setConnectionState('disconnected');
@@ -696,6 +729,10 @@ export class LiveConnection {
         } catch {
           return;
         }
+        if (live.type === 'pong') {
+          if (this.healthChallenge?.socket === next) this.clearHealthChallenge();
+          return;
+        }
         if (this.receiveRouterFrame(live, next)) return;
         if (this.receiveReply(live, next)) return;
         if (live.type === 'sync-ok') return;
@@ -768,6 +805,7 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
+    this.clearHealthChallenge();
     this.resetRouterState();
     this.rejectRequests();
     this.seenSubscribed.clear();

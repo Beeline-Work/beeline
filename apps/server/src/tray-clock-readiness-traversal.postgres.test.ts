@@ -1,3 +1,4 @@
+import {BACKGROUND_OWNERSHIP_SCHEMA} from './background-ownership.js';
 import {randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
 import {describe,expect,it} from 'vitest';
@@ -26,7 +27,7 @@ describe.skipIf(!url)('actual PostgreSQL bounded Room→source readiness access'
           card jsonb,deleted_at timestamptz,created_at timestamptz DEFAULT clock_timestamp());
         CREATE TABLE needs_you_marks(identity_id text,message_id text,workspace_id uuid,first_seen_at timestamptz,cleared_at timestamptz,PRIMARY KEY(identity_id,message_id));
         CREATE TABLE room_choices(id uuid PRIMARY KEY,workspace_id uuid,room_id uuid,status text,closes_at timestamptz);`);
-      await database.query(DURABLE_LIVE_SCHEMA);
+      await database.query(DURABLE_LIVE_SCHEMA);await database.query(BACKGROUND_OWNERSHIP_SCHEMA);
       await database.query(`INSERT INTO workspaces VALUES($1,'Target'),($2,'Unrelated')`,[WS,OTHER]);
       await database.query(`INSERT INTO rooms(id,workspace_id) SELECT md5('room:'||n)::uuid,CASE WHEN n=1 THEN $1::uuid ELSE $2::uuid END FROM generate_series(1,4096)n`,[WS,OTHER]);
       await database.query(`INSERT INTO messages(id,room_id,author_id,text)

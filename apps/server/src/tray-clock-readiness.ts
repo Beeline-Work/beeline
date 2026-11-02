@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {TRAY_CLOCK_HEALTH_SCHEMA,TRAY_CLOCK_HEALTH_PREDICATE_SQL} from './tray-clock-health.js';
+import {TRAY_CLOCK_HEALTH_SCHEMA,TRAY_CLOCK_HEALTH_PREDICATE_SQL,TRAY_CLOCK_HEALTH_OWNER_TRIGGER} from './tray-clock-health.js';
 import type {SqlDatabase} from './database.js';
 
 export {readTrayClockBasisCause,type TrayClockBasisCause} from './tray-clock-protocol.js';
@@ -178,18 +178,28 @@ export class TrayClockReadiness{
       if(functions.length!==actual.length||functions.some(match=>actual.filter(fn=>fn.name===match[1]&&fn.body===match[2]).length!==1))
         throw new TrayClockReadinessUnavailable('Tray capture functions differ from installed source');
       const triggers=[...schema.matchAll(/^CREATE TRIGGER\s+(beeline_tray_clock_\w+)\s+([\s\S]*?);/gm)].map(match=>({name:match[1]!,sql:match[0]}));
-      triggers.push({name:'beeline_tray_clock_workspace_birth',sql:WORKSPACE_BIRTH});
+      triggers.push({name:'beeline_tray_clock_workspace_birth',sql:WORKSPACE_BIRTH},
+        {name:'beeline_tray_clock_health_owner',sql:TRAY_CLOCK_HEALTH_OWNER_TRIGGER});
       for(const trigger of triggers){
-        const table=/\bON\s+(messages|needs_you_marks|room_choices|rooms|workspaces)\b/.exec(trigger.sql)?.[1];
+        const table=/\bON\s+(messages|needs_you_marks|room_choices|rooms|workspaces|tray_clock_health|background_leader_owners)\b/.exec(trigger.sql)?.[1];
         if(!table)throw new TrayClockReadinessUnavailable('Unknown Tray source table');
-        const probe='beeline_tray_clock_readiness_probe';await db.query(trigger.sql.replace(`CREATE TRIGGER ${trigger.name}`,`CREATE TRIGGER ${probe}`));
+        const probe='beeline_tray_clock_readiness_probe';
+        // These control triggers have no column list/WHEN guard. Parse their
+        // reference on a schema clone: DROP TRIGGER on the live health table
+        // would hold ACCESS EXCLUSIVE and block remote pure health reads.
+        const detached=table==='tray_clock_health'||table==='background_leader_owners';
+        const referenceTable=detached?'pg_temp.beeline_tray_clock_control_probe':table;
+        if(detached)await db.query(`CREATE TEMP TABLE ${referenceTable} (LIKE ${table}) ON COMMIT DROP`);
+        await db.query(trigger.sql.replace(`CREATE TRIGGER ${trigger.name}`,`CREATE TRIGGER ${probe}`).replace(` ON ${table} `,` ON ${referenceTable} `));
         const rows=(await db.query<{name:string;enabled:string;descriptor:unknown}>(`SELECT t.tgname name,t.tgenabled enabled,
           jsonb_build_object('type',t.tgtype,'attrs',t.tgattr::text,'args',encode(t.tgargs,'hex'),'function',t.tgfoid::text,
-            'definition',regexp_replace(pg_get_triggerdef(t.oid),'^CREATE TRIGGER [^ ]+ ','CREATE TRIGGER @ '),
+            'definition',regexp_replace(regexp_replace(pg_get_triggerdef(t.oid),'^CREATE TRIGGER [^ ]+ ','CREATE TRIGGER @ '),' ON [^ ]+ ',' ON @ '),
             'constraint',t.tgconstraint::text,'deferrable',t.tgdeferrable,'deferred',t.tginitdeferred) descriptor
-          FROM pg_trigger t WHERE t.tgrelid=$1::regclass AND t.tgname=ANY($2::text[])`,[table,[trigger.name,probe]])).rows;
+          FROM pg_trigger t WHERE (t.tgrelid=$1::regclass AND t.tgname=$2) OR (t.tgrelid=$3::regclass AND t.tgname=$4)`,
+          [table,trigger.name,referenceTable,probe])).rows;
         const installed=rows.find(row=>row.name===trigger.name),reference=rows.find(row=>row.name===probe);
-        await db.query(`DROP TRIGGER ${probe} ON ${table}`);
+        await db.query(`DROP TRIGGER ${probe} ON ${referenceTable}`);
+        if(detached)await db.query(`DROP TABLE ${referenceTable}`);
         if(!installed||!['O','A'].includes(installed.enabled)||JSON.stringify(installed.descriptor)!==JSON.stringify(reference?.descriptor))
           throw new TrayClockReadinessUnavailable('Tray capture trigger differs from installed source');
       }

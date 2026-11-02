@@ -118,7 +118,12 @@ describe('actual-schema aggregate-owned Tray readiness composition',()=>{
     const flight=runner.run();
     try{await reached.promise;controller.abort();expect(runner.status()).toEqual({state:'parked'});release.resolve();expect(await flight).toBe(Infinity);}
     finally{release.resolve();await flight;}
-    expect(await heads()).toEqual(before);expect((await db.query(`SELECT * FROM tray_clock_readiness ORDER BY workspace_id`)).rows).toEqual(progress);
+    const afterStop=await heads(),healthStream='jobs:tray-clock-health';
+    expect(afterStop.filter(row=>row.id!==healthStream)).toEqual(before.filter(row=>row.id!==healthStream));
+    // Domain work rolls back; the separately committed owner retirement must
+    // still reach remote consumers exactly once.
+    expect(Number(afterStop.find(row=>row.id===healthStream)!.sequence)).toBe(Number(before.find(row=>row.id===healthStream)!.sequence)+1);
+    expect((await db.query(`SELECT * FROM tray_clock_readiness ORDER BY workspace_id`)).rows).toEqual(progress);
     const count=statements.length;live.journalChanged(['jobs:tray-clock-readiness']);runner.observeServerLease('tray-ready',Date.now()+1000);await runner.run();expect(statements).toHaveLength(count);
     // An aborted connection cannot be reclaimed by a resync. New actual
     // connection acquisition supplies the distinct ownership admission.

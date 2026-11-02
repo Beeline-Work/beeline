@@ -1,3 +1,4 @@
+import {BACKGROUND_OWNERSHIP_SCHEMA} from './background-ownership.js';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import type {SqlDatabase} from './database.js';
@@ -13,7 +14,7 @@ const observed=(db:SqlDatabase,after:Observe):SqlDatabase=>({query:async(sql,arg
 describe('unselected bounded committed Tray capture readiness',()=>{
   let db:PgliteDatabase,owner:TrayClockReadiness,choiceId:string;
   beforeEach(async()=>{
-    db=await migratedDatabase();
+    db=await migratedDatabase();await db.query(BACKGROUND_OWNERSHIP_SCHEMA);
     // Genuine pre-feature records: no clock lifecycle hook observes insertion.
     await db.query(`DO $$ DECLARE item record;BEGIN FOR item IN SELECT t.tgname,c.relname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
       JOIN pg_namespace ns ON ns.oid=c.relnamespace WHERE ns.nspname=current_schema() AND NOT t.tgisinternal AND t.tgname LIKE 'beeline_tray_clock_%'

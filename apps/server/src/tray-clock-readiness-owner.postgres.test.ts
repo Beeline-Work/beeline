@@ -1,3 +1,4 @@
+import {TrayClockAvailability} from './tray-clock-availability.js';
 import {BackgroundLeader,type LeaderConnection} from './background-leader.js';
 import {LiveHub} from './live.js';
 import {TrayClockWork,TRAY_CLOCK_WORK_SCHEMA} from './tray-clock-work.js';
@@ -111,6 +112,33 @@ describe.skipIf(!url)('real PostgreSQL readiness at the existing aggregate-owner
       expect(runner.status()).toEqual({state:'parked',retirementFailed:true});
       expect(connections).toBe(1);f.drop(replacement);
     }finally{await leader?.stop();await runner?.close();await f.close();}
+  });
+
+  it('one actual PostgreSQL notification parks both remote Tray consumers with one shared control read',async()=>{
+    const f=await fixture();let listener:PoolClient|undefined,availability:TrayClockAvailability|undefined;
+    try{
+      const lock=await f.acquire(),owner=new BackgroundOwnership(f.first,'first'),epoch=await owner.claim(lock);f.scopes.push({owner,epoch});
+      const readiness=new TrayClockReadinessOwner(owner);
+      for(let n=0;n<20;n++)if(!(await readiness.run(epoch)).continuation)break;
+      await new TrayClockHealth(owner).publish(epoch);
+      const live=new LiveHub(),lost=deferred();let queries=0,firstConsumer=0,secondConsumer=0;
+      const observe=(db:SqlDatabase):SqlDatabase=>({query:(sql,args)=>{queries++;return db.query(sql,args);},
+        transaction:work=>db.transaction(tx=>work(observe(tx)))});
+      listener=await f.second.connectDedicated();
+      listener.on('notification',message=>{
+        if(message.channel!=='beeline_live_v1'||!message.payload)return;
+        const event=JSON.parse(message.payload);if(Array.isArray(event.journalStreams))live.journalChanged(event.journalStreams);
+      });
+      await listener.query('LISTEN beeline_live_v1');
+      live.subscribeTrayClockUnavailable(()=>{firstConsumer++;});live.subscribeTrayClockUnavailable(()=>{secondConsumer++;});
+      availability=new TrayClockAvailability(observe(f.second),live,{listenerReady:()=>true,unavailable:()=>lost.resolve()});
+      await availability.start();expect(availability.ready()).toBe(true);const before=queries;
+      await owner.release(epoch);await lost.promise;await availability.start();
+      expect(availability.ready()).toBe(false);expect(firstConsumer).toBe(1);expect(secondConsumer).toBe(1);
+      expect(queries-before).toBe(4); // mode, head, bounded causes, owner health; independent of consumers
+    }finally{
+      await availability?.close();if(listener){await listener.query('UNLISTEN beeline_live_v1');listener.release(true);}await f.close();
+    }
   });
 
   it('bounds the actual health overdue probe with cold and generic plans across33024 pending deadlines',async()=>{

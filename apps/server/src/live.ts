@@ -421,6 +421,13 @@ export class LiveHub {
     return ()=>this.#events.off('projection-unavailable',listener);
   }
 
+  subscribeTrayClockUnavailable(listener:()=>void):()=>void {
+    this.#events.on('tray-clock-unavailable',listener);
+    return ()=>this.#events.off('tray-clock-unavailable',listener);
+  }
+
+  trayClockUnavailable():void {this.#events.emit('tray-clock-unavailable');}
+
   projectionUnavailable():void {this.#events.emit('projection-unavailable');}
 
   resync(): void {

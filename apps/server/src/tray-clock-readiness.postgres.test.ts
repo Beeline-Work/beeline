@@ -1,3 +1,4 @@
+import {BACKGROUND_OWNERSHIP_SCHEMA} from './background-ownership.js';
 import {randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
 import {describe,expect,it} from 'vitest';
@@ -29,7 +30,7 @@ async function rig(run:(first:SqlDatabase,second:SqlDatabase,owner:TrayClockRead
       CREATE TABLE needs_you_marks(identity_id text,message_id text,workspace_id uuid,first_seen_at timestamptz,cleared_at timestamptz,
         PRIMARY KEY(identity_id,message_id));
       CREATE TABLE room_choices(id uuid PRIMARY KEY,workspace_id uuid,room_id uuid,status text,closes_at timestamptz);`);
-    await first.query(DURABLE_LIVE_SCHEMA);
+    await first.query(DURABLE_LIVE_SCHEMA);await first.query(BACKGROUND_OWNERSHIP_SCHEMA);
     // Existing rows genuinely precede capture installation. No hand-written
     // source/deadline rows or test replacement production functions exist.
     await first.query(`INSERT INTO workspaces VALUES($1,'Old'),($2,'Other')`,[WS,OTHER]);

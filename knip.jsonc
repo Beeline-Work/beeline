@@ -262,6 +262,8 @@
         "scripts/render-header-alignment-proof.mjs",
         "scripts/header-alignment-proof/{native,web}.tsx",
         "scripts/room-list-proof.tsx",
+        // The room-deck unavailable evidence builder bundles this entry by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         "scripts/room-list-corner-longpress-proof.tsx",
         "scripts/room-list-gestures-proof.tsx",
         "scripts/room-list-blank-proof.tsx",

@@ -6527,8 +6527,10 @@ export class DaemonService {
   }
   private async cornerRemote(input: Input<'postCornerRemoteState'>, agentId: string) {
     await this.access(input.cornerId, agentId);
+    // A helper heartbeat never ends a corner: only close and merge archive it.
+    // A `gone` remote branch is recorded as an unknown remote state.
     const lifecycle = {
-      lifecycle: input.state === 'gone' ? 'done' : input.state,
+      lifecycle: input.state === 'gone' ? 'unknown' : input.state,
       branch: input.branch,
       checks: input.checks,
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),

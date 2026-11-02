@@ -7112,6 +7112,34 @@ describe('monolith integration', () => {
     ).toEqual([{ received: true, payload: null }]);
   });
 
+  it('never closes a corner from a helper remote-state heartbeat', async () => {
+    const created = await operation('createHumanCorner', { roomId: ROOM, title: 'Gone-branch' });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    expect(
+      (
+        await daemonOperation('postCornerRemoteState', {
+          cornerId,
+          branch: 'fm/gone-branch',
+          state: 'gone',
+          checks: 'unknown',
+        })
+      ).status,
+    ).toBe(200);
+    const listed = (await (await request(`/v1/phone/rooms/${ROOM}/corners`)).json()) as {
+      corners: Array<{ corner: { id: string }; state: string }>;
+    };
+    expect(listed.corners.find((item) => item.corner.id === cornerId)?.state).not.toBe('archived');
+    expect(
+      (
+        await database.query<{ lifecycle: string | null }>(
+          `SELECT lifecycle->>'lifecycle' lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).not.toEqual([{ lifecycle: 'done' }]);
+  });
+
   it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {
     processWebhook.mockImplementation((event, payload) =>
       githubOperations.processWebhook(event, payload),

@@ -28,6 +28,8 @@ export interface JoinedSession {
   deliveredWakes: string[];
   /** The newest wake handed over: only a newer one ends a long poll early. */
   wakesSeenAt?: string;
+  /** When each still-waiting wake was first handed over, and how often it was handed over again since. */
+  wakeDeliveries?: Record<string, { firstAt: string; redeliveries: number }>;
   /** The app's own CLI, for apps reached through it (Codex). */
   agentBin?: string;
   joinedAt: string;

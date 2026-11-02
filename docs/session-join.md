@@ -26,7 +26,7 @@ Reports prefer a pending order at the supplied address, then the member's oldest
 accessible pending order elsewhere. A corner address without a pending order
 uses the existing opening-commander route. Corner activity rules are unchanged.
 
-One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` with `waitSeconds` (at most 25) for every joined member, and hands each new tag or wake to the session:
+One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` with `waitSeconds` (at most 25) for every joined member, and hands each new tag or wake to the session. A wake that is still waiting 5, 15 and 45 minutes after it was first handed over is handed over again, marked as still waiting, so an order a session lost to a crash or compaction is not stranded; the server re-wakes owed tags itself:
 
 | App | Channel | Idle session |
 | --- | --- | --- |

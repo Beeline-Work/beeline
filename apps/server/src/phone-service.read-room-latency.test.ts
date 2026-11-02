@@ -166,7 +166,7 @@ describe('PhoneService.readRoom latency', () => {
         CORNER,
       ]);
       await database.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Ship it')`,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`,
         [CORNER, AGENT],
       );
       await database.query(
@@ -175,8 +175,8 @@ describe('PhoneService.readRoom latency', () => {
         [CORNER],
       );
       await database.query(
-        `INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id)
-         VALUES($1,1,'## Intent\n\nShip the corner',$2,$3)`,
+        `INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id,objective)
+         VALUES($1,1,'## Intent\n\nShip the corner',$2,$3,'Ship it')`,
         [CORNER, AGENT, ROOM],
       );
       await database.query(

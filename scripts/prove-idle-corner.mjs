@@ -31,11 +31,9 @@ try {
       privatePayload:{kind:'order',text:'Check',authorId:peer,fromRoomId:room}});
     await db.query("UPDATE agent_commands SET state='complete' WHERE room_id=$1", [corner]);
     await db.query("DELETE FROM agent_turns WHERE room_id=$1 AND generation_id LIKE 'pending:%'", [corner]);
-    await db.query('UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=$1', [corner]);
     if (scenario === 'scheduled') await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at) VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue','{"kind":"interval","everySeconds":86400}',now()+interval '1 day')`, [workspace,corner,worker]);
     if (scenario === 'pending-ci') {
       await db.query(`UPDATE corner_facts SET lifecycle='{"pr":{"headSha":"head","number":1},"checks":"pending"}' WHERE corner_id=$1`, [corner]);
-      await db.query(`UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`, [corner]);
     }
     if (scenario === 'live-turn') await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id) VALUES($1,'live',$2,'working','actual')`, [corner,worker]);
     if (scenario === 'closed') await db.query(`UPDATE corner_facts SET lifecycle='{"lifecycle":"closed"}' WHERE corner_id=$1`, [corner]);

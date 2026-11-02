@@ -228,7 +228,7 @@ import {
   postRoomChoice,
   skipRoomChoice,
 } from './room-choice.js';
-import { unreadMessageSql, visibleMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
+import { unreadMessageSql, visibleMessageSql, visibleChatMessageSql, viewerReadCursorSql } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -2997,7 +2997,7 @@ export class PhoneService {
         'read-cursor',
         this.enrichmentDatabase.query<{
           read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
-        }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`, [
+        }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`, [
           roomId,
           viewerId,
         ]),
@@ -4853,7 +4853,7 @@ export class PhoneService {
     if (!(await this.canReadRooms([roomId], viewerId)).has(roomId)) return null;
     const row = (await this.database.query<{
       read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
-    }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`,
+    }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`,
       [roomId, viewerId])).rows[0];
     return row?.read_cursor ?? null;
   }

@@ -417,6 +417,26 @@ describe('GitHub phone operations', () => {
       console.info(`CHECK-HEADER-1 (${trigger}): phone Room read → ${await line()}; checks facet → 34 passed`);
     });
 
+  it('IDLE-DERIVED: identical GitHub reads retain the check status timestamp', async () => {
+    const { corners, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    const read = async () => (await database.query<{ stamp: number }>(
+      `SELECT (lifecycle->'checksSummary'->>'statusChangedAt')::double precision stamp
+       FROM corner_facts WHERE corner_id=$1`,[corner])).rows[0]!.stamp;
+    await operations.processWebhook('check_run',payload);
+    const stamp = await read();
+    expect(stamp).toBeGreaterThan(0);
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,
+      '{checksSummary,statusChangedAt}',to_jsonb($2::double precision)) WHERE corner_id=$1`,[corner,stamp-120]);
+    await operations.prChecksStatus({cornerId:corner});
+    expect(await read()).toBe(stamp-120);
+    app.readCommitCheckRollup.mockResolvedValue({state:'passed',total:1,failing:[],checks:[{name:'tests',status:'passed'}]});
+    await operations.prChecksStatus({cornerId:corner});
+    expect(await read()).toBeGreaterThan(stamp-120);
+  });
+
   it('REVIEW-HEAD-1: handoff refresh discovers a push before its webhook and clears predecessor checks', async () => {
     const { corners, app } = await checksFixture();
     const corner = corners[0]!;

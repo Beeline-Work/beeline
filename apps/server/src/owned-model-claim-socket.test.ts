@@ -12,7 +12,7 @@ import { LiveHub } from './live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
-import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_WORKSPACE, ownedModelFixture } from './owned-model.test-support.js';
+import { MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
 
 type Frame = Record<string, unknown> & { capabilities?: Record<string, unknown>; result?: DaemonOperationMap['claimAgentCommand']['output'] };
 const TOKEN = 'bdt_' + 's'.repeat(43);
@@ -21,7 +21,7 @@ describe('actual selected model credential claim socket', () => {
   let socket: WebSocket, origin: string, commandId: string, epoch: number;
   let frames: Frame[];
   beforeEach(async () => {
-    vi.stubEnv('BEELINE_TURN_OWNERSHIP_V1', '1'); f = await ownedModelFixture(); epoch = 1; frames = [];
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '1'); f = await ownedModelFixture(); epoch = 1; frames = [];
     await f.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [MODEL_CLAIM.commandId]);
     await f.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`, [MODEL_WORKSPACE, MODEL_OWNER, MODEL_ROOM]);

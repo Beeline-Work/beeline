@@ -7,7 +7,7 @@ import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { ROUTER_PROJECTION_SCHEMA } from './router-projection-schema.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { parkOwnedModelTerminal } from './owned-model-parking.js';
-import { MODEL, MODEL_AGENT, MODEL_CLAIM, MODEL_ROOM, MODEL_SOURCE, seedOwnedModelFixture } from './owned-model.test-support.js';
+import { MODEL, MODEL_AGENT, MODEL_CLAIM, MODEL_ROOM, MODEL_SOURCE, seedOwnedModelFixture } from './test-fixtures/owned-model.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) throw new Error('Model parking proof requires isolated loopback PostgreSQL');

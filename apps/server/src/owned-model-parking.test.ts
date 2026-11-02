@@ -6,7 +6,7 @@ import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
-import { MODEL, MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_SOURCE, MODEL_WORKSPACE, ownedModelFixture } from './owned-model.test-support.js';
+import { MODEL, MODEL_AGENT, MODEL_CLAIM, MODEL_OWNER, MODEL_ROOM, MODEL_SOURCE, MODEL_WORKSPACE, ownedModelFixture } from './test-fixtures/owned-model.js';
 
 const ONE = '11111111-1111-4111-8111-111111111111', TWO = '22222222-2222-4222-8222-222222222222';
 const input = { roomId: MODEL_ROOM, agentId: MODEL_AGENT, requestId: 'synthetic-request', generationId: MODEL_CLAIM.generationId };

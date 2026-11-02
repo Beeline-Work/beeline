@@ -49,11 +49,15 @@ single-SELECT scalar badge. No read initializes or repairs readiness.
 
 These are correctness proofs, not activation or performance acceptance. The
 catalog fingerprint still deparses the bounded capture contract on reads; the
-one-statement count does not establish cheap CPU. Source phases cap processed
-keys at100, but current Room-filtered global source ordering still needs query
-plan/buffer proofs or a bounded Room/source keyset redesign. Existing-owner
-lifecycle composition, complete source/WAL/CPU/wire costs and migration/cohort
-floors remain open. Production does not install or select these schemas.
+one-statement count does not establish cheap CPU. Readiness now walks bounded Workspace→Room→source keys, charging empty visits
+and phase advances against the100-item budget. First and resumed pages use
+single-key seeks: cold PostgreSQL otherwise chose a bitmap+sort for a100-row
+page. Actual lifecycle SQL over4096 Rooms and33024 source rows passes cold
+custom and generic EXPLAIN/BUFFERS bounds without ANALYZE or forced plans.
+Readiness19/source17/traversal PostgreSQL1/actual runner7/owner PostgreSQL3/
+committed reader6 pass (53). Single-key seeks add round trips; aggregate
+source/WAL/CPU costs, old stored-deadline cohorts and migration/cohort floors
+remain open. Production does not install or select these schemas.
 
 
 The readiness lifecycle now runs as explicit `tray.readiness` work under that

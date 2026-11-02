@@ -3055,7 +3055,8 @@
         "observedAt": "existing before the registry; weekly audit reviews",
         "connectionId": "existing before the registry; weekly audit reviews",
         "never-seen": "existing before the registry; weekly audit reviews",
-        "POST": "existing before the registry; weekly audit reviews"
+        "POST": "existing before the registry; weekly audit reviews",
+        "overlayV1": "Original overlay command/generation/source and revision are required to reject stale publication and clean up only its ending owner; current command state cannot reconstruct them."
       },
       "reactions": {},
       "activity": {

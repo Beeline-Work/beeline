@@ -59,3 +59,25 @@ EOF, 429/500 and transport loss without tools or dependent provider attempts.
 Actual Body generation lifecycle/configuration integration, installed cohort
 negotiation, source/migration floors, images and cost gates remain OPEN. These
 leaves are not installed or selected in production and close no whole finding.
+
+
+## Owner end is independent of provider outcome
+
+An immutable exact-generation owner-end record removes execution authority and
+working overlays while preserving the original command and every model attempt.
+An in-flight UNKNOWN suppresses silence recovery without ending a live owner.
+Only a current authenticated owner end or proven source loss parks execution.
+The actual deferred effect fence covers the parking transaction; later effects
+and legacy claims cannot reuse the ended generation.
+
+The real socket acknowledges both UNKNOWN and succeeded-but-unconfirmed owner
+ends, with no reply-fence relaxation. An unreadable, missing or unsafe private
+journal becomes typed owner end before generic repair/retry. It sends no guessed
+model UUID: the server checks an actually issued credential for that exact
+current source and records only owner end, preserving any existing outcome.
+No-attempt owner end creates no provider receipt. Focused parking16/socket7/
+Body13/codec4 pass; server and Body typechecks pass.
+
+Production installation, isolated generation child/control-file sandbox,
+current-main automatic-idle suppression and Awaiting confirmation UI remain
+open. These proofs do not authorize activation or close a whole finding.

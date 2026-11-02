@@ -739,7 +739,8 @@ export async function createAgentCommand(
   // Capture known offline presence at dispatch. An absent connection record
   // stays unknown and uses the overdue-claim fallback during recovery.
   const result = await db.query<CommandRow>(
-    `INSERT INTO agent_commands
+    `WITH dispatched AS (
+ INSERT INTO agent_commands
  (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,wake_after,created_offline,startup_wake_after)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
    CASE WHEN $14::boolean THEN COALESCE((SELECT min(wake_after) FROM agent_commands
@@ -750,7 +751,14 @@ export async function createAgentCommand(
        AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')
     FROM agent_connections connection WHERE connection.agent_id=$3),
    (SELECT paused_until FROM agent_startup_backoff WHERE agent_id=$3 AND paused_until>now() AND NOT $16::boolean))
- ON CONFLICT DO NOTHING RETURNING *`,
+ ON CONFLICT DO NOTHING RETURNING *
+ ), owed AS (
+   INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id)
+   SELECT agent_id,room_id,source_message_id FROM dispatched
+   WHERE source_message_id IS NOT NULL AND private_payload IS NULL AND NOT avatar_job
+     AND reason IN ('human_tag','direct_message','agent_tag')
+   ON CONFLICT(member_id,message_id) DO NOTHING
+ ) SELECT * FROM dispatched`,
     [
       id,
       input.roomId,
@@ -791,9 +799,6 @@ export async function createAgentCommand(
     await recordMcpMemberWebhook(db, input.agentId, appCallbackUrl, input.roomId, id,
         `${privatePayload?.kind === 'order' ? 'Order' : 'Wake'} (${input.reason}): ${privatePayload?.text ?? sourceText ?? ''}`.trim());
   }
-  if (command && input.sourceMessageId && !privatePayload && !input.avatarJob &&
-      ['human_tag','direct_message','agent_tag'].includes(input.reason))
-    await recordMcpMention(db, input.agentId, input.roomId, input.sourceMessageId);
   return command;
   });
 }

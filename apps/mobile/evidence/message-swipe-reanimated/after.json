@@ -1,0 +1,52 @@
+[
+  {
+    "case": "under-threshold",
+    "bounds": {
+      "swipe-reply-long-agent": [
+        63,
+        421,
+        1017,
+        1518
+      ],
+      "copy-message-long-agent": [
+        64,
+        421,
+        1018,
+        1518
+      ]
+    },
+    "bodyOffsetPx": 0,
+    "atRest": true,
+    "quoteInstalled": false
+  },
+  {
+    "case": "scroll-interrupted",
+    "bounds": {
+      "swipe-reply-long-agent": [
+        63,
+        91,
+        1017,
+        1188
+      ],
+      "copy-message-long-agent": [
+        64,
+        91,
+        1018,
+        1188
+      ]
+    },
+    "bodyOffsetPx": 0,
+    "atRest": true,
+    "quoteInstalled": false
+  },
+  {
+    "case": "reply",
+    "atRest": true,
+    "receipt": "Reply quote installed"
+  },
+  {
+    "case": "corner",
+    "atRest": true,
+    "receipt": "Corner action fired"
+  }
+]

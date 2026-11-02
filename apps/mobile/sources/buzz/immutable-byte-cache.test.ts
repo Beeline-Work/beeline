@@ -55,6 +55,33 @@ describe('immutable shared file bytes', () => {
     second.abort(); expect(flightSignal.aborted).toBe(true);
     expect((await a).name).toBe('AbortError'); expect((await b).name).toBe('AbortError');
   });
+  it('cancels a native disk staging operation when its last admitted consumer disappears', async () => {
+    let finishWrite!: () => void; let stagingSignal: AbortSignal | undefined;
+    const store = { get: async () => null, set: async (_key: string, _bytes: Uint8Array, signal?: AbortSignal) => {
+      stagingSignal = signal; await new Promise<void>(resolve => { finishWrite = resolve; });
+    }, remove: vi.fn(async () => {}), clear: async () => {} };
+    const cache = new ImmutableByteCache(store); const controller = new AbortController();
+    const pending = cache.get(address, async () => new Uint8Array([1]), { ...authorized, signal: controller.signal }).catch(error => error);
+    await drain(); expect(stagingSignal?.aborted).toBe(false);
+    controller.abort(); expect(stagingSignal?.aborted).toBe(true);
+    finishWrite(); await drain();
+    expect((await pending).name).toBe('AbortError'); expect(cache.diagnostics().memoryBytes).toBe(0);
+  });
+  it('fences asynchronous integrity completion before publication or removal of a newer same-key flight', async () => {
+    let finishOld!: (valid: boolean) => void; let oldSignal!: AbortSignal; let checks = 0;
+    const store = { get: async () => null, set: vi.fn(async () => {}), remove: vi.fn(async () => {}), clear: async () => {} };
+    const cache = new ImmutableByteCache(store, async (_address, _bytes, signal) => {
+      if (++checks > 1) return true;
+      oldSignal = signal; return new Promise<boolean>(resolve => { finishOld = resolve; });
+    });
+    const controller = new AbortController(); const load = async () => new Uint8Array([1]);
+    const old = cache.get(address, load, { ...authorized, signal: controller.signal }).catch(error => error);
+    await drain(); controller.abort(); expect(oldSignal.aborted).toBe(true);
+    await cache.get(address, load, authorized); finishOld(false); await drain();
+    expect((await old).name).toBe('AbortError'); expect(store.remove).not.toHaveBeenCalled();
+    expect(store.set).toHaveBeenCalledTimes(1);
+    expect(await cache.get(address, load, authorized)).toEqual(new Uint8Array([1]));
+  });
   it('cold disk bytes remain unread until a current authority certificate exists', async () => {
     const store = { get: vi.fn(async () => new Uint8Array([2])), set: vi.fn(async () => {}), remove: vi.fn(async () => {}), clear: vi.fn(async () => {}) };
     const cache = new ImmutableByteCache(store); const load = vi.fn(async () => new Uint8Array([1]));

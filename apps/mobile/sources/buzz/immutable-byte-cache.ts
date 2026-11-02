@@ -1,7 +1,7 @@
 export type ImmutableByteAddress = Readonly<{ origin: string; principal: string; objectId: string; version: string }>;
 export type ImmutableByteStore = {
-  get(key: string): Promise<Uint8Array | null>;
-  set(key: string, bytes: Uint8Array): Promise<void>;
+  get(key: string, signal?: AbortSignal): Promise<Uint8Array | null>;
+  set(key: string, bytes: Uint8Array, signal?: AbortSignal): Promise<void>;
   remove(key: string): Promise<void>;
   clear(): Promise<void>;
 };
@@ -41,7 +41,7 @@ export class ImmutableByteCache {
   private readonly committedWrites = new Map<string, number>();
 
   constructor(private readonly store?: ImmutableByteStore,
-    private readonly validate: (address: ImmutableByteAddress, bytes: Uint8Array) => boolean = () => true) {}
+    private readonly validate: (address: ImmutableByteAddress, bytes: Uint8Array, signal: AbortSignal) => boolean | Promise<boolean> = () => true) {}
   key(address: ImmutableByteAddress): string {
     if (!address.principal || !address.objectId || !address.version) throw new Error('File identity is incomplete.');
     return JSON.stringify([new URL(address.origin).origin, address.principal, address.objectId, address.version]);
@@ -140,15 +140,16 @@ export class ImmutableByteCache {
     try {
       const restore = [...flight.consumers].some(consumer => consumer.demand.restoreAuthorized && consumer.demand.reuseAuthorized && consumer.demand.isCurrent());
       let bytes: Uint8Array | null = null;
-      if (restore) { try { bytes = await this.store?.get(flight.key) ?? null; } catch { /* A denied disk falls through to authorized download. */ } }
+      if (restore) { try { bytes = await this.store?.get(flight.key, flight.controller.signal) ?? null; } catch { /* A denied disk falls through to authorized download. */ } }
       if (!this.current(flight)) throw aborted();
       if (!bytes) bytes = await flight.load(flight.controller.signal);
       if (!(bytes instanceof Uint8Array) || bytes.byteLength > OBJECT_LIMIT) throw new Error('The file exceeds 25 MiB.');
-      if (!this.validate(flight.address, bytes)) { await this.store?.remove(flight.key); throw new Error('The file failed its immutable integrity check.'); }
+      const valid = await this.validate(flight.address, bytes, flight.controller.signal);
       if (!this.current(flight)) throw aborted();
+      if (!valid) { await this.store?.remove(flight.key); throw new Error('The file failed its immutable integrity check.'); }
       // Persist first; a failed/partial disk write never creates a cache hit.
       // A usable current download can still display if the local disk is full.
-      try { await this.store?.set(flight.key, bytes); } catch { /* Keep this authorized runtime copy only. */ }
+      try { await this.store?.set(flight.key, bytes, flight.controller.signal); } catch { /* Keep this authorized runtime copy only. */ }
       if (!this.current(flight)) {
         const replacement = this.flights.get(flight.key);
         // Immutable key bytes may already serve a newer admitted flight. An

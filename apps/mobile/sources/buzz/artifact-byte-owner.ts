@@ -1,7 +1,6 @@
 import type { AttachmentReference } from '@beeline/buzz-client';
 import type { RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex } from '@noble/hashes/utils.js';
+import { artifactByteDigest } from './artifact-byte-digest';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { getBuzzRuntimeConfig } from './runtime-config';
@@ -13,10 +12,10 @@ export type ArtifactByteOptions = Readonly<{ signal?: AbortSignal; preview?: boo
 type Details = { format: string; authority?: RouterAuthorityCertificate; objectId: string; parentId: string; size?: number };
 const details = new Map<string, Details>();
 const store = createArtifactByteStore(key => details.get(key) ?? { format: 'bin' });
-const cache: ImmutableByteCache = new ImmutableByteCache(store, (address, bytes): boolean => {
+const cache: ImmutableByteCache = new ImmutableByteCache(store, async (address, bytes, signal): Promise<boolean> => {
   const size = details.get(cache.key(address))?.size;
   return (size === undefined || bytes.byteLength === size) &&
-    (!/^[a-f0-9]{64}$/.test(address.version) || bytesToHex(sha256(bytes)) === address.version);
+    (!/^[a-f0-9]{64}$/.test(address.version) || await artifactByteDigest(bytes, signal) === address.version);
 });
 const listeners = new Set<(ids: ReadonlySet<string> | null) => void>();
 const watchedIds = new Map<string, number>();

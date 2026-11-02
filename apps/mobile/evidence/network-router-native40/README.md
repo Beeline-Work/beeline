@@ -1,6 +1,6 @@
 # Historical native40 network and renderer probes
 
-2026-11-02. The scoped native checks passed; the 25 MiB responsiveness check remains **OPEN** because it measured a multi-second synchronous JS stall.
+2026-11-02. The scoped native checks passed. This original baseline recorded an open25MiB responsiveness gate. The [typed IO follow-up](typed-io/README.md) removes the measured multi-second encoding and hashing stalls on the same historical native40 emulator; physical phone performance remains unproved.
 
 The unchanged historical-source local APK has SHA256 `00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be`, native source `62a2695724540f2a300bb2f06fd9994fd72ab713`, Android runtime resource `40`, versionCode `27` and versionName `0.2.22`. This is the authorized walkthrough's local historical build, not the Play-distributed build. The fresh API35 x86_64 emulator used two cores, 2048 MiB, software graphics and Android WebView `124.0.6367.219`.
 

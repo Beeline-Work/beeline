@@ -2023,7 +2023,6 @@ export class MonolithCornerTurnLoop {
               // transcript. The objective is outside the window and always
               // renders, warm session or not.
               const buildPrompt = async (followup?: string): Promise<string> => {
-                await this.client?.preparePromptDelivery(this.sessionId);
                 // Context reads and file delivery can outlive a brief revision.
                 // Check at assembly time; unchanged revisions return no spec or files.
                 for (;;) {

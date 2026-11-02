@@ -1919,7 +1919,6 @@ export class MonolithRoomTurnLoop {
                 )
                 .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
               let deviceResume: string | undefined;
-              await this.client?.preparePromptDelivery(this.sessionId);
               const buildPrompt = (): string => {
                 const transcript = this.warmTranscript.select(
                   this.sessionId,

@@ -1,9 +1,10 @@
-# Agent token budget work
+# Agent token budget proof
 
-This implements the Beebee discovery incident's approved fixture and the
-workflow and allowance fixes. It is **not ready to merge**: universal native
-tool output enforcement and context delivery for unverified adapters remain
-open parts of brief revision (2).
+PR 3248 ships compact app-tool discovery, recoverable MCP text-result caps,
+the `arguments` alias for `args`, workflow describe and aggregated input
+errors, allowance pause fences, and trace result-size/concrete-name diagnostics.
+The human-approved split is recorded in brief revision (3), from lunchboxfortwo's
+message `e10f3e15058297305cd02709beddc083569aacc60334466e03400256a4459d52`.
 
 ## Reproduced
 
@@ -35,43 +36,23 @@ and did not fence subsequent commands.
 - `npx vitest run --root apps/server src/free-agent-model-proxy.test.ts`:
   TOKEN-PAUSE shows real usage, suppresses delivery and claim, and permits them
   after the persisted reset deadline is moved into the past.
-- `npx vitest run --root apps/body src/acp-codex-delivery.test.ts
-  src/codex-prompt-delivery.test.ts src/pi-session-instructions.test.ts`:
-  cold, warm, failed, repaired and compacted conversations retain or restore
-  fixed context. Claude's rules arrive through session creation without
-  repeating the same rules in the first task prompt.
-- The app tools and turn trace suites cover workflow describe, the `arguments`
-  alias, concrete tool names, UTF-8 result sizes and original sizes after capping.
+- The app tools suite exercises workflow describe before start and the
+  `arguments` alias. The trace suite checks concrete tool names, UTF-8 output
+  sizes and original sizes supplied by capped MCP results.
 
-The full workflow suite passed (167 tests), and the startup/attention suite
-passed (66 tests). Root typecheck, workspace builds, and workflow path checks
-passed. The prompt replay runner samples the existing saved member-handle and
-memory cases on both nightly models, with paired seeds and unchanged pass rules.
-Its artifacts must be assessed separately; an unscored sample is not proof of
-unchanged behavior.
+Validation for the split: root typecheck, workspace builds, affected Body and
+server suites, and both built MCP and HTTP workflow proofs are required before
+marking the PR ready. The corner completion report records their output and
+exact PR head.
 
-Both identical replay runs remained incomplete. All cold samples passed on
-both models. The first run left one Luna warm sample unscored; the repeat left
-two Luna warm samples unscored. Sol passed every sample in both runs. No unscored
-sample is counted as a pass. Combined replay usage was (968,323 tokens) and
-cost was ($0.186). The original and repeated result artifacts are attached to
-the corner's blocker report. This does not satisfy the required replay gate.
+## Deferred items
 
-## Remaining boundary
-
-The owned MCP transports can replace tool responses before delivery to a model.
-Native tools in Codex, Claude and Cursor execute inside the external harness;
-ACP's tool updates report what happened and do not provide a general result
-replacement operation. The repository's read-only MCP deliberately has no shell
-execution operation. The installed adapter implementations and the owned Cursor
-bridge were inspected: changing their diagnostic ACP updates would not cap the
-native result seen by the model. Pi exposes a result hook, but that does not
-solve the other harnesses. Native tools need adapter middleware or a deliberate
-change to expose equivalent Beeline-owned tools before universal enforcement
-can be claimed.
-
-Fixed-block delivery is enabled for verified Codex and Claude adapters and Pi's
-journal-based compaction detection, for paid and free agents in Rooms and corners.
-Unknown adapters keep full context conservatively. Enabling omission without
-reliable compaction detection would violate the brief's context-loss constraint.
-Cursor and unverified adapters therefore still need a safe retention contract.
+- Fixed context once per session and its Luna replay check. The follow-up must
+  first test whether the old prompt also duplicates answer objects. Removed
+  work is preserved at local branch `agent-context-once`, head
+  `634ddc4b408188e56e4a83caf760bb732807ef75`. The branch has not been pushed:
+  this session's standing developer instruction restricts pushes to
+  `feature/corner-f03a7bed9460`. The shipping PR contains none of its new
+  context-delivery changes or replay runner. No follow-up PR was opened.
+- Native shell output capping in Claude Code, Codex and Cursor. This PR caps
+  owned MCP text results only; it makes no native-harness output changes.
